@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=80", "wheel>=0.46"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leitir"
+version = "0.1.0"
+description = "Typed foundation for the Leitir technical search prototype"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "docker>=7,<8",
+    "trafilatura>=2,<3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+

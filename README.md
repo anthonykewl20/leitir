@@ -6,7 +6,10 @@
 
 Leitir is a prototype-stage design for answering difficult, version-sensitive programming questions more reliably than a single search-and-generate pass. It is intended to orchestrate evidence retrieval, code synthesis, execution, and repair while preserving a detailed trace of how each result was produced.
 
-Leitir is not implemented yet. This repository currently defines the product and its intended behavior.
+This repository currently contains the v1 foundation: side-effect-free typed
+contracts, validated configuration, replaceable external-effect interfaces, and
+a secret-redacting logging policy. It intentionally contains no workflow,
+transport, retrieval, model, sandbox, orchestration, or evaluation behavior yet.
 
 ## What it can do
 
@@ -61,9 +64,29 @@ The full definitions, exclusions, benchmark composition, and reporting requireme
 
 ## Status
 
-**Status: Prototype / design stage.** Leitir is not yet built. See [docs/PRD.md](docs/PRD.md) for the complete specification.
+**Status: Prototype foundation.** See [docs/PRD.md](docs/PRD.md) for the complete
+specification.
+
+## Development
+
+Python 3.11 or newer is required. From a clean checkout:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install --no-build-isolation --no-deps -e .
+python -m pytest
+```
+
+`requirements.txt` is the fully pinned runtime, test, and build dependency
+closure. Tests perform no network requests, Docker calls, or credential reads.
 
 ## Repository layout
 
 - `README.md` — project overview
 - `docs/PRD.md` — product requirements and technical specification
+- `src/leitir/` — configuration, domain contracts, protocols, and logging policy
+- `tests/` — offline pytest suite
+- `pyproject.toml` — package and test configuration
+- `requirements.txt` — exact dependency lock

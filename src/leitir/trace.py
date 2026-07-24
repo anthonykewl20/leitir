@@ -228,12 +228,22 @@ class ExpansionData:
     expanded_query_artifact_id: ArtifactId
     target_tiers: tuple[EvidenceTier, ...]
     parse_status: str
+    query_texts: tuple[str, ...] = ()
+    sites: tuple[str, ...] = ()
+    query_tiers: tuple[EvidenceTier, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.target_tiers:
             raise ValueError("query expansion requires at least one target tier")
         if not self.parse_status.strip():
             raise ValueError("parse_status must not be empty")
+        populated = (self.query_texts, self.sites, self.query_tiers)
+        if any(populated) and not all(populated):
+            raise ValueError(
+                "expanded queries, sites, and tiers must be recorded together"
+            )
+        if len({len(values) for values in populated}) > 1:
+            raise ValueError("expanded query trace fields must have equal lengths")
 
 
 @dataclass(frozen=True, slots=True)
@@ -737,6 +747,12 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
                 EvidenceTier(value) for value in expansion_data["target_tiers"]
             ),
             parse_status=expansion_data["parse_status"],
+            query_texts=tuple(expansion_data.get("query_texts", ())),
+            sites=tuple(expansion_data.get("sites", ())),
+            query_tiers=tuple(
+                EvidenceTier(value)
+                for value in expansion_data.get("query_tiers", ())
+            ),
         )
         if expansion_data
         else None,

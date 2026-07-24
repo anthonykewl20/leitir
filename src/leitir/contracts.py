@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
+import re
 from types import MappingProxyType
 from typing import Mapping
+
+
+_DOMAIN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_SITE_OPERATOR = re.compile(r"(?i)(?<![a-z0-9_])[+-]?site\s*:")
+_SPACE = re.compile(r"\s+")
+_TIER_2_SITES = frozenset({"docs.python.org", "pypi.org"})
+_TIER_3_SITES = frozenset({"github.com", "api.github.com"})
 
 
 class TargetLanguage(str, Enum):
@@ -102,6 +110,100 @@ class WorkflowRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class QueryRecord:
+    """One site-bound discovery query emitted by Step 1."""
+
+    query_text: str
+    site: str
+    tier: EvidenceTier
+    provenance: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        query = _normalized_text("query_text", self.query_text)
+        site = _domain(self.site)
+        if not isinstance(self.tier, EvidenceTier):
+            raise TypeError("tier must be an EvidenceTier")
+        _tier_site(self.tier, site)
+        if _SITE_OPERATOR.search(query):
+            raise ValueError("query_text must not contain a site operator")
+        if isinstance(self.provenance, (str, bytes)) or not self.provenance:
+            raise ValueError("provenance must contain at least one contributor")
+        contributors: list[str] = []
+        seen: set[str] = set()
+        for value in self.provenance:
+            item = _normalized_text("provenance", value)
+            key = item.casefold()
+            if key not in seen:
+                contributors.append(item)
+                seen.add(key)
+        object.__setattr__(self, "query_text", query)
+        object.__setattr__(self, "site", site)
+        object.__setattr__(self, "provenance", tuple(contributors))
+
+    @property
+    def discovery_query(self) -> str:
+        """Render the restriction only at the Step 1/Step 2 seam."""
+        return f"{self.query_text} site:{self.site}"
+
+
+@dataclass(frozen=True, slots=True)
+class QueryExpansionPlan:
+    """A complete Step 1 result which is safe to pass to discovery."""
+
+    request: WorkflowRequest
+    queries: tuple[QueryRecord, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, WorkflowRequest):
+            raise TypeError("request must be a WorkflowRequest")
+        if not self.queries:
+            raise ValueError("an expansion plan must contain queries")
+        if {record.tier for record in self.queries} != set(EvidenceTier):
+            raise ValueError("an expansion plan requires Tiers 1, 2, and 3")
+
+    def for_tier(self, tier: EvidenceTier) -> tuple[QueryRecord, ...]:
+        return tuple(record for record in self.queries if record.tier is tier)
+
+
+def _normalized_text(name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    normalized = _SPACE.sub(" ", value).strip()
+    if not normalized:
+        raise ValueError(f"{name} must be non-empty text")
+    return normalized
+
+
+def _domain(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("site must be a string")
+    site = value.strip().lower().rstrip(".")
+    if (
+        not site
+        or "://" in site
+        or any(character in site for character in "/:@?#* \t\r\n")
+    ):
+        raise ValueError("site must be a bare domain")
+    labels = site.split(".")
+    if (
+        len(labels) < 2
+        or not re.fullmatch(r"[a-z]{2,63}", labels[-1])
+        or any(not _DOMAIN_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError("site must be a valid domain")
+    return site
+
+
+def _tier_site(tier: EvidenceTier, site: str) -> None:
+    if tier is EvidenceTier.TIER_2 and site not in _TIER_2_SITES:
+        raise ValueError("site is not valid for Tier 2")
+    if tier is EvidenceTier.TIER_3 and site not in _TIER_3_SITES:
+        raise ValueError("site is not valid for Tier 3")
+    if tier is EvidenceTier.TIER_1 and site in _TIER_2_SITES | _TIER_3_SITES:
+        raise ValueError("site is not valid for Tier 1")
+
+
+@dataclass(frozen=True, slots=True)
 class Artifact:
     artifact_id: ArtifactId
     tier: EvidenceTier
@@ -168,4 +270,3 @@ class Attempt:
         if self.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}:
             if self.disposition is not None:
                 raise ValueError("non-terminal attempts cannot have a disposition")
-

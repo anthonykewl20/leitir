@@ -59,6 +59,9 @@ class Config:
     model_retry_initial_backoff_seconds: int | float = 1
     model_retry_max_backoff_seconds: int | float = 8
 
+    expansion_min_queries_per_tier: int = 1
+    expansion_max_queries_per_tier: int = 5
+    expansion_max_task_characters: int = 12_000
     discovery_max_results: int = 50
     discovery_timeout_seconds: int = 30
     extraction_max_bytes: int = 5_000_000
@@ -109,6 +112,9 @@ class Config:
             "model_timeout_seconds": (1, 3_600),
             "model_max_tokens": (1, 1_000_000),
             "model_max_attempts": (1, 10),
+            "expansion_min_queries_per_tier": (1, 20),
+            "expansion_max_queries_per_tier": (1, 20),
+            "expansion_max_task_characters": (1, 100_000),
             "discovery_max_results": (1, 1_000),
             "discovery_timeout_seconds": (1, 300),
             "extraction_max_bytes": (1, 100_000_000),
@@ -150,6 +156,14 @@ class Config:
             raise ValueError(
                 "model_retry_initial_backoff_seconds cannot exceed "
                 "model_retry_max_backoff_seconds"
+            )
+        if (
+            self.expansion_min_queries_per_tier
+            > self.expansion_max_queries_per_tier
+        ):
+            raise ValueError(
+                "expansion_min_queries_per_tier cannot exceed "
+                "expansion_max_queries_per_tier"
             )
         if self.chunk_size > self.max_evidence_tokens:
             raise ValueError("chunk_size cannot exceed max_evidence_tokens")

@@ -10,6 +10,8 @@ from .contracts import (
     ErrorAttribution,
     ErrorCode,
     EvidenceTier,
+    QueryExpansionPlan,
+    QueryRecord,
     StepResult,
     StepStatus,
     TerminalDisposition,
@@ -44,6 +46,11 @@ from .openrouter import (
     RequestValidationError,
     ResponseValidationError,
     TransportError,
+)
+from .expansion import (
+    ExpansionMalformedError,
+    QueryExpander,
+    QueryExpansionClient,
 )
 
 __all__ = [
@@ -86,4 +93,9 @@ __all__ = [
     "RequestValidationError",
     "ResponseValidationError",
     "TransportError",
+    "ExpansionMalformedError",
+    "QueryExpander",
+    "QueryExpansionClient",
+    "QueryExpansionPlan",
+    "QueryRecord",
 ]

@@ -79,6 +79,9 @@ class Config:
 
     chunk_size: int = 2_000
     max_evidence_tokens: int = 20_000
+    repair_max_diagnostics_characters: int = 12_000
+    repair_max_diff_characters: int = 24_000
+    repair_max_candidate_characters: int = 100_000
 
     sandbox_timeout_seconds: int = 120
     sandbox_memory_mb: int = 512
@@ -136,6 +139,9 @@ class Config:
             "github_min_stars": (101, 10_000_000),
             "chunk_size": (1, 100_000),
             "max_evidence_tokens": (1, 1_000_000),
+            "repair_max_diagnostics_characters": (1, 1_000_000),
+            "repair_max_diff_characters": (1, 1_000_000),
+            "repair_max_candidate_characters": (1, 1_000_000),
             "sandbox_timeout_seconds": (1, 3_600),
             "sandbox_memory_mb": (64, 65_536),
             "sandbox_cpu_count": (1, 128),

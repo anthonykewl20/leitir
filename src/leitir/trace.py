@@ -369,6 +369,60 @@ class SecurityData:
 
 
 @dataclass(frozen=True, slots=True)
+class SynthesisData:
+    """Step 4 parse, provenance, and first-prompt SER facts."""
+
+    mode: str
+    parse_status: str
+    candidate_artifact_id: ArtifactId | None
+    total_cleaned_evidence_tokens: int
+    total_cleaned_chunk_ids: tuple[ArtifactId, ...]
+    retained_evidence_tokens: int
+    retained_chunk_ids: tuple[ArtifactId, ...]
+    cited_chunk_ids: tuple[ArtifactId, ...] = ()
+    deduplicated_chunk_ids: tuple[ArtifactId, ...] = ()
+    is_first_prompt: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"initial", "repair"}:
+            raise ValueError("synthesis mode must be initial or repair")
+        if not self.parse_status.strip():
+            raise ValueError("parse_status must not be empty")
+        _non_negative_int(
+            "total_cleaned_evidence_tokens", self.total_cleaned_evidence_tokens
+        )
+        _non_negative_int("retained_evidence_tokens", self.retained_evidence_tokens)
+        if self.retained_evidence_tokens > self.total_cleaned_evidence_tokens:
+            raise ValueError("retained evidence cannot exceed total cleaned evidence")
+        if self.total_cleaned_evidence_tokens and not self.total_cleaned_chunk_ids:
+            raise ValueError("total token accounting requires candidate chunk IDs")
+        if self.retained_evidence_tokens and not self.retained_chunk_ids:
+            raise ValueError("retained token accounting requires retained chunk IDs")
+        candidate_ids = set(self.total_cleaned_chunk_ids)
+        retained_ids = set(self.retained_chunk_ids)
+        for name, values in (
+            ("total_cleaned_chunk_ids", self.total_cleaned_chunk_ids),
+            ("retained_chunk_ids", self.retained_chunk_ids),
+            ("cited_chunk_ids", self.cited_chunk_ids),
+            ("deduplicated_chunk_ids", self.deduplicated_chunk_ids),
+        ):
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} must contain unique IDs")
+        if not retained_ids.issubset(candidate_ids):
+            raise ValueError("retained chunks must be candidate chunks")
+        if not set(self.cited_chunk_ids).issubset(retained_ids):
+            raise ValueError("citations must identify retained chunks")
+        if set(self.deduplicated_chunk_ids) & candidate_ids:
+            raise ValueError("deduplicated IDs cannot also be candidate IDs")
+        if not isinstance(self.is_first_prompt, bool):
+            raise TypeError("is_first_prompt must be a bool")
+        if self.is_first_prompt and self.mode != "initial":
+            raise ValueError("a repair cannot be the first Step 4 prompt")
+        if self.parse_status == "parsed" and self.candidate_artifact_id is None:
+            raise ValueError("parsed synthesis requires a candidate artifact")
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxData:
     exit_code: int | None
     test_passed: bool | None
@@ -400,6 +454,7 @@ class TraceSpan:
     discovery: DiscoveryData | None = None
     extraction: ExtractionData | None = None
     security: SecurityData | None = None
+    synthesis: SynthesisData | None = None
     sandbox: SandboxData | None = None
     started_at: str | None = None
     ended_at: str | None = None
@@ -417,10 +472,16 @@ class TraceSpan:
             and self.extraction is not None
             and self.extraction.extraction_failure is not None
         )
+        normalized_synthesis_failure = (
+            self.step is WorkflowStep.SYNTHESIS
+            and self.synthesis is not None
+            and self.synthesis.parse_status != "parsed"
+        )
         if (
             self.status is StepStatus.FAILED
             and self.error_code is None
             and not normalized_extraction_failure
+            and not normalized_synthesis_failure
         ):
             raise ValueError(
                 "a failed span requires an error_code or normalized "
@@ -443,6 +504,7 @@ class TraceSpan:
             ("discovery", self.discovery, {WorkflowStep.DISCOVERY}),
             ("extraction", self.extraction, {WorkflowStep.EXTRACTION}),
             ("security", self.security, {WorkflowStep.EXTRACTION}),
+            ("synthesis", self.synthesis, {WorkflowStep.SYNTHESIS}),
             ("sandbox", self.sandbox, {WorkflowStep.VERIFICATION}),
         )
         for name, detail, allowed_steps in detail_steps:
@@ -675,6 +737,17 @@ class ExecutionTrace:
                     )
                     if item is not None
                 )
+            if span.synthesis is not None:
+                referenced_ids.update(
+                    (
+                        *span.synthesis.total_cleaned_chunk_ids,
+                        *span.synthesis.retained_chunk_ids,
+                        *span.synthesis.cited_chunk_ids,
+                        *span.synthesis.deduplicated_chunk_ids,
+                    )
+                )
+                if span.synthesis.candidate_artifact_id is not None:
+                    referenced_ids.add(span.synthesis.candidate_artifact_id)
         for attempt_diff in self.attempt_diffs:
             referenced_ids.update(
                 (
@@ -810,6 +883,7 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
     discovery_data = data.get("discovery")
     extraction_data = data.get("extraction")
     security_data = data.get("security")
+    synthesis_data = data.get("synthesis")
     sandbox_data = data.get("sandbox")
     return TraceSpan(
         step=WorkflowStep(data["step"]),
@@ -922,6 +996,30 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
             instruction_like_content=security_data["instruction_like_content"],
         )
         if security_data
+        else None,
+        synthesis=SynthesisData(
+            mode=synthesis_data["mode"],
+            parse_status=synthesis_data["parse_status"],
+            candidate_artifact_id=_artifact_id(
+                synthesis_data["candidate_artifact_id"]
+            ),
+            total_cleaned_evidence_tokens=synthesis_data[
+                "total_cleaned_evidence_tokens"
+            ],
+            total_cleaned_chunk_ids=_ids(
+                synthesis_data["total_cleaned_chunk_ids"]
+            ),
+            retained_evidence_tokens=synthesis_data[
+                "retained_evidence_tokens"
+            ],
+            retained_chunk_ids=_ids(synthesis_data["retained_chunk_ids"]),
+            cited_chunk_ids=_ids(synthesis_data.get("cited_chunk_ids", ())),
+            deduplicated_chunk_ids=_ids(
+                synthesis_data.get("deduplicated_chunk_ids", ())
+            ),
+            is_first_prompt=synthesis_data["is_first_prompt"],
+        )
+        if synthesis_data
         else None,
         sandbox=SandboxData(
             exit_code=sandbox_data["exit_code"],

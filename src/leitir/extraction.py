@@ -175,6 +175,7 @@ class RegexTokenCounter:
 class EvidenceChunk:
     artifact_id: ArtifactId
     evidence_id: ArtifactId
+    tier: EvidenceTier
     ordinal: int
     content: str
     content_reference: str
@@ -185,10 +186,30 @@ class EvidenceChunk:
     revision: str | None
 
     def __post_init__(self) -> None:
-        if self.ordinal < 1 or self.token_count < 1:
+        for name in ("artifact_id", "evidence_id"):
+            if not isinstance(getattr(self, name), ArtifactId):
+                raise TypeError(f"{name} must be an ArtifactId")
+        if not isinstance(self.tier, EvidenceTier):
+            raise TypeError("chunk tier must be an EvidenceTier")
+        if (
+            isinstance(self.ordinal, bool)
+            or not isinstance(self.ordinal, int)
+            or isinstance(self.token_count, bool)
+            or not isinstance(self.token_count, int)
+            or self.ordinal < 1
+            or self.token_count < 1
+        ):
             raise ValueError("chunk ordinal and token count must be positive")
-        if not self.content or not self.content_reference:
-            raise ValueError("chunk content and reference must not be empty")
+        for name in ("content", "content_reference", "source_uri"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"chunk {name} must be non-empty text")
+        for name in ("repository", "file_path", "revision"):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, str) or not value.strip()
+            ):
+                raise ValueError(f"chunk {name} must be non-empty text or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,6 +484,7 @@ class EvidenceExtractor:
             EvidenceChunk(
                 artifact_id=ArtifactId(f"{evidence_id.value}-chunk-{ordinal:04d}"),
                 evidence_id=evidence_id,
+                tier=candidate.tier,
                 ordinal=ordinal,
                 content=text,
                 content_reference=f"memory://step-3/{evidence_id.value}/chunk/{ordinal}",

@@ -396,6 +396,91 @@ def test_malformed_output_fails_closed_and_is_traced(content):
     )
 
 
+@pytest.mark.parametrize(
+    ("content", "expected_code"),
+    [
+        (
+            "```json\n"
+            + json.dumps({"code": "value = 1\n", "citations": ["evidence"]})
+            + "\n```",
+            "value = 1\n",
+        ),
+        (
+            "Here is the candidate:\n"
+            + json.dumps({"code": "value = 2\n", "citations": ["evidence"]})
+            + "\nThis uses the retained evidence.",
+            "value = 2\n",
+        ),
+        (
+            json.dumps(
+                {
+                    "code": "value = 3\n",
+                    "citations": ["evidence"],
+                    "explanation": "extra",
+                    "language": "python",
+                }
+            ),
+            "value = 3\n",
+        ),
+        (
+            json.dumps(
+                {
+                    "result": {
+                        "code": "value = 4\n",
+                        "citations": ["evidence"],
+                    }
+                }
+            ),
+            "value = 4\n",
+        ),
+        (
+            "{'code': 'value = 5\\n', 'citations': ['evidence'],}",
+            "value = 5\n",
+        ),
+        (
+            json.dumps(
+                {
+                    "code": "```python\nvalue = 6\n```",
+                    "citations": ["evidence"],
+                }
+            ),
+            "value = 6",
+        ),
+        (
+            json.dumps({"code": "value = 7\n", "citations": "evidence"}),
+            "value = 7\n",
+        ),
+        (
+            json.dumps(
+                {
+                    "code": "value = 8\n",
+                    "citations": {"chunk_id": "evidence"},
+                }
+            ),
+            "value = 8\n",
+        ),
+        (
+            json.dumps(
+                {
+                    "code": "value = 9\n",
+                    "citations": [{"id": "evidence"}],
+                }
+            ),
+            "value = 9\n",
+        ),
+    ],
+)
+def test_hy3_synthesis_output_variants_are_normalized(content, expected_code):
+    evidence = chunk("evidence", EvidenceTier.TIER_1, 2)
+
+    candidate = EvidenceGroundedSynthesizer(
+        FakeSynthesisClient(content)
+    ).synthesize(request(), (evidence,))
+
+    assert candidate.code == expected_code
+    assert candidate.citations == (evidence.artifact_id,)
+
+
 def test_provider_failure_propagates_and_missing_usage_is_null_flagged():
     evidence = chunk("evidence", EvidenceTier.TIER_1, 2)
     recorder = TraceRecorder("trace-provider-4", "provider synthesis")

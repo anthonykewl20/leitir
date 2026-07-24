@@ -15,6 +15,7 @@ import re
 import time
 from typing import Callable, Protocol
 
+from ._jsonutil import extract_json_obj
 from .config import Config, OPENROUTER_MODEL
 from .contracts import (
     ArtifactId,
@@ -39,6 +40,27 @@ from .trace import (
 
 _SPACE = re.compile(r"\s+")
 _TIERS = tuple(EvidenceTier)
+
+
+def _find_queries(value: Mapping[str, object]) -> Sequence[object] | None:
+    """Find the first model-emitted query array, including inside wrappers."""
+
+    queries = value.get("queries")
+    if isinstance(queries, (list, tuple)):
+        return queries
+    for nested in value.values():
+        if isinstance(nested, Mapping):
+            found = _find_queries(nested)
+            if found is not None:
+                return found
+    for nested in value.values():
+        if (
+            isinstance(nested, (list, tuple))
+            and nested
+            and all(isinstance(item, Mapping) for item in nested)
+        ):
+            return nested
+    return None
 
 
 class QueryExpansionClient(Protocol):
@@ -168,39 +190,61 @@ class QueryExpander:
         ]
 
     def _parse(self, content: object) -> tuple[QueryRecord, ...]:
-        if not isinstance(content, str):
-            raise TypeError("model content must be JSON text")
-        document = json.loads(content)
-        if not isinstance(document, Mapping) or set(document) != {"queries"}:
-            raise ValueError("output must contain exactly the queries member")
-        values = document["queries"]
+        document = extract_json_obj(content)
+
+        values = _find_queries(document)
+        if values is None:
+            raise ValueError("no queries array found")
         if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
             raise TypeError("queries must be an array")
 
         records: list[QueryRecord] = []
         index_by_key: dict[tuple[int, str, str], int] = {}
+        required = {"query_text", "site", "tier", "provenance"}
         for value in values:
-            if not isinstance(value, Mapping) or set(value) != {
-                "query_text",
-                "site",
-                "tier",
-                "provenance",
-            }:
+            if not isinstance(value, Mapping) or not required.issubset(value):
                 raise ValueError("query records have an invalid shape")
+
+            site = value["site"]
+            if not isinstance(site, str):
+                raise TypeError("site must be a string")
+            site = site.strip()
+            site = re.sub(r"^https?://", "", site)
+            site = re.sub(r"^site:", "", site)
+            site = site.split("/")[0].split("?")[0]
+            if not site:
+                raise ValueError("site must not be empty after normalization")
+
+            query_text = value["query_text"]
+            if not isinstance(query_text, str):
+                raise TypeError("query_text must be a string")
+            query_text = re.sub(r"\bsite:\S+", "", query_text).strip()
+
             tier_value = value["tier"]
-            if isinstance(tier_value, bool) or not isinstance(tier_value, int):
+            if isinstance(tier_value, bool):
+                raise TypeError("tier must not be bool")
+            if isinstance(tier_value, str):
+                try:
+                    tier_value = int(tier_value.strip())
+                except ValueError:
+                    raise TypeError("tier must be an integer") from None
+            if not isinstance(tier_value, int):
                 raise TypeError("tier must be an integer")
             tier = EvidenceTier(tier_value)
+
             provenance = value["provenance"]
-            if isinstance(provenance, (str, bytes)) or not isinstance(
-                provenance, Sequence
-            ):
+            if isinstance(provenance, str):
+                provenance = [provenance]
+            elif isinstance(provenance, (list, tuple)):
+                provenance = list(provenance)
+            else:
                 raise TypeError("provenance must be an array")
+
             record = QueryRecord(
-                query_text=value["query_text"],  # type: ignore[arg-type]
-                site=value["site"],  # type: ignore[arg-type]
+                query_text=query_text,
+                site=site,
                 tier=tier,
-                provenance=tuple(provenance),  # type: ignore[arg-type]
+                provenance=tuple(str(item) for item in provenance if item),
             )
             key = (
                 record.tier.value,

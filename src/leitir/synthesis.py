@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from enum import Enum
 import hashlib
 import json
+import re
 import time
 from typing import Callable, Protocol
 
+from ._jsonutil import extract_json_obj
 from .config import Config, OPENROUTER_MODEL
 from .contracts import (
     ArtifactId,
@@ -228,6 +230,21 @@ class _ArtifactIds:
     response: ArtifactId
     parameters: ArtifactId
     candidate: ArtifactId
+
+
+def _find_code_and_citations(
+    value: Mapping[str, object],
+) -> tuple[object, object] | None:
+    """Find the candidate members inside optional model-added wrappers."""
+
+    if "code" in value and "citations" in value:
+        return value["code"], value["citations"]
+    for nested in value.values():
+        if isinstance(nested, Mapping):
+            found = _find_code_and_citations(nested)
+            if found is not None:
+                return found
+    return None
 
 
 def _chunk_key(chunk: EvidenceChunk) -> tuple[object, ...]:
@@ -567,25 +584,29 @@ class EvidenceGroundedSynthesizer:
         content: object,
         selection: EvidenceSelection,
     ) -> tuple[str, tuple[ArtifactId, ...]]:
-        if not isinstance(content, str):
-            raise TypeError("model content must be JSON text")
-        document = json.loads(content)
-        if not isinstance(document, Mapping) or set(document) != {
-            "code",
-            "citations",
-        }:
+        document = extract_json_obj(content)
+        located = _find_code_and_citations(document)
+        if located is None:
             raise ValueError("candidate output has an invalid shape")
-        code = document["code"]
-        citations = document["citations"]
-        if not isinstance(code, str) or not code.strip():
+        code, citations = located
+
+        if not isinstance(code, str):
+            raise TypeError("code must be a string")
+        fence = re.search(r"```(?:python)?\s*(.*?)```", code, re.DOTALL)
+        if fence:
+            code = fence.group(1).strip()
+        if not code.strip():
             raise ValueError("candidate code must be non-empty")
         ast.parse(code)
-        if (
-            isinstance(citations, (str, bytes))
-            or not isinstance(citations, Sequence)
-            or not citations
-        ):
-            raise TypeError("citations must be a non-empty array")
+
+        if isinstance(citations, str):
+            citations = [citations]
+        elif isinstance(citations, Mapping):
+            citation = citations.get("chunk_id") or citations.get("id")
+            citations = [citation] if citation else []
+        if not isinstance(citations, (list, tuple)):
+            raise TypeError("citations must be an array")
+
         retained = {
             group.chunk.artifact_id.value: group.chunk.artifact_id
             for group in selection.retained
@@ -593,6 +614,8 @@ class EvidenceGroundedSynthesizer:
         normalized: list[ArtifactId] = []
         seen: set[ArtifactId] = set()
         for value in citations:
+            if isinstance(value, Mapping):
+                value = value.get("chunk_id") or value.get("id")
             if not isinstance(value, str) or value not in retained:
                 raise ValueError("citation must identify retained evidence")
             item = retained[value]

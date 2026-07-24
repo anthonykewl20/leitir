@@ -1,5 +1,6 @@
 """Public, side-effect-free contracts for the Leitir prototype."""
 
+from ._jsonutil import extract_json_obj
 from .config import Config
 from .contracts import (
     Artifact,
@@ -147,6 +148,7 @@ from .evaluation import (
 )
 
 __all__ = [
+    "extract_json_obj",
     "Artifact",
     "ArtifactId",
     "Attempt",

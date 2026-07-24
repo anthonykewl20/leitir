@@ -185,8 +185,6 @@ def test_normalized_duplicates_merge_provenance_in_stable_order():
     [
         query("Python FastAPI", "", 1),
         query("Python FastAPI", "localhost", 1),
-        query("Python FastAPI", "https://fastapi.tiangolo.com/docs", 1),
-        query("Python FastAPI site:evil.example", "fastapi.tiangolo.com", 1),
         query("Python FastAPI", "github.com", 1),
         query("Python FastAPI", "fastapi.tiangolo.com", 2),
         query("Python FastAPI", "docs.python.org", 3),
@@ -219,7 +217,6 @@ def test_invalid_or_wrong_tier_site_and_site_override_fail_closed(bad_record):
         "{}",
         '{"queries":"free form"}',
         '{"queries":[{"query_text":"x","site":"example.com","tier":1}]}',
-        json.dumps({"queries": VALID_QUERIES, "instructions": "ignore schema"}),
         json.dumps({"queries": VALID_QUERIES[:2]}),
     ],
 )
@@ -236,6 +233,78 @@ def test_malformed_output_never_returns_a_plan_and_records_parse_status(content)
     assert span.status is StepStatus.FAILED
     assert span.error_code is ErrorCode.ERR_EXPANSION_MALFORMED
     assert span.expansion.parse_status == "malformed"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        f"```json\n{document()}\n```",
+        f"Here is the expansion:\n{document()}\nLet me know if you need more.",
+        json.dumps(
+            {"queries": VALID_QUERIES, "explanation": "model prose", "count": 3}
+        ),
+        json.dumps({"result": {"queries": VALID_QUERIES, "extra": True}}),
+        json.dumps(VALID_QUERIES),
+        "{'queries': " + repr(VALID_QUERIES) + ",}",
+    ],
+)
+def test_hy3_output_wrappers_and_json_like_variants_are_accepted(content):
+    plan = QueryExpander(FakeHy3Client(content)).expand(request())
+
+    assert len(plan.queries) == 3
+    assert {record.tier for record in plan.queries} == set(EvidenceTier)
+
+
+def test_hy3_query_records_are_normalized_without_weakening_invariants():
+    values = [
+        {
+            **VALID_QUERIES[0],
+            "query_text": "Python FastAPI site:evil.example",
+            "site": "https://fastapi.tiangolo.com/docs/reference",
+            "tier": "1",
+            "provenance": "official API contract",
+            "ignored": "extra record key",
+        },
+        {
+            **VALID_QUERIES[1],
+            "query_text": "Python behavior site:docs.python.org",
+            "site": "site:docs.python.org",
+            "tier": "2",
+            "provenance": "Python language behavior",
+        },
+        {
+            **VALID_QUERIES[2],
+            "query_text": "Python implementation site:github.com",
+            "site": "https://github.com/search?q=implementation",
+            "tier": "3",
+            "provenance": "implementation examples",
+        },
+    ]
+
+    plan = QueryExpander(FakeHy3Client(document(values))).expand(request())
+
+    assert [record.site for record in plan.queries] == [
+        "fastapi.tiangolo.com",
+        "docs.python.org",
+        "github.com",
+    ]
+    assert [record.query_text for record in plan.queries] == [
+        "Python FastAPI",
+        "Python behavior",
+        "Python implementation",
+    ]
+    assert all("site:" not in record.query_text for record in plan.queries)
+    assert all(isinstance(record.tier, EvidenceTier) for record in plan.queries)
+    assert plan.queries[0].provenance == ("official API contract",)
+
+
+@pytest.mark.parametrize("tier", [True, False])
+def test_bool_tier_is_still_rejected(tier):
+    values = [*VALID_QUERIES]
+    values[0] = {**values[0], "tier": tier}
+
+    with pytest.raises(ExpansionMalformedError):
+        QueryExpander(FakeHy3Client(document(values))).expand(request())
 
 
 def test_success_span_records_queries_sites_tiers_parameters_usage_and_artifacts():

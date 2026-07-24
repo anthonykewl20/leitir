@@ -321,6 +321,27 @@ class DiscoveryData:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractionAttemptData:
+    endpoint_kind: str
+    attempt: int
+    latency_ms: int | float
+    http_status: int | None
+    outcome: str
+    error_category: str | None = None
+    retryable: bool = False
+
+    def __post_init__(self) -> None:
+        if self.endpoint_kind not in {"document", "repository_metadata", "raw_source"}:
+            raise ValueError("unknown extraction endpoint kind")
+        _positive("attempt", self.attempt)
+        _non_negative("latency_ms", self.latency_ms)
+        if self.http_status is not None:
+            _non_negative_int("http_status", self.http_status)
+        if not self.outcome:
+            raise ValueError("outcome must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionData:
     raw_bytes: int
     cleaned_tokens: int
@@ -328,11 +349,15 @@ class ExtractionData:
     source_tier: EvidenceTier
     repository_stars: int | None = None
     extraction_failure: str | None = None
+    attempt_history: tuple[ExtractionAttemptData, ...] = ()
+    star_threshold_passed: bool | None = None
+    chunk_count: int = 0
 
     def __post_init__(self) -> None:
         _non_negative_int("raw_bytes", self.raw_bytes)
         _non_negative_int("cleaned_tokens", self.cleaned_tokens)
         _non_negative_int("repository_stars", self.repository_stars)
+        _non_negative_int("chunk_count", self.chunk_count)
         if not isinstance(self.source_tier, EvidenceTier):
             raise TypeError("source_tier must be an EvidenceTier")
 
@@ -387,8 +412,20 @@ class TraceSpan:
         _non_negative("latency_ms", self.latency_ms)
         _non_negative_int("retry_number", self.retry_number)
         _positive("attempt_number", self.attempt_number)
-        if self.status is StepStatus.FAILED and self.error_code is None:
-            raise ValueError("a failed span requires an error_code")
+        normalized_extraction_failure = (
+            self.step is WorkflowStep.EXTRACTION
+            and self.extraction is not None
+            and self.extraction.extraction_failure is not None
+        )
+        if (
+            self.status is StepStatus.FAILED
+            and self.error_code is None
+            and not normalized_extraction_failure
+        ):
+            raise ValueError(
+                "a failed span requires an error_code or normalized "
+                "extraction failure"
+            )
         for value in (self.started_at, self.ended_at):
             if value is not None:
                 _timestamp(value)
@@ -863,6 +900,20 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
             source_tier=EvidenceTier(extraction_data["source_tier"]),
             repository_stars=extraction_data["repository_stars"],
             extraction_failure=extraction_data["extraction_failure"],
+            attempt_history=tuple(
+                ExtractionAttemptData(
+                    endpoint_kind=item["endpoint_kind"],
+                    attempt=item["attempt"],
+                    latency_ms=item["latency_ms"],
+                    http_status=item["http_status"],
+                    outcome=item["outcome"],
+                    error_category=item["error_category"],
+                    retryable=item["retryable"],
+                )
+                for item in extraction_data.get("attempt_history", ())
+            ),
+            star_threshold_passed=extraction_data.get("star_threshold_passed"),
+            chunk_count=extraction_data.get("chunk_count", 0),
         )
         if extraction_data
         else None,

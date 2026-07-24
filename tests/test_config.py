@@ -44,6 +44,9 @@ def test_normative_defaults_and_fixed_boundaries():
         ("model_retry_max_backoff_seconds", 301),
         ("discovery_max_results", 0),
         ("extraction_max_bytes", 0),
+        ("extraction_max_attempts", 0),
+        ("extraction_retry_initial_backoff_seconds", -1),
+        ("extraction_retry_max_backoff_seconds", 301),
         ("sandbox_timeout_seconds", 0),
         ("sandbox_memory_mb", 32),
         ("max_repairs", 4),
@@ -67,6 +70,14 @@ def test_model_retry_initial_backoff_cannot_exceed_cap():
         Config(
             model_retry_initial_backoff_seconds=2,
             model_retry_max_backoff_seconds=1,
+        )
+
+
+def test_extraction_retry_initial_backoff_cannot_exceed_cap():
+    with pytest.raises(ValueError, match="backoff"):
+        Config(
+            extraction_retry_initial_backoff_seconds=2,
+            extraction_retry_max_backoff_seconds=1,
         )
 
 

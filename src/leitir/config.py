@@ -72,6 +72,9 @@ class Config:
     discovery_retry_max_backoff_seconds: int | float = 8
     extraction_max_bytes: int = 5_000_000
     extraction_timeout_seconds: int = 60
+    extraction_max_attempts: int = 3
+    extraction_retry_initial_backoff_seconds: int | float = 1
+    extraction_retry_max_backoff_seconds: int | float = 8
     github_min_stars: int = 101
 
     chunk_size: int = 2_000
@@ -129,6 +132,7 @@ class Config:
             "discovery_max_attempts": (1, 10),
             "extraction_max_bytes": (1, 100_000_000),
             "extraction_timeout_seconds": (1, 900),
+            "extraction_max_attempts": (1, 10),
             "github_min_stars": (101, 10_000_000),
             "chunk_size": (1, 100_000),
             "max_evidence_tokens": (1, 1_000_000),
@@ -185,6 +189,25 @@ class Config:
             raise ValueError(
                 "discovery_retry_initial_backoff_seconds cannot exceed "
                 "discovery_retry_max_backoff_seconds"
+            )
+        extraction_initial = self.extraction_retry_initial_backoff_seconds
+        extraction_maximum = self.extraction_retry_max_backoff_seconds
+        for name, value in (
+            ("extraction_retry_initial_backoff_seconds", extraction_initial),
+            ("extraction_retry_max_backoff_seconds", extraction_maximum),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > 300
+            ):
+                raise ValueError(f"{name} must be finite and between 0 and 300")
+        if extraction_initial > extraction_maximum:
+            raise ValueError(
+                "extraction_retry_initial_backoff_seconds cannot exceed "
+                "extraction_retry_max_backoff_seconds"
             )
         if (
             self.expansion_min_queries_per_tier

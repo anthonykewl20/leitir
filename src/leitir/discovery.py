@@ -130,6 +130,7 @@ class DiscoveryCandidate:
     retrieval_metadata: Mapping[str, object]
     repository: str | None = None
     file_path: str | None = None
+    revision: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.tier, EvidenceTier):
@@ -563,6 +564,7 @@ class GitHubCodeSearchAdapter(_Adapter):
                     },
                     repository=full_name.strip(),
                     file_path=path.strip(),
+                    revision=_github_revision(canonical_url),
                 )
             )
         telemetry.after_filter += len(candidates)
@@ -790,6 +792,18 @@ def _is_site(domain: str, site: str) -> bool:
 
 def _optional_text(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _github_revision(url: str) -> str | None:
+    """Read the revision carried by a canonical GitHub blob URL."""
+    parts = urlsplit(url).path.split("/")
+    try:
+        marker = parts.index("blob")
+    except ValueError:
+        return None
+    if marker + 1 >= len(parts):
+        return None
+    return parts[marker + 1] or None
 
 
 def _retryable_status(status: int, *, channel: DiscoveryChannel) -> bool:

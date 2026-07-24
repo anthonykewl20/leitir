@@ -276,7 +276,7 @@ def test_malformed_completed_responses_are_not_retried(body):
     assert len(http.calls) == 1
 
 
-def test_message_content_and_raw_usage_are_preserved_exactly():
+def test_non_string_message_content_is_rejected():
     content = [{"type": "text", "text": "preserved"}]
     usage = {
         "cost": 0.001,
@@ -296,20 +296,17 @@ def test_message_content_and_raw_usage_are_preserved_exactly():
             }
         ).encode(),
     )
-    result = client(FakeHttp(response)).synthesis(MESSAGES)
-    assert result.content == content
-    assert dict(result.usage) == usage
-    assert result.provider_usage.raw_provider_fields["vendor"] == {"detail": 99}
-    assert result.provider_usage.reasoning_tokens == 3
+    with pytest.raises(ResponseValidationError):
+        client(FakeHttp(response)).synthesis(MESSAGES)
 
 
 def test_missing_usage_stays_missing_and_normalization_flags_nulls():
     response = HttpResponse(
         200,
-        b'{"choices":[{"message":{"role":"assistant","content":null}}]}',
+        b'{"choices":[{"message":{"role":"assistant","content":"ok"}}]}',
     )
     result = client(FakeHttp(response)).query_expansion(MESSAGES)
-    assert result.content is None
+    assert result.content == "ok"
     assert result.usage is None
     assert result.provider_usage.cost_usd is None
     assert result.provider_usage.prompt_tokens is None

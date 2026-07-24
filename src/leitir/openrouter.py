@@ -572,6 +572,8 @@ class OpenRouterHy3Client:
             message = choices[0]["message"]
             if not isinstance(message, Mapping) or "content" not in message:
                 raise TypeError
+            if not isinstance(message["content"], str):
+                raise TypeError
             raw_usage_value = payload.get("usage")
             if raw_usage_value is not None and not isinstance(
                 raw_usage_value, Mapping
@@ -648,7 +650,7 @@ def _options(options: Mapping[str, object] | None) -> dict[str, object]:
     policy = supplied.intersection(_POLICY_CONTROLLED)
     if "reasoning_effort" in policy and options["reasoning_effort"] == "no_think":
         raise RequestValidationError(
-            "no_think is invalid; query expansion omits reasoning_effort"
+            "no_think is not a permitted reasoning_effort value"
         )
     if policy:
         raise RequestValidationError(
@@ -670,7 +672,7 @@ def _reject_forbidden(values: Mapping[str, object]) -> None:
         and values["reasoning_effort"] == "no_think"
     ):
         raise RequestValidationError(
-            "no_think is invalid; query expansion omits reasoning_effort"
+            "no_think is not a permitted reasoning_effort value"
         )
     if "extra_body" in values:
         raise RequestValidationError("extra_body is not supported")

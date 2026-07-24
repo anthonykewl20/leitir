@@ -725,6 +725,7 @@ class Step5Controller:
         self._synthesizer = synthesizer
         self._config = config or Config.default()
         self._trace = trace_recorder
+        self._recorded_candidates: set[ArtifactId] = set()
 
     def verify_once(
         self,
@@ -754,7 +755,9 @@ class Step5Controller:
 
         number = task.candidate.attempt_number
         snapshot = _candidate_snapshot_id(task.candidate, number)
-        self._record_candidate(task.candidate, snapshot, set())
+        self._record_candidate(
+            task.candidate, snapshot, self._recorded_candidates
+        )
         try:
             execution = self._sandbox.execute(task, hidden_tests=hidden_tests)
         except BaseException as exc:
@@ -810,15 +813,14 @@ class Step5Controller:
         attempts: list[VerificationAttempt] = []
         current_task = task
         prior_diff = "Initial attempt; no earlier candidate diff."
-        recorded_candidates: set[ArtifactId] = set()
-
-        # Config validation caps max_repairs at three, making attempt five and a
-        # fourth repair structurally unreachable.
-        for index in range(self._config.max_repairs + 1):
+        max_repairs = min(self._config.max_repairs, 3)
+        for index in range(max_repairs + 1):
             number = index + 1
             candidate = current_task.candidate
             candidate_snapshot = _candidate_snapshot_id(candidate, number)
-            self._record_candidate(candidate, candidate_snapshot, recorded_candidates)
+            self._record_candidate(
+                candidate, candidate_snapshot, self._recorded_candidates
+            )
             try:
                 execution = self._sandbox.execute(
                     current_task, hidden_tests=hidden_tests
@@ -839,7 +841,7 @@ class Step5Controller:
                 )
 
             classification = _classify(execution, evidence_state)
-            last_allowed = index == self._config.max_repairs
+            last_allowed = index == max_repairs
             route, disposition, repair_used, terminal = _decision(
                 classification, last_allowed
             )
@@ -900,7 +902,7 @@ class Step5Controller:
 
             repaired_snapshot = _candidate_snapshot_id(repaired, number + 1)
             self._record_candidate(
-                repaired, repaired_snapshot, recorded_candidates
+                repaired, repaired_snapshot, self._recorded_candidates
             )
             diff = AttemptDiff.between(
                 from_attempt=number,
@@ -1342,10 +1344,10 @@ def _bounded_streams(
     if not truncated:
         selected_stdout, selected_stderr = stdout, stderr
     else:
-        marker = _TRUNCATION[:maximum]
-        content_budget = max(0, maximum - len(marker))
+        marker = _TRUNCATION[: maximum // 2]
+        content_budget = max(0, maximum - (2 * len(marker)))
         stdout_budget = min(len(stdout), content_budget)
-        selected_stdout = stdout[:stdout_budget]
+        selected_stdout = stdout[:stdout_budget] + marker
         remaining = content_budget - stdout_budget
         selected_stderr = stderr[:remaining] + marker
     return (

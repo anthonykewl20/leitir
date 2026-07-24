@@ -81,6 +81,10 @@ class SynthesisPolicyError(ValueError):
         super().__init__("synthesis client violated the fixed model policy")
 
 
+class EvidenceSelectionError(ValueError):
+    """No eligible evidence could be selected within the configured budget."""
+
+
 @dataclass(frozen=True, slots=True)
 class ChunkProvenance:
     chunk_id: ArtifactId
@@ -303,7 +307,9 @@ def select_evidence(
             retained.append(group)
             retained_tokens += tokens
     if not retained:
-        raise ValueError("no evidence chunk fits max_evidence_tokens")
+        raise EvidenceSelectionError(
+            "no evidence chunk fits max_evidence_tokens"
+        )
 
     accounting = EvidenceAccounting(
         total_cleaned_evidence_tokens=sum(
@@ -898,6 +904,7 @@ __all__ = [
     "EvidenceGroundedSynthesizer",
     "EvidenceGroup",
     "EvidenceSelection",
+    "EvidenceSelectionError",
     "EvidenceSynthesizer",
     "PythonCandidate",
     "RepairContext",

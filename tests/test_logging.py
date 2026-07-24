@@ -6,6 +6,16 @@ import logging as stdlib_logging
 
 import pytest
 
+from leitir import (
+    ArtifactId,
+    ChunkProvenance,
+    EvidenceAccounting,
+    EvidenceCitation,
+    EvidenceTier,
+    PythonCandidate,
+    RepairContext,
+    SynthesisMode,
+)
 from leitir.logging import (
     REDACTED,
     RedactingFilter,
@@ -15,6 +25,54 @@ from leitir.logging import (
 )
 
 SENTINEL = "super-secret-value-do-not-leak-9f3c"
+
+
+def test_repair_context_logging_redaction_removes_sensitive_fragments():
+    openrouter_key = "sk-or-v1-syntheticOpenRouterKey123"
+    hidden_fragment = "SYNTHETIC_HIDDEN_TEST_FRAGMENT_7e91"
+    chunk_id = ArtifactId("redaction-evidence")
+    candidate = PythonCandidate(
+        artifact_id=ArtifactId("redaction-candidate"),
+        code=f"# {openrouter_key}\nanswer = 1\n",
+        citation_ids=(chunk_id,),
+        provenance=(
+            EvidenceCitation(
+                chunk_id,
+                (
+                    ChunkProvenance(
+                        chunk_id,
+                        ArtifactId("redaction-source"),
+                        EvidenceTier.TIER_1,
+                        "https://example.test",
+                        1,
+                        None,
+                        None,
+                        None,
+                    ),
+                ),
+            ),
+        ),
+        evidence_accounting=EvidenceAccounting(1, (chunk_id,), 1, (chunk_id,)),
+        attempt_number=1,
+        mode=SynthesisMode.INITIAL,
+    )
+    context = RepairContext(
+        prior_candidate=candidate,
+        diagnostics=f"secret={hidden_fragment}",
+        prior_diff=f"- token={hidden_fragment}\n+ api_key={openrouter_key}",
+    )
+
+    redacted = redact(
+        {
+            "prior_candidate_code": context.prior_candidate.code,
+            "diagnostics": context.diagnostics,
+            "prior_diff": context.prior_diff,
+        }
+    )
+
+    rendered = str(redacted)
+    assert openrouter_key not in rendered
+    assert hidden_fragment not in rendered
 
 
 class TestRedactionShapes:

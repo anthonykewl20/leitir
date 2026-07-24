@@ -355,6 +355,7 @@ class FiveStepOrchestrator:
 
         if not isinstance(request, WorkflowRequest):
             raise TypeError("request must be a WorkflowRequest")
+        max_repairs = min(self._config.max_repairs, 3)
         if self._fixed_recorder is not None and self._has_run:
             raise RuntimeError("a fixed trace recorder supports exactly one run")
         self._has_run = True
@@ -545,7 +546,7 @@ class FiveStepOrchestrator:
                             else self._hidden_tests
                         ),
                         evidence_state=evidence_state,
-                        last_allowed=feedback_loops >= self._config.max_repairs,
+                        last_allowed=feedback_loops >= max_repairs,
                     )
                     self._validate_verification_attempt(
                         verification_attempt, candidate, attempt_number
@@ -641,7 +642,7 @@ class FiveStepOrchestrator:
                 if classification is FailureClassification.TIMEOUT:
                     final_status = TerminalDisposition.FAILED
                     continue
-                if feedback_loops >= self._config.max_repairs:
+                if feedback_loops >= max_repairs:
                     final_status = TerminalDisposition.REPAIR_EXHAUSTED
                     continue
 
@@ -719,10 +720,7 @@ class FiveStepOrchestrator:
         output: object,
     ) -> None:
         new_spans = recorder.spans[before:]
-        if any(
-            span.step is step and span.output_artifact_ids
-            for span in new_spans
-        ):
+        if any(span.step is step for span in new_spans):
             return
         output_id = (
             output.artifact_id
@@ -1018,7 +1016,7 @@ class FiveStepOrchestrator:
         if not isinstance(attempt, VerificationAttempt):
             raise TypeError("Step 5 must return VerificationAttempt")
         if (
-            attempt.number != attempt_number
+            attempt.number != candidate.attempt_number
             or attempt.candidate.artifact_id != candidate.artifact_id
         ):
             raise ValueError("Step 5 returned an attempt for another candidate")

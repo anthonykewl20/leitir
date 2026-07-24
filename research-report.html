@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leitir v1 — Research Report</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#3b82f6; --green:#22c55e; --text:#e2e8f0; --dim:#94a3b8; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; line-height:1.6; padding:2rem; max-width:900px; margin:0 auto; }
+  h1 { font-size:1.8rem; margin-bottom:.25rem; }
+  h2 { font-size:1.1rem; margin:2rem 0 .75rem; color:var(--accent); border-bottom:1px solid #334155; padding-bottom:.3rem; }
+  .sub { color:var(--dim); font-size:.9rem; margin-bottom:1.5rem; }
+  .task { background:var(--card); border-radius:8px; padding:1rem 1.25rem; border-left:3px solid var(--accent); margin-bottom:1rem; }
+  .task pre { white-space:pre-wrap; font-size:.85rem; color:var(--text); }
+  .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-bottom:1rem; }
+  .metric { background:var(--card); border-radius:8px; padding:.75rem; text-align:center; }
+  .m-val { font-size:1.3rem; font-weight:700; color:var(--green); }
+  .m-label { font-size:.75rem; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; }
+  .step-card { display:flex; gap:1rem; background:var(--card); border-radius:8px; padding:1rem; margin-bottom:.5rem; align-items:flex-start; }
+  .step-num { background:var(--accent); color:#fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:700; flex-shrink:0; }
+  .step-head { font-weight:600; }
+  .step-desc { font-size:.85rem; color:var(--dim); }
+  .step-lat { font-size:.75rem; color:var(--dim); margin-top:.25rem; }
+  .badge { font-size:.7rem; padding:2px 8px; border-radius:4px; color:#fff; margin-left:.5rem; }
+  .query { display:flex; align-items:center; gap:.5rem; background:var(--card); border-radius:6px; padding:.5rem .75rem; margin-bottom:.4rem; font-size:.85rem; }
+  .query code { flex:1; }
+  .tier { background:#334155; border-radius:4px; padding:1px 6px; font-size:.75rem; font-weight:600; }
+  .site { color:var(--accent); font-size:.8rem; }
+  .source { display:inline-block; background:var(--card); border-radius:4px; padding:4px 10px; margin:2px; font-size:.85rem; }
+  .result { background:var(--card); border-radius:8px; padding:1rem 1.25rem; border-left:3px solid var(--green); }
+  .check { color:var(--green); font-size:1.2rem; }
+  footer { margin-top:2rem; color:var(--dim); font-size:.8rem; border-top:1px solid #334155; padding-top:1rem; }
+  code { font-family:'SF Mono',Menlo,monospace; }
+</style></head><body>
+
+<h1>🔍 Leitir v1 — Research Report</h1>
+<div class="sub">Agentic Technical Search & Code Synthesis Engine · Trace <code>smoke-urlencode-doseq-debe1a1b5e814063998ce81b9b23b097</code></div>
+
+<h2>Task</h2>
+<div class="task"><pre>Target Python 3.11.9. Implement `encode_query(pairs)` in `candidate.py`.
+
+`pairs` is an iterable of `(name, value)` pairs. A value may be a string, an integer, `None`, or a list/tuple of those scalar values. Return an ASCII query string using the Python 3.11 `urllib.parse.urlencode` contract with sequence expansion enabled. Preserve pair order, repeated names, blank strings, and `None` using the standard library&#x27;s behavior. Do not manually concatenate or pre-sort parameters.</pre></div>
+
+<h2>Metrics</h2>
+<div class="metrics">
+<div class="metric"><div class="m-val">$0.0143</div><div class="m-label">Cost</div></div>
+<div class="metric"><div class="m-val">93.8s</div><div class="m-label">Latency</div></div>
+<div class="metric"><div class="m-val">51%</div><div class="m-label">SER</div></div>
+<div class="metric"><div class="m-val">20,000</div><div class="m-label">Evidence Tokens</div></div>
+<div class="metric"><div class="m-val">✓</div><div class="m-label">First-Pass</div></div>
+<div class="metric"><div class="m-val">accepted</div><div class="m-label">Status</div></div>
+</div>
+
+<h2>Workflow Timeline</h2>
+
+    <div class="step-card">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-head">Query Expansion <span class="badge" style="background:#22c55e">SUCCEEDED</span></div>
+        <div class="step-desc">hy3 turns the task into site-restricted search queries</div>
+        <div class="step-lat">47.3s</div>
+      </div>
+    </div>
+    
+    <div class="step-card">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-head">Discovery <span class="badge" style="background:#22c55e">SUCCEEDED</span></div>
+        <div class="step-desc">SearXNG + GitHub Code Search find candidate sources</div>
+        <div class="step-lat">19.5s</div>
+      </div>
+    </div>
+    
+    <div class="step-card">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-head">Extraction &amp; Sanitization <span class="badge" style="background:#22c55e">SUCCEEDED</span></div>
+        <div class="step-desc">Fetch, clean, comment-strip, and chunk the evidence</div>
+        <div class="step-lat">0.8s</div>
+      </div>
+    </div>
+    
+    <div class="step-card">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <div class="step-head">Synthesis <span class="badge" style="background:#22c55e">SUCCEEDED</span></div>
+        <div class="step-desc">hy3 synthesizes target-language code from the evidence (high reasoning)</div>
+        <div class="step-lat">20.0s</div>
+      </div>
+    </div>
+    
+    <div class="step-card">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <div class="step-head">Sandbox Verification <span class="badge" style="background:#22c55e">SUCCEEDED</span></div>
+        <div class="step-desc">Docker runs pytest on the generated code against hidden tests</div>
+        <div class="step-lat">0.4s</div>
+      </div>
+    </div>
+    
+
+<h2>Search Queries (Step 1 — hy3 query expansion, no-think)</h2>
+<div class="query"><span class="tier">T1</span><code>Python 3.11.9 urllib.parse.urlencode sequence expansion preserve pair order repeated names None blank strings</code><span class="site">python.org</span></div>
+<div class="query"><span class="tier">T1</span><code>Python 3.11 standard library urllib.parse urlencode behavior list tuple scalar None values</code><span class="site">python.org</span></div>
+<div class="query"><span class="tier">T2</span><code>urllib.parse.urlencode Python 3.11.9 docs sequence expansion doseq None blank</code><span class="site">docs.python.org</span></div>
+<div class="query"><span class="tier">T2</span><code>Python 3.11 library urllib.parse urlencode preserve repeated names order standard behavior</code><span class="site">docs.python.org</span></div>
+<div class="query"><span class="tier">T3</span><code>cpython 3.11.9 urllib.parse urlencode doseq implementation source</code><span class="site">github.com</span></div>
+<div class="query"><span class="tier">T3</span><code>python cpython 3.11 Lib/urllib/parse.py urlencode sequence expansion None handling</code><span class="site">github.com</span></div>
+
+
+<h2>Discovery Sources (Step 2)</h2>
+<span class="source">github.com</span>
+
+<p class="sub">8 usable results found across 1 source(s).</p>
+
+<h2>Evidence (Step 3)</h2>
+<p>8 evidence artifacts extracted · 39,177 total tokens → 20,000 retained for synthesis (SER 51%)</p>
+
+<h2>Sandbox Verification (Step 5)</h2>
+<div class="result">
+  <p><span class="check">✅ PASSED</span> — Docker pytest: exit code 0, classification: <strong>pass</strong></p>
+  <p class="sub">Hidden eval_test.py executed against the synthesized candidate. Repair needed: No — first-pass.</p>
+</div>
+
+<footer>
+  Leitir v1 · 14 spans · $0.0143 · 93.8s ·
+  Reasoning: Step 1 = no-think (omit), Steps 4–5 = high ·
+  Generated from trace smoke-urlencode-doseq-debe1a1b5e814063998ce81b9b23b097-85c05f2311e1.json
+</footer>
+
+</body></html>

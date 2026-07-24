@@ -6,12 +6,13 @@
 
 Leitir is a prototype-stage design for answering difficult, version-sensitive programming questions more reliably than a single search-and-generate pass. It is intended to orchestrate evidence retrieval, code synthesis, execution, and repair while preserving a detailed trace of how each result was produced.
 
-This repository currently contains the v1 foundation plus a structured JSON
-trace and replay recorder: side-effect-free typed contracts, validated
-configuration, replaceable external-effect interfaces, secret-safe logging,
-exact OpenRouter usage normalization, artifact replay references, attempt
+This repository currently contains the v1 foundation, structured JSON trace and
+replay recorder, and the fixed raw-HTTP OpenRouter Hy3 client:
+side-effect-free typed contracts, validated configuration, replaceable
+external-effect interfaces, secret-safe logging, exact request policies and
+usage normalization, bounded retries, artifact replay references, attempt
 diffs, and evidence-token accounting. It intentionally contains no workflow,
-transport, retrieval, model, sandbox, orchestration, or evaluation behavior yet.
+retrieval, sandbox, orchestration, or evaluation behavior yet.
 
 ## What it can do
 
@@ -66,7 +67,7 @@ The full definitions, exclusions, benchmark composition, and reporting requireme
 
 ## Status
 
-**Status: Prototype foundation and trace recorder.** See
+**Status: Prototype foundation, trace recorder, and Hy3 transport.** See
 [docs/PRD.md](docs/PRD.md) for the complete specification.
 
 ## Development

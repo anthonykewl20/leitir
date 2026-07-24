@@ -34,6 +34,17 @@ from .trace import (
     TraceSpan,
     UsageAggregate,
 )
+from .openrouter import (
+    CredentialError,
+    HttpResponse,
+    Hy3Purpose,
+    Hy3Response,
+    OpenCodeCredentialProvider,
+    OpenRouterHy3Client,
+    RequestValidationError,
+    ResponseValidationError,
+    TransportError,
+)
 
 __all__ = [
     "Artifact",
@@ -66,4 +77,13 @@ __all__ = [
     "TraceRecorder",
     "TraceSpan",
     "UsageAggregate",
+    "CredentialError",
+    "HttpResponse",
+    "Hy3Purpose",
+    "Hy3Response",
+    "OpenCodeCredentialProvider",
+    "OpenRouterHy3Client",
+    "RequestValidationError",
+    "ResponseValidationError",
+    "TransportError",
 ]

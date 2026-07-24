@@ -13,6 +13,11 @@ def test_normative_defaults_and_fixed_boundaries():
     config = Config.default()
     assert config.model == OPENROUTER_MODEL
     assert config.model_timeout_seconds == 900
+    assert config.model_temperature == 0
+    assert config.model_max_tokens == 20_000
+    assert config.model_max_attempts == 3
+    assert config.model_retry_initial_backoff_seconds == 1
+    assert config.model_retry_max_backoff_seconds == 8
     assert config.max_repairs == 3
     assert config.chunk_size > 0
     assert config.max_evidence_tokens >= config.chunk_size
@@ -30,6 +35,13 @@ def test_normative_defaults_and_fixed_boundaries():
         ("max_evidence_tokens", 0),
         ("max_evidence_tokens", 1_000_001),
         ("model_timeout_seconds", 0),
+        ("model_temperature", float("nan")),
+        ("model_temperature", True),
+        ("model_max_tokens", 0),
+        ("model_max_attempts", 0),
+        ("model_max_attempts", 11),
+        ("model_retry_initial_backoff_seconds", -1),
+        ("model_retry_max_backoff_seconds", 301),
         ("discovery_max_results", 0),
         ("extraction_max_bytes", 0),
         ("sandbox_timeout_seconds", 0),
@@ -48,6 +60,14 @@ def test_bounded_values_rejected(name, value):
 def test_chunk_cannot_exceed_evidence_budget():
     with pytest.raises(ValueError, match="chunk_size"):
         Config(chunk_size=101, max_evidence_tokens=100)
+
+
+def test_model_retry_initial_backoff_cannot_exceed_cap():
+    with pytest.raises(ValueError, match="backoff"):
+        Config(
+            model_retry_initial_backoff_seconds=2,
+            model_retry_max_backoff_seconds=1,
+        )
 
 
 @pytest.mark.parametrize(
@@ -87,4 +107,3 @@ def test_serialization_is_deterministic_json_and_contains_no_secret():
     assert "authorization" not in first.lower()
     assert "bearer" not in first.lower()
     assert "api_key" not in first.lower()
-

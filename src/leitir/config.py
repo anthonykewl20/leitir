@@ -53,6 +53,11 @@ class Config:
     raw_content_endpoint: str = "https://raw.githubusercontent.com"
     model: str = OPENROUTER_MODEL
     model_timeout_seconds: int = 900
+    model_temperature: int | float = 0
+    model_max_tokens: int = 20_000
+    model_max_attempts: int = 3
+    model_retry_initial_backoff_seconds: int | float = 1
+    model_retry_max_backoff_seconds: int | float = 8
 
     discovery_max_results: int = 50
     discovery_timeout_seconds: int = 30
@@ -102,6 +107,8 @@ class Config:
 
         bounds = {
             "model_timeout_seconds": (1, 3_600),
+            "model_max_tokens": (1, 1_000_000),
+            "model_max_attempts": (1, 10),
             "discovery_max_results": (1, 1_000),
             "discovery_timeout_seconds": (1, 300),
             "extraction_max_bytes": (1, 100_000_000),
@@ -117,6 +124,33 @@ class Config:
         }
         for name, (minimum, maximum) in bounds.items():
             _bounded_int(name, getattr(self, name), minimum=minimum, maximum=maximum)
+        temperature = self.model_temperature
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(temperature)
+            or not 0 <= temperature <= 2
+        ):
+            raise ValueError("model_temperature must be finite and between 0 and 2")
+        initial_backoff = self.model_retry_initial_backoff_seconds
+        maximum_backoff = self.model_retry_max_backoff_seconds
+        for name, value in (
+            ("model_retry_initial_backoff_seconds", initial_backoff),
+            ("model_retry_max_backoff_seconds", maximum_backoff),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > 300
+            ):
+                raise ValueError(f"{name} must be finite and between 0 and 300")
+        if initial_backoff > maximum_backoff:
+            raise ValueError(
+                "model_retry_initial_backoff_seconds cannot exceed "
+                "model_retry_max_backoff_seconds"
+            )
         if self.chunk_size > self.max_evidence_tokens:
             raise ValueError("chunk_size cannot exceed max_evidence_tokens")
         cap = self.per_run_spend_cap_usd
@@ -157,4 +191,3 @@ class Config:
         return json.dumps(
             self.to_dict(), sort_keys=True, separators=(",", ":"), allow_nan=False
         )
-

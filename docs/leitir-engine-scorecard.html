@@ -3,277 +3,232 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leitir v1 — Engine Scorecard</title>
+<title>Leitir v1 — Engine Scorecard (expert consensus)</title>
 <style>
   :root{
     --surface:#fcfcfb; --surface-2:#f3f2ee; --ink:#0b0b0b; --muted:#52514e; --rule:#e4e2dc;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
-    --accent:#2a78d6;
+    --good:#0ca30c; --fair:#fab219; --serious:#ec835a; --critical:#d03b3b; --accent:#2a78d6;
   }
   @media (prefers-color-scheme: dark){
     :root{ --surface:#1a1a19; --surface-2:#232320; --ink:#ffffff; --muted:#c3c2b7; --rule:#34332e;
-           --good:#3dd54b; --warning:#fac84a; --serious:#f09a72; --critical:#e66767; --accent:#3987e5; }
+           --good:#3dd54b; --fair:#fac84a; --serious:#f09a72; --critical:#e66767; --accent:#3987e5; }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--surface);color:var(--ink);
     font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     padding:32px 20px 64px}
-  .wrap{max-width:1000px;margin:0 auto}
+  .wrap{max-width:1040px;margin:0 auto}
   h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em}
   .sub{color:var(--muted);margin:0 0 4px;font-size:14px}
-  .stamp{color:var(--muted);font-size:12px;margin:0 0 20px}
+  .stamp{color:var(--muted);font-size:12px;margin:0 0 18px}
   .disclaimer{background:var(--surface-2);border:1px solid var(--rule);border-radius:8px;
-    padding:10px 14px;font-size:12.5px;color:var(--muted);margin:0 0 22px}
+    padding:10px 14px;font-size:12.5px;color:var(--muted);margin:0 0 20px}
   .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0 0 24px}
   .tile{background:var(--surface-2);border:1px solid var(--rule);border-radius:10px;padding:14px}
   .tile .n{font-size:30px;font-weight:700;line-height:1}
   .tile .l{font-size:12px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.04em}
   .tile.crit .n{color:var(--critical)} .tile.ser .n{color:var(--serious)}
-  .tile.ok .n{color:var(--warning)} .tile.good .n{color:var(--good)}
-  section{margin:0 0 30px}
+  .tile.fair .n{color:var(--fair)} .tile.good .n{color:var(--good)}
+  section{margin:0 0 28px}
   h2{font-size:15px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
     margin:0 0 12px;border-bottom:1px solid var(--rule);padding-bottom:6px}
-  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
   th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-    padding:8px 10px;border-bottom:1px solid var(--rule)}
-  td{padding:11px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+    padding:8px 8px;border-bottom:1px solid var(--rule)}
+  th.r,td.r{text-align:right}
+  td{padding:10px 8px;border-bottom:1px solid var(--rule);vertical-align:top}
   tr:hover td{background:var(--surface-2)}
   .comp{font-weight:600;white-space:nowrap}
-  .comp small{display:block;font-weight:400;color:var(--muted);font-size:11.5px;margin-top:2px;white-space:normal}
-  .barcell{width:200px;min-width:160px}
+  .comp small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:2px;white-space:normal}
+  .barcell{width:230px;min-width:180px}
   .bar{height:14px;border-radius:7px;background:var(--surface-2);overflow:hidden;border:1px solid var(--rule)}
   .bar > i{display:block;height:100%;border-radius:7px}
   .b-critical{background:var(--critical)} .b-serious{background:var(--serious)}
-  .b-warning{background:var(--warning)} .b-good{background:var(--good)}
+  .b-fair{background:var(--fair)} .b-good{background:var(--good)}
   .score{font-weight:700;font-variant-numeric:tabular-nums}
-  .score small{color:var(--muted);font-weight:400}
-  .badge{display:inline-block;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:10px;
-    border:1px solid var(--rule);color:var(--muted);white-space:nowrap}
-  .tag{font-size:10.5px;color:var(--muted);font-weight:600}
-  .basis,.gap{color:var(--muted);font-size:12.5px}
-  .gap{color:var(--ink)}
-  .callout{border-radius:12px;padding:18px 20px;border:1px solid var(--rule);background:var(--surface-2)}
+  .exp{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px}
+  .gap{color:var(--ink);font-size:12.5px}
+  .callout{border-radius:12px;padding:16px 18px;border:1px solid var(--rule);background:var(--surface-2)}
   .callout.next{border-left:5px solid var(--critical)}
-  .callout.blocker{border-left:5px solid var(--serious);margin-top:14px}
-  .callout h3{margin:0 0 6px;font-size:16px}
-  .callout p{margin:0;color:var(--muted);font-size:13.5px}
+  .callout.blocker{border-left:5px solid var(--serious);margin-top:12px}
+  .callout h3{margin:0 0 6px;font-size:15.5px}
+  .callout p{margin:0;color:var(--muted);font-size:13px}
   .callout .pick{display:inline-block;background:var(--critical);color:#fff;font-size:11px;font-weight:700;
     padding:2px 8px;border-radius:10px;margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase}
-  .panel{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-  .reviewer{background:var(--surface-2);border:1px solid var(--rule);border-radius:10px;padding:14px}
-  .reviewer .who{font-weight:700;font-size:13px}
-  .reviewer .verdict{font-size:12px;font-weight:700;margin-top:2px}
-  .v-pass{color:var(--good)} .v-fail{color:var(--critical)}
-  .reviewer .scores{font-size:12px;color:var(--muted);margin-top:8px}
-  .reviewer .scores b{color:var(--ink)}
   .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
-  code{background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:12px}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:11.5px}
   .foot{color:var(--muted);font-size:11.5px;margin-top:24px;border-top:1px solid var(--rule);padding-top:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Leitir v1 — Engine Scorecard</h1>
-  <p class="sub">Every nut &amp; bolt scored 0–10. Weakest on top. Reading: length = score; color = health band.</p>
-  <p class="stamp">Snapshot 2026-07-25 · code @ <code>d729de0</code> (main) · gate change in worktree (not landed)</p>
+  <p class="sub">Every nut &amp; bolt scored 0–10 by three expert reviewers <strong>blind</strong>, independently. Weakest on top.</p>
+  <p class="stamp">Snapshot 2026-07-25 · code @ <code>d729de0</code> (main) · grounding gate built in a worktree, not landed</p>
 
   <div class="disclaimer">
-    <strong>How to read this.</strong> Scores are <em>evidence-synthesized</em>, not a formal benchmark: each is grounded in the
-    8 live run traces (<code>~/.local/state/leitir/traces/</code>) and the independent reviews by tencent/hy3, DeepSeek v4-pro and
-    GPT-5.6-sol. The basis column cites the evidence. Color is a secondary cue — the numeric score and label carry the meaning.
+    <strong>How these scores were produced.</strong> tencent/hy3 (high), DeepSeek v4-pro and GPT-5.6-sol each scored every
+    component 0–10 <em>independently and blind</em> (the head chef's own draft was withheld to avoid anchoring — it ran
+    1–3 points optimistic and was discarded). The <b>consensus</b> column is the mean of the three. Each reviewer also
+    verified the evidence against the actual code and traces; GPT corrected three framings (noted inline). This is a
+    diagnostic map, not a formal benchmark.
   </div>
 
   <div class="tiles">
-    <div class="tile crit"><div class="n">2</div><div class="l">Critical (0–3)</div></div>
-    <div class="tile ser"><div class="n">5</div><div class="l">Serious (4–5)</div></div>
-    <div class="tile ok"><div class="n">3</div><div class="l">Fair (6–7)</div></div>
-    <div class="tile good"><div class="n">2</div><div class="l">Good (8–10)</div></div>
+    <div class="tile crit"><div class="n">7</div><div class="l">Critical (0–3.9)</div></div>
+    <div class="tile ser"><div class="n">3</div><div class="l">Serious (4–5.9)</div></div>
+    <div class="tile fair"><div class="n">3</div><div class="l">Fair (6–7.9)</div></div>
+    <div class="tile good"><div class="n">0</div><div class="l">Good (8–10)</div></div>
   </div>
 
   <section>
-    <h2>Per-component scorecard (sorted weakest first)</h2>
+    <h2>Per-component consensus (sorted weakest first)</h2>
     <table>
       <thead><tr>
-        <th>Component</th><th>Health</th><th>Type</th><th>Evidence basis</th><th>Main gap</th>
+        <th>Component</th><th>Consensus health</th><th class="r">hy3</th><th class="r">DeepSeek</th><th class="r">GPT</th><th>Main gap</th>
       </tr></thead>
       <tbody>
 
       <tr>
         <td class="comp">Tier-3 star gate <small>(cross-cutting)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-critical" style="width:30%"></i></div>
-          <span class="score">3<small>/10</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis"><code>config.py:82</code> <code>github_min_stars=0</code>; PRD §3 requires &gt;100; accepted-run repos had stars <code>[9,0,0,0,0,0,0,0]</code>.</td>
-        <td class="gap">Quality gate <b>disabled by default</b>; docs and code contradict.</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:8%"></i></div>
+          <span class="score">0.8<small>/10</small></span></td>
+        <td class="r exp">1</td><td class="r exp">0</td><td class="r exp">1.5</td>
+        <td class="gap"><code>config.py:81</code> <code>github_min_stars=0</code> — the PRD‑mandated &gt;100 gate is <b>off by default</b>; accepted run used repos with stars <code>[9,0,0,0,0,0,0,0]</code>.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Acceptance / grounding gate <small>(integrity)</small></td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:10%"></i></div>
+          <span class="score">1.0<small>/10</small></span></td>
+        <td class="r exp">1</td><td class="r exp">1</td><td class="r exp">1.0</td>
+        <td class="gap">A Tier‑2 task was <code>accepted</code> on Tier‑3‑only evidence (false green). Gate built but <b>not landed</b>; exported <code>Step5Controller.verify()</code> still ACCEPTs on PASS with no check.</td>
       </tr>
 
       <tr>
         <td class="comp">Step 3 — Extraction &amp; sanitization <small>(trafilatura)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-critical" style="width:30%"></i></div>
-          <span class="score">3<small>/10</small></span></td>
-        <td><span class="tag">D/E</span></td>
-        <td class="basis">Trace <code>2825…</code>: 13 fetched docs → <b>0 cleaned tokens</b> (<code>sanitization_failed:ModuleNotFoundError</code>, <code>extraction.py:141/456</code>); silent fail-open.</td>
-        <td class="gap"><b>Env-parity hole</b> — a missing import destroys all fetched evidence; <code>cleaned_tokens==0</code> should be a loud error. Blocks ALL real grounding.</td>
-      </tr>
-
-      <tr>
-        <td class="comp">Step 2 — Discovery <small>(SearXNG + GitHub)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:40%"></i></div>
-          <span class="score">4<small>/10</small></span></td>
-        <td><span class="tag">E</span></td>
-        <td class="basis"><code>engines_blocked</code> in 3/8 runs; GitHub HTTP 401 when no token; single channel only.</td>
-        <td class="gap">No deterministic retrieval (intersphinx <code>objects.inv</code> / <code>llms.txt</code>); no API-keyed fallback.</td>
-      </tr>
-
-      <tr>
-        <td class="comp">Evidence dedup <small>(cross-cutting)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:40%"></i></div>
-          <span class="score">4<small>/10</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis">8 byte-identical GitHub mirrors of the official docs not deduped (<code>discovery.py:1004</code> URL-only); content-dedup only later (<code>synthesis.py:268</code>).</td>
-        <td class="gap">No discovery-level content-hash dedup → <b>mirror amplification</b> (×8).</td>
-      </tr>
-
-      <tr>
-        <td class="comp">Acceptance / grounding gate <small>(new — worktree, not landed)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:40%"></i></div>
-          <span class="score">4<small>/10 · →7 if landed</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis">False green: 1/8 runs <code>accepted</code> on Tier-3-only evidence. Gate built; re-scored that run → <code>grounding_unavailable</code>. Panel split (below).</td>
-        <td class="gap"><b>Land blocker (GPT):</b> exported <code>Step5Controller.verify()</code> (<code>verification.py:795</code>) ACCEPTs without the gate.</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:15%"></i></div>
+          <span class="score">1.5<small>/10</small></span></td>
+        <td class="r exp">2</td><td class="r exp">0</td><td class="r exp">2.5</td>
+        <td class="gap">Run 2825: 13 fetched docs → <b>0 cleaned tokens</b> (11 <code>ModuleNotFoundError</code> + 2 encoding). Failures <i>are</i> traced per‑span (GPT), but the run fails <b>open</b> to zero usable evidence.</td>
       </tr>
 
       <tr>
         <td class="comp">Evaluation harness <small>(smoke-v1)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:40%"></i></div>
-          <span class="score">4<small>/10</small></span></td>
-        <td><span class="tag">E</span></td>
-        <td class="basis">4 smoke tasks; all 8 live runs are the <b>same trivial task</b>; SER/DRI/FPCR/SCCR are aggregate-only.</td>
-        <td class="gap">n=1-on-one-task; no labeled corpus / confusion matrix; traces don't persist <code>declared_tiers</code>.</td>
-      </tr>
-
-      <tr>
-        <td class="comp">Spend control <small>(cross-cutting)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:50%"></i></div>
-          <span class="score">5<small>/10</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis">Missing provider cost recorded as zero; cap observed only <b>after</b> a paid call overspends (<code>orchestrator.py:218–242</code>).</td>
-        <td class="gap">Fail-open on missing cost.</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:20%"></i></div>
+          <span class="score">2.0<small>/10</small></span></td>
+        <td class="r exp">2</td><td class="r exp">2</td><td class="r exp">2.0</td>
+        <td class="gap">4 tasks, but all 8 live runs are the <b>same trivial task</b>; aggregate‑only metrics; no labeled corpus / confusion matrix. Cannot measure whether fixes work.</td>
       </tr>
 
       <tr>
         <td class="comp">Step 1 — Expansion <small>(hy3 queries)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-serious" style="width:50%"></i></div>
-          <span class="score">5<small>/10</small></span></td>
-        <td><span class="tag">D/J</span></td>
-        <td class="basis">3/8 runs died <code>ERR_EXPANSION_MALFORMED</code>; hy3 non-determinism; retry-on-malformed not bulletproof.</td>
-        <td class="gap">No strict JSON-schema (OpenRouter <code>response_format</code>); consider a cheaper, reliably-structured model.</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:30%"></i></div>
+          <span class="score">3.0<small>/10</small></span></td>
+        <td class="r exp">3</td><td class="r exp">3</td><td class="r exp">3.0</td>
+        <td class="gap">3/8 runs died <code>ERR_EXPANSION_MALFORMED</code>; heuristic JSON parse, not a strict schema (<code>expansion.py:133</code>). Retry mitigates, doesn't fix.</td>
       </tr>
 
       <tr>
-        <td class="comp">Step 4 — Synthesis <small>(hy3)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-warning" style="width:60%"></i></div>
-          <span class="score">6<small>/10</small></span></td>
-        <td><span class="tag">D/J</span></td>
-        <td class="basis">Authority-first selection is sound; 2 runs failed at Step 4 for lack of typed evidence.</td>
-        <td class="gap">Gate checks <b>identity+tier, not entailment</b> — a cited-but-irrelevant chunk can bless a Tier-3 answer.</td>
+        <td class="comp">Step 2 — Discovery <small>(SearXNG + GitHub)</small></td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:30%"></i></div>
+          <span class="score">3.0<small>/10</small></span></td>
+        <td class="r exp">3</td><td class="r exp">3</td><td class="r exp">3.0</td>
+        <td class="gap">3/8 runs hit SearXNG <code>engines_blocked</code>; 2/8 GitHub 401 (no token); Tier 1/2 single‑channel, no fallback.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Spend control <small>(cross-cutting)</small></td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:33%"></i></div>
+          <span class="score">3.3<small>/10</small></span></td>
+        <td class="r exp">3</td><td class="r exp">3</td><td class="r exp">4.0</td>
+        <td class="gap">Cap fires <b>after</b> the overshooting call; missing cost is excluded + flagged (not zeroed, GPT) — so the cap can't fire on unknown cost. Only the $0.05 default limits blast radius.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Evidence dedup <small>(cross-cutting)</small></td>
+        <td class="barcell"><div class="bar"><i class="b-serious" style="width:43%"></i></div>
+          <span class="score">4.3<small>/10</small></span></td>
+        <td class="r exp">4</td><td class="r exp">4</td><td class="r exp">5.0</td>
+        <td class="gap">8 byte‑identical mirrors not deduped at discovery (URL‑only); late content‑dedup protects synthesis budget but wastes discovery+extraction work.</td>
       </tr>
 
       <tr>
         <td class="comp">Step 5 — Verification <small>(Docker pytest)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-warning" style="width:60%"></i></div>
-          <span class="score">6<small>/10</small></span></td>
-        <td><span class="tag">D/E</span></td>
-        <td class="basis">Sandbox isolation strong; oracle gameable (<code>verification.py</code>).</td>
-        <td class="gap">Hidden tests readable in-container; exit-0 alone = PASS; no held-out / mutation oracle.</td>
+        <td class="barcell"><div class="bar"><i class="b-serious" style="width:43%"></i></div>
+          <span class="score">4.3<small>/10</small></span></td>
+        <td class="r exp">4</td><td class="r exp">5</td><td class="r exp">4.0</td>
+        <td class="gap">Sandbox bounded, but candidate code can read <code>/hidden-tests</code> (same container); exit‑0 alone = PASS; no held‑out / mutation oracle.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Step 4 — Synthesis <small>(hy3)</small></td>
+        <td class="barcell"><div class="bar"><i class="b-serious" style="width:45%"></i></div>
+          <span class="score">4.5<small>/10</small></span></td>
+        <td class="r exp">5</td><td class="r exp">4</td><td class="r exp">4.5</td>
+        <td class="gap">Authority‑first selection + AST parsing are real strengths; but citations prove <b>location, not entailment</b> — "grounded" is structurally unverified.</td>
       </tr>
 
       <tr>
         <td class="comp">Trace / observability <small>(§5.1)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-warning" style="width:70%"></i></div>
-          <span class="score">7<small>/10</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis">Rich, schema-validated trace; replay lineage; this whole scorecard was built from it.</td>
-        <td class="gap">Replay not materialized (<code>memory://</code>); traces don't persist <code>declared_tiers</code> (auditable-policy gap).</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:63%"></i></div>
+          <span class="score">6.3<small>/10</small></span></td>
+        <td class="r exp">7</td><td class="r exp">5</td><td class="r exp">7.0</td>
+        <td class="gap">Rich, schema‑validated trace (this scorecard is built from it); but 182/190 artifacts are <code>memory://</code> (no post‑exit replay) and request tier policy isn't persisted.</td>
       </tr>
 
       <tr>
         <td class="comp">Sandbox isolation <small>(runtime)</small></td>
-        <td class="barcell"><div class="bar"><i class="b-good" style="width:80%"></i></div>
-          <span class="score">8<small>/10</small></span></td>
-        <td><span class="tag">D/E</span></td>
-        <td class="basis">Networkless, unprivileged UID, read-only FS, no caps, no-new-privs, bounded.</td>
-        <td class="gap">Build-time supply-chain egress (mutable base image, unhashed package installs).</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:68%"></i></div>
+          <span class="score">6.8<small>/10</small></span></td>
+        <td class="r exp">7</td><td class="r exp">6</td><td class="r exp">7.5</td>
+        <td class="gap">Networkless, unprivileged UID 65532, read‑only FS, no caps, bounded. Build‑time supply‑chain egress (mutable base image, unhashed installs) is the gap.</td>
       </tr>
 
       <tr>
         <td class="comp">Contracts / config</td>
-        <td class="barcell"><div class="bar"><i class="b-good" style="width:80%"></i></div>
-          <span class="score">8<small>/10</small></span></td>
-        <td><span class="tag">D</span></td>
-        <td class="basis">Typed, frozen, validated dataclasses; tier↔site authority pinned (<code>_tier_site</code>).</td>
-        <td class="gap">Minor: <code>tier_floor</code> misnamed (it's a ceiling); <code>[1,3]</code> declared set silently admits undeclared Tier-2 (GPT).</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:70%"></i></div>
+          <span class="score">7.0<small>/10</small></span></td>
+        <td class="r exp">7</td><td class="r exp">6</td><td class="r exp">8.0</td>
+        <td class="gap">Typed, frozen, validated; tier↔site authority pinned. Clean on main (GPT) — the <code>tier_floor</code> naming and <code>[1,3]</code> defects live only on the unlanded worktree.</td>
       </tr>
 
       </tbody>
     </table>
     <div class="legend">
-      <span><i class="b-critical"></i>0–3 critical</span>
-      <span><i class="b-serious"></i>4–5 serious</span>
-      <span><i class="b-warning"></i>6–7 fair / needs work</span>
+      <span><i class="b-critical"></i>0–3.9 critical</span>
+      <span><i class="b-serious"></i>4–5.9 serious</span>
+      <span><i class="b-fair"></i>6–7.9 fair</span>
       <span><i class="b-good"></i>8–10 good</span>
-      <span>· Type: <b>D</b>=deterministic · <b>J</b>=LLM-judge · <b>E</b>=end-to-end</span>
+      <span>· columns hy3 / DeepSeek / GPT are each reviewer's blind 0–10</span>
     </div>
   </section>
 
   <section>
-    <h2>Next enhancement</h2>
+    <h2>Next enhancement — unanimous</h2>
     <div class="callout next">
-      <span class="pick">Pick</span>
-      <h3>Fix the trafilatura env-parity hole (Step 3 extraction)</h3>
-      <p>Lowest-scoring <b>functional</b> bolt (3/10) and the consensus "#2 build-first" item from all three reviewers.
-      It is the single biggest reason real grounding doesn't happen: even when discovery works, extraction silently zeroes
-      every fetched doc on a missing import. Cheap, high-leverage, unblocks Tier-1/2 grounding for everything downstream.</p>
-      <p style="margin-top:8px"><b>Concrete:</b> a <code>leitir doctor</code> production-image readiness check that imports trafilatura and extracts one
-      fixture before any run; make <code>cleaned_tokens==0</code> a loud <code>infrastructure_invalid</code>, not a silent degrade; run ≥1 eval task in the published image, not the dev venv.</p>
+      <span class="pick">All three reviewers</span>
+      <h3>Land the fail-closed grounding gate (+ flip the star gate)</h3>
+      <p>Hy3, DeepSeek and GPT-5.6-sol independently named the same #1 move: ship the already-built grounding gate so no
+      acceptance path can stamp a Tier‑3‑only answer as <code>accepted</code>, and set <code>github_min_stars</code> to the
+      PRD value. It is the one <b>proven, live integrity failure</b>, the fix already exists, and landing it is the
+      precondition for every other metric meaning anything. (The head chef's earlier pick — trafilatura — was overruled.)</p>
     </div>
     <div class="callout blocker">
-      <h3>But first — the immediate blocker to land the grounding gate</h3>
-      <p>GPT-5.6-sol found the gate only protects the orchestrator's internal loop. The exported
-      <code>Step5Controller.verify()</code> still ACCEPTs on a PASS without the grounding check — so a caller on the public API
-      bypasses the gate. Centralize the invariant (or remove that method from the acceptance surface), then the gate goes
-      4 → ~7 and lands. <em>See the split verdict below.</em></p>
+      <h3>Immediate blocker to landing it</h3>
+      <p>GPT-5.6-sol verified the gate protects only the orchestrator's internal loop; the exported
+      <code>Step5Controller.verify()</code> (<code>verification.py:843</code>) still ACCEPTs on PASS without it. Centralize the
+      invariant (or remove that method from the acceptance surface) so the gate is inescapable, then land.</p>
     </div>
-  </section>
-
-  <section>
-    <h2>Grounding gate — panel verdict (split)</h2>
-    <div class="panel">
-      <div class="reviewer">
-        <div class="who">tencent/hy3 (high)</div>
-        <div class="verdict v-pass">PASS — ship</div>
-        <div class="scores">Caught + fixed its own F1 (Tier-1-only). Flagged latent gaps; did <b>not</b> catch the exported bypass.</div>
-      </div>
-      <div class="reviewer">
-        <div class="who">DeepSeek v4-pro</div>
-        <div class="verdict v-pass">PASS — 9 / 8 / 8</div>
-        <div class="scores">Re-ran suite (334 ✓), re-derived before/after. Nit: <code>tier_floor</code> naming. Did <b>not</b> catch the bypass.</div>
-      </div>
-      <div class="reviewer">
-        <div class="who">GPT-5.6-sol (high)</div>
-        <div class="verdict v-fail">FAIL — 6 / 7 / 6</div>
-        <div class="scores"><b>Land blocker:</b> <code>Step5Controller.verify()</code> ACCEPTs without the gate. Also: claim-level grounding, refresh-vs-terminate.</div>
-      </div>
-    </div>
-    <p class="basis" style="margin-top:10px">Scores: correctness / metric-honesty / increment-1 completeness. The panel is not unanimous; per house rules a real, verified FAIL on a land blocker stands — the gate does not ship until the bypass is closed.</p>
   </section>
 
   <p class="foot">
-    Evidence: 8 live traces under <code>~/.local/state/leitir/traces/</code> · reviews <code>/tmp/hy3_gate_review2.txt</code>,
-    <code>/tmp/deepseek_audit.txt</code>, <code>.codex-runs/leitir-gate-audit/</code> · issues <a href="https://github.com/anthonykewl20/leitir/issues/15">#15</a>
-    &amp; <a href="https://github.com/anthonykewl20/leitir/issues/16">#16</a>. Self-contained file — no external dependencies; honors dark mode.
+    Evidence: 8 live traces under <code>~/.local/state/leitir/traces/</code> · expert scores:
+    <code>/tmp/hy3_scorecard.txt</code>, <code>/tmp/deepseek_scorecard.txt</code>, <code>.codex-runs/leitir-scorecard/</code>
+    · issues <a href="https://github.com/anthonykewl20/leitir/issues/15">#15</a> &amp;
+    <a href="https://github.com/anthonykewl20/leitir/issues/16">#16</a>. Self-contained file — no external dependencies; honors dark mode.
   </p>
 </div>
 </body>

@@ -42,22 +42,24 @@ tiers may add detail but do not override a conflicting higher-tier contract.
 
 ## Engine health scorecard
 
-`docs/leitir-engine-scorecard.html` is a health snapshot of the v1 engine: every
-component — the five pipeline steps plus cross-cutting concerns like extraction,
-dedup, the acceptance gate, sandbox, spend, trace, and evaluation — scored 0–10,
-weakest first. Scores are evidence-synthesized from the live run traces and an
-independent three-reviewer audit (tencent/hy3, DeepSeek, GPT-5.6-sol); each row
-cites its basis and names its main gap. Open the HTML in a browser for the full
-version; the image below is a static snapshot.
+`docs/leitir-engine-scorecard.html` scores every component of the v1 engine —
+the five pipeline steps plus cross-cutting concerns (extraction, dedup, the
+acceptance gate, sandbox, spend, trace, evaluation) — on a 0–10 health scale,
+weakest first. **The scores are the blind consensus of three independent expert
+reviewers (tencent/hy3, DeepSeek v4-pro, GPT-5.6-sol)**, each scoring every
+component from the live run traces and the codebase; an earlier head-chef draft
+ran optimistic and was discarded. Open the HTML for the full per-reviewer
+breakdown; the image below is a static snapshot.
 
 ![Leitir v1 engine scorecard](docs/leitir-engine-scorecard.png)
 
-**How to read it.** Bar length is the health score (0–10); color is the band —
-red 0–3 (critical), orange 4–5 (serious), amber 6–7 (fair), green 8–10 (good).
-The numeric score and label carry the meaning; color is only a secondary cue.
-This is a diagnostic map of where the prototype is weakest and what to fix next,
-not a formal benchmark. See the scorecard's "Next enhancement" section for the
-top-ranked fix.
+**How to read it.** Bar length is the consensus health score (0–10); color is
+the band — red 0–3.9 (critical), orange 4–5.9 (serious), amber 6–7.9 (fair),
+green 8–10 (good). On this snapshot 7 of 13 components score critical and none
+score good: the acceptance/gate and the Tier-3 star gate are the weakest bolts,
+and all three reviewers agree the highest-leverage next step is to land the
+already-built fail-closed grounding gate. This is a diagnostic map, not a formal
+benchmark.
 
 ## Prerequisites
 
@@ -154,7 +156,7 @@ and therefore requires the Docker daemon. For a Docker-free check, add
 - [Operations, CLI outcomes, traces, security, and troubleshooting](docs/operations.md)
 - [Smoke evaluation and metric definitions](docs/smoke-evaluation.md)
 - [Product Requirements Document](docs/PRD.md)
-- [Engine health scorecard (snapshot)](docs/leitir-engine-scorecard.html) — per-component 0–10 health map
+- [Engine health scorecard](docs/leitir-engine-scorecard.html) — per-component 0–10 health (3-expert consensus)
 
 ## Repository layout
 

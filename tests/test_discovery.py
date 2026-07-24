@@ -216,8 +216,70 @@ def test_rate_limit_and_timeout_retry_with_capped_backoff_and_attempt_trace():
         "rate_limit",
         None,
     ]
-    assert sleeps == [2, 3]
+    assert sleeps == [2, 3, 0.25, 0.25]
     assert not result.partial
+
+
+def test_retry_after_header_extends_backoff_but_respects_maximum():
+    outcomes = deque(
+        [
+            DiscoveryHttpResponse(429, b"{}", {"Retry-After": "30"}),
+            _github("src/errors.py"),
+        ]
+    )
+    sleeps = []
+    adapter = GitHubCodeSearchAdapter(
+        RoutingHttp(lambda _url, _headers: outcomes.popleft()),
+        config=Config(
+            discovery_max_attempts=2,
+            discovery_retry_initial_backoff_seconds=1,
+            discovery_retry_max_backoff_seconds=4,
+        ),
+        sleep=sleeps.append,
+        credentials=SyntheticGitHubCredentials(),
+    )
+
+    assert adapter.search(_plan().queries[-1])
+    assert sleeps == [4]
+
+
+def test_discovery_delays_between_queries_and_caps_github_page_size():
+    sleeps = []
+
+    def handler(url, _headers):
+        if "api.github.com" in url:
+            page = int(parse_qs(urlsplit(url).query)["page"][0])
+            paths = (
+                tuple(f"src/file-{index}.py" for index in range(10))
+                if page == 1
+                else ("src/final.py",)
+            )
+            return _github(*paths, total_count=11)
+        return _searx(
+            "https://fastapi.tiangolo.com/x"
+            if "fastapi.tiangolo.com" in url
+            else "https://docs.python.org/3/x"
+        )
+
+    http = RoutingHttp(handler)
+
+    _targeted(
+        http,
+        config=Config(
+            discovery_page_size=25,
+            discovery_max_pages=2,
+            discovery_max_results_per_query=20,
+        ),
+        sleep=sleeps.append,
+    ).discover(_plan())
+
+    assert sleeps == [0.25, 0.25]
+    github_urls = [url for url, _, _ in http.calls if "api.github.com" in url]
+    assert len(github_urls) == 2
+    assert all(
+        parse_qs(urlsplit(url).query)["per_page"] == ["10"]
+        for url in github_urls
+    )
 
 
 def test_partial_channel_failure_retains_evidence_and_explicit_failure_record():
@@ -264,7 +326,11 @@ def test_non_retryable_status_stops_that_request_immediately():
     result = _targeted(
         RoutingHttp(handler),
         config=Config(discovery_max_attempts=3),
-        sleep=lambda _: pytest.fail("must not back off a non-retryable failure"),
+        sleep=lambda seconds: (
+            None
+            if seconds == 0.25
+            else pytest.fail("must not back off a non-retryable failure")
+        ),
     ).discover(_plan())
 
     assert github_calls == 1
@@ -445,6 +511,35 @@ def test_terminal_engines_blocked_error_is_distinct():
         ).discover(_plan())
 
     assert caught.value.code is ErrorCode.ERR_SEARCH_ENGINES_BLOCKED
+
+
+def test_engines_blocked_is_non_fatal_when_tier_three_returns_candidates():
+    blocked = _json_response(
+        {
+            "results": [],
+            "unresponsive_engines": [["duckduckgo", "rate limit"]],
+        }
+    )
+
+    result = _targeted(
+        RoutingHttp(
+            lambda url, _headers: (
+                _github("src/errors.py") if "api.github.com" in url else blocked
+            )
+        ),
+        config=Config(
+            discovery_max_attempts=1,
+            discovery_retry_initial_backoff_seconds=0,
+            discovery_retry_max_backoff_seconds=0,
+        ),
+        sleep=lambda _: None,
+    ).discover(_plan())
+
+    assert [candidate.tier for candidate in result.candidates] == [
+        EvidenceTier.TIER_3
+    ]
+    assert result.partial
+    assert result.discovery_data.partial_failures == ("searxng",)
 
 
 def test_terminal_genuine_empty_results_remains_zero_results():

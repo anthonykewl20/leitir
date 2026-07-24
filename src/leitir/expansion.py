@@ -40,6 +40,9 @@ from .trace import (
 
 _SPACE = re.compile(r"\s+")
 _TIERS = tuple(EvidenceTier)
+MAX_INTERNAL_RETRIES = 2
+EXPANSION_RETRY_BACKOFF = 0.5
+_MAX_EXPANSION_RETRY_BACKOFF = 4.0
 
 
 def _find_queries(value: Mapping[str, object]) -> Sequence[object] | None:
@@ -102,11 +105,13 @@ class QueryExpander:
         config: Config | None = None,
         trace_recorder: ExecutionTraceRecorder | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._client = client
         self._config = config or Config.default()
         self._trace = trace_recorder
         self._monotonic = monotonic
+        self._sleep = sleep
 
     def expand(
         self,
@@ -125,41 +130,58 @@ class QueryExpander:
         ):
             raise ValueError("attempt_number must be a positive integer")
 
-        ids = _artifact_ids(request.request_id, attempt_number)
-        messages = self._messages(request)
         options = {"response_format": {"type": "json_object"}}
-        started = self._monotonic()
-        response = self._client.query_expansion(messages, options=options)
-        latency_ms = max(0, (self._monotonic() - started) * 1000)
-        self._record_artifacts(ids, request, response)
+        for retry in range(MAX_INTERNAL_RETRIES + 1):
+            ids = _artifact_ids(request.request_id, attempt_number, retry)
+            messages = (
+                self._messages(request)
+                if retry == 0
+                else self._messages_nudged(request, retry)
+            )
+            started = self._monotonic()
+            response = self._client.query_expansion(messages, options=options)
+            latency_ms = max(0, (self._monotonic() - started) * 1000)
+            self._record_artifacts(ids, request, response)
 
-        try:
-            records = self._parse(response.content)
-            plan = QueryExpansionPlan(request=request, queries=records)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            try:
+                records = self._parse(response.content)
+                plan = QueryExpansionPlan(request=request, queries=records)
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                self._record_span(
+                    ids=ids,
+                    response=response,
+                    latency_ms=latency_ms,
+                    attempt_number=attempt_number,
+                    status=StepStatus.FAILED,
+                    parse_status="malformed",
+                    records=(),
+                    error_code=ErrorCode.ERR_EXPANSION_MALFORMED,
+                    retry_number=retry,
+                )
+                if retry < MAX_INTERNAL_RETRIES:
+                    self._sleep(
+                        min(
+                            EXPANSION_RETRY_BACKOFF * (2**retry),
+                            _MAX_EXPANSION_RETRY_BACKOFF,
+                        )
+                    )
+                    continue
+                raise ExpansionMalformedError() from None
+
             self._record_span(
                 ids=ids,
                 response=response,
                 latency_ms=latency_ms,
                 attempt_number=attempt_number,
-                status=StepStatus.FAILED,
-                parse_status="malformed",
-                records=(),
-                error_code=ErrorCode.ERR_EXPANSION_MALFORMED,
+                status=StepStatus.SUCCEEDED,
+                parse_status="parsed",
+                records=records,
+                error_code=None,
+                retry_number=retry,
             )
-            raise ExpansionMalformedError() from None
+            return plan
 
-        self._record_span(
-            ids=ids,
-            response=response,
-            latency_ms=latency_ms,
-            attempt_number=attempt_number,
-            status=StepStatus.SUCCEEDED,
-            parse_status="parsed",
-            records=records,
-            error_code=None,
-        )
-        return plan
+        raise AssertionError("unreachable expansion retry loop")
 
     def _messages(self, request: WorkflowRequest) -> list[dict[str, str]]:
         minimum = self._config.expansion_min_queries_per_tier
@@ -188,6 +210,24 @@ class QueryExpander:
                 ),
             },
         ]
+
+    def _messages_nudged(
+        self, request: WorkflowRequest, retry: int
+    ) -> list[dict[str, str]]:
+        del retry
+        messages = self._messages(request)
+        reminder = (
+            " Your previous attempt was malformed. Return ONLY the JSON object "
+            "with the 'queries' array and exactly the required fields. No markdown, "
+            "no code fences, no commentary."
+        )
+        messages = list(messages)
+        if messages[-1]["role"] == "user":
+            messages[-1] = {
+                "role": "user",
+                "content": messages[-1]["content"] + reminder,
+            }
+        return messages
 
     def _parse(self, content: object) -> tuple[QueryRecord, ...]:
         document = extract_json_obj(content)
@@ -336,6 +376,7 @@ class QueryExpander:
         parse_status: str,
         records: tuple[QueryRecord, ...],
         error_code: ErrorCode | None,
+        retry_number: int | None = None,
     ) -> None:
         if self._trace is None:
             return
@@ -364,7 +405,11 @@ class QueryExpander:
                     else None
                 ),
                 attempt_number=attempt_number,
-                retry_number=response.attempts - 1,
+                retry_number=(
+                    retry_number
+                    if retry_number is not None
+                    else response.attempts - 1
+                ),
                 model=model,
                 expansion=ExpansionData(
                     expanded_query_artifact_id=ids.queries,
@@ -378,9 +423,11 @@ class QueryExpander:
         )
 
 
-def _artifact_ids(request_id: str, attempt: int) -> _ArtifactIds:
+def _artifact_ids(
+    request_id: str, attempt: int, retry: int = 0
+) -> _ArtifactIds:
     token = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
-    prefix = f"step-1-{token}-attempt-{attempt}"
+    prefix = f"step-1-{token}-attempt-{attempt}-retry-{retry}"
     return _ArtifactIds(
         prompt=ArtifactId(f"{prefix}-prompt"),
         response=ArtifactId(f"{prefix}-response"),

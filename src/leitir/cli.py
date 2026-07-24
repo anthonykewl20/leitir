@@ -93,8 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="execute one task")
-    run.add_argument(
-        "--task", required=True, type=_task, help="task description"
+    task_source = run.add_mutually_exclusive_group(required=True)
+    task_source.add_argument("--task", type=_task, help="task description")
+    task_source.add_argument(
+        "--smoke-task",
+        default=None,
+        help="smoke task id (loads bundle and hidden tests)",
     )
     run.add_argument(
         "--language",
@@ -316,13 +320,48 @@ def main(
     token = CancellationToken()
     with _cancellation_signals(token):
         if args.command == "run":
-            request = WorkflowRequest(
-                request_id=uuid.uuid4().hex,
-                task=args.task,
-                target_language=TargetLanguage(args.language),
-            )
             try:
-                result = orchestrator.run(request, cancellation=token)
+                dependencies: tuple[str, ...] = ()
+                hidden_tests: Path | None = None
+                if args.smoke_task is not None:
+                    from .evaluation import SmokeBenchmark
+
+                    benchmark = SmokeBenchmark.load()
+                    task = next(
+                        (
+                            item
+                            for item in benchmark.tasks
+                            if item.task_id == args.smoke_task
+                        ),
+                        None,
+                    )
+                    if task is None:
+                        _safe_print(
+                            "status=infrastructure_error "
+                            f"error=unknown smoke task {args.smoke_task}",
+                            file=err,
+                        )
+                        return int(ExitCode.INFRASTRUCTURE_FAILURE)
+                    request = WorkflowRequest(
+                        request_id=f"smoke-{task.task_id}",
+                        task=task.prompt,
+                        target_language=TargetLanguage.PYTHON,
+                    )
+                    dependencies = task.dependencies
+                    hidden_tests = task.hidden_test_directory
+                    result = orchestrator.run(
+                        request,
+                        cancellation=token,
+                        dependencies=dependencies,
+                        hidden_tests=hidden_tests,
+                    )
+                else:
+                    request = WorkflowRequest(
+                        request_id=uuid.uuid4().hex,
+                        task=args.task,
+                        target_language=TargetLanguage(args.language),
+                    )
+                    result = orchestrator.run(request, cancellation=token)
             except KeyboardInterrupt:
                 token.cancel()
                 _safe_print(

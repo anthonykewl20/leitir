@@ -49,6 +49,7 @@ from .trace import (
 
 
 _RETRYABLE_STATUSES = frozenset({408, 409, 425, 429})
+DISCOVERY_INTER_QUERY_DELAY_SECONDS = 0.25
 _TRACKING_PARAMETERS = frozenset(
     {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "source"}
 )
@@ -386,6 +387,7 @@ class _Adapter:
         attempts = 0
         for attempt in range(1, self._config.discovery_max_attempts + 1):
             attempts = attempt
+            response = None
             started = self._monotonic()
             try:
                 response = self._http.get(
@@ -471,13 +473,27 @@ class _Adapter:
 
             if not last_retryable or attempt == self._config.discovery_max_attempts:
                 break
-            self._sleep(
-                min(
-                    self._config.discovery_retry_initial_backoff_seconds
-                    * (2 ** (attempt - 1)),
-                    self._config.discovery_retry_max_backoff_seconds,
-                )
+            backoff = min(
+                self._config.discovery_retry_initial_backoff_seconds
+                * (2 ** (attempt - 1)),
+                self._config.discovery_retry_max_backoff_seconds,
             )
+            retry_after = (
+                response.headers.get("Retry-After")
+                if response is not None
+                else None
+            )
+            if retry_after is not None:
+                try:
+                    retry_after_seconds = float(retry_after)
+                except (TypeError, ValueError):
+                    retry_after_seconds = None
+                if retry_after_seconds is not None:
+                    backoff = min(
+                        self._config.discovery_retry_max_backoff_seconds,
+                        max(backoff, retry_after_seconds),
+                    )
+            self._sleep(backoff)
 
         telemetry.errors.append(
             DiscoveryChannelErrorData(
@@ -631,7 +647,7 @@ class GitHubCodeSearchAdapter(_Adapter):
         params = urlencode(
             {
                 "q": record.query_text,
-                "per_page": self._config.discovery_page_size,
+                "per_page": min(self._config.discovery_page_size, 10),
                 "page": page,
             }
         )
@@ -707,11 +723,12 @@ class GitHubCodeSearchAdapter(_Adapter):
             )
         telemetry.after_filter += len(candidates)
         total = document.get("total_count")
+        page_size = min(self._config.discovery_page_size, 10)
         has_more = (
-            len(items) >= self._config.discovery_page_size
+            len(items) >= page_size
             and (
                 not isinstance(total, int)
-                or page * self._config.discovery_page_size < total
+                or page * page_size < total
             )
         )
         return _Page(tuple(candidates), len(items), has_more)
@@ -733,6 +750,7 @@ class TargetedDiscovery:
         self._config = config or Config.default()
         self._trace = trace_recorder
         self._monotonic = monotonic
+        self._sleep = sleep
         self._searxng = SearXNGAdapter(
             http,
             config=self._config,
@@ -769,6 +787,8 @@ class TargetedDiscovery:
         telemetry = _Telemetry()
         raw_candidates: list[DiscoveryCandidate] = []
         for index, record in enumerate(plan.queries, 1):
+            if index > 1:
+                self._sleep(DISCOVERY_INTER_QUERY_DELAY_SECONDS)
             query_id = query_record_id(record, index=index)
             adapter = (
                 self._github
@@ -805,11 +825,19 @@ class TargetedDiscovery:
             | None
         ) = None
         if not candidates:
-            if any(error.category == "auth" for error in telemetry.errors):
+            has_auth = any(
+                error.category == "auth" for error in telemetry.errors
+            )
+            has_engines_blocked = any(
+                error.category == "engines_blocked"
+                for error in telemetry.errors
+            )
+            has_rate_limit = any(
+                error.category == "rate_limit" for error in telemetry.errors
+            )
+            if has_auth:
                 failure = DiscoveryAuthError(data)
-            elif any(
-                error.category == "engines_blocked" for error in telemetry.errors
-            ):
+            elif has_engines_blocked and not has_rate_limit:
                 failure = DiscoveryEnginesBlockedError(data)
             else:
                 failure = DiscoveryZeroResultsError(data)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 import signal
 
 import pytest
@@ -80,9 +81,11 @@ class FakeOrchestrator:
     def __init__(self, status: TerminalDisposition) -> None:
         self.status = status
         self.calls: list[tuple[WorkflowRequest, object]] = []
+        self.evaluation_inputs: list[dict[str, object]] = []
 
-    def run(self, request, *, cancellation=None):
+    def run(self, request, *, cancellation=None, **evaluation_inputs):
         self.calls.append((request, cancellation))
+        self.evaluation_inputs.append(evaluation_inputs)
         trace = completed_trace(self.status)
         return WorkflowRunResult(self.status, trace.accepted_attempt, trace)
 
@@ -156,6 +159,42 @@ def test_run_loads_config_and_invokes_orchestrator_once():
     assert orchestrator.calls[0][0].task == "Do the thing"
     assert orchestrator.calls[0][0].target_language.value == "python"
     assert len(traces) == 1
+
+
+def test_run_smoke_task_loads_bundle_and_passes_hidden_tests():
+    orchestrator = FakeOrchestrator(TerminalDisposition.ACCEPTED)
+
+    code = main(
+        ["run", "--smoke-task", "retry-after"],
+        orchestrator_factory=lambda _config: orchestrator,
+        trace_writer=lambda _trace: "smoke.json",
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert code == ExitCode.SUCCESS
+    request = orchestrator.calls[0][0]
+    assert request.request_id == "smoke-retry-after"
+    assert request.target_language.value == "python"
+    assert "Retry-After" in request.task
+    inputs = orchestrator.evaluation_inputs[0]
+    assert inputs["dependencies"] == ()
+    hidden_tests = inputs["hidden_tests"]
+    assert isinstance(hidden_tests, Path)
+    assert hidden_tests.name == "hidden"
+    assert (hidden_tests / "eval_test.py").is_file()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["run", "--task", "work", "--smoke-task", "retry-after"],
+        ["run"],
+    ],
+)
+def test_run_requires_exactly_one_task_source(argv, capsys):
+    assert main(argv) == ExitCode.MALFORMED_USAGE
+    assert "usage:" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

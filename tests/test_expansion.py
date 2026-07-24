@@ -106,6 +106,16 @@ class FakeHy3Client:
         return self.response
 
 
+class SequencedHy3Client:
+    def __init__(self, *contents: object):
+        self.responses = iter(model_response(content) for content in contents)
+        self.calls: list[tuple[object, object]] = []
+
+    def query_expansion(self, messages, *, options=None):
+        self.calls.append((messages, options))
+        return next(self.responses)
+
+
 def document(queries=VALID_QUERIES) -> str:
     return json.dumps({"queries": queries})
 
@@ -160,6 +170,59 @@ def test_prompt_is_bounded_structured_and_preserves_request_constraints():
     assert "1 to 5 queries for EACH tier" in prompt
 
 
+def test_malformed_expansion_retries_with_nudge_unique_trace_and_backoff():
+    client = SequencedHy3Client("not json", document())
+    recorder = TraceRecorder("trace-retry", TASK)
+    sleeps = []
+
+    plan = QueryExpander(
+        client,
+        trace_recorder=recorder,
+        monotonic=lambda: 1.0,
+        sleep=sleeps.append,
+    ).expand(request(), attempt_number=2)
+
+    assert len(plan.queries) == 3
+    assert len(client.calls) == 2
+    assert sleeps == [0.5]
+    initial_prompt = client.calls[0][0][-1]["content"]
+    retry_prompt = client.calls[1][0][-1]["content"]
+    assert "previous attempt was malformed" not in initial_prompt
+    assert "previous attempt was malformed" in retry_prompt
+    assert "Return ONLY the JSON object" in retry_prompt
+    assert [span.retry_number for span in recorder._spans] == [0, 1]
+    assert [span.status for span in recorder._spans] == [
+        StepStatus.FAILED,
+        StepStatus.SUCCEEDED,
+    ]
+    assert all(span.attempt_number == 2 for span in recorder._spans)
+    artifact_ids = [
+        artifact_id.value for artifact_id in recorder._artifacts
+    ]
+    assert len(artifact_ids) == len(set(artifact_ids)) == 8
+    assert any("-retry-0-" in artifact_id for artifact_id in artifact_ids)
+    assert any("-retry-1-" in artifact_id for artifact_id in artifact_ids)
+
+
+def test_malformed_expansion_raises_after_two_internal_retries():
+    client = SequencedHy3Client("bad-1", "bad-2", "bad-3")
+    recorder = TraceRecorder("trace-retry-exhausted", TASK)
+    sleeps = []
+
+    with pytest.raises(ExpansionMalformedError):
+        QueryExpander(
+            client,
+            trace_recorder=recorder,
+            monotonic=lambda: 1.0,
+            sleep=sleeps.append,
+        ).expand(request())
+
+    assert len(client.calls) == 3
+    assert sleeps == [0.5, 1.0]
+    assert [span.retry_number for span in recorder._spans] == [0, 1, 2]
+    assert all(span.status is StepStatus.FAILED for span in recorder._spans)
+
+
 def test_normalized_duplicates_merge_provenance_in_stable_order():
     duplicates = [
         *VALID_QUERIES,
@@ -197,7 +260,9 @@ def test_invalid_or_wrong_tier_site_and_site_override_fail_closed(bad_record):
 
     with pytest.raises(ExpansionMalformedError) as caught:
         QueryExpander(
-            FakeHy3Client(document(values)), trace_recorder=recorder
+            FakeHy3Client(document(values)),
+            trace_recorder=recorder,
+            sleep=lambda _: None,
         ).expand(request())
 
     assert caught.value.code is ErrorCode.ERR_EXPANSION_MALFORMED
@@ -224,11 +289,13 @@ def test_malformed_output_never_returns_a_plan_and_records_parse_status(content)
     recorder = TraceRecorder("trace-malformed", TASK)
     with pytest.raises(ExpansionMalformedError):
         QueryExpander(
-            FakeHy3Client(content), trace_recorder=recorder
+            FakeHy3Client(content),
+            trace_recorder=recorder,
+            sleep=lambda _: None,
         ).expand(request())
 
-    assert len(recorder._spans) == 1
-    span = recorder._spans[0]
+    assert len(recorder._spans) == 3
+    span = recorder._spans[-1]
     assert span.step is WorkflowStep.QUERY_EXPANSION
     assert span.status is StepStatus.FAILED
     assert span.error_code is ErrorCode.ERR_EXPANSION_MALFORMED
@@ -304,7 +371,9 @@ def test_bool_tier_is_still_rejected(tier):
     values[0] = {**values[0], "tier": tier}
 
     with pytest.raises(ExpansionMalformedError):
-        QueryExpander(FakeHy3Client(document(values))).expand(request())
+        QueryExpander(
+            FakeHy3Client(document(values)), sleep=lambda _: None
+        ).expand(request())
 
 
 def test_success_span_records_queries_sites_tiers_parameters_usage_and_artifacts():
@@ -356,6 +425,7 @@ def test_query_count_bounds_are_configurable_and_validated():
                 expansion_min_queries_per_tier=2,
                 expansion_max_queries_per_tier=3,
             ),
+            sleep=lambda _: None,
         ).expand(request())
 
 

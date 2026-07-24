@@ -726,6 +726,69 @@ class Step5Controller:
         self._config = config or Config.default()
         self._trace = trace_recorder
 
+    def verify_once(
+        self,
+        task: PythonVerificationTask,
+        *,
+        request: WorkflowRequest,
+        evidence: ExtractionResult | Iterable[EvidenceChunk],
+        hidden_tests: str | Path | None = None,
+        evidence_state: EvidenceState = EvidenceState.CURRENT,
+        last_allowed: bool = False,
+    ) -> VerificationAttempt:
+        """Run and classify exactly one sandbox attempt.
+
+        The five-step orchestrator owns feedback routing and calls this seam so
+        no repair model call can occur behind its run-level spend guard.  The
+        older :meth:`verify` operation remains the standalone bounded controller.
+        """
+
+        if not isinstance(task, PythonVerificationTask):
+            raise TypeError("task must be a PythonVerificationTask")
+        if not isinstance(request, WorkflowRequest):
+            raise TypeError("request must be a WorkflowRequest")
+        if not isinstance(evidence_state, EvidenceState):
+            raise TypeError("evidence_state must be an EvidenceState")
+        if not isinstance(last_allowed, bool):
+            raise TypeError("last_allowed must be a bool")
+
+        number = task.candidate.attempt_number
+        snapshot = _candidate_snapshot_id(task.candidate, number)
+        self._record_candidate(task.candidate, snapshot, set())
+        try:
+            execution = self._sandbox.execute(task, hidden_tests=hidden_tests)
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            execution = SandboxExecution(
+                exit_code=None,
+                stdout="",
+                stderr=f"Sandbox infrastructure failure ({type(exc).__name__})",
+                test_outcome=TestOutcome.NOT_RUN,
+                timed_out=False,
+                infrastructure_status=InfrastructureStatus.INVALID,
+                error_category=f"sandbox_{type(exc).__name__.lower()}",
+                output_limit_exceeded=False,
+                duration_ms=0,
+            )
+        classification = _classify(execution, evidence_state)
+        route, disposition, repair_used, _ = _decision(
+            classification, last_allowed
+        )
+        attempt = VerificationAttempt(
+            number=number,
+            candidate=task.candidate,
+            execution=execution,
+            classification=classification,
+            route=route,
+            repair_used=repair_used,
+            disposition=disposition,
+            candidate_artifact_id=snapshot,
+            error_code=_error_code(classification),
+        )
+        self._record_attempt(attempt)
+        return attempt
+
     def verify(
         self,
         task: PythonVerificationTask,
@@ -1069,6 +1132,81 @@ def _repair_diagnostics(
     return _bounded_text(redact(document), maximum)
 
 
+def build_repair_context(
+    attempt: VerificationAttempt,
+    *,
+    prior_diff: str,
+    config: Config | None = None,
+    hidden_tests_mounted: bool = False,
+) -> RepairContext:
+    """Build the bounded, redacted Step 5 feedback consumed by Step 4."""
+
+    if not isinstance(attempt, VerificationAttempt):
+        raise TypeError("attempt must be a VerificationAttempt")
+    if not isinstance(prior_diff, str) or not prior_diff.strip():
+        raise ValueError("prior_diff must be non-empty text")
+    settings = config or Config.default()
+    return RepairContext(
+        prior_candidate=attempt.candidate,
+        diagnostics=_repair_diagnostics(
+            attempt.execution,
+            settings.repair_max_diagnostics_characters,
+            hidden_tests_mounted=hidden_tests_mounted,
+        ),
+        prior_diff=_bounded_text(
+            redact(prior_diff), settings.repair_max_diff_characters
+        ),
+        relevant_chunk_ids=attempt.candidate.citation_ids,
+    )
+
+
+def record_repair_diff(
+    previous: PythonCandidate,
+    current: PythonCandidate,
+    *,
+    trace_recorder: ExecutionTraceRecorder,
+    config: Config | None = None,
+) -> str:
+    """Record one candidate transition and return bounded next-loop context."""
+
+    if not isinstance(previous, PythonCandidate) or not isinstance(
+        current, PythonCandidate
+    ):
+        raise TypeError("repair diff candidates must be PythonCandidate values")
+    if current.attempt_number != previous.attempt_number + 1:
+        raise ValueError("repair candidates must be consecutive")
+    settings = config or Config.default()
+    diff = AttemptDiff.between(
+        from_attempt=previous.attempt_number,
+        to_attempt=current.attempt_number,
+        from_code_artifact_id=previous.artifact_id,
+        to_code_artifact_id=current.artifact_id,
+        diff_artifact_id=_diff_id(previous, current, previous.attempt_number),
+        previous_code=previous.code,
+        current_code=current.code,
+    )
+    encoded = diff.unified_diff.encode("utf-8")
+    trace_recorder.add_artifact(
+        ArtifactReference(
+            diff.diff_artifact_id,
+            ArtifactKind.ATTEMPT_DIFF,
+            f"memory://step-5/{diff.diff_artifact_id}",
+            media_type="text/x-diff",
+            size_bytes=len(encoded),
+            digest=hashlib.sha256(encoded).hexdigest(),
+            metadata={
+                "from_attempt": diff.from_attempt,
+                "to_attempt": diff.to_attempt,
+            },
+        )
+    )
+    trace_recorder.record_attempt_diff(diff)
+    return _bounded_text(
+        diff.unified_diff or "Repair made no textual change.",
+        settings.repair_max_diff_characters,
+    )
+
+
 def _bounded_text(value: str, maximum: int) -> str:
     if len(value) <= maximum:
         return value
@@ -1257,4 +1395,6 @@ __all__ = [
     "VerificationAttempt",
     "VerificationResult",
     "VerificationRoute",
+    "build_repair_context",
+    "record_repair_diff",
 ]

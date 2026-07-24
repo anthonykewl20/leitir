@@ -16,6 +16,7 @@ from .trace import (
     EvidenceAccounting,
     ExecutionTrace,
     ReplayMetadata,
+    SpendCapBreach,
     TraceSpan,
 )
 
@@ -67,6 +68,8 @@ class ExecutionTraceRecorder(Protocol):
     def record_span(self, span: TraceSpan) -> None: ...
 
     def record_attempt_diff(self, attempt_diff: AttemptDiff) -> None: ...
+
+    def record_spend_cap_breach(self, breach: SpendCapBreach) -> None: ...
 
     def finish(
         self,

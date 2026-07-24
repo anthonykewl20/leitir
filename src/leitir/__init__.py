@@ -35,6 +35,7 @@ from .trace import (
     ReplayMetadata,
     SandboxData,
     SecurityData,
+    SpendCapBreach,
     SynthesisData,
     TraceRecorder,
     TraceSpan,
@@ -121,6 +122,17 @@ from .verification import (
     VerificationAttempt,
     VerificationResult,
     VerificationRoute,
+    build_repair_context,
+    record_repair_diff,
+)
+from .orchestrator import (
+    CancellationToken,
+    FiveStepOrchestrator,
+    Orchestrator,
+    WorkflowComponents,
+    WorkflowOrchestrator,
+    WorkflowRunResult,
+    WorkflowStepFailure,
 )
 
 __all__ = [
@@ -154,6 +166,7 @@ __all__ = [
     "ReplayMetadata",
     "SandboxData",
     "SecurityData",
+    "SpendCapBreach",
     "SynthesisData",
     "TraceRecorder",
     "TraceSpan",
@@ -230,4 +243,13 @@ __all__ = [
     "VerificationAttempt",
     "VerificationResult",
     "VerificationRoute",
+    "build_repair_context",
+    "record_repair_diff",
+    "CancellationToken",
+    "FiveStepOrchestrator",
+    "Orchestrator",
+    "WorkflowComponents",
+    "WorkflowOrchestrator",
+    "WorkflowRunResult",
+    "WorkflowStepFailure",
 ]

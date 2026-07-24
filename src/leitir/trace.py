@@ -640,6 +640,54 @@ class UsageAggregate:
             raise ValueError("complete usage cannot have missing provider fields")
 
 
+@dataclass(frozen=True, slots=True)
+class SpendCapBreach:
+    """The exact run-level observation which stopped paid workflow work."""
+
+    configured_cap_usd: int | float
+    accumulated_provider_cost_usd: int | float
+    triggering_span_index: int
+    triggering_step: WorkflowStep
+    triggering_attempt: int
+    provider_cost_complete: bool
+    missing_cost_span_indexes: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        _non_negative("configured_cap_usd", self.configured_cap_usd)
+        _non_negative(
+            "accumulated_provider_cost_usd",
+            self.accumulated_provider_cost_usd,
+        )
+        if self.configured_cap_usd <= 0:
+            raise ValueError("configured_cap_usd must be positive")
+        _non_negative_int("triggering_span_index", self.triggering_span_index)
+        if not isinstance(self.triggering_step, WorkflowStep):
+            raise TypeError("triggering_step must be a WorkflowStep")
+        _positive("triggering_attempt", self.triggering_attempt)
+        if not isinstance(self.provider_cost_complete, bool):
+            raise TypeError("provider_cost_complete must be a bool")
+        for index in self.missing_cost_span_indexes:
+            _non_negative_int("missing_cost_span_index", index)
+        if len(set(self.missing_cost_span_indexes)) != len(
+            self.missing_cost_span_indexes
+        ):
+            raise ValueError("missing cost span indexes must be unique")
+        if self.provider_cost_complete and self.missing_cost_span_indexes:
+            raise ValueError(
+                "complete provider cost cannot have missing cost spans"
+            )
+        if self.accumulated_provider_cost_usd <= self.configured_cap_usd:
+            raise ValueError("a spend breach must exceed the configured cap")
+
+    @property
+    def cap_usd(self) -> int | float:
+        return self.configured_cap_usd
+
+    @property
+    def accumulated_cost_usd(self) -> int | float:
+        return self.accumulated_provider_cost_usd
+
+
 def _aggregate(spans: Sequence[TraceSpan]) -> UsageAggregate:
     usages = [span.model.usage for span in spans if span.model is not None]
     missing = tuple(
@@ -693,6 +741,7 @@ class ExecutionTrace:
     attempt_diffs: tuple[AttemptDiff, ...]
     evidence_accounting: EvidenceAccounting
     aggregate: UsageAggregate
+    spend_cap_breach: SpendCapBreach | None = None
     schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -710,6 +759,24 @@ class ExecutionTrace:
             and self.accepted_attempt is None
         ):
             raise ValueError("an accepted trace requires accepted_attempt")
+        if (
+            self.final_status is TerminalDisposition.SPEND_CAP_EXCEEDED
+        ) != (self.spend_cap_breach is not None):
+            raise ValueError(
+                "spend-cap disposition and breach record must be present together"
+            )
+        if self.spend_cap_breach is not None:
+            breach = self.spend_cap_breach
+            if breach.triggering_span_index >= len(self.spans):
+                raise ValueError("spend breach references an unknown span")
+            triggering = self.spans[breach.triggering_span_index]
+            if (
+                triggering.step is not breach.triggering_step
+                or triggering.attempt_number != breach.triggering_attempt
+            ):
+                raise ValueError(
+                    "spend breach triggering span metadata does not match"
+                )
         ids = [item.artifact_id for item in self.artifacts]
         if len(ids) != len(set(ids)):
             raise ValueError("artifact IDs must be unique")
@@ -831,19 +898,54 @@ class TraceRecorder:
         self._spans: list[TraceSpan] = []
         self._artifacts: dict[ArtifactId, ArtifactReference] = {}
         self._diffs: list[AttemptDiff] = []
+        self._spend_cap_breach: SpendCapBreach | None = None
+        self._finished = False
+
+    @property
+    def spans(self) -> tuple[TraceSpan, ...]:
+        return tuple(self._spans)
+
+    @property
+    def artifacts(self) -> tuple[ArtifactReference, ...]:
+        return tuple(self._artifacts.values())
+
+    @property
+    def artifact_ids(self) -> frozenset[ArtifactId]:
+        return frozenset(self._artifacts)
+
+    @property
+    def spend_cap_breach(self) -> SpendCapBreach | None:
+        return self._spend_cap_breach
+
+    @property
+    def finished(self) -> bool:
+        return self._finished
 
     def add_artifact(self, artifact: ArtifactReference) -> None:
+        if self._finished:
+            raise RuntimeError("cannot add an artifact to a finished trace")
         if artifact.artifact_id in self._artifacts:
             raise ValueError(f"duplicate artifact ID: {artifact.artifact_id}")
         self._artifacts[artifact.artifact_id] = artifact
 
     def record_span(self, span: TraceSpan) -> None:
+        if self._finished:
+            raise RuntimeError("cannot add a span to a finished trace")
         self._spans.append(span)
 
     def record_attempt_diff(self, attempt_diff: AttemptDiff) -> None:
+        if self._finished:
+            raise RuntimeError("cannot add a diff to a finished trace")
         if self._diffs and attempt_diff.from_attempt < self._diffs[-1].from_attempt:
             raise ValueError("attempt diffs must be recorded in attempt order")
         self._diffs.append(attempt_diff)
+
+    def record_spend_cap_breach(self, breach: SpendCapBreach) -> None:
+        if self._finished:
+            raise RuntimeError("cannot add a breach to a finished trace")
+        if self._spend_cap_breach is not None:
+            raise ValueError("a trace can contain only one spend-cap breach")
+        self._spend_cap_breach = breach
 
     def finish(
         self,
@@ -855,7 +957,9 @@ class TraceRecorder:
         replay: ReplayMetadata,
         evidence_accounting: EvidenceAccounting,
     ) -> ExecutionTrace:
-        return ExecutionTrace(
+        if self._finished:
+            raise RuntimeError("a trace can be finalized only once")
+        trace = ExecutionTrace(
             trace_id=self.trace_id,
             task_summary=self.task_summary,
             started_at=self.started_at,
@@ -869,7 +973,10 @@ class TraceRecorder:
             attempt_diffs=tuple(self._diffs),
             evidence_accounting=evidence_accounting,
             aggregate=_aggregate(self._spans),
+            spend_cap_breach=self._spend_cap_breach,
         )
+        self._finished = True
+        return trace
 
 
 def _artifact_id(value: str | None) -> ArtifactId | None:
@@ -1060,6 +1167,7 @@ def _trace_from_dict(data: Mapping[str, Any]) -> ExecutionTrace:
     replay = data["replay"]
     evidence = data["evidence_accounting"]
     aggregate = data["aggregate"]
+    breach_data = data.get("spend_cap_breach")
     return ExecutionTrace(
         trace_id=data["trace_id"],
         task_summary=data["task_summary"],
@@ -1121,5 +1229,20 @@ def _trace_from_dict(data: Mapping[str, Any]) -> ExecutionTrace:
             complete=aggregate["complete"],
             missing_provider_fields=tuple(aggregate["missing_provider_fields"]),
         ),
+        spend_cap_breach=SpendCapBreach(
+            configured_cap_usd=breach_data["configured_cap_usd"],
+            accumulated_provider_cost_usd=breach_data[
+                "accumulated_provider_cost_usd"
+            ],
+            triggering_span_index=breach_data["triggering_span_index"],
+            triggering_step=WorkflowStep(breach_data["triggering_step"]),
+            triggering_attempt=breach_data["triggering_attempt"],
+            provider_cost_complete=breach_data["provider_cost_complete"],
+            missing_cost_span_indexes=tuple(
+                breach_data["missing_cost_span_indexes"]
+            ),
+        )
+        if breach_data is not None
+        else None,
         schema_version=data["schema_version"],
     )

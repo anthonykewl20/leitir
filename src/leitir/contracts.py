@@ -59,6 +59,7 @@ class TerminalDisposition(str, Enum):
     REPAIR_EXHAUSTED = "repair_exhausted"
     SPEND_CAP_EXCEEDED = "spend_cap_exceeded"
     INFRASTRUCTURE_ERROR = "infrastructure_error"
+    CANCELLED = "cancelled"
 
 
 class ErrorCode(str, Enum):

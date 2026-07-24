@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from enum import IntEnum
 import hashlib
@@ -42,9 +42,22 @@ class EvaluationDriver(Protocol):
     """v1-11 extension point; the driver owns task selection and reporting."""
 
     def evaluate(
-        self, run: Callable[[WorkflowRequest], WorkflowRunResult]
+        self, run: EvaluationRunOperation
     ) -> object:
         """Execute evaluation tasks through the supplied orchestrator operation."""
+
+
+class EvaluationRunOperation(Protocol):
+    """The task-scoped seam from evaluation into the normal orchestrator."""
+
+    def __call__(
+        self,
+        request: WorkflowRequest,
+        *,
+        public_tests: Mapping[str, str] | None = None,
+        dependencies: tuple[str, ...] | None = None,
+        hidden_tests: str | Path | None = None,
+    ) -> WorkflowRunResult: ...
 
 
 class TraceWriter(Protocol):
@@ -135,10 +148,19 @@ def build_orchestrator(config: Config) -> FiveStepOrchestrator:
     return FiveStepOrchestrator(components_factory=components, config=config)
 
 
-def _missing_eval_driver(_config: Config) -> EvaluationDriver:
-    raise EvaluationDriverUnavailable(
-        "the evaluation driver is not installed; v1-11 supplies it"
-    )
+def build_evaluation_driver(_config: Config) -> EvaluationDriver:
+    """Build the live driver only after an explicit operator opt-in."""
+
+    import os
+
+    if os.environ.get("LEITIR_ENABLE_LIVE_EVAL") != "1":
+        raise EvaluationDriverUnavailable(
+            "the evaluation driver is not installed for automatic paid runs; "
+            "set LEITIR_ENABLE_LIVE_EVAL=1 to opt in to Docker/network/model use"
+        )
+    from .evaluation import SmokeEvaluationDriver
+
+    return SmokeEvaluationDriver()
 
 
 def write_trace(trace: ExecutionTrace) -> str:
@@ -233,9 +255,24 @@ def _run_operation(
     trace_writer: TraceWriter,
     stdout: TextIO,
     stderr: TextIO,
-) -> Callable[[WorkflowRequest], WorkflowRunResult]:
-    def run(request: WorkflowRequest) -> WorkflowRunResult:
-        result = orchestrator.run(request, cancellation=token)
+) -> EvaluationRunOperation:
+    def run(
+        request: WorkflowRequest,
+        *,
+        public_tests: Mapping[str, str] | None = None,
+        dependencies: tuple[str, ...] | None = None,
+        hidden_tests: str | Path | None = None,
+    ) -> WorkflowRunResult:
+        evaluation_inputs = {}
+        if public_tests is not None:
+            evaluation_inputs["public_tests"] = public_tests
+        if dependencies is not None:
+            evaluation_inputs["dependencies"] = dependencies
+        if hidden_tests is not None:
+            evaluation_inputs["hidden_tests"] = hidden_tests
+        result = orchestrator.run(
+            request, cancellation=token, **evaluation_inputs
+        )
         _write_result(
             result,
             trace_writer=trace_writer,
@@ -252,7 +289,7 @@ def main(
     *,
     config_loader: ConfigLoader = Config.default,
     orchestrator_factory: OrchestratorFactory = build_orchestrator,
-    eval_driver_factory: EvaluationDriverFactory = _missing_eval_driver,
+    eval_driver_factory: EvaluationDriverFactory = build_evaluation_driver,
     trace_writer: TraceWriter = write_trace,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -310,7 +347,7 @@ def main(
 
         try:
             driver = eval_driver_factory(config)
-            driver.evaluate(
+            report = driver.evaluate(
                 _run_operation(orchestrator, token, trace_writer, out, err)
             )
         except KeyboardInterrupt:
@@ -320,6 +357,8 @@ def main(
         except Exception as exc:
             _safe_print(f"status=infrastructure_error error={exc}", file=err)
             return int(ExitCode.INFRASTRUCTURE_FAILURE)
+        if hasattr(report, "to_json") and callable(report.to_json):
+            _safe_print(report.to_json(), file=out)
         _safe_print("status=accepted trace=driver-managed", file=out)
         return int(ExitCode.SUCCESS)
 
@@ -331,8 +370,10 @@ if __name__ == "__main__":
 __all__ = [
     "EvaluationDriver",
     "EvaluationDriverUnavailable",
+    "EvaluationRunOperation",
     "ExitCode",
     "TraceWriter",
+    "build_evaluation_driver",
     "build_orchestrator",
     "build_parser",
     "main",

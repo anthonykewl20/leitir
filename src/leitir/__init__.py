@@ -134,6 +134,16 @@ from .orchestrator import (
     WorkflowRunResult,
     WorkflowStepFailure,
 )
+from .evaluation import (
+    BENCHMARK_VERSION,
+    BenchmarkValidationError,
+    EvaluationReport,
+    Metric,
+    SmokeBenchmark,
+    SmokeEvaluationDriver,
+    SmokeTask,
+    build_report,
+)
 
 __all__ = [
     "Artifact",
@@ -252,4 +262,12 @@ __all__ = [
     "WorkflowOrchestrator",
     "WorkflowRunResult",
     "WorkflowStepFailure",
+    "BENCHMARK_VERSION",
+    "BenchmarkValidationError",
+    "EvaluationReport",
+    "Metric",
+    "SmokeBenchmark",
+    "SmokeEvaluationDriver",
+    "SmokeTask",
+    "build_report",
 ]

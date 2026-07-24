@@ -1,0 +1,51 @@
+{
+  "version": "smoke-v1",
+  "language": "python",
+  "runner": "docker-pytest",
+  "tasks": [
+    {
+      "id": "urlencode-doseq",
+      "prompt": "prompt.md",
+      "dependency": "CPython urllib.parse",
+      "dependency_version": "3.11.9",
+      "evidence_date": "2025-02-18",
+      "tiers": [2],
+      "sandbox": {"runner": "pytest", "dependencies": []},
+      "valid": true,
+      "hidden_test_identity": "leitir:smoke-v1:urlencode-doseq:eval-v1"
+    },
+    {
+      "id": "tomllib-contract",
+      "prompt": "prompt.md",
+      "dependency": "CPython tomllib",
+      "dependency_version": "3.11.9",
+      "evidence_date": "2025-05-06",
+      "tiers": [1, 2],
+      "sandbox": {"runner": "pytest", "dependencies": []},
+      "valid": true,
+      "hidden_test_identity": "leitir:smoke-v1:tomllib-contract:eval-v1"
+    },
+    {
+      "id": "batched-backport",
+      "prompt": "prompt.md",
+      "dependency": "CPython itertools",
+      "dependency_version": "3.12.3",
+      "evidence_date": "2025-09-14",
+      "tiers": [2, 3],
+      "sandbox": {"runner": "pytest", "dependencies": []},
+      "valid": true,
+      "hidden_test_identity": "leitir:smoke-v1:batched-backport:eval-v1"
+    },
+    {
+      "id": "retry-after",
+      "prompt": "prompt.md",
+      "dependency": "HTTP Semantics RFC 9110",
+      "dependency_version": "RFC 9110",
+      "evidence_date": "2026-01-22",
+      "tiers": [1, 2, 3],
+      "sandbox": {"runner": "pytest", "dependencies": []},
+      "valid": true,
+      "hidden_test_identity": "leitir:smoke-v1:retry-after:eval-v1"
+    }
+  ]
+}

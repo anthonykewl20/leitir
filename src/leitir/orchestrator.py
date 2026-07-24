@@ -341,8 +341,17 @@ class FiveStepOrchestrator:
         request: WorkflowRequest,
         *,
         cancellation: CancellationToken | Callable[[], bool] | object | None = None,
+        public_tests: Mapping[str, str] | None = None,
+        dependencies: tuple[str, ...] | None = None,
+        hidden_tests: str | Path | None = None,
     ) -> WorkflowRunResult:
-        """Execute one complete workflow and finalize exactly one trace."""
+        """Execute one complete workflow and finalize exactly one trace.
+
+        The optional verification inputs are an evaluator seam.  They are
+        consumed only while constructing and executing Step 5; in particular,
+        ``hidden_tests`` is never added to the workflow request, evidence, or
+        synthesis/repair context.
+        """
 
         if not isinstance(request, WorkflowRequest):
             raise TypeError("request must be a WorkflowRequest")
@@ -511,7 +520,14 @@ class FiveStepOrchestrator:
                     output = candidate
                 else:
                     assert evidence is not None and candidate is not None
-                    verification_task = self._verification_task_factory(candidate)
+                    if public_tests is None and dependencies is None:
+                        verification_task = self._verification_task_factory(candidate)
+                    else:
+                        verification_task = PythonVerificationTask(
+                            candidate,
+                            public_tests or {},
+                            dependencies or (),
+                        )
                     evidence_state = self._evidence_state_resolver(
                         request, evidence, candidate, attempt_number
                     )
@@ -523,7 +539,11 @@ class FiveStepOrchestrator:
                         verification_task,
                         request=request,
                         evidence=evidence,
-                        hidden_tests=self._hidden_tests,
+                        hidden_tests=(
+                            hidden_tests
+                            if hidden_tests is not None
+                            else self._hidden_tests
+                        ),
                         evidence_state=evidence_state,
                         last_allowed=feedback_loops >= self._config.max_repairs,
                     )
@@ -630,7 +650,9 @@ class FiveStepOrchestrator:
                     attempt,
                     prior_diff=prior_diff,
                     config=self._config,
-                    hidden_tests_mounted=self._hidden_tests is not None,
+                    hidden_tests_mounted=(
+                        hidden_tests is not None or self._hidden_tests is not None
+                    ),
                 )
                 attempt_number = feedback_loops + 1
                 if classification in {

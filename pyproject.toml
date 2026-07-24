@@ -19,6 +19,14 @@ leitir = "leitir.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+leitir = [
+    "benchmarks/**/*.json",
+    "benchmarks/**/*.md",
+    "benchmarks/**/Dockerfile",
+    "benchmarks/**/eval_test.py",
+]
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]

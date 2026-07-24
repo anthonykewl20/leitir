@@ -6,9 +6,11 @@
 
 Leitir is a prototype-stage design for answering difficult, version-sensitive programming questions more reliably than a single search-and-generate pass. It is intended to orchestrate evidence retrieval, code synthesis, execution, and repair while preserving a detailed trace of how each result was produced.
 
-This repository currently contains the v1 foundation: side-effect-free typed
-contracts, validated configuration, replaceable external-effect interfaces, and
-a secret-redacting logging policy. It intentionally contains no workflow,
+This repository currently contains the v1 foundation plus a structured JSON
+trace and replay recorder: side-effect-free typed contracts, validated
+configuration, replaceable external-effect interfaces, secret-safe logging,
+exact OpenRouter usage normalization, artifact replay references, attempt
+diffs, and evidence-token accounting. It intentionally contains no workflow,
 transport, retrieval, model, sandbox, orchestration, or evaluation behavior yet.
 
 ## What it can do
@@ -64,8 +66,8 @@ The full definitions, exclusions, benchmark composition, and reporting requireme
 
 ## Status
 
-**Status: Prototype foundation.** See [docs/PRD.md](docs/PRD.md) for the complete
-specification.
+**Status: Prototype foundation and trace recorder.** See
+[docs/PRD.md](docs/PRD.md) for the complete specification.
 
 ## Development
 
@@ -86,7 +88,7 @@ closure. Tests perform no network requests, Docker calls, or credential reads.
 
 - `README.md` — project overview
 - `docs/PRD.md` — product requirements and technical specification
-- `src/leitir/` — configuration, domain contracts, protocols, and logging policy
+- `src/leitir/` — configuration, contracts, protocols, logging, and trace records
 - `tests/` — offline pytest suite
 - `pyproject.toml` — package and test configuration
 - `requirements.txt` — exact dependency lock

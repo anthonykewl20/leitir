@@ -16,6 +16,24 @@ from .contracts import (
     WorkflowRequest,
     WorkflowStep,
 )
+from .trace import (
+    ArtifactKind,
+    ArtifactReference,
+    AttemptDiff,
+    DiscoveryData,
+    EvidenceAccounting,
+    ExecutionTrace,
+    ExpansionData,
+    ExtractionData,
+    ModelData,
+    ProviderUsage,
+    ReplayMetadata,
+    SandboxData,
+    SecurityData,
+    TraceRecorder,
+    TraceSpan,
+    UsageAggregate,
+)
 
 __all__ = [
     "Artifact",
@@ -32,5 +50,20 @@ __all__ = [
     "TerminalDisposition",
     "WorkflowRequest",
     "WorkflowStep",
+    "ArtifactKind",
+    "ArtifactReference",
+    "AttemptDiff",
+    "DiscoveryData",
+    "EvidenceAccounting",
+    "ExecutionTrace",
+    "ExpansionData",
+    "ExtractionData",
+    "ModelData",
+    "ProviderUsage",
+    "ReplayMetadata",
+    "SandboxData",
+    "SecurityData",
+    "TraceRecorder",
+    "TraceSpan",
+    "UsageAggregate",
 ]
-

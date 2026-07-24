@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import logging
 import re
+import traceback
 from typing import Any
 
 REDACTED = "[REDACTED]"
@@ -17,9 +18,11 @@ _SENSITIVE_KEY = re.compile(
 )
 _AUTH_HEADER = re.compile(
     r"(?i)(\b(?:proxy-)?authorization\s*:\s*(?:bearer|basic)\s+)"
-    r"[^\s,;\]}]+"
+    r"(?!\[REDACTED\])[^\s,;\]}]+"
 )
-_BEARER = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
+_BEARER = re.compile(
+    r"(?i)(\bbearer\s+)(?!\[REDACTED\])[A-Za-z0-9._~+/=-]+"
+)
 _KEY_VALUE = re.compile(
     r"""(?ix)
     (["']?(?:api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|
@@ -38,9 +41,11 @@ _AUTH_VALUE = re.compile(
     (?:"[^"]*"|'[^']*'|[^\s,;\]}]+)
     """
 )
+_OPENROUTER_KEY = re.compile(r"\bsk-or-v1-[A-Za-z0-9._~+/=-]+\b", re.IGNORECASE)
 
 
 def _redact_text(value: str) -> str:
+    value = _OPENROUTER_KEY.sub(REDACTED, value)
     value = _AUTH_HEADER.sub(lambda match: match.group(1) + REDACTED, value)
     value = _BEARER.sub(lambda match: match.group(1) + REDACTED, value)
     value = _AUTH_VALUE.sub(
@@ -105,6 +110,13 @@ class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = safe_record_message(record)
         record.args = ()
+        if record.exc_info:
+            exception_text = "".join(traceback.format_exception(*record.exc_info))
+            record.msg = f"{record.msg}\n{redact(exception_text)}"
+            record.exc_info = None
+            record.exc_text = None
+        if record.stack_info:
+            record.stack_info = redact(record.stack_info)
         for name, value in tuple(record.__dict__.items()):
             if name not in self._STANDARD_ATTRIBUTES:
                 record.__dict__[name] = (

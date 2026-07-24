@@ -43,13 +43,16 @@ def _endpoint(name: str, value: str) -> None:
 class Config:
     """All configurable boundaries owned by the v1 foundation.
 
-    Python, ``pytest``, evidence Tiers 1–3, the OpenRouter model identity, and
-    the single credential location are fixed rather than user-selectable.
+    Python, ``pytest``, evidence Tiers 1–3, and the OpenRouter model identity
+    are fixed rather than user-selectable. Credential fields contain paths,
+    never credential values.
     """
 
     model_endpoint: str = OPENROUTER_ENDPOINT
     search_endpoint: str = "http://localhost:8080/search"
     github_search_endpoint: str = "https://api.github.com/search/code"
+    github_credential_path: str = "~/.config/gh/hosts.yml"
+    search_engines: str | None = None
     raw_content_endpoint: str = "https://raw.githubusercontent.com"
     model: str = OPENROUTER_MODEL
     model_timeout_seconds: int = 900

@@ -19,13 +19,35 @@ from leitir.contracts import (
     WorkflowStep,
 )
 from leitir.discovery import (
+    DiscoveryAuthError,
     DiscoveryChannel,
+    DiscoveryEnginesBlockedError,
     DiscoveryHttpResponse,
     DiscoveryZeroResultsError,
+    GitHubCodeSearchAdapter,
+    GitHubCredentialProvider,
+    SearXNGAdapter,
     TargetedDiscovery,
     canonicalize_url,
 )
+from leitir.openrouter import CredentialError
 from leitir.trace import TraceRecorder
+
+
+GITHUB_TOKEN = "github-test-token-not-real"
+
+
+class SyntheticGitHubCredentials:
+    def get_github_token(self):
+        return GITHUB_TOKEN
+
+
+def _targeted(http, **kwargs):
+    return TargetedDiscovery(
+        http,
+        github_credential_provider=SyntheticGitHubCredentials(),
+        **kwargs,
+    )
 
 
 def _plan(*, duplicate_doc_query: bool = False) -> QueryExpansionPlan:
@@ -122,7 +144,7 @@ def test_routes_tiers_paginates_limits_normalizes_deduplicates_and_traces():
         discovery_max_pages=2,
         discovery_max_results=20,
     )
-    result = TargetedDiscovery(
+    result = _targeted(
         http, config=config, trace_recorder=recorder
     ).discover(_plan(duplicate_doc_query=True))
 
@@ -145,6 +167,16 @@ def test_routes_tiers_paginates_limits_normalizes_deduplicates_and_traces():
     assert recorder._spans[-1].step is WorkflowStep.DISCOVERY
     assert recorder._spans[-1].status is StepStatus.SUCCEEDED
     assert recorder._spans[-1].discovery == result.discovery_data
+    assert (
+        recorder.artifacts[-1].metadata["credential_mode"]
+        == "local-and-github-token"
+    )
+    github_calls = [call for call in http.calls if "api.github.com" in call[0]]
+    assert github_calls
+    assert all(
+        call[1]["Authorization"] == f"Bearer {GITHUB_TOKEN}"
+        for call in github_calls
+    )
 
 
 def test_rate_limit_and_timeout_retry_with_capped_backoff_and_attempt_trace():
@@ -167,7 +199,7 @@ def test_rate_limit_and_timeout_retry_with_capped_backoff_and_attempt_trace():
             return _searx("https://docs.python.org/3/library/exceptions.html")
         return _github("src/errors.py")
 
-    result = TargetedDiscovery(
+    result = _targeted(
         RoutingHttp(handler),
         config=Config(
             discovery_max_attempts=3,
@@ -191,14 +223,14 @@ def test_rate_limit_and_timeout_retry_with_capped_backoff_and_attempt_trace():
 def test_partial_channel_failure_retains_evidence_and_explicit_failure_record():
     def handler(url, headers):
         if "api.github.com" in url:
-            assert "Authorization" not in headers
+            assert headers["Authorization"] == f"Bearer {GITHUB_TOKEN}"
             return DiscoveryHttpResponse(503, b"unavailable")
         assert "Authorization" not in headers
         if "fastapi.tiangolo.com" in url:
             return _searx("https://fastapi.tiangolo.com/tutorial/errors/")
         return _searx("https://docs.python.org/3/library/exceptions.html")
 
-    result = TargetedDiscovery(
+    result = _targeted(
         RoutingHttp(handler),
         config=Config(
             discovery_max_attempts=2,
@@ -229,7 +261,7 @@ def test_non_retryable_status_stops_that_request_immediately():
             return _searx("https://fastapi.tiangolo.com/tutorial/errors/")
         return _searx("https://docs.python.org/3/library/exceptions.html")
 
-    result = TargetedDiscovery(
+    result = _targeted(
         RoutingHttp(handler),
         config=Config(discovery_max_attempts=3),
         sleep=lambda _: pytest.fail("must not back off a non-retryable failure"),
@@ -245,7 +277,7 @@ def test_non_retryable_status_stops_that_request_immediately():
 def test_zero_results_error_only_after_all_retryable_failures_are_exhausted():
     recorder = TraceRecorder("trace-total-failure", "discovery")
     http = RoutingHttp(lambda _url, _headers: DiscoveryHttpResponse(503, b"no"))
-    discovery = TargetedDiscovery(
+    discovery = _targeted(
         http,
         config=Config(
             discovery_max_attempts=2,
@@ -279,7 +311,7 @@ def test_empty_and_malformed_results_are_filtered_and_can_partially_succeed():
             )
         return _json_response({"items": ["bad", {"html_url": "not a url"}]})
 
-    result = TargetedDiscovery(RoutingHttp(handler)).discover(_plan())
+    result = _targeted(RoutingHttp(handler)).discover(_plan())
     assert len(result.candidates) == 1
     assert result.candidates[0].domain == "docs.python.org"
     assert "searxng:invalid_url" in result.discovery_data.filtering_reasons
@@ -306,4 +338,188 @@ def test_url_canonicalization(value, expected):
 def test_only_validated_step_one_plan_is_accepted_without_http_call():
     http = RoutingHttp(lambda _url, _headers: pytest.fail("must not call HTTP"))
     with pytest.raises(TypeError, match="QueryExpansionPlan"):
-        TargetedDiscovery(http).discover(tuple(_plan().queries))  # type: ignore[arg-type]
+        _targeted(http).discover(tuple(_plan().queries))  # type: ignore[arg-type]
+
+
+def test_github_adapter_sends_bearer_header_and_tags_401_as_auth():
+    from leitir.discovery import _Telemetry
+
+    http = RoutingHttp(
+        lambda _url, _headers: DiscoveryHttpResponse(401, b"unauthorized")
+    )
+    adapter = GitHubCodeSearchAdapter(
+        http,
+        credentials=SyntheticGitHubCredentials(),
+    )
+    recorded = _Telemetry()
+
+    assert adapter.search(_plan().queries[-1], telemetry=recorded) == ()
+    assert http.calls[0][1] == {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "User-Agent": "Leitir/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    assert recorded.errors[0].category == "auth"
+    assert recorded.errors[0].http_status == 401
+
+
+def test_searxng_engines_blocked_retries_and_pins_configured_engine():
+    outcomes = deque(
+        [
+            _json_response(
+                {
+                    "results": [],
+                    "unresponsive_engines": [["duckduckgo", "CAPTCHA"]],
+                }
+            ),
+            _searx("https://fastapi.tiangolo.com/tutorial/errors/"),
+        ]
+    )
+    sleeps = []
+    http = RoutingHttp(lambda _url, _headers: outcomes.popleft())
+    adapter = SearXNGAdapter(
+        http,
+        config=Config(
+            search_engines="brave",
+            discovery_max_attempts=2,
+            discovery_retry_initial_backoff_seconds=3,
+            discovery_retry_max_backoff_seconds=3,
+        ),
+        sleep=sleeps.append,
+    )
+    from leitir.discovery import _Telemetry
+
+    recorded = _Telemetry()
+    candidates = adapter.search(_plan().queries[0], telemetry=recorded)
+
+    assert len(candidates) == 1
+    assert sleeps == [3]
+    assert [attempt.error_category for attempt in recorded.attempts] == [
+        "engines_blocked",
+        None,
+    ]
+    assert parse_qs(urlsplit(http.calls[0][0]).query)["engines"] == ["brave"]
+
+
+def test_terminal_auth_error_takes_precedence_and_is_traced():
+    recorder = TraceRecorder("trace-auth", "discovery")
+
+    def handler(url, _headers):
+        if "api.github.com" in url:
+            return DiscoveryHttpResponse(401, b"unauthorized")
+        return _searx()
+
+    with pytest.raises(DiscoveryAuthError) as caught:
+        _targeted(
+            RoutingHttp(handler),
+            trace_recorder=recorder,
+        ).discover(_plan())
+
+    assert caught.value.code is ErrorCode.ERR_SEARCH_AUTH_REQUIRED
+    assert recorder._spans[-1].error_code is ErrorCode.ERR_SEARCH_AUTH_REQUIRED
+
+
+def test_terminal_engines_blocked_error_is_distinct():
+    blocked = _json_response(
+        {
+            "results": [],
+            "unresponsive_engines": [["duckduckgo", "rate limit"]],
+        }
+    )
+
+    def handler(url, _headers):
+        if "api.github.com" in url:
+            return _github()
+        return blocked
+
+    with pytest.raises(DiscoveryEnginesBlockedError) as caught:
+        _targeted(
+            RoutingHttp(handler),
+            config=Config(
+                discovery_max_attempts=2,
+                discovery_retry_initial_backoff_seconds=0,
+                discovery_retry_max_backoff_seconds=0,
+            ),
+            sleep=lambda _: None,
+        ).discover(_plan())
+
+    assert caught.value.code is ErrorCode.ERR_SEARCH_ENGINES_BLOCKED
+
+
+def test_terminal_genuine_empty_results_remains_zero_results():
+    def handler(url, _headers):
+        return _github() if "api.github.com" in url else _searx()
+
+    with pytest.raises(DiscoveryZeroResultsError) as caught:
+        _targeted(RoutingHttp(handler)).discover(_plan())
+
+    assert caught.value.code is ErrorCode.ERR_SEARCH_ZERO_RESULTS
+
+
+def test_github_credentials_prefer_matching_environment_aliases(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "hosts.yml"
+    path.write_text(
+        "users:\n  local-user:\n    oauth_token: file-test-token-not-real\n"
+    )
+    monkeypatch.setenv("GH_TOKEN", GITHUB_TOKEN)
+    monkeypatch.setenv("GITHUB_TOKEN", GITHUB_TOKEN)
+
+    assert GitHubCredentialProvider(path).get_github_token() == GITHUB_TOKEN
+
+
+def test_github_credentials_parse_hosts_yaml(tmp_path, monkeypatch):
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    path = tmp_path / "hosts.yml"
+    path.write_text(
+        "github.com:\n"
+        "  user: local-user\n"
+        "users:\n"
+        "  local-user:\n"
+        f"    oauth_token: {GITHUB_TOKEN}\n"
+    )
+
+    assert GitHubCredentialProvider(path).get_github_token() == GITHUB_TOKEN
+
+
+@pytest.mark.parametrize(
+    ("env_one", "env_two", "document"),
+    [
+        ("first-test-token", "second-test-token", None),
+        (None, None, None),
+        (None, None, "users: {}"),
+        (None, None, "users:\n  one:\n    oauth_token: ' bad-token'"),
+        (
+            None,
+            None,
+            "users:\n"
+            "  one:\n"
+            "    oauth_token: first-test-token\n"
+            "  two:\n"
+            "    oauth_token: second-test-token\n",
+        ),
+    ],
+)
+def test_bad_github_credentials_are_redacted(
+    tmp_path, monkeypatch, env_one, env_two, document
+):
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    if env_one is not None:
+        monkeypatch.setenv("GH_TOKEN", env_one)
+    if env_two is not None:
+        monkeypatch.setenv("GITHUB_TOKEN", env_two)
+    path = tmp_path / "hosts.yml"
+    if document is not None:
+        path.write_text(document)
+
+    with pytest.raises(CredentialError) as caught:
+        GitHubCredentialProvider(path).get_github_token()
+
+    rendered = str(caught.value)
+    for secret in ("first-test-token", "second-test-token", "bad-token"):
+        assert secret not in rendered
+    assert str(path) not in rendered

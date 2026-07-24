@@ -28,7 +28,12 @@ from .contracts import (
     WorkflowRequest,
     WorkflowStep,
 )
-from .discovery import DiscoveryResult, DiscoveryZeroResultsError
+from .discovery import (
+    DiscoveryAuthError,
+    DiscoveryEnginesBlockedError,
+    DiscoveryResult,
+    DiscoveryZeroResultsError,
+)
 from .expansion import ExpansionMalformedError
 from .extraction import ExtractionResult
 from .openrouter import (
@@ -1033,6 +1038,8 @@ class FiveStepOrchestrator:
         attributed = (
             WorkflowStepFailure,
             ExpansionMalformedError,
+            DiscoveryAuthError,
+            DiscoveryEnginesBlockedError,
             DiscoveryZeroResultsError,
             SynthesisMalformedError,
             SynthesisPolicyError,

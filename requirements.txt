@@ -16,6 +16,7 @@ lxml_html_clean==0.4.5
 packaging==26.2
 pluggy==1.6.0
 Pygments==2.20.0
+PyYAML==6.0.3
 pyproject_hooks==1.2.0
 pytest==9.0.2
 python-dateutil==2.9.0.post0

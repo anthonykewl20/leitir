@@ -1,9 +1,8 @@
-"""Step 2: deterministic, credential-free targeted discovery.
+"""Step 2: deterministic targeted discovery.
 
 Tier 1 and 2 queries are sent to an injected local SearXNG HTTP boundary.
-Tier 3 queries are sent to anonymous GitHub Code Search.  The module neither
-imports nor invokes a model client, reads credentials, or fetches source
-content.
+Tier 3 queries are sent to authenticated GitHub Code Search.  The module
+neither imports nor invokes a model client or fetches source content.
 """
 
 from __future__ import annotations
@@ -13,6 +12,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
+import os
+from pathlib import Path
 import posixpath
 import time
 from types import MappingProxyType
@@ -35,6 +36,7 @@ from .contracts import (
     StepStatus,
     WorkflowStep,
 )
+from .openrouter import CredentialError, _hashable_text
 from .protocols import ExecutionTraceRecorder
 from .trace import (
     ArtifactKind,
@@ -181,6 +183,83 @@ class DiscoveryZeroResultsError(RuntimeError):
         )
 
 
+class DiscoveryAuthError(RuntimeError):
+    """GitHub credentials were missing, invalid, or rejected."""
+
+    code = ErrorCode.ERR_SEARCH_AUTH_REQUIRED
+
+    def __init__(self, discovery_data: DiscoveryData):
+        self.discovery_data = discovery_data
+        super().__init__("GitHub auth required / failed")
+
+
+class DiscoveryEnginesBlockedError(RuntimeError):
+    """SearXNG reported that its configured engines were unavailable."""
+
+    code = ErrorCode.ERR_SEARCH_ENGINES_BLOCKED
+
+    def __init__(self, discovery_data: DiscoveryData):
+        self.discovery_data = discovery_data
+        super().__init__("SearXNG engines blocked/rate-limited")
+
+
+class GitHubCredentialProvider:
+    """Load a GitHub token without exposing its value in errors or traces."""
+
+    def __init__(self, path: str | Path = "~/.config/gh/hosts.yml") -> None:
+        self._path = Path(path)
+
+    def get_github_token(self) -> str:
+        env_token: str | None = None
+        for variable in ("GH_TOKEN", "GITHUB_TOKEN"):
+            value = os.environ.get(variable)
+            if value:
+                if (
+                    env_token is not None
+                    and _hashable_text(value) != _hashable_text(env_token)
+                ):
+                    raise CredentialError("GitHub credential aliases conflict")
+                env_token = value
+        if env_token:
+            return self._validate(env_token)
+
+        try:
+            import yaml
+
+            document = yaml.safe_load(
+                self._path.expanduser().read_text(encoding="utf-8")
+            )
+        except Exception:
+            raise CredentialError(
+                "GitHub credential document could not be loaded"
+            ) from None
+        if not isinstance(document, Mapping) or not isinstance(
+            document.get("users"), Mapping
+        ):
+            raise CredentialError("GitHub credential document is malformed")
+        tokens = [
+            entry["oauth_token"]
+            for entry in document["users"].values()
+            if isinstance(entry, Mapping)
+            and isinstance(entry.get("oauth_token"), str)
+        ]
+        if not tokens:
+            raise CredentialError("GitHub credential token is missing")
+        if len({_hashable_text(token) for token in tokens}) > 1:
+            raise CredentialError("GitHub credential aliases conflict")
+        return self._validate(tokens[0])
+
+    @staticmethod
+    def _validate(token: str) -> str:
+        if (
+            not token
+            or token != token.strip()
+            or any(character in token for character in "\r\n")
+        ):
+            raise CredentialError("GitHub credential token is invalid")
+        return token
+
+
 @dataclass(slots=True)
 class _Telemetry:
     attempts: list[DiscoveryAttemptData] = field(default_factory=list)
@@ -210,11 +289,13 @@ class _Adapter:
         config: Config | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        credentials: GitHubCredentialProvider | None = None,
     ) -> None:
         self._http = http
         self._config = config or Config.default()
         self._sleep = sleep
         self._monotonic = monotonic
+        self._credentials = credentials
 
     def search(
         self,
@@ -270,7 +351,35 @@ class _Adapter:
         telemetry: _Telemetry,
     ) -> DiscoveryHttpResponse | None:
         url = self._url(record, page)
-        headers = self._headers()
+        try:
+            headers = self._headers()
+        except CredentialError:
+            telemetry.attempts.append(
+                DiscoveryAttemptData(
+                    channel=self.channel.value,
+                    query_id=query_id,
+                    page=page,
+                    attempt=1,
+                    latency_ms=0,
+                    http_status=None,
+                    outcome="error",
+                    error_category="auth",
+                    retryable=False,
+                )
+            )
+            telemetry.errors.append(
+                DiscoveryChannelErrorData(
+                    channel=self.channel.value,
+                    query_id=query_id,
+                    page=page,
+                    category="auth",
+                    http_status=None,
+                    attempts=1,
+                    retryable=False,
+                    exhausted=False,
+                )
+            )
+            return None
         last_category = "transport"
         last_status: int | None = None
         last_retryable = False
@@ -323,27 +432,29 @@ class _Adapter:
             else:
                 telemetry.statuses.append(response.status)
                 if 200 <= response.status < 300:
-                    telemetry.attempts.append(
-                        DiscoveryAttemptData(
-                            channel=self.channel.value,
-                            query_id=query_id,
-                            page=page,
-                            attempt=attempt,
-                            latency_ms=(self._monotonic() - started) * 1000,
-                            http_status=response.status,
-                            outcome="success",
+                    validation = self._validate_success(response)
+                    if validation is None:
+                        telemetry.attempts.append(
+                            DiscoveryAttemptData(
+                                channel=self.channel.value,
+                                query_id=query_id,
+                                page=page,
+                                attempt=attempt,
+                                latency_ms=(self._monotonic() - started) * 1000,
+                                http_status=response.status,
+                                outcome="success",
+                            )
                         )
+                        return response
+                    last_status = response.status
+                    last_category = validation
+                    last_retryable = True
+                else:
+                    last_status = response.status
+                    last_category = self._status_category(response.status)
+                    last_retryable = _retryable_status(
+                        response.status, channel=self.channel
                     )
-                    return response
-                last_status = response.status
-                last_category = (
-                    "rate_limit"
-                    if response.status in {403, 429}
-                    else "http_status"
-                )
-                last_retryable = _retryable_status(
-                    response.status, channel=self.channel
-                )
                 telemetry.attempts.append(
                     DiscoveryAttemptData(
                         channel=self.channel.value,
@@ -388,6 +499,14 @@ class _Adapter:
     def _headers(self) -> Mapping[str, str]:
         raise NotImplementedError
 
+    def _validate_success(
+        self, response: DiscoveryHttpResponse
+    ) -> str | None:
+        return None
+
+    def _status_category(self, status: int) -> str:
+        return "rate_limit" if status in {403, 429} else "http_status"
+
     def _url(self, record: QueryRecord, page: int) -> str:
         raise NotImplementedError
 
@@ -412,14 +531,25 @@ class SearXNGAdapter(_Adapter):
         return {"Accept": "application/json", "User-Agent": "Leitir/1"}
 
     def _url(self, record: QueryRecord, page: int) -> str:
-        params = urlencode(
-            {
-                "q": record.discovery_query,
-                "format": "json",
-                "pageno": page,
-            }
-        )
-        return f"{self._config.search_endpoint}?{params}"
+        params = {
+            "q": record.discovery_query,
+            "format": "json",
+            "pageno": page,
+        }
+        if self._config.search_engines:
+            params["engines"] = self._config.search_engines
+        return f"{self._config.search_endpoint}?{urlencode(params)}"
+
+    def _validate_success(
+        self, response: DiscoveryHttpResponse
+    ) -> str | None:
+        try:
+            document = json.loads(response.body.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            return "malformed_response"
+        if isinstance(document, Mapping) and document.get("unresponsive_engines"):
+            return "engines_blocked"
+        return None
 
     def _parse_page(
         self,
@@ -476,18 +606,26 @@ class SearXNGAdapter(_Adapter):
 
 
 class GitHubCodeSearchAdapter(_Adapter):
-    """Anonymous GitHub REST Code Search for Tier 3 file candidates."""
+    """Authenticated GitHub REST Code Search for Tier 3 file candidates."""
 
     channel = DiscoveryChannel.GITHUB_CODE_SEARCH
     tiers = frozenset({EvidenceTier.TIER_3})
 
     def _headers(self) -> Mapping[str, str]:
-        # Authorization is intentionally absent: v1 has no GitHub credential.
-        return {
+        headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "Leitir/1",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        if self._credentials is not None:
+            token = self._credentials.get_github_token()
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    def _status_category(self, status: int) -> str:
+        if status == 401:
+            return "auth"
+        return super()._status_category(status)
 
     def _url(self, record: QueryRecord, page: int) -> str:
         params = urlencode(
@@ -590,6 +728,7 @@ class TargetedDiscovery:
         trace_recorder: ExecutionTraceRecorder | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        github_credential_provider: GitHubCredentialProvider | None = None,
     ) -> None:
         self._config = config or Config.default()
         self._trace = trace_recorder
@@ -605,6 +744,10 @@ class TargetedDiscovery:
             config=self._config,
             sleep=sleep,
             monotonic=monotonic,
+            credentials=(
+                github_credential_provider
+                or GitHubCredentialProvider(self._config.github_credential_path)
+            ),
         )
 
     def discover(
@@ -655,16 +798,31 @@ class TargetedDiscovery:
             partial_failures=partial_failures,
         )
         latency_ms = (self._monotonic() - started) * 1000
+        failure: (
+            DiscoveryZeroResultsError
+            | DiscoveryAuthError
+            | DiscoveryEnginesBlockedError
+            | None
+        ) = None
+        if not candidates:
+            if any(error.category == "auth" for error in telemetry.errors):
+                failure = DiscoveryAuthError(data)
+            elif any(
+                error.category == "engines_blocked" for error in telemetry.errors
+            ):
+                failure = DiscoveryEnginesBlockedError(data)
+            else:
+                failure = DiscoveryZeroResultsError(data)
         self._record(
             plan,
             attempt_number=attempt_number,
             candidates=candidates,
             data=data,
             latency_ms=latency_ms,
-            failed=not candidates,
+            failure=failure,
         )
-        if not candidates:
-            raise DiscoveryZeroResultsError(data)
+        if failure is not None:
+            raise failure
         return DiscoveryResult(candidates=candidates, discovery_data=data)
 
     def _record(
@@ -675,7 +833,12 @@ class TargetedDiscovery:
         candidates: tuple[DiscoveryCandidate, ...],
         data: DiscoveryData,
         latency_ms: float,
-        failed: bool,
+        failure: (
+            DiscoveryZeroResultsError
+            | DiscoveryAuthError
+            | DiscoveryEnginesBlockedError
+            | None
+        ),
     ) -> None:
         if self._trace is None:
             return
@@ -692,23 +855,19 @@ class TargetedDiscovery:
                         DiscoveryChannel.SEARXNG.value,
                         DiscoveryChannel.GITHUB_CODE_SEARCH.value,
                     ],
-                    "credential_mode": "local-and-anonymous",
+                    "credential_mode": "local-and-github-token",
                 },
             )
         )
         self._trace.record_span(
             TraceSpan(
                 step=WorkflowStep.DISCOVERY,
-                status=StepStatus.FAILED if failed else StepStatus.SUCCEEDED,
+                status=StepStatus.FAILED if failure else StepStatus.SUCCEEDED,
                 latency_ms=latency_ms,
                 input_artifact_ids=(ids[0],),
                 output_artifact_ids=(ids[1],),
-                error_code=ErrorCode.ERR_SEARCH_ZERO_RESULTS if failed else None,
-                error_message=(
-                    "targeted discovery returned zero usable results after retries"
-                    if failed
-                    else None
-                ),
+                error_code=failure.code if failure else None,
+                error_message=str(failure) if failure else None,
                 retry_number=max(
                     (item.attempt - 1 for item in data.attempts), default=0
                 ),
@@ -857,12 +1016,15 @@ def _artifact_ids(request_id: str, attempt: int) -> tuple[ArtifactId, ArtifactId
 
 __all__ = [
     "DiscoveryCandidate",
+    "DiscoveryAuthError",
     "DiscoveryChannel",
     "DiscoveryCoordinator",
     "DiscoveryHttpResponse",
     "DiscoveryHttpTransport",
     "DiscoveryResult",
+    "DiscoveryEnginesBlockedError",
     "DiscoveryZeroResultsError",
+    "GitHubCredentialProvider",
     "GitHubCodeSearchAdapter",
     "SearXNGAdapter",
     "TargetedDiscovery",

@@ -24,6 +24,8 @@ def test_normative_defaults_and_fixed_boundaries():
     assert config.chunk_size > 0
     assert config.max_evidence_tokens >= config.chunk_size
     assert config.per_run_spend_cap_usd == 0.05
+    assert config.github_credential_path == "~/.config/gh/hosts.yml"
+    assert config.search_engines is None
     assert config.language.value == "python"
     assert config.test_command == "pytest"
     assert [tier.value for tier in config.evidence_tiers] == [1, 2, 3]

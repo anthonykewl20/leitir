@@ -247,6 +247,54 @@ class ExpansionData:
 
 
 @dataclass(frozen=True, slots=True)
+class DiscoveryAttemptData:
+    channel: str
+    query_id: str
+    page: int
+    attempt: int
+    latency_ms: int | float
+    http_status: int | None
+    outcome: str
+    error_category: str | None = None
+    retryable: bool = False
+
+    def __post_init__(self) -> None:
+        if self.channel not in {"searxng", "github_code_search"}:
+            raise ValueError("unknown discovery channel")
+        if not self.query_id:
+            raise ValueError("query_id must not be empty")
+        _positive("page", self.page)
+        _positive("attempt", self.attempt)
+        _non_negative("latency_ms", self.latency_ms)
+        if self.http_status is not None:
+            _non_negative_int("http_status", self.http_status)
+        if not self.outcome:
+            raise ValueError("outcome must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryChannelErrorData:
+    channel: str
+    query_id: str
+    page: int
+    category: str
+    http_status: int | None
+    attempts: int
+    retryable: bool
+    exhausted: bool
+
+    def __post_init__(self) -> None:
+        if self.channel not in {"searxng", "github_code_search"}:
+            raise ValueError("unknown discovery channel")
+        if not self.query_id or not self.category:
+            raise ValueError("query_id and category must not be empty")
+        _positive("page", self.page)
+        _positive("attempts", self.attempts)
+        if self.http_status is not None:
+            _non_negative_int("http_status", self.http_status)
+
+
+@dataclass(frozen=True, slots=True)
 class DiscoveryData:
     urls_found: int
     usable_results: int
@@ -255,9 +303,20 @@ class DiscoveryData:
     source_domains: tuple[str, ...] = ()
     http_statuses: tuple[int, ...] = ()
     filtering_reasons: tuple[str, ...] = ()
+    before_filter_count: int = 0
+    after_filter_count: int = 0
+    attempts: tuple[DiscoveryAttemptData, ...] = ()
+    channel_errors: tuple[DiscoveryChannelErrorData, ...] = ()
+    partial_failures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("urls_found", "usable_results", "deduplication_count"):
+        for name in (
+            "urls_found",
+            "usable_results",
+            "deduplication_count",
+            "before_filter_count",
+            "after_filter_count",
+        ):
             _non_negative_int(name, getattr(self, name))
 
 
@@ -764,6 +823,36 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
             source_domains=tuple(discovery_data["source_domains"]),
             http_statuses=tuple(discovery_data["http_statuses"]),
             filtering_reasons=tuple(discovery_data["filtering_reasons"]),
+            before_filter_count=discovery_data.get("before_filter_count", 0),
+            after_filter_count=discovery_data.get("after_filter_count", 0),
+            attempts=tuple(
+                DiscoveryAttemptData(
+                    channel=item["channel"],
+                    query_id=item["query_id"],
+                    page=item["page"],
+                    attempt=item["attempt"],
+                    latency_ms=item["latency_ms"],
+                    http_status=item["http_status"],
+                    outcome=item["outcome"],
+                    error_category=item["error_category"],
+                    retryable=item["retryable"],
+                )
+                for item in discovery_data.get("attempts", ())
+            ),
+            channel_errors=tuple(
+                DiscoveryChannelErrorData(
+                    channel=item["channel"],
+                    query_id=item["query_id"],
+                    page=item["page"],
+                    category=item["category"],
+                    http_status=item["http_status"],
+                    attempts=item["attempts"],
+                    retryable=item["retryable"],
+                    exhausted=item["exhausted"],
+                )
+                for item in discovery_data.get("channel_errors", ())
+            ),
+            partial_failures=tuple(discovery_data.get("partial_failures", ())),
         )
         if discovery_data
         else None,

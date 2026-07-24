@@ -63,7 +63,13 @@ class Config:
     expansion_max_queries_per_tier: int = 5
     expansion_max_task_characters: int = 12_000
     discovery_max_results: int = 50
+    discovery_max_results_per_query: int = 10
+    discovery_page_size: int = 10
+    discovery_max_pages: int = 3
     discovery_timeout_seconds: int = 30
+    discovery_max_attempts: int = 3
+    discovery_retry_initial_backoff_seconds: int | float = 1
+    discovery_retry_max_backoff_seconds: int | float = 8
     extraction_max_bytes: int = 5_000_000
     extraction_timeout_seconds: int = 60
     github_min_stars: int = 101
@@ -116,7 +122,11 @@ class Config:
             "expansion_max_queries_per_tier": (1, 20),
             "expansion_max_task_characters": (1, 100_000),
             "discovery_max_results": (1, 1_000),
+            "discovery_max_results_per_query": (1, 1_000),
+            "discovery_page_size": (1, 100),
+            "discovery_max_pages": (1, 100),
             "discovery_timeout_seconds": (1, 300),
+            "discovery_max_attempts": (1, 10),
             "extraction_max_bytes": (1, 100_000_000),
             "extraction_timeout_seconds": (1, 900),
             "github_min_stars": (101, 10_000_000),
@@ -156,6 +166,25 @@ class Config:
             raise ValueError(
                 "model_retry_initial_backoff_seconds cannot exceed "
                 "model_retry_max_backoff_seconds"
+            )
+        discovery_initial = self.discovery_retry_initial_backoff_seconds
+        discovery_maximum = self.discovery_retry_max_backoff_seconds
+        for name, value in (
+            ("discovery_retry_initial_backoff_seconds", discovery_initial),
+            ("discovery_retry_max_backoff_seconds", discovery_maximum),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > 300
+            ):
+                raise ValueError(f"{name} must be finite and between 0 and 300")
+        if discovery_initial > discovery_maximum:
+            raise ValueError(
+                "discovery_retry_initial_backoff_seconds cannot exceed "
+                "discovery_retry_max_backoff_seconds"
             )
         if (
             self.expansion_min_queries_per_tier

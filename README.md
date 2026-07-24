@@ -1,95 +1,145 @@
 # Leitir
 
-**Leitir is a proposed agentic technical search and code synthesis engine that grounds generated code in documentation and real implementations, then verifies it in a sandbox.**
+Leitir is a prototype technical-search and Python code-synthesis orchestrator.
+It expands a programming task into searches, collects and sanitizes evidence,
+asks `tencent/hy3` to synthesize code through OpenRouter, and runs that code
+with `pytest` in an isolated Docker container.
 
-## What it is
+**Status: prototype / design-stage. Leitir v1 is not production-ready.**
 
-Leitir is a prototype-stage design for answering difficult, version-sensitive programming questions more reliably than a single search-and-generate pass. It is intended to orchestrate evidence retrieval, code synthesis, execution, and repair while preserving a detailed trace of how each result was produced.
+## Shipped v1 boundaries
 
-This repository currently contains the v1 foundation, structured JSON trace and
-replay recorder, and the fixed raw-HTTP OpenRouter Hy3 client:
-side-effect-free typed contracts, validated configuration, replaceable
-external-effect interfaces, secret-safe logging, exact request policies and
-usage normalization, bounded retries, artifact replay references, attempt
-diffs, and evidence-token accounting. It intentionally contains no workflow,
-retrieval, sandbox, orchestration, or evaluation behavior yet.
+The implementation is deliberately narrower than parts of the PRD:
 
-## What it can do
+- Python tasks only.
+- Evidence Tiers 1–3 only; there is no headless-browser Tier 4.
+- The Docker sandbox runs `pytest` only; it does not run Cargo or Go.
+- The bundled smoke evaluation has four tasks (the supported smoke boundary is
+  3–5), not the planned 50-task benchmark.
+- Tracing is structured JSON only. OpenTelemetry export is deferred.
+- The workflow makes **zero internal Hy3 review calls**. A review-purpose
+  client method exists, but the v1 loop does not use it.
 
-The design is intended to:
+Leitir, the `tencent/hy3` model, and the OpenRouter provider are separate
+components. See [the PRD](docs/PRD.md) for the broader design; shipped behavior
+is described here and in the [operator guide](docs/operations.md).
 
-- ground API contracts and syntax in official provider and language documentation;
-- find control flow, error handling, and edge cases in real source code;
-- synthesize code in a requested target language from ranked evidence;
-- treat retrieved content as untrusted and flag instruction-like text;
-- compile or test generated code inside an ephemeral Docker workspace;
-- feed execution failures back into evidence gathering or code repair;
-- record step-level latency, usage, cost, evidence, errors, and diffs for evaluation and replay.
+## How v1 works
 
-## How it works
+1. **Query expansion:** Hy3 produces site-restricted queries for Tiers 1–3.
+2. **Discovery:** local, unauthenticated SearXNG serves documentation searches;
+   anonymous GitHub Code Search serves code searches.
+3. **Extraction:** Leitir fetches, cleans, deduplicates, and screens untrusted
+   retrieved content. Tier 3 repositories must have more than 100 stars.
+4. **Synthesis:** Hy3 produces a Python candidate grounded in selected evidence.
+5. **Verification:** a networkless, ephemeral Docker container runs `pytest`.
+   Syntax and logic failures can trigger at most three repairs (four total
+   candidate attempts). Missing or stale evidence routes back through search.
 
-Leitir follows a five-step workflow:
+Tier 1 official provider contracts outrank Tier 2 canonical Python/package
+documentation, which outranks Tier 3 GitHub implementation examples. Lower
+tiers may add detail but do not override a conflicting higher-tier contract.
 
-1. Expand the request into targeted queries.
-2. Discover documentation and source code across multiple search channels.
-3. Extract, clean, deduplicate, and sanitize the evidence.
-4. Synthesize target-language code while giving official contracts priority.
-5. Run the result in a sandbox and, when it fails, route the diagnostics into another evidence or repair loop.
+## Prerequisites
 
-Evidence is prioritized through four “doors”:
+- Python 3.11 or newer
+- A running Docker daemon accessible to the current user
+- Network access for OpenRouter, SearXNG, GitHub, raw source, and initial Docker
+  image/dependency builds
+- An unauthenticated SearXNG JSON endpoint at
+  `http://localhost:8080/search`
+- An OpenRouter key in the one supported credential file (described below)
 
-1. official provider documentation and OpenAPI specifications;
-2. canonical target-language documentation such as docs.rs and pkg.go.dev;
-3. GitHub code search for implementation logic and edge cases;
-4. a headless browser for content that direct extraction cannot recover.
+GitHub access is anonymous in v1; there is no GitHub credential option, so API
+rate limits apply.
 
-Higher-authority evidence wins when sources conflict. The Docker sandbox—not model confidence—determines whether generated code passes.
+## Install
 
-## Evaluation goals
-
-Leitir’s prototype goals are:
-
-- **SER (Search Efficiency Ratio):** retain more than 25% of cleaned candidate evidence in the first synthesis prompt;
-- **DRI (Door Resolution Index):** resolve at least 80% of accepted benchmark tasks using Tier 1 or Tier 2 evidence;
-- **FPCR (First-Pass Compilation Rate):** pass the complete hidden test suite on the first valid attempt for more than 70% of benchmark tasks;
-- **SCCR (Self-Correction Convergence Rate):** recover more than 85% of valid first-pass failures within three repair loops.
-
-The full definitions, exclusions, benchmark composition, and reporting requirements are in the [Product Requirements Document](docs/PRD.md).
-
-## Technology stack
-
-- **Orchestrator:** Python by default.
-- **Model:** exact model ID `tencent/hy3`, called through OpenRouter.
-- **Reasoning policy:** Step 1 query expansion uses default no-think mode by omitting the top-level `reasoning_effort` field. Step 4 synthesis, Step 5 repair, and every Hy3 review send top-level `"reasoning_effort": "high"`. Model calls send `"include_reasoning": false`.
-- **Discovery:** SearXNG or DuckDuckGo, plus GitHub Code Search.
-- **Extraction:** Trafilatura, readability tooling, raw GitHub content, or GitIngest.
-- **Verification:** ephemeral Docker workspaces running `cargo test`, `go test`, or `pytest` as appropriate.
-
-## Status
-
-**Status: Prototype foundation, trace recorder, and Hy3 transport.** See
-[docs/PRD.md](docs/PRD.md) for the complete specification.
-
-## Development
-
-Python 3.11 or newer is required. From a clean checkout:
+From a clean checkout, use the fully pinned runtime, test, and build closure:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m pip install --no-build-isolation --no-deps -e .
+leitir --help
+```
+
+The `[project.scripts]` entry in `pyproject.toml` installs the `leitir` console
+script. The install and help commands above have been verified against this
+checkout.
+
+## Credential setup
+
+Leitir reads a key **only** from the `openrouter` object in:
+
+```text
+~/.local/share/opencode/auth.json
+```
+
+That object must contain one of `key`, `apiKey`, or `api_key`. If multiple
+aliases are present, their values must agree. A shape-only example is:
+
+```json
+{"openrouter":{"key":"REDACTED"}}
+```
+
+Do not put a real key in a task, command line, issue, trace, or log. Keep the
+auth file out of source control and restrict its file permissions. The key is
+used as a Bearer credential and is never intentionally logged or serialized.
+Leitir does not read an OpenRouter key from an environment variable.
+
+## Quick start
+
+Running a task performs network calls, paid model calls, and Docker execution:
+
+```bash
+leitir run --task "Write a Python function that preserves repeated query parameters" --language python
+```
+
+`--language` defaults to `python`, so it may be omitted. A completed run prints
+one line such as:
+
+```text
+status=accepted trace=/home/user/.local/state/leitir/traces/TRACE.json
+```
+
+The trace is written for every completed orchestrator run, including task
+failure, repair exhaustion, cancellation, infrastructure failure, and spend-cap
+termination. The default per-run cap is USD 0.05.
+
+The CLI has no dry-run or fixture flag. Safe, offline checks are:
+
+```bash
+leitir --help
+leitir run --help
+leitir eval --help
+python -m pytest --ignore=tests/test_verification_docker.py
+```
+
+`leitir eval` is separately gated and refuses paid execution unless
+`LEITIR_ENABLE_LIVE_EVAL=1` is set. See
+[Smoke evaluation](docs/smoke-evaluation.md).
+
+## Tests and operator documentation
+
+```bash
 python -m pytest
 ```
 
-`requirements.txt` is the fully pinned runtime, test, and build dependency
-closure. Tests perform no network requests, Docker calls, or credential reads.
+The test suite uses injected fakes for network/model behavior and does not need
+a real credential. The full suite includes Docker sandbox integration tests
+and therefore requires the Docker daemon. For a Docker-free check, add
+`--ignore=tests/test_verification_docker.py`.
+
+- [Operations, CLI outcomes, traces, security, and troubleshooting](docs/operations.md)
+- [Smoke evaluation and metric definitions](docs/smoke-evaluation.md)
+- [Product Requirements Document](docs/PRD.md)
 
 ## Repository layout
 
-- `README.md` — project overview
-- `docs/PRD.md` — product requirements and technical specification
-- `src/leitir/` — configuration, contracts, protocols, logging, and trace records
-- `tests/` — offline pytest suite
-- `pyproject.toml` — package and test configuration
+- `src/leitir/` — shipped Python package
+- `src/leitir/benchmarks/smoke-v1/` — versioned four-task smoke benchmark
+- `tests/` — fake-backed tests plus live Docker sandbox integration tests
 - `requirements.txt` — exact dependency lock
+- `pyproject.toml` — package metadata and `leitir` console entry point

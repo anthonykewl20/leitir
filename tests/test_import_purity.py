@@ -50,7 +50,8 @@ def test_import_leitir_does_not_load_external_effect_modules(tmp_path):
         import json, sys
         sys.path.insert(0, %r)
         import leitir
-        import leitir.contracts, leitir.config, leitir.logging, leitir.protocols
+        import leitir.cli, leitir.contracts, leitir.config
+        import leitir.logging, leitir.protocols
         present = [m for m in %r if m in sys.modules]
         print(json.dumps({"present": present}))
         """

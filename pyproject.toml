@@ -13,10 +13,12 @@ dependencies = [
     "trafilatura>=2,<3",
 ]
 
+[project.scripts]
+leitir = "leitir.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-

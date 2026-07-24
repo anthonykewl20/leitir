@@ -107,6 +107,21 @@ from .synthesis import (
     Synthesizer,
     select_evidence,
 )
+from .verification import (
+    AttemptDisposition,
+    DockerSandbox,
+    EvidenceState,
+    FailureClassification,
+    InfrastructureStatus,
+    PythonVerificationTask,
+    SandboxExecution,
+    SandboxPolicyError,
+    Step5Controller,
+    TestOutcome,
+    VerificationAttempt,
+    VerificationResult,
+    VerificationRoute,
+)
 
 __all__ = [
     "Artifact",
@@ -202,4 +217,17 @@ __all__ = [
     "SynthesisResult",
     "Synthesizer",
     "select_evidence",
+    "AttemptDisposition",
+    "DockerSandbox",
+    "EvidenceState",
+    "FailureClassification",
+    "InfrastructureStatus",
+    "PythonVerificationTask",
+    "SandboxExecution",
+    "SandboxPolicyError",
+    "Step5Controller",
+    "TestOutcome",
+    "VerificationAttempt",
+    "VerificationResult",
+    "VerificationRoute",
 ]

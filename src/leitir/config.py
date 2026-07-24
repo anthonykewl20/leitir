@@ -86,7 +86,9 @@ class Config:
     sandbox_timeout_seconds: int = 120
     sandbox_memory_mb: int = 512
     sandbox_cpu_count: int = 1
+    sandbox_process_limit: int = 64
     sandbox_max_output_bytes: int = 1_000_000
+    sandbox_tmpfs_mb: int = 64
 
     max_repairs: int = 3
     per_run_spend_cap_usd: float = 0.05
@@ -145,7 +147,9 @@ class Config:
             "sandbox_timeout_seconds": (1, 3_600),
             "sandbox_memory_mb": (64, 65_536),
             "sandbox_cpu_count": (1, 128),
+            "sandbox_process_limit": (8, 4_096),
             "sandbox_max_output_bytes": (1, 100_000_000),
+            "sandbox_tmpfs_mb": (1, 1_024),
             "max_repairs": (0, 3),
         }
         for name, (minimum, maximum) in bounds.items():

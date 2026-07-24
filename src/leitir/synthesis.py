@@ -1,8 +1,9 @@
 """Step 4: deterministic evidence selection and grounded Python synthesis.
 
 This module owns no HTTP or credential behavior.  It accepts only Step 3's
-typed chunks and invokes the injected Hy3 client's ``synthesis`` purpose.
-Provider policy remains entirely inside :mod:`leitir.openrouter`.
+typed chunks and invokes the injected Hy3 client's ``synthesis`` purpose for
+initial candidates or ``repair`` purpose for Step 5 feedback. Provider policy
+remains entirely inside :mod:`leitir.openrouter`.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .contracts import (
     WorkflowStep,
 )
 from .extraction import EvidenceChunk, ExtractionResult
+from .logging import redact
 from .openrouter import Hy3Response
 from .protocols import ExecutionTraceRecorder
 from .trace import (
@@ -44,9 +46,16 @@ class SynthesisMode(str, Enum):
 
 
 class SynthesisClient(Protocol):
-    """The sole model operation that Step 4 may invoke."""
+    """Shared Hy3 operations used by initial synthesis and Step 5 repair."""
 
     def synthesis(
+        self,
+        messages: Sequence[Mapping[str, object]],
+        *,
+        options: Mapping[str, object] | None = None,
+    ) -> Hy3Response: ...
+
+    def repair(
         self,
         messages: Sequence[Mapping[str, object]],
         *,
@@ -386,7 +395,12 @@ class EvidenceGroundedSynthesizer:
 
         started = self._monotonic()
         try:
-            response = self._client.synthesis(messages, options=options)
+            operation = (
+                getattr(self._client, "repair", self._client.synthesis)
+                if mode is SynthesisMode.REPAIR
+                else self._client.synthesis
+            )
+            response = operation(messages, options=options)
         except Exception:
             latency_ms = max(0, (self._monotonic() - started) * 1000)
             self._record_failure_span(
@@ -455,7 +469,7 @@ class EvidenceGroundedSynthesizer:
         *,
         attempt_number: int = 2,
     ) -> PythonCandidate:
-        """Repair through the same Step 4 synthesis purpose, never ``repair``."""
+        """Repair through the shared client's high-reasoning repair purpose."""
 
         return self.synthesize(
             request,
@@ -496,15 +510,15 @@ class EvidenceGroundedSynthesizer:
         if repair is not None:
             document["repair_context"] = {
                 "prior_candidate": _bounded(
-                    repair.prior_candidate.code,
+                    redact(repair.prior_candidate.code),
                     self._config.repair_max_candidate_characters,
                 ),
                 "recorded_diagnostics": _bounded(
-                    repair.diagnostics,
+                    redact(repair.diagnostics),
                     self._config.repair_max_diagnostics_characters,
                 ),
                 "prior_diff": _bounded(
-                    repair.prior_diff,
+                    redact(repair.prior_diff),
                     self._config.repair_max_diff_characters,
                 ),
                 "instruction": (
@@ -630,7 +644,9 @@ class EvidenceGroundedSynthesizer:
                 media_type="application/json",
                 metadata={
                     "model": OPENROUTER_MODEL,
-                    "purpose": "synthesis",
+                    "purpose": (
+                        "repair" if mode is SynthesisMode.REPAIR else "synthesis"
+                    ),
                     "reasoning_effort": "high",
                     "include_reasoning": False,
                     "response_format": "json_object",

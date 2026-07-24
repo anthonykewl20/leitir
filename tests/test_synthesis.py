@@ -337,6 +337,38 @@ def test_repair_uses_synthesis_with_bounded_recorded_context_and_no_hidden_tests
         )
 
 
+def test_repair_routes_through_shared_clients_high_reasoning_repair_purpose():
+    class PurposeAwareClient(FakeSynthesisClient):
+        def __init__(self, *contents):
+            super().__init__(*contents)
+            self.purposes = []
+
+        def synthesis(self, messages, *, options=None):
+            self.purposes.append("synthesis")
+            return super().synthesis(messages, options=options)
+
+        def repair(self, messages, *, options=None):
+            self.purposes.append("repair")
+            return super().synthesis(messages, options=options)
+
+    evidence = chunk("evidence", EvidenceTier.TIER_1, 2)
+    client = PurposeAwareClient(
+        document("value = 1\n", "evidence"),
+        document("value = 2\n", "evidence"),
+    )
+    synthesizer = EvidenceGroundedSynthesizer(client)
+    prior = synthesizer.synthesize(request(), (evidence,))
+    synthesizer.repair(
+        request(),
+        (evidence,),
+        RepairContext(prior, "pytest failed", "no prior repair diff"),
+    )
+    assert client.purposes == ["synthesis", "repair"]
+    # The client validates that its repair purpose sends high reasoning; the
+    # synthesizer independently rejects any response that does not report it.
+    assert client.calls[-1]
+
+
 @pytest.mark.parametrize(
     "content",
     [

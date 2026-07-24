@@ -430,12 +430,20 @@ class SandboxData:
     stderr_artifact_id: ArtifactId | None
     timed_out: bool
     error_category: str | None = None
+    infrastructure_status: str = "valid"
+    classification: str | None = None
+    repair_used: bool = False
+    disposition: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.timed_out, bool):
             raise TypeError("timed_out must be a bool")
         if self.timed_out and self.test_passed is True:
             raise ValueError("a timed-out sandbox cannot have passed")
+        if self.infrastructure_status not in {"valid", "invalid"}:
+            raise ValueError("unknown sandbox infrastructure status")
+        if not isinstance(self.repair_used, bool):
+            raise TypeError("repair_used must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,11 +485,17 @@ class TraceSpan:
             and self.synthesis is not None
             and self.synthesis.parse_status != "parsed"
         )
+        normalized_sandbox_failure = (
+            self.step is WorkflowStep.VERIFICATION
+            and self.sandbox is not None
+            and self.sandbox.error_category is not None
+        )
         if (
             self.status is StepStatus.FAILED
             and self.error_code is None
             and not normalized_extraction_failure
             and not normalized_synthesis_failure
+            and not normalized_sandbox_failure
         ):
             raise ValueError(
                 "a failed span requires an error_code or normalized "
@@ -1028,6 +1042,12 @@ def _span(data: Mapping[str, Any]) -> TraceSpan:
             stderr_artifact_id=_artifact_id(sandbox_data["stderr_artifact_id"]),
             timed_out=sandbox_data["timed_out"],
             error_category=sandbox_data["error_category"],
+            infrastructure_status=sandbox_data.get(
+                "infrastructure_status", "valid"
+            ),
+            classification=sandbox_data.get("classification"),
+            repair_used=sandbox_data.get("repair_used", False),
+            disposition=sandbox_data.get("disposition"),
         )
         if sandbox_data
         else None,

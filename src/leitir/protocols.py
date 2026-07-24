@@ -6,7 +6,8 @@ trace implementations belong to later issues and are never created on import.
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Protocol, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Iterable, Mapping, Protocol, runtime_checkable
 
 from .contracts import Artifact, StepResult, TerminalDisposition, WorkflowRequest
 from .trace import (
@@ -17,6 +18,9 @@ from .trace import (
     ReplayMetadata,
     TraceSpan,
 )
+
+if TYPE_CHECKING:
+    from .verification import PythonVerificationTask, SandboxExecution
 
 
 @runtime_checkable
@@ -41,7 +45,12 @@ class CredentialProvider(Protocol):
 
 @runtime_checkable
 class SandboxExecutor(Protocol):
-    def execute(self, source: str) -> StepResult: ...
+    def execute(
+        self,
+        task: PythonVerificationTask,
+        *,
+        hidden_tests: str | Path | None = None,
+    ) -> SandboxExecution: ...
 
 
 @runtime_checkable

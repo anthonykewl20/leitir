@@ -19,6 +19,8 @@ def test_normative_defaults_and_fixed_boundaries():
     assert config.model_retry_initial_backoff_seconds == 1
     assert config.model_retry_max_backoff_seconds == 8
     assert config.max_repairs == 3
+    assert config.sandbox_process_limit == 64
+    assert config.sandbox_tmpfs_mb == 64
     assert config.chunk_size > 0
     assert config.max_evidence_tokens >= config.chunk_size
     assert config.per_run_spend_cap_usd == 0.05
@@ -49,6 +51,10 @@ def test_normative_defaults_and_fixed_boundaries():
         ("extraction_retry_max_backoff_seconds", 301),
         ("sandbox_timeout_seconds", 0),
         ("sandbox_memory_mb", 32),
+        ("sandbox_cpu_count", 0),
+        ("sandbox_process_limit", 7),
+        ("sandbox_max_output_bytes", 0),
+        ("sandbox_tmpfs_mb", 0),
         ("max_repairs", 4),
         ("max_repairs", -1),
         ("per_run_spend_cap_usd", 0),

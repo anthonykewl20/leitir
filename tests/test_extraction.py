@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import deque
 
+import pytest
+
 from leitir import (
     Config,
     DiscoveryCandidate,
@@ -81,9 +83,30 @@ def test_comment_stripping_preserves_strings_and_structure():
     assert "# gone" not in cleaned
 
 
+def test_comment_stripping_is_best_effort_for_incomplete_python():
+    source = "value = '''unterminated"
+    assert strip_python_comments(source) == (source, False)
+
+    recorder = TraceRecorder("trace-sanitization-skipped", "partial source")
+    record = EvidenceExtractor(
+        QueueFetcher(response(source)),
+        trace_recorder=recorder,
+    ).extract(candidate(stars=0))
+
+    assert record.eligible
+    assert record.cleaned_text == source
+    assert record.error_code is None
+    assert not record.instruction_like_content
+    assert recorder._spans[-1].status is StepStatus.SUCCEEDED
+    assert recorder._spans[-1].error_code is None
+
+
 def test_raw_source_provenance_star_boundary_and_token_chunks():
     rejected_fetcher = QueueFetcher()
-    rejected = EvidenceExtractor(rejected_fetcher).extract(candidate(stars=100))
+    rejected = EvidenceExtractor(
+        rejected_fetcher,
+        config=Config(github_min_stars=101),
+    ).extract(candidate(stars=100))
     assert not rejected.eligible
     assert rejected.star_threshold_passed is False
     assert not rejected_fetcher.calls
@@ -195,6 +218,20 @@ def test_document_extractor_is_injected_and_latin1_is_supported():
     assert record.raw_bytes == raw
 
 
+@pytest.mark.parametrize("tier", [EvidenceTier.TIER_1, EvidenceTier.TIER_2])
+@pytest.mark.parametrize("extracted", [None, "", "   "])
+def test_empty_document_extraction_falls_back_to_decoded_raw_text(tier, extracted):
+    raw_text = "Raw documentation content survives extractor failure."
+    record = EvidenceExtractor(
+        QueueFetcher(response(raw_text)),
+        extractor=lambda _content, url: extracted,
+    ).extract(candidate(tier))
+
+    assert record.eligible
+    assert record.cleaned_text == raw_text
+    assert record.error_code is None
+
+
 def test_default_trafilatura_extractor_removes_page_chrome():
     html = """
     <html><body>
@@ -225,3 +262,17 @@ def test_repository_metadata_supplies_stars_and_revision():
     assert record.repository_stars == 101
     assert record.revision == "main"
     assert fetcher.calls[1][0].endswith("/acme/repo/main/src/main.py")
+
+
+def test_repository_metadata_defaults_missing_stars_to_zero():
+    fetcher = QueueFetcher(
+        response('{"default_branch":"main"}'),
+        response("answer = 42\n"),
+    )
+    record = EvidenceExtractor(fetcher).extract(
+        candidate(stars=None, revision=None)
+    )
+
+    assert record.eligible
+    assert record.repository_stars == 0
+    assert record.star_threshold_passed is True

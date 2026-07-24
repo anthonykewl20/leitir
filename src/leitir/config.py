@@ -78,7 +78,8 @@ class Config:
     extraction_max_attempts: int = 3
     extraction_retry_initial_backoff_seconds: int | float = 1
     extraction_retry_max_backoff_seconds: int | float = 8
-    github_min_stars: int = 101
+    # No hard star gate by default; operators may still configure a heuristic.
+    github_min_stars: int = 0
 
     chunk_size: int = 2_000
     max_evidence_tokens: int = 20_000
@@ -141,7 +142,7 @@ class Config:
             "extraction_max_bytes": (1, 100_000_000),
             "extraction_timeout_seconds": (1, 900),
             "extraction_max_attempts": (1, 10),
-            "github_min_stars": (101, 10_000_000),
+            "github_min_stars": (0, 10_000_000),
             "chunk_size": (1, 100_000),
             "max_evidence_tokens": (1, 1_000_000),
             "repair_max_diagnostics_characters": (1, 1_000_000),

@@ -14,6 +14,7 @@ from leitir import (
     Config,
     EvidenceChunk,
     EvidenceGroundedSynthesizer,
+    EvidenceSelectionError,
     EvidenceTier,
     ExecutionTrace,
     HttpResponse,
@@ -479,6 +480,100 @@ def test_hy3_synthesis_output_variants_are_normalized(content, expected_code):
 
     assert candidate.code == expected_code
     assert candidate.citations == (evidence.artifact_id,)
+
+
+@pytest.mark.parametrize(
+    "citation_kind",
+    [
+        "evidence_id",
+        "source_uri",
+        "evidence_object",
+        "source_object",
+        "suffix",
+    ],
+)
+def test_citations_resolve_retained_evidence_variants(citation_kind):
+    evidence = chunk("prefix-evidence", EvidenceTier.TIER_1, 2)
+    citation = {
+        "evidence_id": evidence.evidence_id.value,
+        "source_uri": evidence.source_uri,
+        "evidence_object": {"evidence_id": evidence.evidence_id.value},
+        "source_object": {"source_uri": evidence.source_uri},
+        "suffix": "evidence",
+    }[citation_kind]
+    content = json.dumps({"code": "value = 1\n", "citations": [citation]})
+
+    candidate = EvidenceGroundedSynthesizer(
+        FakeSynthesisClient(content)
+    ).synthesize(request(), (evidence,))
+
+    assert candidate.citations == (evidence.artifact_id,)
+
+
+def test_single_citation_object_resolves_by_source_uri():
+    evidence = chunk("evidence", EvidenceTier.TIER_1, 2)
+    content = json.dumps(
+        {
+            "code": "value = 1\n",
+            "citations": {"source_uri": evidence.source_uri},
+        }
+    )
+
+    candidate = EvidenceGroundedSynthesizer(
+        FakeSynthesisClient(content)
+    ).synthesize(request(), (evidence,))
+
+    assert candidate.citations == (evidence.artifact_id,)
+
+
+def test_deeply_nested_hy3_response_wrapper_is_unwrapped():
+    evidence = chunk("evidence", EvidenceTier.TIER_1, 2)
+    content = json.dumps(
+        {
+            "data": {
+                "output": {
+                    "result": {
+                        "candidate": {
+                            "code": "value = 1\n",
+                            "citations": [{"evidence_id": "parent-evidence"}],
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    candidate = EvidenceGroundedSynthesizer(
+        FakeSynthesisClient(content)
+    ).synthesize(request(), (evidence,))
+
+    assert candidate.citations == (evidence.artifact_id,)
+
+
+def test_no_chunk_fitting_budget_records_evidence_exhaustion():
+    evidence = chunk("oversize", EvidenceTier.TIER_1, 2)
+    client = FakeSynthesisClient()
+    recorder = TraceRecorder("trace-exhausted-4", "evidence exhaustion")
+
+    with pytest.raises(
+        EvidenceSelectionError,
+        match="no evidence chunk fits max_evidence_tokens",
+    ):
+        EvidenceGroundedSynthesizer(
+            client,
+            config=Config(chunk_size=1, max_evidence_tokens=1),
+            trace_recorder=recorder,
+        ).synthesize(request(), (evidence,))
+
+    assert not client.calls
+    span = recorder._spans[-1]
+    assert span.status is StepStatus.FAILED
+    assert span.synthesis.parse_status == "evidence_exhausted"
+    assert span.error_message == "no evidence chunk fit max_evidence_tokens"
+    assert span.synthesis.total_cleaned_evidence_tokens == 2
+    assert span.synthesis.total_cleaned_chunk_ids == (evidence.artifact_id,)
+    assert span.synthesis.retained_evidence_tokens == 0
+    assert span.synthesis.retained_chunk_ids == ()
 
 
 def test_provider_failure_propagates_and_missing_usage_is_null_flagged():

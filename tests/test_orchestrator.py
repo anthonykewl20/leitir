@@ -28,6 +28,7 @@ from leitir import (
     QueryRecord,
     SandboxExecution,
     StepStatus,
+    SynthesisData,
     SynthesisMode,
     TerminalDisposition,
     TestOutcome as VerificationTestOutcome,
@@ -142,6 +143,28 @@ class Steps:
 
     def synthesize(self, request, evidence, *, attempt_number=1):
         self.calls.append("synthesize")
+        if self.fail_on == "synthesis_accounted":
+            retained_id = ArtifactId("retained-before-synthesis-failure")
+            skipped_id = ArtifactId("skipped-before-synthesis-failure")
+            self.recorder.record_span(
+                TraceSpan(
+                    step=WorkflowStep.SYNTHESIS,
+                    status=StepStatus.FAILED,
+                    latency_ms=1,
+                    attempt_number=attempt_number,
+                    synthesis=SynthesisData(
+                        mode="initial",
+                        parse_status="malformed",
+                        candidate_artifact_id=None,
+                        total_cleaned_evidence_tokens=7,
+                        total_cleaned_chunk_ids=(retained_id, skipped_id),
+                        retained_evidence_tokens=3,
+                        retained_chunk_ids=(retained_id,),
+                        is_first_prompt=True,
+                    ),
+                )
+            )
+            raise RuntimeError("synthesis failed after selecting evidence")
         self._maybe_fail("synthesize")
         self._model_span(WorkflowStep.SYNTHESIS, attempt_number, high=True)
         return candidate(attempt_number)
@@ -466,3 +489,24 @@ def test_every_step_infrastructure_error_finalizes_and_stops(operation):
     assert steps.calls[-1] == operation
     assert recorder.finished
     assert result.trace.spans[-1].status is StepStatus.FAILED
+
+
+def test_synthesis_failure_preserves_selection_accounting_in_final_trace():
+    result, steps, _ = orchestrator(
+        (FailureClassification.PASS,),
+        fail_on="synthesis_accounted",
+    )
+
+    assert result.final_status is TerminalDisposition.INFRASTRUCTURE_ERROR
+    assert steps.calls[-1] == "synthesize"
+    assert result.trace.evidence_accounting == EvidenceAccounting(
+        total_cleaned_evidence_tokens=7,
+        total_cleaned_chunk_ids=(
+            ArtifactId("retained-before-synthesis-failure"),
+            ArtifactId("skipped-before-synthesis-failure"),
+        ),
+        retained_evidence_tokens=3,
+        retained_chunk_ids=(
+            ArtifactId("retained-before-synthesis-failure"),
+        ),
+    )

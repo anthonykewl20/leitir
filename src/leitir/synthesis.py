@@ -404,14 +404,45 @@ class EvidenceGroundedSynthesizer:
             if isinstance(chunks, ExtractionResult)
             else tuple(chunks)
         )
-        selection = select_evidence(
-            values,
-            self._config.max_evidence_tokens,
-            relevant_chunk_ids=(
-                repair_context.relevant_chunk_ids if repair_context else ()
-            ),
-        )
         ids = _artifact_ids(request.request_id, attempt_number)
+        try:
+            selection = select_evidence(
+                values,
+                self._config.max_evidence_tokens,
+                relevant_chunk_ids=(
+                    repair_context.relevant_chunk_ids if repair_context else ()
+                ),
+            )
+        except EvidenceSelectionError:
+            groups = tuple(EvidenceGroup(item, (item,)) for item in values)
+            accounting = EvidenceAccounting(
+                total_cleaned_evidence_tokens=sum(
+                    group.chunk.token_count for group in groups
+                ),
+                total_cleaned_chunk_ids=tuple(
+                    group.chunk.artifact_id for group in groups
+                ),
+                retained_evidence_tokens=0,
+                retained_chunk_ids=(),
+            )
+            selection = EvidenceSelection(
+                candidates=groups,
+                retained=(),
+                accounting=accounting,
+                deduplicated_chunk_ids=(),
+            )
+            self._record_request_artifacts(ids, request, selection, mode)
+            self._record_failure_span(
+                ids,
+                selection,
+                mode,
+                attempt_number,
+                0.0,
+                "evidence_exhausted",
+                "no evidence chunk fit max_evidence_tokens",
+                response=None,
+            )
+            raise
         messages = self._messages(request, selection, repair_context)
         options = {"response_format": {"type": "json_object"}}
         self._record_request_artifacts(ids, request, selection, mode)
@@ -602,23 +633,50 @@ class EvidenceGroundedSynthesizer:
         if isinstance(citations, str):
             citations = [citations]
         elif isinstance(citations, Mapping):
-            citation = citations.get("chunk_id") or citations.get("id")
-            citations = [citation] if citation else []
+            citations = [citations]
         if not isinstance(citations, (list, tuple)):
             raise TypeError("citations must be an array")
 
-        retained = {
+        chunk_ids = {
             group.chunk.artifact_id.value: group.chunk.artifact_id
             for group in selection.retained
         }
+        evidence_ids: dict[str, ArtifactId] = {}
+        source_keys: dict[str, ArtifactId] = {}
+        for group in selection.retained:
+            chunk = group.chunk
+            evidence_ids.setdefault(chunk.evidence_id.value, chunk.artifact_id)
+            for source in group.sources:
+                source_keys[source.artifact_id.value] = chunk.artifact_id
+                source_keys[source.source_uri] = chunk.artifact_id
+
+        def resolve(value: object) -> ArtifactId | None:
+            if isinstance(value, Mapping):
+                value = (
+                    value.get("chunk_id")
+                    or value.get("id")
+                    or value.get("evidence_id")
+                    or value.get("source_uri")
+                )
+            if not isinstance(value, str) or not value:
+                return None
+            if value in chunk_ids:
+                return chunk_ids[value]
+            if value in evidence_ids:
+                return evidence_ids[value]
+            if value in source_keys:
+                return source_keys[value]
+            for key, artifact_id in chunk_ids.items():
+                if key.endswith(value) or value.endswith(key):
+                    return artifact_id
+            return None
+
         normalized: list[ArtifactId] = []
         seen: set[ArtifactId] = set()
         for value in citations:
-            if isinstance(value, Mapping):
-                value = value.get("chunk_id") or value.get("id")
-            if not isinstance(value, str) or value not in retained:
+            item = resolve(value)
+            if item is None:
                 raise ValueError("citation must identify retained evidence")
-            item = retained[value]
             if item not in seen:
                 normalized.append(item)
                 seen.add(item)

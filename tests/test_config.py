@@ -24,6 +24,7 @@ def test_normative_defaults_and_fixed_boundaries():
     assert config.chunk_size > 0
     assert config.max_evidence_tokens >= config.chunk_size
     assert config.per_run_spend_cap_usd == 0.05
+    assert config.github_min_stars == 0
     assert config.github_credential_path == "~/.config/gh/hosts.yml"
     assert config.search_engines is None
     assert config.language.value == "python"
@@ -51,6 +52,7 @@ def test_normative_defaults_and_fixed_boundaries():
         ("extraction_max_attempts", 0),
         ("extraction_retry_initial_backoff_seconds", -1),
         ("extraction_retry_max_backoff_seconds", 301),
+        ("github_min_stars", -1),
         ("sandbox_timeout_seconds", 0),
         ("sandbox_memory_mb", 32),
         ("sandbox_cpu_count", 0),
@@ -71,6 +73,11 @@ def test_bounded_values_rejected(name, value):
 def test_chunk_cannot_exceed_evidence_budget():
     with pytest.raises(ValueError, match="chunk_size"):
         Config(chunk_size=101, max_evidence_tokens=100)
+
+
+def test_github_star_gate_remains_configurable_from_zero():
+    assert Config(github_min_stars=0).github_min_stars == 0
+    assert Config(github_min_stars=5).github_min_stars == 5
 
 
 def test_model_retry_initial_backoff_cannot_exceed_cap():

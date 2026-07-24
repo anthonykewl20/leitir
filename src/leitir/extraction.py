@@ -385,7 +385,7 @@ class EvidenceExtractor:
                     if not isinstance(document, Mapping):
                         raise ValueError
                     if stars is None:
-                        stars_value = document.get("stargazers_count")
+                        stars_value = document.get("stargazers_count", 0)
                         if isinstance(stars_value, bool) or not isinstance(
                             stars_value, int
                         ):
@@ -440,18 +440,21 @@ class EvidenceExtractor:
         comments_stripped = False
         try:
             if candidate.tier is EvidenceTier.TIER_3:
-                cleaned, comments_stripped = strip_python_comments(decoded)
+                try:
+                    cleaned, comments_stripped = strip_python_comments(decoded)
+                except Exception:
+                    # Sanitization is best-effort for partial real-world source.
+                    cleaned = decoded
+                    comments_stripped = False
             else:
                 cleaned = self._extract_document(raw, source_uri)
+                if not cleaned.strip():
+                    cleaned = decoded
         except Exception as exc:
             return self._failure(
                 candidate, source_uri, raw, revision, attempts,
                 f"sanitization_failed:{type(exc).__name__}", stars, threshold, started,
-                error_code=(
-                    ErrorCode.ERR_SECURITY_PROMPT_INJECTION
-                    if raw_flags
-                    else None
-                ),
+                error_code=None,
                 security_flags=raw_flags,
                 attempt_number=attempt_number,
             )
@@ -741,24 +744,27 @@ class EvidenceExtractor:
 
 
 def strip_python_comments(source: str) -> tuple[str, bool]:
-    """Remove COMMENT tokens while preserving strings, lines, and indentation."""
+    """Remove comments, returning unchanged source when tokenization cannot finish."""
     if not isinstance(source, str):
         raise TypeError("source must be text")
-    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
-    stripped = False
-    rewritten: list[tokenize.TokenInfo] = []
-    for token in tokens:
-        if token.type == tokenize.COMMENT:
-            stripped = True
-            token = tokenize.TokenInfo(
-                token.type,
-                " " * len(token.string),
-                token.start,
-                token.end,
-                token.line,
-            )
-        rewritten.append(token)
-    return tokenize.untokenize(rewritten), stripped
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+        stripped = False
+        rewritten: list[tokenize.TokenInfo] = []
+        for token in tokens:
+            if token.type == tokenize.COMMENT:
+                stripped = True
+                token = tokenize.TokenInfo(
+                    token.type,
+                    " " * len(token.string),
+                    token.start,
+                    token.end,
+                    token.line,
+                )
+            rewritten.append(token)
+        return tokenize.untokenize(rewritten), stripped
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return source, False
 
 
 def _decode(response: ExtractionHttpResponse) -> str:

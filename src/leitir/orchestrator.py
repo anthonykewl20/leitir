@@ -674,7 +674,7 @@ class FiveStepOrchestrator:
                     state = _State.REPAIR
 
         assert final_status is not None
-        accounting = self._evidence_accounting(candidate, evidence)
+        accounting = self._evidence_accounting(candidate, evidence, recorder)
         self._ensure_trace_artifacts(recorder, accounting)
         replay = self._replay_metadata(recorder, config_id)
         trace = recorder.finish(
@@ -989,9 +989,29 @@ class FiveStepOrchestrator:
         self,
         candidate: PythonCandidate | None,
         evidence: ExtractionResult | None,
+        recorder: TraceRecorder | None = None,
     ) -> EvidenceAccounting:
         if candidate is not None:
             return candidate.evidence_accounting
+        if recorder is not None:
+            for span in reversed(recorder.spans):
+                if (
+                    span.step is WorkflowStep.SYNTHESIS
+                    and span.synthesis is not None
+                ):
+                    synthesis = span.synthesis
+                    return EvidenceAccounting(
+                        total_cleaned_evidence_tokens=(
+                            synthesis.total_cleaned_evidence_tokens
+                        ),
+                        total_cleaned_chunk_ids=(
+                            synthesis.total_cleaned_chunk_ids
+                        ),
+                        retained_evidence_tokens=(
+                            synthesis.retained_evidence_tokens
+                        ),
+                        retained_chunk_ids=synthesis.retained_chunk_ids,
+                    )
         chunks = evidence.chunks if evidence is not None else ()
         return EvidenceAccounting(
             total_cleaned_evidence_tokens=sum(chunk.token_count for chunk in chunks),

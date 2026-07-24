@@ -417,15 +417,10 @@ class OpenRouterHy3Client:
             "Authorization": f"Bearer {key}",
         }
         started = self._monotonic()
-        response, attempts = self._send_with_retries(
+        result, attempts = self._send_with_retries(
             purpose=purpose,
             headers=headers,
             body=serialized,
-        )
-        result = self._parse_response(
-            purpose=purpose,
-            response=response,
-            attempts=attempts,
         )
         recorder = trace_recorder or self._trace_recorder
         if recorder is not None:
@@ -485,7 +480,7 @@ class OpenRouterHy3Client:
         purpose: Hy3Purpose,
         headers: Mapping[str, str],
         body: bytes,
-    ) -> tuple[HttpResponse, int]:
+    ) -> tuple[Hy3Response, int]:
         maximum = self._config.model_max_attempts
         for attempt in range(1, maximum + 1):
             try:
@@ -497,9 +492,15 @@ class OpenRouterHy3Client:
                 )
             except Exception as exc:
                 timeout = _is_timeout(exc)
-                retryable = timeout
+                retryable = timeout or _is_retryable_transport(exc)
                 if retryable and attempt < maximum:
-                    self._retry(purpose, "timeout", None, attempt + 1, attempt)
+                    self._retry(
+                        purpose,
+                        "timeout" if timeout else "transport",
+                        None,
+                        attempt + 1,
+                        attempt,
+                    )
                     continue
                 raise TransportError(
                     category="timeout" if timeout else "transport",
@@ -510,7 +511,24 @@ class OpenRouterHy3Client:
                 ) from None
 
             if 200 <= response.status < 300:
-                return response, attempt
+                try:
+                    parsed = self._parse_response(
+                        purpose=purpose,
+                        response=response,
+                        attempts=attempt,
+                    )
+                except ResponseValidationError:
+                    if attempt < maximum:
+                        self._retry(
+                            purpose,
+                            "malformed_response",
+                            response.status,
+                            attempt + 1,
+                            attempt,
+                        )
+                        continue
+                    raise
+                return parsed, attempt
             retryable = _retryable_status(response.status)
             if retryable and attempt < maximum:
                 self._retry(
@@ -572,7 +590,8 @@ class OpenRouterHy3Client:
             message = choices[0]["message"]
             if not isinstance(message, Mapping) or "content" not in message:
                 raise TypeError
-            if not isinstance(message["content"], str):
+            content = message["content"]
+            if not isinstance(content, str) or not content:
                 raise TypeError
             raw_usage_value = payload.get("usage")
             if raw_usage_value is not None and not isinstance(
@@ -718,6 +737,18 @@ def _is_timeout(exc: BaseException) -> bool:
             return True
         reason = getattr(current, "reason", None)
         if isinstance(reason, TimeoutError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _is_retryable_transport(exc: BaseException) -> bool:
+    """Return whether a cause-chain member represents a transient connection error."""
+    seen: set[int] = set()
+    current: object | None = exc
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (OSError, EOFError)):
             return True
         current = current.__cause__ or current.__context__
     return False

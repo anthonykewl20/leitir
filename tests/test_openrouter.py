@@ -240,7 +240,7 @@ def test_timeouts_retry_and_exhaust_with_safe_metadata():
     assert len(http.calls) == 3
 
 
-def test_non_retryable_status_and_transport_error_fail_immediately():
+def test_non_retryable_status_fails_immediately():
     http = FakeHttp(HttpResponse(400, f"Authorization: Bearer {KEY}".encode()))
     with pytest.raises(TransportError) as caught:
         client(http).synthesis(MESSAGES)
@@ -249,12 +249,14 @@ def test_non_retryable_status_and_transport_error_fail_immediately():
     assert caught.value.attempts == 1
     assert KEY not in str(caught.value)
 
-    http = FakeHttp(OSError(f"api_key={KEY}"))
-    with pytest.raises(TransportError) as caught:
-        client(http).synthesis(MESSAGES)
-    assert caught.value.category == "transport"
-    assert caught.value.attempts == 1
-    assert KEY not in str(caught.value)
+
+@pytest.mark.parametrize("error_type", [OSError, EOFError])
+def test_retryable_transport_errors_retry_then_succeed(error_type):
+    http = FakeHttp(error_type(f"api_key={KEY}"), SUCCESS)
+    result = client(http).synthesis(MESSAGES)
+    assert result.content == "answer"
+    assert result.attempts == 2
+    assert len(http.calls) == 2
 
 
 @pytest.mark.parametrize(
@@ -268,12 +270,53 @@ def test_non_retryable_status_and_transport_error_fail_immediately():
         b'{"choices":[{"message":{"content":"ok"}}],"usage":"bad"}',
     ],
 )
-def test_malformed_completed_responses_are_not_retried(body):
+def test_malformed_completed_responses_retry_then_succeed(body):
     http = FakeHttp(HttpResponse(200, body), SUCCESS)
+    result = client(http).query_expansion(MESSAGES)
+    assert result.content == "answer"
+    assert result.attempts == 2
+    assert len(http.calls) == 2
+
+
+def test_malformed_completed_response_exhausts_bounded_attempts():
+    malformed = HttpResponse(200, b'{"choices":[]}')
+    http = FakeHttp(malformed, malformed, malformed)
     with pytest.raises(ResponseValidationError) as caught:
-        client(http).query_expansion(MESSAGES)
-    assert caught.value.attempts == 1
-    assert len(http.calls) == 1
+        client(http, model_max_attempts=3).query_expansion(MESSAGES)
+    assert caught.value.attempts == 3
+    assert len(http.calls) == 3
+
+
+def test_empty_content_retries_then_succeeds():
+    empty = HttpResponse(
+        200,
+        b'{"choices":[{"message":{"role":"assistant","content":""}}]}',
+    )
+    http = FakeHttp(empty, SUCCESS)
+    result = client(http).synthesis(MESSAGES)
+    assert result.content == "answer"
+    assert result.attempts == 2
+    assert len(http.calls) == 2
+
+
+def test_retry_paths_never_surface_or_log_secrets(caplog):
+    secret_body = HttpResponse(
+        200,
+        json.dumps({"secret": KEY, "choices": []}).encode(),
+    )
+    http = FakeHttp(
+        OSError(f"Authorization: Bearer {KEY}"),
+        secret_body,
+        secret_body,
+    )
+    with caplog.at_level(logging.WARNING, logger="leitir.openrouter"):
+        with pytest.raises(ResponseValidationError) as caught:
+            client(http, model_max_attempts=3).repair(MESSAGES)
+    assert caught.value.attempts == 3
+    rendered = f"{caught.value}\n{caplog.text}"
+    assert KEY not in rendered
+    assert "Authorization" not in rendered
+    assert "Bearer" not in rendered
 
 
 def test_non_string_message_content_is_rejected():
@@ -296,8 +339,9 @@ def test_non_string_message_content_is_rejected():
             }
         ).encode(),
     )
-    with pytest.raises(ResponseValidationError):
-        client(FakeHttp(response)).synthesis(MESSAGES)
+    with pytest.raises(ResponseValidationError) as caught:
+        client(FakeHttp(response, response, response)).synthesis(MESSAGES)
+    assert caught.value.attempts == 3
 
 
 def test_missing_usage_stays_missing_and_normalization_flags_nulls():

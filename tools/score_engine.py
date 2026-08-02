@@ -1,9 +1,9 @@
-"""Deterministic assessment contracts and provenance for ADR-002 S1-S2.
+"""Deterministic evidence scoring engine for ADR-002 S1-S3.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
-canonical provenance envelope; collectors and evidence adapters belong to
-later ADR-002 slices.
+canonical provenance envelope, and offline engine-correctness collectors.
+Later slices own retrieval metrics and the remaining assessment dimensions.
 """
 
 from __future__ import annotations
@@ -12,11 +12,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from enum import Enum, IntEnum
 import hashlib
+from importlib import machinery
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 from typing import Iterable, Iterator, Mapping
+from xml.etree import ElementTree
 
 
 ASSESSMENT_SCHEMA_VERSION = "leitir-assessment-v1"
@@ -37,6 +39,51 @@ _REASON_CODE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
+_REPO_SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+ADR001_OFFLINE_GATE_TESTS = (
+    "tests/test_search.py",
+    "tests/test_search_e2e.py",
+    "tests/test_engine.py",
+    "tests/test_engine_e2e.py",
+    "tests/test_adapters_multi.py",
+    "tests/test_resolver.py",
+    "tests/test_resolver_e2e.py",
+    "tests/test_cli.py",
+    "tests/test_cli_e2e.py",
+    "tests/test_global.py",
+    "tests/test_global_e2e.py",
+    "tests/test_ranking.py",
+    "tests/test_bench.py",
+)
+_PYTEST_JUNIT_PATH = ".leitir-score/evidence/adr001-offline-junit.xml"
+ADR001_OFFLINE_GATE_ARGV = (
+    "python",
+    "-m",
+    "pytest",
+    *ADR001_OFFLINE_GATE_TESTS,
+    "-p",
+    "no:cacheprovider",
+    f"--junitxml={_PYTEST_JUNIT_PATH}",
+)
+_MAX_JUNIT_BYTES = 16 * 1024 * 1024
+_RETIRED_V1_MODULES = (
+    "_jsonutil",
+    "config",
+    "contracts",
+    "discovery",
+    "evaluation",
+    "expansion",
+    "extraction",
+    "openrouter",
+    "orchestrator",
+    "protocols",
+    "synthesis",
+    "trace",
+    "verification",
+)
 
 
 class CheckStatus(str, Enum):
@@ -1298,6 +1345,724 @@ def subject_from_repository(
     )
 
 
+def _sanitized_collector_environment(root: Path) -> dict[str, str]:
+    """Return the fixed, credential-free environment for offline collectors."""
+    return {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.environ.get("PATH", os.defpath),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": str(root / "src"),
+        "PYTHONUTF8": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "TZ": "UTC",
+    }
+
+
+def _pytest_collector_artifact(
+    *, content: bytes, process_exit: int, reason_code: str
+) -> EvidenceArtifact:
+    return EvidenceArtifact(
+        id="engine.pytest-junit",
+        path=_PYTEST_JUNIT_PATH,
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+        command=CommandExecution(
+            argv=ADR001_OFFLINE_GATE_ARGV,
+            process_exit=process_exit,
+            collector_reason_code=reason_code,
+        ),
+    )
+
+
+def _discard_pytest_junit(path: Path) -> None:
+    """Best-effort cleanup; callers still return empty error evidence on failure."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # A path that cannot be removed is never read by the current run.  A
+        # later run must remove it successfully before starting pytest, or it
+        # also returns COLLECTOR_FILESYSTEM_ERROR without reading stale bytes.
+        pass
+
+
+def collect_adr001_pytest_junit(root: str | Path) -> EvidenceArtifact:
+    """Execute ADR-001's cumulative offline gate and collect its JUnit XML.
+
+    The test paths are copied verbatim from ADR-001.  Only deterministic
+    collector options are appended.  Neither policy nor callers can supply
+    command text or an output path.
+    """
+    import subprocess
+
+    if not isinstance(root, (str, Path)):
+        raise TypeError("root must be text or Path")
+    repository_root = Path(root).resolve()
+    if not repository_root.is_dir():
+        raise ValueError("root must be an existing directory")
+    output_path = repository_root / Path(*PurePosixPath(_PYTEST_JUNIT_PATH).parts)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.unlink(missing_ok=True)
+    except OSError:
+        _discard_pytest_junit(output_path)
+        return _pytest_collector_artifact(
+            content=b"",
+            process_exit=-1,
+            reason_code="COLLECTOR_FILESYSTEM_ERROR",
+        )
+    try:
+        completed = subprocess.run(
+            ADR001_OFFLINE_GATE_ARGV,
+            cwd=str(repository_root),
+            shell=False,
+            check=False,
+            capture_output=True,
+            env=_sanitized_collector_environment(repository_root),
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        _discard_pytest_junit(output_path)
+        return _pytest_collector_artifact(
+            content=b"", process_exit=-1, reason_code="COLLECTOR_TIMEOUT"
+        )
+    except OSError:
+        _discard_pytest_junit(output_path)
+        return _pytest_collector_artifact(
+            content=b"",
+            process_exit=-1,
+            reason_code="COLLECTOR_EXECUTION_ERROR",
+        )
+    try:
+        if not output_path.is_file():
+            return _pytest_collector_artifact(
+                content=b"",
+                process_exit=completed.returncode,
+                reason_code="COLLECTOR_ARTIFACT_MISSING",
+            )
+        content = output_path.read_bytes()
+    except OSError:
+        _discard_pytest_junit(output_path)
+        return _pytest_collector_artifact(
+            content=b"",
+            process_exit=completed.returncode,
+            reason_code="COLLECTOR_FILESYSTEM_ERROR",
+        )
+    return _pytest_collector_artifact(
+        content=content,
+        process_exit=completed.returncode,
+        reason_code="COLLECTOR_COMPLETE",
+    )
+
+
+def _artifact_references(
+    artifacts: Iterable[EvidenceArtifact],
+) -> tuple[Mapping[str, str], ...]:
+    return tuple(
+        {"kind": "artifact", "value": artifact.id} for artifact in artifacts
+    )
+
+
+def _error_result(
+    check_id: str,
+    reason_code: str,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> CheckResult:
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.ERROR,
+        score_bps=None,
+        reason_code=reason_code,
+        evidence=_artifact_references(artifacts),
+    )
+
+
+def _binary_result(
+    check_id: str,
+    passed: bool,
+    *,
+    pass_reason: str,
+    fail_reason: str,
+    artifacts: tuple[EvidenceArtifact, ...] = (),
+    numerator: int = 1,
+    denominator: int = 1,
+) -> CheckResult:
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.PASS if passed else CheckStatus.FAIL,
+        score_bps=10000 if passed else 0,
+        reason_code=pass_reason if passed else fail_reason,
+        numerator=numerator if passed else 0,
+        denominator=denominator,
+        evidence=_artifact_references(artifacts),
+    )
+
+
+def _xml_local_name(tag: object) -> str:
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _junit_count(element: ElementTree.Element, name: str) -> int:
+    raw = element.get(name)
+    if raw is None or not raw.isascii() or not raw.isdecimal():
+        raise ValueError(f"JUnit testsuite {name} must be a non-negative integer")
+    return int(raw)
+
+
+def _pytest_junit_counts(content: bytes) -> tuple[int, int, int, int]:
+    if len(content) > _MAX_JUNIT_BYTES:
+        raise ValueError("JUnit artifact exceeds the fixed size limit")
+    upper = content.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise ValueError("JUnit artifact must not contain DTD or entity declarations")
+    try:
+        root = ElementTree.fromstring(content)
+    except (ElementTree.ParseError, ValueError) as exc:
+        raise ValueError("JUnit artifact is malformed XML") from exc
+    root_name = _xml_local_name(root.tag)
+    if root_name == "testsuite":
+        suites = (root,)
+    elif root_name == "testsuites":
+        suites = tuple(
+            item for item in root if _xml_local_name(item.tag) == "testsuite"
+        )
+    else:
+        raise ValueError("JUnit root must be testsuite or testsuites")
+    if not suites:
+        raise ValueError("JUnit artifact contains no testsuite")
+
+    declared = tuple(
+        sum(_junit_count(suite, name) for suite in suites)
+        for name in ("tests", "failures", "errors", "skipped")
+    )
+    tests, failures, errors, skipped = declared
+    if failures + errors + skipped > tests:
+        raise ValueError("JUnit outcome counts exceed collected tests")
+
+    cases = tuple(
+        item
+        for suite in suites
+        for item in suite.iter()
+        if _xml_local_name(item.tag) == "testcase"
+    )
+    case_failures = 0
+    case_errors = 0
+    case_skipped = 0
+    for case in cases:
+        outcomes = [_xml_local_name(item.tag) for item in case]
+        case_failures += outcomes.count("failure")
+        case_errors += outcomes.count("error")
+        case_skipped += outcomes.count("skipped")
+        if sum(name in {"failure", "error", "skipped"} for name in outcomes) > 1:
+            raise ValueError("JUnit testcase contains multiple terminal outcomes")
+    if (len(cases), case_failures, case_errors, case_skipped) != declared:
+        raise ValueError("JUnit declared counts do not match testcase outcomes")
+    return declared
+
+
+def evaluate_pytest_junit(artifact: EvidenceArtifact) -> CheckResult:
+    """Require a fixed-command, nonempty, green ADR-001 pytest run."""
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    artifacts = (artifact,)
+    if (
+        artifact.command is None
+        or artifact.command.argv != ADR001_OFFLINE_GATE_ARGV
+    ):
+        return _error_result(
+            "engine.offline_contracts", "PYTEST_COMMAND_PROVENANCE_INVALID", artifacts
+        )
+    if artifact.command.collector_reason_code != "COLLECTOR_COMPLETE":
+        return _error_result(
+            "engine.offline_contracts",
+            artifact.command.collector_reason_code,
+            artifacts,
+        )
+    try:
+        tests, failures, errors, skipped = _pytest_junit_counts(artifact.content)
+    except ValueError:
+        return _error_result(
+            "engine.offline_contracts", "PYTEST_JUNIT_MALFORMED", artifacts
+        )
+    if tests == 0:
+        return _binary_result(
+            "engine.offline_contracts",
+            False,
+            pass_reason="PYTEST_GREEN_NONZERO",
+            fail_reason="PYTEST_ZERO_TESTS_COLLECTED",
+            artifacts=artifacts,
+        )
+    passed = tests - failures - errors - skipped
+    skip_exclusions = (("PYTEST_SKIPPED", skipped),) if skipped else ()
+    process_exit = artifact.command.process_exit
+    if failures or errors or process_exit == 1:
+        return CheckResult(
+            id="engine.offline_contracts",
+            status=CheckStatus.FAIL,
+            score_bps=proportional_score_bps(passed, tests),
+            reason_code=(
+                "PYTEST_TEST_FAILURES"
+                if failures or errors
+                else "PYTEST_NON_GREEN_EXIT"
+            ),
+            numerator=passed,
+            denominator=tests,
+            exclusions=skip_exclusions,
+            evidence=_artifact_references(artifacts),
+        )
+    if process_exit != 0:
+        return _error_result(
+            "engine.offline_contracts", "PYTEST_EXECUTION_ERROR", artifacts
+        )
+    if skipped == tests:
+        return CheckResult(
+            id="engine.offline_contracts",
+            status=CheckStatus.SKIPPED,
+            score_bps=None,
+            reason_code="PYTEST_ALL_TESTS_SKIPPED",
+            numerator=0,
+            denominator=tests,
+            exclusions=skip_exclusions,
+            evidence=_artifact_references(artifacts),
+        )
+    if skipped:
+        return CheckResult(
+            id="engine.offline_contracts",
+            status=CheckStatus.FAIL,
+            score_bps=proportional_score_bps(passed, tests),
+            reason_code="PYTEST_TESTS_SKIPPED",
+            numerator=passed,
+            denominator=tests,
+            exclusions=skip_exclusions,
+            evidence=_artifact_references(artifacts),
+        )
+    return CheckResult(
+        id="engine.offline_contracts",
+        status=CheckStatus.PASS,
+        score_bps=10000,
+        reason_code="PYTEST_GREEN_NONZERO",
+        numerator=passed,
+        denominator=tests,
+        exclusions=skip_exclusions,
+        evidence=_artifact_references(artifacts),
+    )
+
+
+def _load_json_object(artifact: EvidenceArtifact, name: str) -> Mapping[str, object]:
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"{name} contains non-finite number {value}")
+
+    try:
+        decoded = json.loads(artifact.content, parse_constant=reject_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"{name} is not strict JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise ValueError(f"{name} must be a JSON object")
+    return decoded
+
+
+def _object_keys(raw: object, keys: set[str], name: str) -> Mapping[str, object]:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{name} must be an object")
+    if set(raw) != keys:
+        raise ValueError(f"{name} has an invalid field set")
+    return raw
+
+
+def _list_value(raw: object, name: str, *, nonempty: bool = False) -> list[object]:
+    if not isinstance(raw, list) or (nonempty and not raw):
+        qualifier = "a nonempty" if nonempty else "a"
+        raise ValueError(f"{name} must be {qualifier} list")
+    return raw
+
+
+def _non_negative_json_int(value: object, name: str) -> int:
+    if not _is_int(value) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _finite_json_decimal(value: object, name: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a JSON number")
+    decimal = Decimal(str(value))
+    if not decimal.is_finite():
+        raise ValueError(f"{name} must be finite")
+    return decimal
+
+
+def _benchmark_tasks(artifact: EvidenceArtifact) -> list[object]:
+    raw = _object_keys(
+        _load_json_object(artifact, "benchmark run"),
+        {"schema_version", "benchmark", "tasks"},
+        "benchmark run",
+    )
+    if raw["schema_version"] != "leitir-benchmark-run-v1":
+        raise ValueError("benchmark run schema version is unsupported")
+    return _list_value(raw["tasks"], "benchmark tasks", nonempty=True)
+
+
+def evaluate_deterministic_replay(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> CheckResult:
+    """Compare baseline, repeated, and input-permuted canonical run bytes."""
+    if not isinstance(artifacts, tuple) or any(
+        not isinstance(item, EvidenceArtifact) for item in artifacts
+    ):
+        raise TypeError("artifacts must be a tuple of EvidenceArtifact")
+    if len(artifacts) != 3:
+        return _error_result(
+            "engine.deterministic_replay", "REPLAY_EVIDENCE_INCOMPLETE", artifacts
+        )
+    return _binary_result(
+        "engine.deterministic_replay",
+        artifacts[0].content == artifacts[1].content == artifacts[2].content,
+        pass_reason="REPLAY_AND_PERMUTATION_IDENTICAL",
+        fail_reason="NONDETERMINISTIC_OUTPUT",
+        artifacts=artifacts,
+    )
+
+
+def _source_identity_from_result(result: object) -> tuple[str, str, str, str, int, int]:
+    result_raw = _object_keys(
+        result,
+        {"source", "score", "normalized_score", "rank", "rank_score", "matched_kinds"},
+        "ranked result",
+    )
+    source = _object_keys(
+        result_raw["source"],
+        {"slug", "commit_sha", "path", "blob_sha", "start_line", "end_line", "permalink"},
+        "result source",
+    )
+    start_line = _non_negative_json_int(source["start_line"], "start_line")
+    end_line = _non_negative_json_int(source["end_line"], "end_line")
+    if start_line < 1 or end_line < start_line:
+        raise ValueError("result source line span is invalid")
+    values = (
+        source["slug"],
+        source["commit_sha"],
+        source["path"],
+        source["blob_sha"],
+    )
+    if any(not isinstance(value, str) for value in values):
+        raise ValueError("result source identity fields must be text")
+    return (*values, start_line, end_line)
+
+
+def _total_order_is_valid(artifact: EvidenceArtifact) -> bool:
+    tasks = _benchmark_tasks(artifact)
+    task_ids: list[str] = []
+    for task in tasks:
+        task_raw = _object_keys(
+            task,
+            {"task_id", "language", "spec_digest", "coverage", "results"},
+            "benchmark task",
+        )
+        task_id = task_raw["task_id"]
+        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+            raise ValueError("task_id must be lowercase kebab-case")
+        task_ids.append(task_id)
+        results = _list_value(task_raw["results"], "ranked results")
+        decorated: list[tuple[tuple[object, ...], int, int]] = []
+        identities: list[tuple[str, str, str, str, int, int]] = []
+        for result in results:
+            result_raw = _object_keys(
+                result,
+                {"source", "score", "normalized_score", "rank", "rank_score", "matched_kinds"},
+                "ranked result",
+            )
+            _finite_json_decimal(result_raw["score"], "score")
+            normalized = _finite_json_decimal(
+                result_raw["normalized_score"], "normalized_score"
+            )
+            if not Decimal(0) <= normalized <= Decimal(1):
+                raise ValueError("normalized_score must be within zero and one")
+            identity = _source_identity_from_result(result)
+            rank = _non_negative_json_int(result_raw["rank"], "rank")
+            rank_score = _non_negative_json_int(result_raw["rank_score"], "rank_score")
+            identities.append(identity)
+            decorated.append(((-normalized, *identity), rank, rank_score))
+        if len(set(identities)) != len(identities):
+            return False
+        expected_keys = sorted(item[0] for item in decorated)
+        if [item[0] for item in decorated] != expected_keys:
+            return False
+        count = len(decorated)
+        if [item[1] for item in decorated] != list(range(1, count + 1)):
+            return False
+        if [item[2] for item in decorated] != list(range(count, 0, -1)):
+            return False
+    return task_ids == sorted(task_ids) and len(set(task_ids)) == len(task_ids)
+
+
+def evaluate_total_ordering(artifact: EvidenceArtifact) -> CheckResult:
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    try:
+        passed = _total_order_is_valid(artifact)
+    except ValueError:
+        return _error_result("engine.total_ordering", "RANKED_RUN_MALFORMED", (artifact,))
+    return _binary_result(
+        "engine.total_ordering",
+        passed,
+        pass_reason="ADR001_TOTAL_ORDER_VALID",
+        fail_reason="ADR001_TOTAL_ORDER_INVALID",
+        artifacts=(artifact,),
+    )
+
+
+def _result_provenance_is_valid(artifact: EvidenceArtifact) -> bool:
+    raw = _object_keys(
+        _load_json_object(artifact, "benchmark run"),
+        {"schema_version", "benchmark", "tasks"},
+        "benchmark run",
+    )
+    if raw["schema_version"] != "leitir-benchmark-run-v1":
+        raise ValueError("benchmark run schema version is unsupported")
+    benchmark = _object_keys(
+        raw["benchmark"], {"id", "manifest_sha256"}, "benchmark identity"
+    )
+    if not isinstance(benchmark["id"], str) or not benchmark["id"]:
+        raise ValueError("benchmark ID must be non-empty text")
+    if not isinstance(benchmark["manifest_sha256"], str) or not _SHA256.fullmatch(
+        benchmark["manifest_sha256"]
+    ):
+        raise ValueError("benchmark manifest digest is invalid")
+    tasks = _list_value(raw["tasks"], "benchmark tasks", nonempty=True)
+    for task in tasks:
+        task_raw = _object_keys(
+            task,
+            {"task_id", "language", "spec_digest", "coverage", "results"},
+            "benchmark task",
+        )
+        if not isinstance(task_raw["task_id"], str) or not _TASK_ID.fullmatch(
+            task_raw["task_id"]
+        ):
+            raise ValueError("task_id must be lowercase kebab-case")
+        if task_raw["language"] not in {"python", "rust", "go"}:
+            raise ValueError("task language is invalid")
+        if not isinstance(task_raw["spec_digest"], str) or not _SHA256.fullmatch(
+            task_raw["spec_digest"]
+        ):
+            raise ValueError("task spec digest is invalid")
+        for result in _list_value(task_raw["results"], "ranked results"):
+            identity = _source_identity_from_result(result)
+            slug, commit_sha, path, blob_sha, start_line, end_line = identity
+            if not _REPO_SLUG.fullmatch(slug):
+                raise ValueError("result repository slug is invalid")
+            if not _SHA1.fullmatch(commit_sha) or not _SHA1.fullmatch(blob_sha):
+                raise ValueError("result commit or blob provenance is invalid")
+            _validate_canonical_path(path, "result source path")
+            result_raw = _object_keys(
+                result,
+                {"source", "score", "normalized_score", "rank", "rank_score", "matched_kinds"},
+                "ranked result",
+            )
+            source = result_raw["source"]
+            expected_permalink = (
+                f"https://github.com/{slug}/blob/{commit_sha}/{path}"
+                f"#L{start_line}-L{end_line}"
+            )
+            if source["permalink"] != expected_permalink:
+                return False
+            matched_kinds = result_raw["matched_kinds"]
+            if not isinstance(matched_kinds, list) or not matched_kinds or any(
+                not isinstance(item, str) or not item for item in matched_kinds
+            ):
+                raise ValueError("matched_kinds must be a nonempty text list")
+    return True
+
+
+def evaluate_result_provenance(artifact: EvidenceArtifact) -> CheckResult:
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    try:
+        passed = _result_provenance_is_valid(artifact)
+    except ValueError:
+        return _error_result(
+            "engine.result_provenance", "RESULT_PROVENANCE_MALFORMED", (artifact,)
+        )
+    return _binary_result(
+        "engine.result_provenance",
+        passed,
+        pass_reason="RESULT_PROVENANCE_VALID",
+        fail_reason="RESULT_PROVENANCE_MISMATCH",
+        artifacts=(artifact,),
+    )
+
+
+def _coverage(raw: object) -> tuple[str, int, int, int, bool]:
+    coverage = _object_keys(
+        raw,
+        {"status", "files_eligible", "files_indexed", "files_excluded", "incomplete_results"},
+        "coverage",
+    )
+    status = coverage["status"]
+    if not isinstance(status, str):
+        raise ValueError("coverage status must be text")
+    eligible = _non_negative_json_int(coverage["files_eligible"], "files_eligible")
+    indexed = _non_negative_json_int(coverage["files_indexed"], "files_indexed")
+    excluded = _non_negative_json_int(coverage["files_excluded"], "files_excluded")
+    incomplete = coverage["incomplete_results"]
+    if not isinstance(incomplete, bool) or indexed > eligible:
+        raise ValueError("coverage counters or incomplete flag are invalid")
+    return status, eligible, indexed, excluded, incomplete
+
+
+def _scoped_coverage_is_valid(artifact: EvidenceArtifact) -> bool:
+    for task in _benchmark_tasks(artifact):
+        task_raw = _object_keys(
+            task,
+            {"task_id", "language", "spec_digest", "coverage", "results"},
+            "benchmark task",
+        )
+        status, eligible, indexed, _excluded, incomplete = _coverage(
+            task_raw["coverage"]
+        )
+        if (
+            status != "complete_for_declared_universe"
+            or indexed != eligible
+            or incomplete
+        ):
+            return False
+    return True
+
+
+def evaluate_scoped_coverage(artifact: EvidenceArtifact) -> CheckResult:
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    try:
+        passed = _scoped_coverage_is_valid(artifact)
+    except ValueError:
+        return _error_result(
+            "engine.scoped_coverage", "SCOPED_COVERAGE_MALFORMED", (artifact,)
+        )
+    return _binary_result(
+        "engine.scoped_coverage",
+        passed,
+        pass_reason="DECLARED_UNIVERSE_COMPLETE",
+        fail_reason="DECLARED_UNIVERSE_PARTIAL",
+        artifacts=(artifact,),
+    )
+
+
+def evaluate_global_no_exhaustiveness(artifact: EvidenceArtifact) -> CheckResult:
+    """Require dedicated global evidence to retain INDETERMINATE_GLOBAL."""
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    try:
+        raw = _object_keys(
+            _load_json_object(artifact, "global search report"),
+            {"spec_digest", "coverage", "matches"},
+            "global search report",
+        )
+        if not isinstance(raw["spec_digest"], str) or not _SHA256.fullmatch(
+            raw["spec_digest"]
+        ):
+            raise ValueError("global search spec digest is invalid")
+        _list_value(raw["matches"], "global matches")
+        status, _eligible, _indexed, _excluded, _incomplete = _coverage(
+            raw["coverage"]
+        )
+    except ValueError:
+        return _error_result(
+            "engine.global_no_exhaustiveness",
+            "GLOBAL_COVERAGE_MALFORMED",
+            (artifact,),
+        )
+    if status == "complete_for_declared_universe":
+        reason = "GLOBAL_EXHAUSTIVENESS_OVERCLAIM"
+    else:
+        reason = "GLOBAL_COVERAGE_NOT_INDETERMINATE"
+    return _binary_result(
+        "engine.global_no_exhaustiveness",
+        status == "indeterminate_global",
+        pass_reason="INDETERMINATE_GLOBAL_PRESERVED",
+        fail_reason=reason,
+        artifacts=(artifact,),
+    )
+
+
+def evaluate_retired_surfaces_absent(root: str | Path) -> CheckResult:
+    """Fail if any retired v1 top-level module remains importable from src."""
+    if not isinstance(root, (str, Path)):
+        raise TypeError("root must be text or Path")
+    module_root = Path(root).resolve() / "src" / "leitir"
+    try:
+        children = tuple(module_root.iterdir())
+    except OSError:
+        return _error_result(
+            "engine.retired_surfaces_absent", "RETIRED_SURFACE_SCOPE_UNREADABLE", ()
+        )
+    import_suffixes = tuple(machinery.all_suffixes()) + (".pyi",)
+    repository_root = Path(root).resolve()
+    present = sorted(
+        child.relative_to(repository_root).as_posix()
+        for child in children
+        for module in _RETIRED_V1_MODULES
+        if (child.is_dir() and child.name == module)
+        or (child.is_file() and child.name in {f"{module}{suffix}" for suffix in import_suffixes})
+    )
+    evidence = (
+        {"kind": "scope", "value": "src/leitir top-level import surfaces"},
+        {
+            "kind": "retired_modules",
+            "value": ",".join(_RETIRED_V1_MODULES),
+        },
+    )
+    return CheckResult(
+        id="engine.retired_surfaces_absent",
+        status=CheckStatus.PASS if not present else CheckStatus.FAIL,
+        score_bps=10000 if not present else 0,
+        reason_code=(
+            "RETIRED_SURFACES_ABSENT" if not present else "RETIRED_SURFACES_PRESENT"
+        ),
+        numerator=1 if not present else 0,
+        denominator=1,
+        evidence=evidence
+        + tuple({"kind": "present_surface", "value": item} for item in present),
+    )
+
+
+def evaluate_engine_correctness_evidence(
+    *,
+    pytest_junit: EvidenceArtifact,
+    replay_artifacts: tuple[EvidenceArtifact, ...],
+    global_report: EvidenceArtifact,
+    repository_root: str | Path,
+) -> tuple[CheckResult, ...]:
+    """Evaluate the complete ADR-002 S3 engine-correctness check vector."""
+    primary_run = replay_artifacts[0] if replay_artifacts else None
+    if primary_run is None:
+        artifact_checks = (
+            _error_result("engine.total_ordering", "RANKED_RUN_MISSING", ()),
+            _error_result("engine.result_provenance", "RANKED_RUN_MISSING", ()),
+            _error_result("engine.scoped_coverage", "RANKED_RUN_MISSING", ()),
+        )
+    else:
+        artifact_checks = (
+            evaluate_total_ordering(primary_run),
+            evaluate_result_provenance(primary_run),
+            evaluate_scoped_coverage(primary_run),
+        )
+    return tuple(
+        sorted(
+            (
+                evaluate_pytest_junit(pytest_junit),
+                evaluate_deterministic_replay(replay_artifacts),
+                *artifact_checks,
+                evaluate_global_no_exhaustiveness(global_report),
+                evaluate_retired_surfaces_absent(repository_root),
+            ),
+            key=lambda item: item.id,
+        )
+    )
+
+
 def _score_checks(checks: tuple[AssessedCheck, ...]) -> ScoreAggregate:
     eligible = tuple(
         item
@@ -1657,6 +2422,8 @@ def load_policy(path: str | Path) -> Policy:
 
 
 __all__ = [
+    "ADR001_OFFLINE_GATE_ARGV",
+    "ADR001_OFFLINE_GATE_TESTS",
     "ASSESSMENT_SCHEMA_VERSION",
     "POLICY_SCHEMA_VERSION",
     "RUN_ENVELOPE_SCHEMA_VERSION",
@@ -1686,9 +2453,18 @@ __all__ = [
     "Subject",
     "canonical_json_bytes",
     "canonical_patch_sha256",
+    "collect_adr001_pytest_junit",
     "decision_exit_code",
     "display_band",
     "evaluate",
+    "evaluate_deterministic_replay",
+    "evaluate_engine_correctness_evidence",
+    "evaluate_global_no_exhaustiveness",
+    "evaluate_pytest_junit",
+    "evaluate_result_provenance",
+    "evaluate_retired_surfaces_absent",
+    "evaluate_scoped_coverage",
+    "evaluate_total_ordering",
     "load_policy",
     "policy_from_dict",
     "proportional_score_bps",

@@ -44,6 +44,96 @@
       "applicability": null
     },
     {
+      "id": "engine.deterministic_replay",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "engine.total_ordering",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "engine.result_provenance",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "engine.scoped_coverage",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "engine.global_no_exhaustiveness",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "engine.retired_surfaces_absent",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
       "id": "output.pinned_benchmark",
       "dimension": "output_effectiveness",
       "weight": 1,

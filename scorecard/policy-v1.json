@@ -133,21 +133,21 @@
       },
       "applicability": null
     },
-    {
-      "id": "output.pinned_benchmark",
-      "dimension": "output_effectiveness",
-      "weight": 1,
-      "score_eligible": true,
-      "criterion": {
-        "op": "eq",
-        "value": 10000
-      },
-      "modes": {
-        "offline": "required",
-        "release": "required"
-      },
-      "applicability": null
-    },
+    {"id": "output.average_precision_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": {"rule": "qrels declare no sufficiently complete tasks"}},
+    {"id": "output.complete_scoped_coverage", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.exact_target_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.language_strata", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.ndcg_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.pinned_benchmark", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.precision_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": {"rule": "qrels declare no sufficiently complete tasks"}},
+    {"id": "output.precision_at_5", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": {"rule": "qrels declare no sufficiently complete tasks"}},
+    {"id": "output.predicate_strata", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.recall_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.reciprocal_rank_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.success_at_1", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.success_at_10", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.success_at_5", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
+    {"id": "output.total_ordering", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
     {
       "id": "code.production_scope_parsed",
       "dimension": "code_health",

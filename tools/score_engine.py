@@ -1,9 +1,10 @@
-"""Deterministic evidence scoring engine for ADR-002 S1-S3.
+"""Deterministic evidence scoring engine for ADR-002 S1-S4.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
-canonical provenance envelope, and offline engine-correctness collectors.
-Later slices own retrieval metrics and the remaining assessment dimensions.
+canonical provenance envelope, offline engine-correctness collectors, and the
+ranked-output effectiveness adapter.  Later slices own the remaining
+assessment dimensions.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from enum import Enum, IntEnum
 import hashlib
 from importlib import machinery
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -41,6 +43,29 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _REPO_SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+_BENCHMARK_MANIFEST_SCHEMA_VERSION = "leitir-benchmark-manifest-v1"
+_BENCHMARK_RUN_SCHEMA_VERSION = "leitir-benchmark-run-v1"
+_BENCHMARK_QRELS_SCHEMA_VERSION = "leitir-benchmark-qrels-v1"
+_RETRIEVAL_LANGUAGES = ("go", "python", "rust")
+_RETRIEVAL_CUTOFF = 10
+_OUTPUT_CHECK_IDS = (
+    "output.average_precision_at_10",
+    "output.complete_scoped_coverage",
+    "output.exact_target_at_10",
+    "output.language_strata",
+    "output.ndcg_at_10",
+    "output.pinned_benchmark",
+    "output.precision_at_10",
+    "output.precision_at_5",
+    "output.predicate_strata",
+    "output.recall_at_10",
+    "output.reciprocal_rank_at_10",
+    "output.success_at_1",
+    "output.success_at_10",
+    "output.success_at_5",
+    "output.total_ordering",
+)
 
 
 ADR001_OFFLINE_GATE_TESTS = (
@@ -2063,6 +2088,767 @@ def evaluate_engine_correctness_evidence(
     )
 
 
+SourceIdentity = tuple[str, str, str, str, int, int]
+
+
+class RetrievalEvaluationError(ValueError):
+    """A stable evaluation error for malformed or mismatched retrieval evidence."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        if not _REASON_CODE.fullmatch(reason_code):
+            raise ValueError("retrieval error reason must be uppercase snake-case")
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalMetrics:
+    """Per-task or macro-averaged IR metrics on the unit interval."""
+
+    ndcg_at_10: float
+    reciprocal_rank_at_10: float
+    success_at_1: float
+    success_at_5: float
+    success_at_10: float
+    recall_at_10: float
+    precision_at_5: float | None
+    precision_at_10: float | None
+    average_precision_at_10: float | None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "ndcg_at_10",
+            "reciprocal_rank_at_10",
+            "success_at_1",
+            "success_at_5",
+            "success_at_10",
+            "recall_at_10",
+            "precision_at_5",
+            "precision_at_10",
+            "average_precision_at_10",
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(f"{name} must be null or a finite unit-interval value")
+
+    def to_bps_dict(self) -> dict[str, int | None]:
+        return {
+            name: _metric_bps(getattr(self, name))
+            for name in (
+                "ndcg_at_10",
+                "reciprocal_rank_at_10",
+                "success_at_1",
+                "success_at_5",
+                "success_at_10",
+                "recall_at_10",
+                "precision_at_5",
+                "precision_at_10",
+                "average_precision_at_10",
+            )
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalTaskEvaluation:
+    task_id: str
+    language: str
+    predicate_kinds: tuple[str, ...]
+    judgments_complete: bool
+    metrics: RetrievalMetrics
+    exact_target_rank: int | None
+    result_count: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "language": self.language,
+            "predicate_kinds": list(self.predicate_kinds),
+            "judgments_complete": self.judgments_complete,
+            "metrics_bps": self.metrics.to_bps_dict(),
+            "exact_target_rank": self.exact_target_rank,
+            "result_count": self.result_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalStratum:
+    kind: str
+    value: str
+    task_ids: tuple[str, ...]
+    complete_task_count: int
+    metrics: RetrievalMetrics
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "value": self.value,
+            "task_ids": list(self.task_ids),
+            "task_count": len(self.task_ids),
+            "complete_task_count": self.complete_task_count,
+            "metrics_bps": self.metrics.to_bps_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalEvaluation:
+    benchmark_id: str
+    manifest_sha256: str
+    aggregate: RetrievalMetrics
+    tasks: tuple[RetrievalTaskEvaluation, ...]
+    language_strata: tuple[RetrievalStratum, ...]
+    predicate_strata: tuple[RetrievalStratum, ...]
+    checks: tuple[CheckResult, ...]
+    authoritative_qrels: Mapping[str, Mapping[str, int]]
+    authoritative_run: Mapping[str, Mapping[str, int]]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "benchmark": {
+                "id": self.benchmark_id,
+                "manifest_sha256": self.manifest_sha256,
+            },
+            "aggregate_metrics_bps": self.aggregate.to_bps_dict(),
+            "tasks": [item.to_dict() for item in self.tasks],
+            "strata": {
+                "language": [item.to_dict() for item in self.language_strata],
+                "predicate": [item.to_dict() for item in self.predicate_strata],
+            },
+        }
+
+
+def _metric_bps(value: float | None) -> int | None:
+    if value is None:
+        return None
+    return int(
+        (Decimal(str(value)) * Decimal(10000)).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+
+
+def _validate_source_identity(identity: object, name: str) -> SourceIdentity:
+    if not isinstance(identity, tuple) or len(identity) != 6:
+        raise TypeError(f"{name} must be a six-field SourceRef tuple")
+    slug, commit_sha, path, blob_sha, start_line, end_line = identity
+    if not isinstance(slug, str) or not _REPO_SLUG.fullmatch(slug):
+        raise ValueError(f"{name} repository slug is invalid")
+    if not isinstance(commit_sha, str) or not _SHA1.fullmatch(commit_sha):
+        raise ValueError(f"{name} commit_sha is invalid")
+    _validate_canonical_path(path, f"{name} path")
+    if not isinstance(blob_sha, str) or not _SHA1.fullmatch(blob_sha):
+        raise ValueError(f"{name} blob_sha is invalid")
+    if (
+        not _is_int(start_line)
+        or not _is_int(end_line)
+        or start_line < 1
+        or end_line < start_line
+    ):
+        raise ValueError(f"{name} line span is invalid")
+    return identity
+
+
+def _source_identity_from_qrel(raw: object, name: str) -> SourceIdentity:
+    source = _object_keys(
+        raw,
+        {"slug", "commit_sha", "path", "blob_sha", "start_line", "end_line"},
+        name,
+    )
+    identity = (
+        source["slug"],
+        source["commit_sha"],
+        source["path"],
+        source["blob_sha"],
+        source["start_line"],
+        source["end_line"],
+    )
+    try:
+        return _validate_source_identity(identity, name)
+    except (TypeError, ValueError) as exc:
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", str(exc)) from exc
+
+
+def _source_identity_text(identity: SourceIdentity) -> str:
+    return _canonical_json(list(identity))
+
+
+def compute_retrieval_metrics(
+    ranked_result_ids: tuple[SourceIdentity, ...],
+    judgments: Mapping[SourceIdentity, int],
+    *,
+    judgments_complete: bool,
+) -> RetrievalMetrics:
+    """Compute ADR-002's standard-library metric kernel for one task.
+
+    nDCG uses the qrel grade itself as linear gain.  Unjudged results have gain
+    zero and retain their rank.  Binary useful relevance is grade >= 1, while
+    exact-target RR and Success use grade >= 2.
+    """
+    if not isinstance(ranked_result_ids, tuple):
+        raise TypeError("ranked_result_ids must be a tuple")
+    normalized_results = tuple(
+        _validate_source_identity(item, "ranked result identity")
+        for item in ranked_result_ids
+    )
+    if len(set(normalized_results)) != len(normalized_results):
+        raise ValueError("ranked results contain duplicate SourceRef identities")
+    if not isinstance(judgments, Mapping):
+        raise TypeError("judgments must be a mapping")
+    normalized_judgments: dict[SourceIdentity, int] = {}
+    for identity, grade in judgments.items():
+        checked = _validate_source_identity(identity, "qrel identity")
+        if not _is_int(grade) or grade not in {0, 1, 2}:
+            raise ValueError("qrel grade must be 0, 1, or 2")
+        normalized_judgments[checked] = grade
+    if 2 not in normalized_judgments.values():
+        raise ValueError("every scored task requires at least one grade-2 target")
+    if not isinstance(judgments_complete, bool):
+        raise TypeError("judgments_complete must be a bool")
+
+    top_ten = normalized_results[:_RETRIEVAL_CUTOFF]
+    gains = [normalized_judgments.get(identity, 0) for identity in top_ten]
+    dcg = math.fsum(
+        gain / math.log2(rank + 1)
+        for rank, gain in enumerate(gains, start=1)
+    )
+    ideal_gains = sorted(normalized_judgments.values(), reverse=True)[:_RETRIEVAL_CUTOFF]
+    ideal_dcg = math.fsum(
+        gain / math.log2(rank + 1)
+        for rank, gain in enumerate(ideal_gains, start=1)
+    )
+    ndcg = dcg / ideal_dcg
+
+    exact_rank = next(
+        (
+            rank
+            for rank, identity in enumerate(top_ten, start=1)
+            if normalized_judgments.get(identity, 0) == 2
+        ),
+        None,
+    )
+    useful_total = sum(grade >= 1 for grade in normalized_judgments.values())
+    useful_hits = [normalized_judgments.get(identity, 0) >= 1 for identity in top_ten]
+    recall = sum(useful_hits) / useful_total
+
+    precision_at_5: float | None = None
+    precision_at_10: float | None = None
+    average_precision_at_10: float | None = None
+    if judgments_complete:
+        precision_at_5 = sum(useful_hits[:5]) / 5
+        precision_at_10 = sum(useful_hits) / 10
+        hits = 0
+        precision_sum = 0.0
+        for rank, relevant in enumerate(useful_hits, start=1):
+            if relevant:
+                hits += 1
+                precision_sum += hits / rank
+        average_precision_at_10 = precision_sum / min(useful_total, _RETRIEVAL_CUTOFF)
+
+    return RetrievalMetrics(
+        ndcg_at_10=ndcg,
+        reciprocal_rank_at_10=0.0 if exact_rank is None else 1.0 / exact_rank,
+        success_at_1=float(exact_rank == 1),
+        success_at_5=float(exact_rank is not None and exact_rank <= 5),
+        success_at_10=float(exact_rank is not None),
+        recall_at_10=recall,
+        precision_at_5=precision_at_5,
+        precision_at_10=precision_at_10,
+        average_precision_at_10=average_precision_at_10,
+    )
+
+
+def _macro_metrics(tasks: tuple[RetrievalTaskEvaluation, ...]) -> RetrievalMetrics:
+    if not tasks:
+        raise ValueError("metric aggregation requires at least one task")
+
+    def mean(name: str, *, complete_only: bool = False) -> float | None:
+        values = [
+            getattr(item.metrics, name)
+            for item in tasks
+            if not complete_only or item.judgments_complete
+        ]
+        known = [value for value in values if value is not None]
+        return None if not known else math.fsum(known) / len(known)
+
+    return RetrievalMetrics(
+        ndcg_at_10=mean("ndcg_at_10") or 0.0,
+        reciprocal_rank_at_10=mean("reciprocal_rank_at_10") or 0.0,
+        success_at_1=mean("success_at_1") or 0.0,
+        success_at_5=mean("success_at_5") or 0.0,
+        success_at_10=mean("success_at_10") or 0.0,
+        recall_at_10=mean("recall_at_10") or 0.0,
+        precision_at_5=mean("precision_at_5", complete_only=True),
+        precision_at_10=mean("precision_at_10", complete_only=True),
+        average_precision_at_10=mean("average_precision_at_10", complete_only=True),
+    )
+
+
+def _manifest_contract(
+    artifact: EvidenceArtifact,
+) -> tuple[str, str, dict[str, tuple[str, tuple[str, ...], frozenset[SourceIdentity]]]]:
+    raw = _object_keys(
+        _load_json_object(artifact, "benchmark manifest"),
+        {"schema_version", "benchmark_id", "tasks"},
+        "benchmark manifest",
+    )
+    if raw["schema_version"] != _BENCHMARK_MANIFEST_SCHEMA_VERSION:
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "unsupported manifest schema")
+    benchmark_id = raw["benchmark_id"]
+    if not isinstance(benchmark_id, str) or not _TASK_ID.fullmatch(benchmark_id):
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid benchmark ID")
+    tasks_raw = _list_value(raw["tasks"], "manifest tasks", nonempty=True)
+    normalized_tasks: list[dict[str, object]] = []
+    tasks: dict[str, tuple[str, tuple[str, ...], frozenset[SourceIdentity]]] = {}
+    language_counts = {language: 0 for language in _RETRIEVAL_LANGUAGES}
+    for task in tasks_raw:
+        task_raw = _object_keys(
+            task,
+            {"id", "language", "scope", "must", "should", "must_not", "expected_results", "pin_source"},
+            "manifest task",
+        )
+        task_id = task_raw["id"]
+        language = task_raw["language"]
+        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid manifest task ID")
+        if task_id in tasks:
+            raise RetrievalEvaluationError("DUPLICATE_TASK_ID", "manifest task IDs must be unique")
+        if language not in language_counts:
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid task language")
+        language_counts[language] += 1
+        scope = _object_keys(task_raw["scope"], {"slug", "commit_sha"}, "task scope")
+        scope_slug = scope["slug"]
+        scope_commit = scope["commit_sha"]
+        if not isinstance(scope_slug, str) or not _REPO_SLUG.fullmatch(scope_slug):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid task scope slug")
+        if not isinstance(scope_commit, str) or not _SHA1.fullmatch(scope_commit):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid task scope commit")
+        predicate_kinds: set[str] = set()
+        for field_name in ("must", "should", "must_not"):
+            for predicate in _list_value(task_raw[field_name], f"task {field_name}"):
+                if not isinstance(predicate, Mapping) or set(predicate) not in (
+                    {"kind", "value"},
+                    {"kind", "value", "language"},
+                ):
+                    raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "predicate has an invalid field set")
+                predicate_raw = predicate
+                kind = predicate_raw["kind"]
+                if not isinstance(kind, str) or not kind:
+                    raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid predicate kind")
+                if not isinstance(predicate_raw["value"], str) or not predicate_raw["value"]:
+                    raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid predicate value")
+                predicate_language = predicate_raw.get("language")
+                if predicate_language is not None and (
+                    not isinstance(predicate_language, str) or not predicate_language
+                ):
+                    raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid predicate language")
+                predicate_kinds.add(kind)
+        if not predicate_kinds:
+            raise RetrievalEvaluationError("PREDICATE_STRATUM_MISSING", "manifest task has no predicate stratum")
+        if not isinstance(task_raw["pin_source"], str) or not task_raw["pin_source"].strip():
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "manifest pin_source must be nonempty text")
+        expected_list = _list_value(task_raw["expected_results"], "expected results", nonempty=True)
+        expected = frozenset(
+            _source_identity_from_qrel(item, "expected result") for item in expected_list
+        )
+        if len(expected) != len(expected_list):
+            raise RetrievalEvaluationError("DUPLICATE_QREL_ID", "expected result identities must be unique")
+        if any(identity[:2] != (scope_slug, scope_commit) for identity in expected):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "expected result is outside task scope")
+        tasks[task_id] = (language, tuple(sorted(predicate_kinds)), expected)
+        normalized_task = dict(task_raw)
+        normalized_expected = []
+        for identity in sorted(expected):
+            slug, commit_sha, path, blob_sha, start_line, end_line = identity
+            normalized_expected.append(
+                {
+                    "slug": slug,
+                    "commit_sha": commit_sha,
+                    "path": path,
+                    "blob_sha": blob_sha,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "permalink": (
+                        f"https://github.com/{slug}/blob/{commit_sha}/{path}"
+                        f"#L{start_line}-L{end_line}"
+                    ),
+                }
+            )
+        normalized_task["expected_results"] = normalized_expected
+        normalized_tasks.append(normalized_task)
+    if any(count < 4 for count in language_counts.values()):
+        raise RetrievalEvaluationError("LANGUAGE_STRATUM_MISSING", "manifest requires at least four tasks per language")
+    normalized = dict(raw)
+    normalized["tasks"] = sorted(normalized_tasks, key=lambda item: item["id"])
+    digest = hashlib.sha256(canonical_json_bytes(normalized)).hexdigest()
+    return benchmark_id, digest, tasks
+
+
+def _qrels_contract(
+    artifact: EvidenceArtifact,
+    *,
+    benchmark_id: str,
+    manifest_sha256: str,
+    manifest_tasks: Mapping[str, tuple[str, tuple[str, ...], frozenset[SourceIdentity]]],
+) -> dict[str, tuple[bool, dict[SourceIdentity, int]]]:
+    raw = _object_keys(
+        _load_json_object(artifact, "benchmark qrels"),
+        {"schema_version", "benchmark", "tasks"},
+        "benchmark qrels",
+    )
+    if raw["schema_version"] != _BENCHMARK_QRELS_SCHEMA_VERSION:
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "unsupported qrels schema")
+    benchmark = _object_keys(raw["benchmark"], {"id", "manifest_sha256"}, "qrels benchmark")
+    if benchmark != {"id": benchmark_id, "manifest_sha256": manifest_sha256}:
+        raise RetrievalEvaluationError("MANIFEST_DIGEST_MISMATCH", "qrels benchmark identity does not match manifest")
+    tasks: dict[str, tuple[bool, dict[SourceIdentity, int]]] = {}
+    for task in _list_value(raw["tasks"], "qrel tasks", nonempty=True):
+        task_raw = _object_keys(task, {"task_id", "judgments_complete", "judgments"}, "qrel task")
+        task_id = task_raw["task_id"]
+        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid qrel task ID")
+        if task_id in tasks:
+            raise RetrievalEvaluationError("DUPLICATE_TASK_ID", "qrel task IDs must be unique")
+        complete = task_raw["judgments_complete"]
+        if not isinstance(complete, bool):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "judgments_complete must be a bool")
+        judgments: dict[SourceIdentity, int] = {}
+        for judgment in _list_value(task_raw["judgments"], "qrel judgments", nonempty=True):
+            judgment_raw = _object_keys(judgment, {"grade", "source"}, "qrel judgment")
+            grade = judgment_raw["grade"]
+            if not _is_int(grade) or grade not in {0, 1, 2}:
+                raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "qrel grade must be 0, 1, or 2")
+            identity = _source_identity_from_qrel(judgment_raw["source"], "qrel source")
+            if identity in judgments:
+                raise RetrievalEvaluationError("DUPLICATE_QREL_ID", "qrel identities must be unique per task")
+            judgments[identity] = grade
+        expected = manifest_tasks.get(task_id)
+        if expected is not None:
+            scope = next(iter(expected[2]))[:2]
+            if any(identity[:2] != scope for identity in judgments):
+                raise RetrievalEvaluationError("QREL_SCOPE_MISMATCH", "qrel source is outside the task scope")
+            grade_two = frozenset(identity for identity, grade in judgments.items() if grade == 2)
+            if grade_two != expected[2]:
+                raise RetrievalEvaluationError("GRADE_TWO_TARGET_MISMATCH", "grade-2 qrels must exactly match manifest expected results")
+        tasks[task_id] = (complete, judgments)
+    if set(tasks) != set(manifest_tasks):
+        raise RetrievalEvaluationError("TASK_SET_MISMATCH", "qrels task set must exactly equal manifest query set")
+    return tasks
+
+
+def _run_contract(
+    artifact: EvidenceArtifact,
+    *,
+    benchmark_id: str,
+    manifest_sha256: str,
+    manifest_tasks: Mapping[str, tuple[str, tuple[str, ...], frozenset[SourceIdentity]]],
+) -> tuple[dict[str, tuple[tuple[SourceIdentity, ...], tuple[int, ...]]], bool]:
+    raw = _object_keys(
+        _load_json_object(artifact, "benchmark run"),
+        {"schema_version", "benchmark", "tasks"},
+        "benchmark run",
+    )
+    if raw["schema_version"] != _BENCHMARK_RUN_SCHEMA_VERSION:
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "unsupported run schema")
+    benchmark = _object_keys(raw["benchmark"], {"id", "manifest_sha256"}, "run benchmark")
+    if benchmark != {"id": benchmark_id, "manifest_sha256": manifest_sha256}:
+        raise RetrievalEvaluationError("MANIFEST_DIGEST_MISMATCH", "run benchmark identity does not match manifest")
+    tasks: dict[str, tuple[tuple[SourceIdentity, ...], tuple[int, ...]]] = {}
+    complete_coverage = True
+    for task in _list_value(raw["tasks"], "run tasks", nonempty=True):
+        task_raw = _object_keys(task, {"task_id", "language", "spec_digest", "coverage", "results"}, "run task")
+        task_id = task_raw["task_id"]
+        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid run task ID")
+        if task_id in tasks:
+            raise RetrievalEvaluationError("DUPLICATE_TASK_ID", "run task IDs must be unique")
+        manifest_task = manifest_tasks.get(task_id)
+        if manifest_task is not None and task_raw["language"] != manifest_task[0]:
+            raise RetrievalEvaluationError("TASK_LANGUAGE_MISMATCH", "run language does not match manifest")
+        if not isinstance(task_raw["spec_digest"], str) or not _SHA256.fullmatch(task_raw["spec_digest"]):
+            raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "invalid run spec digest")
+        status, eligible, indexed, _excluded, incomplete = _coverage(task_raw["coverage"])
+        complete_coverage &= status == "complete_for_declared_universe" and eligible == indexed and not incomplete
+        identities: list[SourceIdentity] = []
+        ordering_keys: list[tuple[object, ...]] = []
+        ranks: list[int] = []
+        rank_scores: list[int] = []
+        for result in _list_value(task_raw["results"], "ranked results"):
+            result_raw = _object_keys(result, {"source", "score", "normalized_score", "rank", "rank_score", "matched_kinds"}, "ranked result")
+            _finite_json_decimal(result_raw["score"], "score")
+            normalized = _finite_json_decimal(result_raw["normalized_score"], "normalized_score")
+            if not Decimal(0) <= normalized <= Decimal(1):
+                raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "normalized score is outside zero and one")
+            try:
+                identity = _source_identity_from_result(result)
+                identity = _validate_source_identity(identity, "run result identity")
+            except (TypeError, ValueError) as exc:
+                raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", str(exc)) from exc
+            if manifest_task is not None and identity[:2] != next(iter(manifest_task[2]))[:2]:
+                raise RetrievalEvaluationError("RESULT_SCOPE_MISMATCH", "run result is outside the task scope")
+            source = result_raw["source"]
+            expected_permalink = (
+                f"https://github.com/{identity[0]}/blob/{identity[1]}/{identity[2]}"
+                f"#L{identity[4]}-L{identity[5]}"
+            )
+            if source["permalink"] != expected_permalink:
+                raise RetrievalEvaluationError("RESULT_PROVENANCE_MISMATCH", "run result permalink does not match SourceRef")
+            matched_kinds = result_raw["matched_kinds"]
+            if not isinstance(matched_kinds, list) or not matched_kinds or any(
+                not isinstance(kind, str) or not kind for kind in matched_kinds
+            ):
+                raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "matched_kinds must be a nonempty text list")
+            rank = _non_negative_json_int(result_raw["rank"], "rank")
+            rank_score = _non_negative_json_int(result_raw["rank_score"], "rank_score")
+            if rank < 1 or rank_score < 1:
+                raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", "rank and rank_score must be positive")
+            identities.append(identity)
+            ordering_keys.append((-normalized, *identity))
+            ranks.append(rank)
+            rank_scores.append(rank_score)
+        if len(set(identities)) != len(identities):
+            raise RetrievalEvaluationError("DUPLICATE_RESULT_ID", "run contains duplicate SourceRef identities")
+        if ordering_keys != sorted(ordering_keys) or ranks != list(range(1, len(ranks) + 1)):
+            raise RetrievalEvaluationError("RANKED_RUN_TOTAL_ORDER_INVALID", "run is not in P6 total order")
+        if len(set(rank_scores)) != len(rank_scores) or any(
+            left <= right for left, right in zip(rank_scores, rank_scores[1:])
+        ):
+            raise RetrievalEvaluationError("RANKED_RUN_TOTAL_ORDER_INVALID", "rank_score must be unique and strictly descending")
+        tasks[task_id] = (tuple(identities), tuple(rank_scores))
+    if set(tasks) != set(manifest_tasks):
+        raise RetrievalEvaluationError("TASK_SET_MISMATCH", "run task set must exactly equal manifest query set")
+    return tasks, complete_coverage
+
+
+def _retrieval_strata(
+    tasks: tuple[RetrievalTaskEvaluation, ...], kind: str
+) -> tuple[RetrievalStratum, ...]:
+    if kind == "language":
+        values = sorted({item.language for item in tasks})
+        selected = lambda item, value: item.language == value
+    elif kind == "predicate":
+        values = sorted({value for item in tasks for value in item.predicate_kinds})
+        selected = lambda item, value: value in item.predicate_kinds
+    else:
+        raise ValueError("stratum kind must be language or predicate")
+    strata = []
+    for value in values:
+        members = tuple(item for item in tasks if selected(item, value))
+        strata.append(
+            RetrievalStratum(
+                kind=kind,
+                value=value,
+                task_ids=tuple(item.task_id for item in members),
+                complete_task_count=sum(item.judgments_complete for item in members),
+                metrics=_macro_metrics(members),
+            )
+        )
+    return tuple(strata)
+
+
+def _retrieval_metric_result(
+    metric_name: str,
+    value: float | None,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> CheckResult:
+    check_id = f"output.{metric_name}"
+    if value is None:
+        return CheckResult(
+            id=check_id,
+            status=CheckStatus.NOT_APPLICABLE,
+            score_bps=None,
+            reason_code="QRELS_INSUFFICIENTLY_COMPLETE",
+            evidence=_artifact_references(artifacts)
+            + ({"kind": "applicability", "value": "no task has sufficiently complete qrels"},),
+        )
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.PASS,
+        score_bps=_metric_bps(value),
+        reason_code="RETRIEVAL_METRIC_COMPUTED",
+        evidence=_artifact_references(artifacts),
+    )
+
+
+def evaluate_retrieval(
+    *,
+    manifest: EvidenceArtifact,
+    qrels: EvidenceArtifact,
+    benchmark_run: EvidenceArtifact,
+) -> RetrievalEvaluation:
+    """Validate and score one P6 ranked benchmark artifact against pinned qrels."""
+    artifacts = (manifest, qrels, benchmark_run)
+    if any(not isinstance(item, EvidenceArtifact) for item in artifacts):
+        raise TypeError("manifest, qrels, and benchmark_run must be EvidenceArtifact values")
+    try:
+        benchmark_id, manifest_sha256, manifest_tasks = _manifest_contract(manifest)
+        qrel_tasks = _qrels_contract(
+            qrels,
+            benchmark_id=benchmark_id,
+            manifest_sha256=manifest_sha256,
+            manifest_tasks=manifest_tasks,
+        )
+        run_tasks, complete_coverage = _run_contract(
+            benchmark_run,
+            benchmark_id=benchmark_id,
+            manifest_sha256=manifest_sha256,
+            manifest_tasks=manifest_tasks,
+        )
+    except RetrievalEvaluationError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RetrievalEvaluationError("RETRIEVAL_EVIDENCE_MALFORMED", str(exc)) from exc
+
+    task_evaluations: list[RetrievalTaskEvaluation] = []
+    authoritative_qrels: dict[str, dict[str, int]] = {}
+    authoritative_run: dict[str, dict[str, int]] = {}
+    for task_id in sorted(manifest_tasks):
+        language, predicates, _expected = manifest_tasks[task_id]
+        judgments_complete, judgments = qrel_tasks[task_id]
+        result_ids, rank_scores = run_tasks[task_id]
+        metrics = compute_retrieval_metrics(
+            result_ids, judgments, judgments_complete=judgments_complete
+        )
+        exact_rank = next(
+            (
+                rank
+                for rank, identity in enumerate(result_ids, start=1)
+                if judgments.get(identity) == 2
+            ),
+            None,
+        )
+        task_evaluations.append(
+            RetrievalTaskEvaluation(
+                task_id=task_id,
+                language=language,
+                predicate_kinds=predicates,
+                judgments_complete=judgments_complete,
+                metrics=metrics,
+                exact_target_rank=exact_rank,
+                result_count=len(result_ids),
+            )
+        )
+        authoritative_qrels[task_id] = {
+            _source_identity_text(identity): grade
+            for identity, grade in sorted(judgments.items())
+        }
+        authoritative_run[task_id] = {
+            _source_identity_text(identity): rank_score
+            for identity, rank_score in zip(result_ids, rank_scores, strict=True)
+        }
+    tasks = tuple(task_evaluations)
+    aggregate = _macro_metrics(tasks)
+    language_strata = _retrieval_strata(tasks, "language")
+    predicate_strata = _retrieval_strata(tasks, "predicate")
+    exact_at_cutoff = sum(
+        item.exact_target_rank is not None and item.exact_target_rank <= _RETRIEVAL_CUTOFF
+        for item in tasks
+    )
+    checks = [
+        _binary_result(
+            "output.pinned_benchmark",
+            True,
+            pass_reason="PINNED_QRELS_QUERY_SET_VALID",
+            fail_reason="PINNED_QRELS_QUERY_SET_INVALID",
+            artifacts=artifacts,
+        ),
+        _binary_result(
+            "output.complete_scoped_coverage",
+            complete_coverage,
+            pass_reason="SCOPED_BENCHMARK_COVERAGE_COMPLETE",
+            fail_reason="SCOPED_BENCHMARK_COVERAGE_PARTIAL",
+            artifacts=artifacts,
+        ),
+        _binary_result(
+            "output.total_ordering",
+            True,
+            pass_reason="P6_TOTAL_ORDER_VALID",
+            fail_reason="P6_TOTAL_ORDER_INVALID",
+            artifacts=artifacts,
+        ),
+        CheckResult(
+            id="output.exact_target_at_10",
+            status=CheckStatus.PASS if exact_at_cutoff == len(tasks) else CheckStatus.FAIL,
+            score_bps=proportional_score_bps(exact_at_cutoff, len(tasks)),
+            reason_code="EXACT_TARGET_CUTOFF_COMPLETE" if exact_at_cutoff == len(tasks) else "EXACT_TARGET_CUTOFF_MISSED",
+            numerator=exact_at_cutoff,
+            denominator=len(tasks),
+            evidence=_artifact_references(artifacts),
+        ),
+        CheckResult(
+            id="output.language_strata",
+            status=CheckStatus.PASS,
+            score_bps=10000,
+            reason_code="LANGUAGE_STRATA_REPORTED",
+            numerator=len(language_strata),
+            denominator=len(language_strata),
+            evidence=_artifact_references(artifacts)
+            + tuple({"kind": "language_stratum", "value": item.value} for item in language_strata),
+        ),
+        CheckResult(
+            id="output.predicate_strata",
+            status=CheckStatus.PASS,
+            score_bps=10000,
+            reason_code="PREDICATE_STRATA_REPORTED",
+            numerator=len(predicate_strata),
+            denominator=len(predicate_strata),
+            evidence=_artifact_references(artifacts)
+            + tuple({"kind": "predicate_stratum", "value": item.value} for item in predicate_strata),
+        ),
+    ]
+    for metric_name in (
+        "ndcg_at_10",
+        "reciprocal_rank_at_10",
+        "success_at_1",
+        "success_at_5",
+        "success_at_10",
+        "recall_at_10",
+        "precision_at_5",
+        "precision_at_10",
+        "average_precision_at_10",
+    ):
+        checks.append(
+            _retrieval_metric_result(metric_name, getattr(aggregate, metric_name), artifacts)
+        )
+    return RetrievalEvaluation(
+        benchmark_id=benchmark_id,
+        manifest_sha256=manifest_sha256,
+        aggregate=aggregate,
+        tasks=tasks,
+        language_strata=language_strata,
+        predicate_strata=predicate_strata,
+        checks=tuple(sorted(checks, key=lambda item: item.id)),
+        authoritative_qrels=authoritative_qrels,
+        authoritative_run=authoritative_run,
+    )
+
+
+def evaluate_output_effectiveness_evidence(
+    *,
+    manifest: EvidenceArtifact,
+    qrels: EvidenceArtifact,
+    benchmark_run: EvidenceArtifact,
+) -> tuple[CheckResult, ...]:
+    """Return policy checks, mapping retrieval contract faults to evaluation errors."""
+    artifacts = tuple(
+        item
+        for item in (manifest, qrels, benchmark_run)
+        if isinstance(item, EvidenceArtifact)
+    )
+    try:
+        return evaluate_retrieval(
+            manifest=manifest, qrels=qrels, benchmark_run=benchmark_run
+        ).checks
+    except RetrievalEvaluationError as exc:
+        return tuple(
+            _error_result(check_id, exc.reason_code, artifacts)
+            for check_id in _OUTPUT_CHECK_IDS
+        )
+
+
 def _score_checks(checks: tuple[AssessedCheck, ...]) -> ScoreAggregate:
     eligible = tuple(
         item
@@ -2447,6 +3233,11 @@ __all__ = [
     "Policy",
     "Producer",
     "Profile",
+    "RetrievalEvaluation",
+    "RetrievalEvaluationError",
+    "RetrievalMetrics",
+    "RetrievalStratum",
+    "RetrievalTaskEvaluation",
     "RunEnvelope",
     "ScoreAggregate",
     "SourceSpan",
@@ -2454,16 +3245,19 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_patch_sha256",
     "collect_adr001_pytest_junit",
+    "compute_retrieval_metrics",
     "decision_exit_code",
     "display_band",
     "evaluate",
     "evaluate_deterministic_replay",
     "evaluate_engine_correctness_evidence",
     "evaluate_global_no_exhaustiveness",
+    "evaluate_output_effectiveness_evidence",
     "evaluate_pytest_junit",
     "evaluate_result_provenance",
     "evaluate_retired_surfaces_absent",
     "evaluate_scoped_coverage",
+    "evaluate_retrieval",
     "evaluate_total_ordering",
     "load_policy",
     "policy_from_dict",

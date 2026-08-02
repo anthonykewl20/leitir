@@ -1,0 +1,29 @@
+{
+  "scorers": {
+    "ir_measures": "0.4.3",
+    "pytrec_eval_terrier": "0.5.10"
+  },
+  "qrels": {
+    "exact": 2,
+    "support": 1,
+    "wrong": 0
+  },
+  "vectors": {
+    "rank1": {
+      "ranking": ["exact", "support", "wrong"],
+      "expected": {"ndcg_at_10": 1.0, "reciprocal_rank_at_10": 1.0, "success_at_1": 1.0, "success_at_5": 1.0, "success_at_10": 1.0, "recall_at_10": 1.0, "precision_at_5": 0.4, "precision_at_10": 0.2, "average_precision_at_10": 1.0}
+    },
+    "rank3": {
+      "ranking": ["support", "wrong", "exact"],
+      "expected": {"ndcg_at_10": 0.7601875334318685, "reciprocal_rank_at_10": 0.3333333333333333, "success_at_1": 0.0, "success_at_5": 1.0, "success_at_10": 1.0, "recall_at_10": 1.0, "precision_at_5": 0.4, "precision_at_10": 0.2, "average_precision_at_10": 0.8333333333333333}
+    },
+    "missing": {
+      "ranking": ["wrong", "unjudged"],
+      "expected": {"ndcg_at_10": 0.0, "reciprocal_rank_at_10": 0.0, "success_at_1": 0.0, "success_at_5": 0.0, "success_at_10": 0.0, "recall_at_10": 0.0, "precision_at_5": 0.0, "precision_at_10": 0.0, "average_precision_at_10": 0.0}
+    },
+    "unjudged_first": {
+      "ranking": ["unjudged", "exact", "support"],
+      "expected": {"ndcg_at_10": 0.66967181649423, "reciprocal_rank_at_10": 0.5, "success_at_1": 0.0, "success_at_5": 1.0, "success_at_10": 1.0, "recall_at_10": 1.0, "precision_at_5": 0.4, "precision_at_10": 0.2, "average_precision_at_10": 0.5833333333333333}
+    }
+  }
+}

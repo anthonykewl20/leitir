@@ -25,6 +25,72 @@ from leitir.tree import BlobEntry, TreeSource
 MAX_BLOB_SIZE = 2 * 1024 * 1024
 
 
+def _span_excluded(
+    content: str,
+    adapter: LanguageAdapter,
+    span: SpanMatch,
+    must_not: tuple[Predicate, ...],
+) -> bool:
+    for pred in must_not:
+        if pred.kind is PredicateKind.PATH:
+            continue
+        hits = adapter.find_matches(content, (pred,))
+        for hit in hits:
+            if hit.start_line == span.start_line:
+                return True
+    return False
+
+
+def score_content(
+    content: str,
+    adapter: LanguageAdapter,
+    slug: str,
+    commit_sha: str,
+    path: str,
+    blob_sha: str,
+    content_must: tuple[Predicate, ...],
+    should: tuple[Predicate, ...],
+    must_not: tuple[Predicate, ...],
+) -> list[SourceMatch]:
+    """Score one blob's content against predicates and return ranked matches."""
+    spans = adapter.find_matches(content, content_must) if content_must else ()
+    if not spans and content_must:
+        return []
+    if not spans and not content_must:
+        spans = adapter.find_matches(content, should) if should else ()
+
+    matches: list[SourceMatch] = []
+    for span in spans:
+        if must_not and _span_excluded(content, adapter, span, must_not):
+            continue
+
+        matched_kinds = set(span.matched_kinds)
+        should_boost = 0
+        if should:
+            for ss in adapter.find_matches(content, should):
+                if ss.start_line == span.start_line:
+                    matched_kinds.update(ss.matched_kinds)
+                    should_boost += len(ss.matched_kinds)
+
+        score = float(len(content_must) + should_boost)
+        ref = SourceRef(
+            slug=slug,
+            commit_sha=commit_sha,
+            path=path,
+            blob_sha=blob_sha,
+            start_line=span.start_line,
+            end_line=span.end_line,
+        )
+        matches.append(
+            SourceMatch(
+                source=ref,
+                score=score,
+                matched_kinds=tuple(sorted(matched_kinds, key=lambda k: k.value)),
+            )
+        )
+    return matches
+
+
 class ScopedSearcher:
     """Executes a scoped-exhaustive search over pinned commits."""
 
@@ -136,46 +202,13 @@ class ScopedSearcher:
             if must_not and self._excluded(content, adapter, must_not):
                 continue
 
-            spans = adapter.find_matches(content, content_must) if content_must else ()
-            if not spans and content_must:
-                continue
-
-            if not spans and not content_must:
-                spans = adapter.find_matches(content, should)
-
-            for span in spans:
-                if must_not and self._span_excluded(
-                    content, adapter, span, must_not
-                ):
-                    continue
-
-                matched_kinds = set(span.matched_kinds)
-                should_hit_count = 0
-                if should:
-                    should_spans = adapter.find_matches(content, should)
-                    for ss in should_spans:
-                        if ss.start_line == span.start_line:
-                            matched_kinds.update(ss.matched_kinds)
-                            should_hit_count += len(ss.matched_kinds)
-
-                score = float(len(content_must) + should_hit_count)
-                ref = SourceRef(
-                    slug=slug,
-                    commit_sha=commit_sha,
-                    path=blob.path,
-                    blob_sha=blob.blob_sha,
-                    start_line=span.start_line,
-                    end_line=span.end_line,
+            matches.extend(
+                score_content(
+                    content, adapter, slug, commit_sha,
+                    blob.path, blob.blob_sha,
+                    content_must, should, must_not,
                 )
-                matches.append(
-                    SourceMatch(
-                        source=ref,
-                        score=score,
-                        matched_kinds=tuple(
-                            sorted(matched_kinds, key=lambda k: k.value)
-                        ),
-                    )
-                )
+            )
 
         return files_eligible, files_indexed, files_excluded, matches, partial
 
@@ -211,20 +244,4 @@ class ScopedSearcher:
             hits = adapter.find_matches(content, (pred,))
             if hits:
                 return True
-        return False
-
-    def _span_excluded(
-        self,
-        content: str,
-        adapter: LanguageAdapter,
-        span: SpanMatch,
-        must_not: tuple[Predicate, ...],
-    ) -> bool:
-        for pred in must_not:
-            if pred.kind is PredicateKind.PATH:
-                continue
-            hits = adapter.find_matches(content, (pred,))
-            for hit in hits:
-                if hit.start_line == span.start_line:
-                    return True
         return False

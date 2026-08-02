@@ -1,364 +1,368 @@
-"""Operator-boundary tests for the thin Leitir CLI."""
+"""Operator-boundary tests for the leitir search CLI (ADR-001 P4)."""
 
 from __future__ import annotations
 
 import io
-from pathlib import Path
-import signal
+import json
 
 import pytest
 
-from leitir.cli import ExitCode, main, write_trace
-from leitir.config import Config
-from leitir.contracts import (
-    ArtifactId,
-    StepStatus,
-    TerminalDisposition,
-    WorkflowRequest,
-    WorkflowStep,
-)
-from leitir.orchestrator import WorkflowRunResult
-from leitir.trace import (
-    ArtifactKind,
-    ArtifactReference,
-    EvidenceAccounting,
-    ExecutionTrace,
-    ReplayMetadata,
-    SpendCapBreach,
-    TraceRecorder,
-    TraceSpan,
+from leitir.cli import ExitCode, main
+from leitir.search import (
+    Coverage,
+    CoverageStatus,
+    Predicate,
+    PredicateKind,
+    RepoScope,
+    SearchMode,
+    SearchReport,
+    SearchSpec,
+    SourceMatch,
+    SourceRef,
 )
 
+SHA = "a" * 40
+BLOB = "b" * 40
 
-def completed_trace(status: TerminalDisposition) -> ExecutionTrace:
-    recorder = TraceRecorder("cli-test-trace", "safe task")
-    config_id = ArtifactId("config")
-    recorder.add_artifact(
-        ArtifactReference(
-            config_id,
-            ArtifactKind.CONFIGURATION,
-            "memory://config",
-            media_type="application/json",
-            size_bytes=2,
-        )
-    )
-    if status is TerminalDisposition.SPEND_CAP_EXCEEDED:
-        recorder.record_span(
-            TraceSpan(
-                step=WorkflowStep.QUERY_EXPANSION,
-                status=StepStatus.SUCCEEDED,
-                latency_ms=1,
-                attempt_number=1,
-            )
-        )
-        recorder.record_spend_cap_breach(
-            SpendCapBreach(
-                configured_cap_usd=0.05,
-                accumulated_provider_cost_usd=0.051,
-                triggering_span_index=0,
-                triggering_step=WorkflowStep.QUERY_EXPANSION,
-                triggering_attempt=1,
-                provider_cost_complete=True,
-            )
-        )
-    return recorder.finish(
-        ended_at="2026-07-24T00:00:01Z",
-        total_latency_ms=1,
-        final_status=status,
-        accepted_attempt=1 if status is TerminalDisposition.ACCEPTED else None,
-        replay=ReplayMetadata(
-            prompt_artifact_ids=(),
-            tool_output_artifact_ids=(),
-            cleaned_chunk_artifact_ids=(),
-            response_artifact_ids=(),
-            configuration_artifact_id=config_id,
+
+def _report(**overrides) -> SearchReport:
+    base = dict(
+        spec_digest="c" * 64,
+        coverage=Coverage(
+            status=CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE,
+            files_eligible=1,
+            files_indexed=1,
+            files_excluded=0,
         ),
-        evidence_accounting=EvidenceAccounting(0, (), 0, ()),
+        matches=(
+            SourceMatch(
+                source=SourceRef("python/cpython", SHA, "Lib/urllib/parse.py", BLOB, 1, 5),
+                score=2.0,
+                matched_kinds=(PredicateKind.SYMBOL_DEFINITION,),
+            ),
+        ),
     )
+    base.update(overrides)
+    return SearchReport(**base)
 
 
-class FakeOrchestrator:
-    def __init__(self, status: TerminalDisposition) -> None:
-        self.status = status
-        self.calls: list[tuple[WorkflowRequest, object]] = []
-        self.evaluation_inputs: list[dict[str, object]] = []
+class FakeSearcher:
+    def __init__(self, report: SearchReport | None = None, error: Exception | None = None):
+        self.report = report or _report()
+        self.error = error
+        self.specs: list[SearchSpec] = []
 
-    def run(self, request, *, cancellation=None, **evaluation_inputs):
-        self.calls.append((request, cancellation))
-        self.evaluation_inputs.append(evaluation_inputs)
-        trace = completed_trace(self.status)
-        return WorkflowRunResult(self.status, trace.accepted_attempt, trace)
+    def search(self, spec: SearchSpec) -> SearchReport:
+        self.specs.append(spec)
+        if self.error:
+            raise self.error
+        return self.report
 
 
-def invoke(
-    status: TerminalDisposition = TerminalDisposition.ACCEPTED,
-    *,
-    argv: list[str] | None = None,
-    trace_writer=None,
-):
-    orchestrator = FakeOrchestrator(status)
-    written = []
+class FakeResolver:
+    def __init__(self, scope: RepoScope | None = None, error: Exception | None = None):
+        self.scope = scope or RepoScope("psf/requests", SHA)
+        self.error = error
+        self.calls: list = []
+
+    def resolve(self, ref):
+        self.calls.append(ref)
+        if self.error:
+            raise self.error
+        from leitir.resolver import ResolvedPackage
+
+        return ResolvedPackage(
+            ref=ref,
+            scope=self.scope,
+            tag="v1.0",
+            registry_url="https://pypi.org/project/x/1.0/",
+        )
+
+
+def invoke(argv, *, searcher=None, resolver=None):
+    searcher = searcher or FakeSearcher()
+    resolver = resolver or FakeResolver()
     out = io.StringIO()
     err = io.StringIO()
     code = main(
-        argv or ["run", "--task", "Build a parser"],
-        orchestrator_factory=lambda _config: orchestrator,
-        trace_writer=trace_writer
-        or (lambda trace: written.append(trace) or "trace.json"),
+        argv,
+        tree_source_factory=lambda _token: object(),
+        resolver_factory=lambda _token: resolver,
+        searcher_factory=lambda _ts: searcher,
         stdout=out,
         stderr=err,
     )
-    return code, orchestrator, written, out.getvalue(), err.getvalue()
+    return code, out.getvalue(), err.getvalue(), searcher, resolver
 
 
-def test_help_lists_run_and_eval_without_loading_config(capsys):
-    loaded = False
-
-    def config_loader():
-        nonlocal loaded
-        loaded = True
-        return Config.default()
-
-    assert main(["--help"], config_loader=config_loader) == ExitCode.SUCCESS
+def test_help_lists_search_without_side_effects(capsys):
+    assert main(["--help"]) == ExitCode.SUCCESS
     output = capsys.readouterr().out
-    assert "run" in output
-    assert "eval" in output
-    assert not loaded
+    assert "search" in output
+
+
+def test_search_help_lists_both_input_modes(capsys):
+    code = main(["search", "--help"])
+    assert code == ExitCode.SUCCESS
+    output = capsys.readouterr().out
+    assert "--repo" in output
+    assert "--package" in output
+    assert "--must" in output
 
 
 @pytest.mark.parametrize(
     "argv",
     [
         [],
-        ["run"],
-        ["run", "--task", "   "],
-        ["run", "--task", "work", "--language", "go"],
-        ["eval", "--task", "not-allowed"],
+        ["search"],
+        ["search", "--repo", "python/cpython"],
+        ["search", "--package", "requests"],
+        ["search", "--package", "requests", "--version", "2.28.1"],
+        ["search", "--repo", "python/cpython", "--commit", SHA, "--must", "bad"],
+        ["search", "--repo", "python/cpython", "--commit", SHA, "--must", "nope:x"],
     ],
 )
 def test_malformed_usage_has_distinct_exit_code(argv, capsys):
-    assert main(argv) == ExitCode.MALFORMED_USAGE
-    assert "usage:" in capsys.readouterr().err
+    code = main(argv)
+    assert code == ExitCode.MALFORMED_USAGE
 
 
-def test_run_loads_config_and_invokes_orchestrator_once():
-    loaded = []
-    orchestrator = FakeOrchestrator(TerminalDisposition.ACCEPTED)
-    traces = []
-    code = main(
-        ["run", "--task", "Do the thing", "--language", "python"],
-        config_loader=lambda: loaded.append(True) or Config.default(),
-        orchestrator_factory=lambda config: orchestrator,
-        trace_writer=lambda trace: traces.append(trace) or "/tmp/t.json",
-        stdout=io.StringIO(),
-        stderr=io.StringIO(),
-    )
-    assert code == ExitCode.SUCCESS
-    assert loaded == [True]
-    assert len(orchestrator.calls) == 1
-    assert orchestrator.calls[0][0].task == "Do the thing"
-    assert orchestrator.calls[0][0].target_language.value == "python"
-    assert len(traces) == 1
-
-
-def test_run_smoke_task_loads_bundle_and_passes_hidden_tests():
-    orchestrator = FakeOrchestrator(TerminalDisposition.ACCEPTED)
-
-    code = main(
-        ["run", "--smoke-task", "retry-after"],
-        orchestrator_factory=lambda _config: orchestrator,
-        trace_writer=lambda _trace: "smoke.json",
-        stdout=io.StringIO(),
-        stderr=io.StringIO(),
-    )
-
-    assert code == ExitCode.SUCCESS
-    request = orchestrator.calls[0][0]
-    assert request.request_id == "smoke-retry-after"
-    assert request.target_language.value == "python"
-    assert "Retry-After" in request.task
-    inputs = orchestrator.evaluation_inputs[0]
-    assert inputs["dependencies"] == ()
-    hidden_tests = inputs["hidden_tests"]
-    assert isinstance(hidden_tests, Path)
-    assert hidden_tests.name == "hidden"
-    assert (hidden_tests / "eval_test.py").is_file()
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["run", "--task", "work", "--smoke-task", "retry-after"],
-        ["run"],
-    ],
-)
-def test_run_requires_exactly_one_task_source(argv, capsys):
-    assert main(argv) == ExitCode.MALFORMED_USAGE
-    assert "usage:" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("status", "exit_code"),
-    [
-        (TerminalDisposition.ACCEPTED, ExitCode.SUCCESS),
-        (TerminalDisposition.FAILED, ExitCode.TASK_FAILURE),
-        (TerminalDisposition.REPAIR_EXHAUSTED, ExitCode.TASK_FAILURE),
-        (
-            TerminalDisposition.INFRASTRUCTURE_ERROR,
-            ExitCode.INFRASTRUCTURE_FAILURE,
-        ),
-        (
-            TerminalDisposition.SPEND_CAP_EXCEEDED,
-            ExitCode.SPEND_CAP_TERMINATION,
-        ),
-        (TerminalDisposition.CANCELLED, ExitCode.CANCELLED),
-    ],
-)
-def test_run_exit_mapping_and_one_trace_for_every_terminal_result(
-    status, exit_code
-):
-    code, orchestrator, traces, out, err = invoke(status)
-    assert code == exit_code
-    assert len(orchestrator.calls) == 1
-    assert len(traces) == 1
-    assert ExecutionTrace.from_json(traces[0].to_json()).final_status is status
-    assert out == f"status={status.value} trace=trace.json\n"
-    assert err == ""
-
-
-def test_configuration_failure_is_safe_and_does_not_start_a_run():
-    secret = "sk-or-v1-cli-secret"
-    out = io.StringIO()
-    err = io.StringIO()
-
-    def fail():
-        raise ValueError(f"Authorization: Bearer {secret}")
-
-    code = main(
-        ["run", "--task", "safe"],
-        config_loader=fail,
-        stdout=out,
-        stderr=err,
-    )
-    assert code == ExitCode.INFRASTRUCTURE_FAILURE
-    assert secret not in err.getvalue()
-    assert "Bearer [REDACTED]" in err.getvalue()
-    assert out.getvalue() == ""
-
-
-def test_trace_persistence_failure_falls_back_to_redacted_stdout():
-    secret = "sk-or-v1-cli-secret"
-    out = io.StringIO()
-    err = io.StringIO()
-    orchestrator = FakeOrchestrator(TerminalDisposition.ACCEPTED)
-
-    def fail(_trace):
-        raise OSError(f"Authorization: Bearer {secret}")
-
-    code = main(
-        ["run", "--task", "safe"],
-        orchestrator_factory=lambda _config: orchestrator,
-        trace_writer=fail,
-        stdout=out,
-        stderr=err,
-    )
-    assert code == ExitCode.INFRASTRUCTURE_FAILURE
-    lines = out.getvalue().splitlines()
-    assert ExecutionTrace.from_json(lines[0]).trace_id == "cli-test-trace"
-    assert lines[1] == "status=infrastructure_error trace=stdout"
-    assert secret not in out.getvalue() + err.getvalue()
-
-
-def test_default_trace_writer_persists_one_valid_trace(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    trace = completed_trace(TerminalDisposition.FAILED)
-
-    reference = write_trace(trace)
-
-    trace_files = list(
-        (tmp_path / ".local" / "state" / "leitir" / "traces").iterdir()
-    )
-    assert len(trace_files) == 1
-    assert str(trace_files[0]) == reference
-    assert ExecutionTrace.read_json(reference) == trace
-
-
-def test_signal_requests_cancellation_and_finalizes_trace():
-    traces = []
-
-    class SignalOrchestrator(FakeOrchestrator):
-        def run(self, request, *, cancellation=None):
-            handler = signal.getsignal(signal.SIGINT)
-            assert callable(handler)
-            handler(signal.SIGINT, None)
-            assert cancellation.is_cancelled()
-            self.calls.append((request, cancellation))
-            trace = completed_trace(TerminalDisposition.CANCELLED)
-            return WorkflowRunResult(TerminalDisposition.CANCELLED, None, trace)
-
-    orchestrator = SignalOrchestrator(TerminalDisposition.CANCELLED)
-    code = main(
-        ["run", "--task", "safe"],
-        orchestrator_factory=lambda _config: orchestrator,
-        trace_writer=lambda trace: traces.append(trace) or "cancelled.json",
-        stdout=io.StringIO(),
-        stderr=io.StringIO(),
-    )
-    assert code == ExitCode.CANCELLED
-    assert len(traces) == 1
-    assert traces[0].final_status is TerminalDisposition.CANCELLED
-
-
-def test_eval_delegates_run_operation_and_driver_executes_task():
-    orchestrator = FakeOrchestrator(TerminalDisposition.ACCEPTED)
-    traces = []
-    drivers = []
-
-    class Driver:
-        def __init__(self):
-            self.calls = 0
-
-        def evaluate(self, run):
-            self.calls += 1
-            result = run(WorkflowRequest("eval-1", "smoke task"))
-            assert result.final_status is TerminalDisposition.ACCEPTED
-
-    driver = Driver()
-    code = main(
-        ["eval"],
-        orchestrator_factory=lambda _config: orchestrator,
-        eval_driver_factory=lambda _config: drivers.append(driver) or driver,
-        trace_writer=lambda trace: traces.append(trace) or "eval.json",
-        stdout=io.StringIO(),
-        stderr=io.StringIO(),
-    )
-    assert code == ExitCode.SUCCESS
-    assert drivers == [driver]
-    assert driver.calls == 1
-    assert [call[0].task for call in orchestrator.calls] == ["smoke task"]
-    assert len(traces) == 1
-
-
-def test_eval_without_v1_11_driver_is_an_infrastructure_failure():
-    code, _orchestrator, traces, out, err = invoke(
-        argv=["eval"],
-    )
-    assert code == ExitCode.INFRASTRUCTURE_FAILURE
-    assert traces == []
-    assert out == ""
-    assert "evaluation driver is not installed" in err
-
-
-def test_invalid_language_error_redacts_authorization_value(capsys):
-    secret = "sk-or-v1-cli-secret"
-    code = main(
+def test_explicit_scope_wires_spec_to_searcher():
+    code, out, err, searcher, _ = invoke(
         [
-            "run",
-            "--task",
-            "safe",
-            "--language",
-            f"Authorization:Bearer {secret}",
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "symbol_definition:urlencode:python",
         ]
     )
+    assert code == ExitCode.SUCCESS
+    assert len(searcher.specs) == 1
+    spec = searcher.specs[0]
+    assert spec.scopes[0].slug == "python/cpython"
+    assert spec.scopes[0].commit_sha == SHA
+    assert spec.must[0].kind is PredicateKind.SYMBOL_DEFINITION
+    assert spec.must[0].value == "urlencode"
+    assert spec.must[0].language == "python"
+
+
+def test_package_resolution_wires_resolver_then_searcher():
+    scope = RepoScope("psf/requests", SHA)
+    resolver = FakeResolver(scope=scope)
+    code, out, err, searcher, _ = invoke(
+        [
+            "search",
+            "--package", "requests",
+            "--version", "2.28.1",
+            "--ecosystem", "pypi",
+            "--must", "identifier:Session",
+        ],
+        resolver=resolver,
+    )
+    assert code == ExitCode.SUCCESS
+    assert len(resolver.calls) == 1
+    assert resolver.calls[0].name == "requests"
+    assert resolver.calls[0].version == "2.28.1"
+    spec = searcher.specs[0]
+    assert spec.scopes[0].slug == "psf/requests"
+    assert spec.scopes[0].commit_sha == SHA
+
+
+def test_stdout_is_valid_json_report():
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "identifier:urlencode",
+        ]
+    )
+    assert code == ExitCode.SUCCESS
+    payload = json.loads(out)
+    assert payload["spec_digest"] == "c" * 64
+    assert payload["coverage"]["status"] == "complete_for_declared_universe"
+    assert len(payload["matches"]) == 1
+    assert payload["matches"][0]["source"]["slug"] == "python/cpython"
+
+
+def test_stderr_has_human_summary():
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "identifier:urlencode",
+        ]
+    )
+    assert "coverage=complete_for_declared_universe" in err
+    assert "matches=1" in err
+    assert "Lib/urllib/parse.py" in err
+
+
+def test_should_and_must_not_predicates_threaded():
+    code, _, _, searcher, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "identifier:urlencode",
+            "--should", "identifier:doseq",
+            "--must-not", "identifier:deprecated",
+        ]
+    )
+    assert code == ExitCode.SUCCESS
+    spec = searcher.specs[0]
+    assert len(spec.should) == 1
+    assert spec.should[0].kind is PredicateKind.IDENTIFIER
+    assert len(spec.must_not) == 1
+    assert spec.must_not[0].value == "deprecated"
+
+
+def test_infrastructure_error_on_searcher_failure():
+    searcher = FakeSearcher(error=RuntimeError("network down"))
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "identifier:urlencode",
+        ],
+        searcher=searcher,
+    )
+    assert code == ExitCode.INFRASTRUCTURE_FAILURE
+    assert "network down" in err
+    assert out == ""
+
+
+def test_infrastructure_error_on_resolver_failure():
+    resolver = FakeResolver(error=RuntimeError("registry unreachable"))
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--package", "requests",
+            "--version", "2.28.1",
+            "--ecosystem", "pypi",
+            "--must", "identifier:Session",
+        ],
+        resolver=resolver,
+    )
+    assert code == ExitCode.INFRASTRUCTURE_FAILURE
+    assert "registry unreachable" in err
+
+
+def test_invalid_commit_sha_is_infrastructure_failure():
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", "tooshort",
+            "--must", "identifier:urlencode",
+        ]
+    )
+    assert code == ExitCode.INFRASTRUCTURE_FAILURE
+    assert "40-char" in err or "commit_sha" in err
+
+
+def test_no_matches_is_still_success():
+    empty = _report(matches=())
+    searcher = FakeSearcher(report=empty)
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--repo", "python/cpython",
+            "--commit", SHA,
+            "--must", "identifier:zzz_absent",
+        ],
+        searcher=searcher,
+    )
+    assert code == ExitCode.SUCCESS
+    payload = json.loads(out)
+    assert payload["matches"] == []
+    assert "matches=0" in err
+
+
+def test_predicate_kind_validation():
+    code = main(
+        ["search", "--repo", "o/r", "--commit", SHA, "--must", "bogus_kind:x"]
+    )
     assert code == ExitCode.MALFORMED_USAGE
-    assert secret not in capsys.readouterr().err
+
+
+class FakeGlobalSearcher:
+    def __init__(self, report=None, error=None):
+        self.report = report or _report(
+            coverage=Coverage(
+                status=CoverageStatus.INDETERMINATE_GLOBAL,
+                files_eligible=10,
+                files_indexed=1,
+                files_excluded=0,
+            ),
+        )
+        self.error = error
+        self.specs: list[SearchSpec] = []
+
+    def search(self, spec: SearchSpec) -> SearchReport:
+        self.specs.append(spec)
+        if self.error:
+            raise self.error
+        return self.report
+
+
+def test_global_flag_wires_global_searcher():
+    gs = FakeGlobalSearcher()
+    out = io.StringIO()
+    err = io.StringIO()
+    code = main(
+        ["search", "--global", "--must", "identifier:urlencode:python"],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=lambda cs, ts: gs,
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.SUCCESS
+    assert len(gs.specs) == 1
+    assert gs.specs[0].mode is SearchMode.GLOBAL_DISCOVERY
+    assert gs.specs[0].scopes == ()
+    payload = json.loads(out.getvalue())
+    assert payload["coverage"]["status"] == "indeterminate_global"
+
+
+def test_global_and_repo_mutually_exclusive():
+    code = main([
+        "search", "--global", "--repo", "o/r", "--commit", SHA,
+        "--must", "identifier:x",
+    ])
+    assert code == ExitCode.MALFORMED_USAGE
+
+
+def test_global_and_package_mutually_exclusive():
+    code = main([
+        "search", "--global", "--package", "requests",
+        "--version", "1.0", "--ecosystem", "pypi",
+        "--must", "identifier:x",
+    ])
+    assert code == ExitCode.MALFORMED_USAGE
+
+
+def test_no_scope_flag_is_malformed():
+    code = main(
+        ["search", "--must", "identifier:x"],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    assert code == ExitCode.MALFORMED_USAGE
+
+
+def test_global_searcher_error_is_infrastructure_failure():
+    gs = FakeGlobalSearcher(error=RuntimeError("api down"))
+    out = io.StringIO()
+    err = io.StringIO()
+    code = main(
+        ["search", "--global", "--must", "identifier:x"],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=lambda cs, ts: gs,
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.INFRASTRUCTURE_FAILURE
+    assert "api down" in err.getvalue()

@@ -1,0 +1,270 @@
+"""Global discovery via GitHub Code Search with honest coverage (ADR-001 P5).
+
+``GlobalSearcher`` handles ``SearchSpec`` in ``GLOBAL_DISCOVERY`` mode. It
+translates typed predicates into a GitHub Code Search query, fetches matching
+blobs, evaluates them through language adapters for precise spans, and returns
+a ``SearchReport`` whose coverage is always ``INDETERMINATE_GLOBAL``.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from leitir.adapters import LanguageAdapter
+from leitir.engine import score_content
+from leitir.search import (
+    Coverage,
+    CoverageStatus,
+    Predicate,
+    PredicateKind,
+    SearchMode,
+    SearchReport,
+    SearchSpec,
+    SourceMatch,
+)
+from leitir.tree import TreeSource
+
+_API = "https://api.github.com"
+_SHA1 = re.compile(r"^[0-9a-f]{40}$")
+
+
+@dataclass(frozen=True, slots=True)
+class CodeSearchHit:
+    """One file-level result from a code search API."""
+
+    slug: str
+    path: str
+    blob_sha: str
+    html_url: str
+
+    def __post_init__(self) -> None:
+        if not self.slug or "/" not in self.slug:
+            raise ValueError("slug must look like 'owner/repo'")
+        if not self.path or not self.path.strip():
+            raise ValueError("path must be non-empty")
+        if not _SHA1.fullmatch(self.blob_sha):
+            raise ValueError("blob_sha must be a 40-char git SHA")
+
+
+@dataclass(frozen=True, slots=True)
+class CodeSearchPage:
+    """One page of code search results."""
+
+    hits: tuple[CodeSearchHit, ...]
+    total_count: int
+    incomplete_results: bool
+
+
+@runtime_checkable
+class CodeSearchPort(Protocol):
+    """Port: execute one code search query and return one page of results."""
+
+    def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage: ...
+
+
+class GitHubCodeSearchTransport:
+    """Production CodeSearchPort backed by the GitHub REST API."""
+
+    def __init__(self, token: str | None = None, timeout: int = 30) -> None:
+        self._token = token
+        self._timeout = timeout
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "leitir",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        return headers
+
+    def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
+        from urllib.parse import urlencode
+
+        params = urlencode({"q": query, "per_page": min(per_page, 100), "page": page})
+        url = f"{_API}/search/code?{params}"
+        request = urllib.request.Request(url, headers=self._headers())
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+                payload = json.load(resp)
+        except urllib.error.HTTPError as exc:
+            raise CodeSearchError(f"GitHub code search failed: HTTP {exc.code}") from exc
+
+        items = payload.get("items", [])
+        hits: list[CodeSearchHit] = []
+        for item in items:
+            repo = item.get("repository", {})
+            slug = repo.get("full_name", "")
+            path = item.get("path", "")
+            sha = item.get("sha", "")
+            html_url = item.get("html_url", "")
+            if not slug or not path or not _SHA1.fullmatch(sha):
+                continue
+            hits.append(CodeSearchHit(slug=slug, path=path, blob_sha=sha, html_url=html_url))
+
+        return CodeSearchPage(
+            hits=tuple(hits),
+            total_count=payload.get("total_count", 0),
+            incomplete_results=bool(payload.get("incomplete_results", False)),
+        )
+
+    def resolve_head_sha(self, slug: str) -> str:
+        url = f"{_API}/repos/{slug}/commits?per_page=1"
+        request = urllib.request.Request(url, headers=self._headers())
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+                payload = json.load(resp)
+        except urllib.error.HTTPError as exc:
+            raise CodeSearchError(f"cannot resolve HEAD for {slug}: HTTP {exc.code}") from exc
+        if not payload or not isinstance(payload, list):
+            raise CodeSearchError(f"empty commit list for {slug}")
+        return payload[0]["sha"]
+
+    def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
+        url = f"https://raw.githubusercontent.com/{slug}/{commit_sha}/{path}"
+        request = urllib.request.Request(url, headers={"User-Agent": "leitir"})
+        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            return resp.read()
+
+
+class CodeSearchError(Exception):
+    """The code search API call failed."""
+
+
+def build_query(spec: SearchSpec) -> str:
+    """Translate must predicates into a GitHub Code Search query string."""
+    terms: list[str] = []
+    language: str | None = None
+
+    for pred in spec.must:
+        if pred.kind is PredicateKind.PATH:
+            terms.append(f"path:{pred.value}")
+        elif pred.kind in (
+            PredicateKind.EXACT_TEXT,
+            PredicateKind.IDENTIFIER,
+            PredicateKind.TOKEN_SEQUENCE,
+            PredicateKind.SYMBOL_DEFINITION,
+            PredicateKind.SYMBOL_REFERENCE,
+            PredicateKind.SIGNATURE,
+            PredicateKind.CALL,
+            PredicateKind.IMPORT,
+        ):
+            terms.append(pred.value)
+        elif pred.kind is PredicateKind.REGEX:
+            terms.append(pred.value)
+        if pred.language and language is None:
+            language = pred.language
+
+    if language:
+        terms.append(f"language:{language}")
+
+    return " ".join(terms)
+
+
+class GlobalSearcher:
+    """Executes a global-discovery search via GitHub Code Search."""
+
+    def __init__(
+        self,
+        code_search: CodeSearchPort,
+        tree_source: TreeSource,
+        adapters: tuple[LanguageAdapter, ...],
+        head_resolver: object | None = None,
+        blob_reader: object | None = None,
+        max_results: int = 30,
+    ) -> None:
+        self._search = code_search
+        self._tree = tree_source
+        self._adapters = adapters
+        self._head_resolver = head_resolver
+        self._blob_reader = blob_reader
+        self._max_results = max_results
+
+    def search(self, spec: SearchSpec) -> SearchReport:
+        if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
+            raise ValueError("GlobalSearcher only handles global_discovery")
+
+        query = build_query(spec)
+        page = self._search.search(query, per_page=min(self._max_results, 100))
+
+        head_cache: dict[str, str] = {}
+        matches: list[SourceMatch] = []
+        files_seen = 0
+
+        for hit in page.hits:
+            if files_seen >= self._max_results:
+                break
+            files_seen += 1
+
+            commit_sha = self._resolve_head(hit.slug, head_cache)
+            if commit_sha is None:
+                continue
+
+            content = self._read_content(hit.slug, commit_sha, hit.path, hit.blob_sha)
+            if content is None:
+                continue
+
+            adapter = self._adapter_for(hit.path)
+            if adapter is None:
+                continue
+
+            content_preds = tuple(
+                p for p in spec.must if p.kind is not PredicateKind.PATH
+            )
+            matches.extend(
+                score_content(
+                    content, adapter, hit.slug, commit_sha,
+                    hit.path, hit.blob_sha,
+                    content_preds, spec.should, spec.must_not,
+                )
+            )
+
+        coverage = Coverage(
+            status=CoverageStatus.INDETERMINATE_GLOBAL,
+            files_eligible=page.total_count,
+            files_indexed=files_seen,
+            files_excluded=0,
+            incomplete_results=page.incomplete_results,
+        )
+        return SearchReport(
+            spec_digest=spec.digest(),
+            coverage=coverage,
+            matches=tuple(matches),
+        )
+
+    def _resolve_head(self, slug: str, cache: dict[str, str]) -> str | None:
+        if slug in cache:
+            return cache[slug]
+        try:
+            if self._head_resolver is not None:
+                sha = self._head_resolver(slug)
+            else:
+                return None
+            cache[slug] = sha
+            return sha
+        except Exception:
+            return None
+
+    def _read_content(
+        self, slug: str, commit_sha: str, path: str, blob_sha: str
+    ) -> str | None:
+        try:
+            if self._blob_reader is not None:
+                data = self._blob_reader(slug, commit_sha, path)
+            else:
+                data = self._tree.read_blob(slug, blob_sha)
+            return data.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+    def _adapter_for(self, path: str) -> LanguageAdapter | None:
+        for adapter in self._adapters:
+            if adapter.eligible(path):
+                return adapter
+        return None

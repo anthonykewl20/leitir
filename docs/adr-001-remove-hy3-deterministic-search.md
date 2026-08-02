@@ -50,15 +50,18 @@ task is not done until both gates are green.
 Gate commands (cumulative — each P task appends its test files):
 
 ```bash
-# Offline (current: P1–P3)
+# Offline (current: P1–P5)
 python -m pytest tests/test_search.py tests/test_search_e2e.py \
   tests/test_engine.py tests/test_engine_e2e.py \
-  tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py
+  tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py \
+  tests/test_cli.py tests/test_cli_e2e.py \
+  tests/test_global.py tests/test_global_e2e.py
 
-# Live (current: P1–P3)
+# Live (current: P1–P5)
 LEITIR_ENABLE_LIVE_E2E=1 python -m pytest \
   tests/test_search_e2e_live.py tests/test_engine_e2e_live.py \
-  tests/test_resolver_e2e_live.py
+  tests/test_resolver_e2e_live.py tests/test_cli_e2e_live.py \
+  tests/test_global_e2e_live.py
 ```
 
 ## Work (bite-sized)
@@ -86,7 +89,7 @@ enrichment behind the existing CLI (P5–P6).
       `tests/fixtures_resolver.py`)
       Gate: offline 128 passed; live 15 passed.
 
-- [ ] P4: CLI shell + end-to-end wiring.
+- [x] P4: CLI shell + end-to-end wiring.
       Replace the v1 Hy3 CLI with a `leitir search` command that wires
       resolver → engine → report. Two input modes:
       (a) explicit scope: `--repo owner/repo --commit <sha>` + predicates;
@@ -95,15 +98,15 @@ enrichment behind the existing CLI (P5–P6).
       Retire the old `leitir run` / `leitir eval` entry points.
       (`src/leitir/cli.py` rewrite, `tests/test_cli.py`,
       `tests/test_cli_e2e.py`, `tests/test_cli_e2e_live.py`)
-      Gate: offline + live, happy and sad paths.
+      Gate: offline 158 passed (P1–P4 cumulative); full suite 452 passed.
 
-- [ ] P5: Global discovery with honest coverage reporting.
+- [x] P5: Global discovery with honest coverage reporting.
       Add a `GlobalSearcher` that uses GitHub Code Search API for
       `GLOBAL_DISCOVERY` mode. Coverage is always `INDETERMINATE_GLOBAL`.
       Wire into the CLI as `leitir search --global`.
       (`src/leitir/discovery_search.py`, `tests/test_global.py`,
       `tests/test_global_e2e.py`, `tests/test_global_e2e_live.py`)
-      Gate: offline + live, happy and sad paths.
+      Gate: offline 192 passed (P1–P5 cumulative); full suite 486 passed.
 
 - [ ] P6: Deterministic ranking + pinned benchmark.
       Score normalization, tie-breaking by provenance stability, and a

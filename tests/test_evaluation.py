@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import json
 
-from leitir.cli import ExitCode, main
 from leitir.contracts import (
     ArtifactId,
     EvidenceTier,
@@ -114,44 +112,6 @@ def test_driver_supplies_hidden_mount_only_as_orchestrator_step5_input():
     assert report.task_count == len(suite.tasks)
     assert report.outcomes["first_pass_pass"] == len(suite.tasks)
 
-
-def test_cli_runs_fully_stubbed_suite_writes_one_trace_per_task_and_report():
-    suite = SmokeBenchmark.default()
-
-    class Orchestrator:
-        def __init__(self):
-            self.calls = []
-
-        def run(self, request, *, cancellation=None, **verification_inputs):
-            self.calls.append((request, cancellation, verification_inputs))
-            trace = _workflow_trace(
-                f"cli-{len(self.calls)}",
-                TerminalDisposition.ACCEPTED,
-                accepted_attempt=1,
-                verification=("pass",),
-            )
-            return WorkflowRunResult(TerminalDisposition.ACCEPTED, 1, trace)
-
-    orchestrator = Orchestrator()
-    traces = []
-    stdout = io.StringIO()
-    code = main(
-        ["eval"],
-        orchestrator_factory=lambda _config: orchestrator,
-        eval_driver_factory=lambda _config: SmokeEvaluationDriver(suite),
-        trace_writer=lambda trace: traces.append(trace) or f"{trace.trace_id}.json",
-        stdout=stdout,
-        stderr=io.StringIO(),
-    )
-
-    assert code == ExitCode.SUCCESS
-    assert len(orchestrator.calls) == len(suite.tasks)
-    assert len(traces) == len(suite.tasks)
-    lines = stdout.getvalue().splitlines()
-    report = json.loads(lines[-2])
-    assert report["benchmark_version"] == BENCHMARK_VERSION
-    assert report["task_count"] == len(suite.tasks)
-    assert lines[-1] == "status=accepted trace=driver-managed"
 
 
 def test_integrated_orchestrator_never_leaks_hidden_input_to_repair_or_trace(

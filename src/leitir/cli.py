@@ -1,304 +1,253 @@
-"""Thin command-line boundary for Leitir's existing application interfaces."""
+"""Thin command-line boundary for Leitir's deterministic code-search kernel."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from enum import IntEnum
-import hashlib
-from pathlib import Path
-import re
-import signal
+import os
 import sys
-import threading
 from typing import Protocol, TextIO
-import uuid
 
-from .config import Config
-from .contracts import TargetLanguage, TerminalDisposition, WorkflowRequest
 from .logging import redact
-from .orchestrator import (
-    CancellationToken,
-    FiveStepOrchestrator,
-    WorkflowComponents,
-    WorkflowRunResult,
+from .search import (
+    Predicate,
+    PredicateKind,
+    RepoScope,
+    SearchMode,
+    SearchReport,
+    SearchSpec,
 )
-from .trace import ExecutionTrace, TraceRecorder
 
 
 class ExitCode(IntEnum):
     """Stable process outcomes for automation."""
 
     SUCCESS = 0
-    TASK_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
-    SPEND_CAP_TERMINATION = 4
-    CANCELLED = 130
 
 
-class EvaluationDriver(Protocol):
-    """v1-11 extension point; the driver owns task selection and reporting."""
-
-    def evaluate(
-        self, run: EvaluationRunOperation
-    ) -> object:
-        """Execute evaluation tasks through the supplied orchestrator operation."""
+class TreeSourceFactory(Protocol):
+    def __call__(self, token: str | None) -> object: ...
 
 
-class EvaluationRunOperation(Protocol):
-    """The task-scoped seam from evaluation into the normal orchestrator."""
-
-    def __call__(
-        self,
-        request: WorkflowRequest,
-        *,
-        public_tests: Mapping[str, str] | None = None,
-        dependencies: tuple[str, ...] | None = None,
-        hidden_tests: str | Path | None = None,
-    ) -> WorkflowRunResult: ...
+class ResolverFactory(Protocol):
+    def __call__(self, token: str | None) -> object: ...
 
 
-class TraceWriter(Protocol):
-    def __call__(self, trace: ExecutionTrace) -> str:
-        """Persist one completed trace and return its reference."""
+class SearcherFactory(Protocol):
+    def __call__(self, tree_source: object) -> object: ...
 
 
-ConfigLoader = Callable[[], Config]
-OrchestratorFactory = Callable[[Config], FiveStepOrchestrator]
-EvaluationDriverFactory = Callable[[Config], EvaluationDriver]
+def _github_token() -> str | None:
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 
 
-class EvaluationDriverUnavailable(RuntimeError):
-    """Raised until v1-11 supplies the concrete smoke evaluation driver."""
-
-
-class _SafeArgumentParser(argparse.ArgumentParser):
-    def _print_message(self, message: str | None, file: TextIO | None = None) -> None:
-        if message:
-            (file or sys.stderr).write(str(redact(message)))
-
-
-def _task(value: str) -> str:
-    if not value.strip():
-        raise argparse.ArgumentTypeError("task must be nonblank")
-    return value
+def _parse_predicate(raw: str) -> Predicate:
+    parts = raw.split(":", 2)
+    if len(parts) < 2:
+        raise argparse.ArgumentTypeError(
+            f"predicate must be kind:value, got {raw!r}"
+        )
+    kind_str, value = parts[0], parts[1]
+    language = parts[2] if len(parts) == 3 else None
+    try:
+        kind = PredicateKind(kind_str)
+    except ValueError:
+        valid = ", ".join(k.value for k in PredicateKind)
+        raise argparse.ArgumentTypeError(
+            f"unknown predicate kind {kind_str!r}; valid kinds: {valid}"
+        ) from None
+    return Predicate(kind=kind, value=value, language=language)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = _SafeArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="leitir",
-        description="Leitir technical search and code synthesis",
+        description="Leitir deterministic code-search kernel",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="execute one task")
-    task_source = run.add_mutually_exclusive_group(required=True)
-    task_source.add_argument("--task", type=_task, help="task description")
-    task_source.add_argument(
-        "--smoke-task",
+    search = commands.add_parser("search", help="search a pinned code corpus")
+
+    scope_group = search.add_mutually_exclusive_group(required=False)
+    scope_group.add_argument(
+        "--repo",
         default=None,
-        help="smoke task id (loads bundle and hidden tests)",
+        help="repository slug (owner/repo); requires --commit",
     )
-    run.add_argument(
-        "--language",
-        default=TargetLanguage.PYTHON.value,
-        choices=(TargetLanguage.PYTHON.value,),
-        help="target language (v1: python only)",
+    scope_group.add_argument(
+        "--package",
+        default=None,
+        help="package name; requires --version and --ecosystem",
     )
-    commands.add_parser("eval", help="run the configured evaluation driver")
+    scope_group.add_argument(
+        "--global",
+        action="store_true",
+        default=False,
+        dest="global_search",
+        help="global discovery via GitHub Code Search (coverage is indeterminate)",
+    )
+
+    search.add_argument("--commit", default=None, help="40-char git SHA")
+    search.add_argument("--version", default=None, help="exact package version")
+    search.add_argument(
+        "--ecosystem",
+        default=None,
+        choices=("pypi", "crates", "go"),
+        help="package ecosystem",
+    )
+
+    search.add_argument(
+        "--must",
+        type=_parse_predicate,
+        action="append",
+        default=[],
+        dest="must",
+        help="required predicate (kind:value[:language])",
+    )
+    search.add_argument(
+        "--should",
+        type=_parse_predicate,
+        action="append",
+        default=[],
+        dest="should",
+        help="optional boosting predicate (kind:value[:language])",
+    )
+    search.add_argument(
+        "--must-not",
+        type=_parse_predicate,
+        action="append",
+        default=[],
+        dest="must_not",
+        help="exclusion predicate (kind:value[:language])",
+    )
+
     return parser
 
 
-def build_orchestrator(config: Config) -> FiveStepOrchestrator:
-    """Compose existing workflow components without duplicating their logic."""
-
-    # Imports stay here so importing the CLI remains an effect-free operation.
-    from .discovery import TargetedDiscovery, UrllibDiscoveryHttpTransport
-    from .expansion import QueryExpander
-    from .extraction import EvidenceExtractor, UrllibExtractionFetcher
-    from .openrouter import OpenRouterHy3Client
-    from .synthesis import EvidenceGroundedSynthesizer
-    from .verification import DockerSandbox, Step5Controller
-
-    def components(recorder: TraceRecorder) -> WorkflowComponents:
-        client = OpenRouterHy3Client(config, trace_recorder=recorder)
-        synthesis = EvidenceGroundedSynthesizer(
-            client, config=config, trace_recorder=recorder
-        )
-        return WorkflowComponents(
-            expansion=QueryExpander(
-                client, config=config, trace_recorder=recorder
-            ),
-            discovery=TargetedDiscovery(
-                UrllibDiscoveryHttpTransport(),
-                config=config,
-                trace_recorder=recorder,
-            ),
-            extraction=EvidenceExtractor(
-                UrllibExtractionFetcher(),
-                config=config,
-                trace_recorder=recorder,
-            ),
-            synthesis=synthesis,
-            verification=Step5Controller(
-                DockerSandbox(config),
-                synthesis,
-                config,
-                trace_recorder=recorder,
-            ),
-        )
-
-    return FiveStepOrchestrator(components_factory=components, config=config)
+def _validate_scope_args(args: argparse.Namespace) -> str | None:
+    if args.global_search:
+        return None
+    if args.repo is not None:
+        if args.commit is None:
+            return "--repo requires --commit"
+        return None
+    if args.package is not None:
+        if args.version is None:
+            return "--package requires --version"
+        if args.ecosystem is None:
+            return "--package requires --ecosystem"
+        return None
+    return "one of --repo, --package, or --global is required"
 
 
-def build_evaluation_driver(_config: Config) -> EvaluationDriver:
-    """Build the live driver only after an explicit operator opt-in."""
+def _build_default_tree_source(token: str | None) -> object:
+    from .tree import GitHubTreeSource
 
-    import os
-
-    if os.environ.get("LEITIR_ENABLE_LIVE_EVAL") != "1":
-        raise EvaluationDriverUnavailable(
-            "the evaluation driver is not installed for automatic paid runs; "
-            "set LEITIR_ENABLE_LIVE_EVAL=1 to opt in to Docker/network/model use"
-        )
-    from .evaluation import SmokeEvaluationDriver
-
-    return SmokeEvaluationDriver()
+    return GitHubTreeSource(token=token)
 
 
-def write_trace(trace: ExecutionTrace) -> str:
-    """Write exactly one trace document to Leitir's user-state directory."""
-
-    root = Path.home() / ".local" / "state" / "leitir" / "traces"
-    root.mkdir(parents=True, exist_ok=True)
-    name = _trace_filename(trace.trace_id)
-    destination = root / name
-    temporary = root / f".{name}.{uuid.uuid4().hex}.tmp"
-    try:
-        temporary.write_text(trace.to_json(), encoding="utf-8")
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return str(destination)
-
-
-def _trace_filename(trace_id: str) -> str:
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", trace_id).strip(".-")[:80]
-    digest = hashlib.sha256(trace_id.encode("utf-8")).hexdigest()[:12]
-    return f"{stem or 'trace'}-{digest}.json"
-
-
-@contextmanager
-def _cancellation_signals(token: CancellationToken):
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    installed: dict[signal.Signals, object] = {}
-
-    def request_cancellation(_signum: int, _frame: object) -> None:
-        token.cancel()
-
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        installed[signum] = signal.getsignal(signum)
-        signal.signal(signum, request_cancellation)
-    try:
-        yield
-    finally:
-        for signum, handler in installed.items():
-            signal.signal(signum, handler)
-
-
-def _exit_code(status: TerminalDisposition) -> ExitCode:
-    if status is TerminalDisposition.ACCEPTED:
-        return ExitCode.SUCCESS
-    if status in {
-        TerminalDisposition.FAILED,
-        TerminalDisposition.REPAIR_EXHAUSTED,
-    }:
-        return ExitCode.TASK_FAILURE
-    if status is TerminalDisposition.SPEND_CAP_EXCEEDED:
-        return ExitCode.SPEND_CAP_TERMINATION
-    if status is TerminalDisposition.CANCELLED:
-        return ExitCode.CANCELLED
-    return ExitCode.INFRASTRUCTURE_FAILURE
-
-
-def _safe_print(message: object, *, file: TextIO) -> None:
-    print(redact(str(message)), file=file)
-
-
-def _write_result(
-    result: WorkflowRunResult,
-    *,
-    trace_writer: TraceWriter,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> ExitCode:
-    try:
-        reference = trace_writer(result.trace_reference)
-    except Exception as exc:
-        # If persistence fails, stdout is the last-resort trace output. This
-        # preserves the trace-on-every-started-run contract.
-        _safe_print(result.trace_reference.to_json(), file=stdout)
-        _safe_print(f"trace persistence failed: {exc}", file=stderr)
-        reference = "stdout"
-        status = TerminalDisposition.INFRASTRUCTURE_ERROR
-    else:
-        status = result.final_status
-    _safe_print(
-        f"status={status.value} trace={reference}",
-        file=stdout,
+def _build_default_resolver(token: str | None) -> object:
+    from .resolver import (
+        CratesResolver,
+        GitHubTagResolver,
+        GoResolver,
+        MultiResolver,
+        PyPIResolver,
     )
-    return _exit_code(status)
+
+    tag_resolver = GitHubTagResolver(token=token)
+    return MultiResolver(
+        pypi=PyPIResolver(tag_resolver),
+        crates=CratesResolver(tag_resolver),
+        go=GoResolver(tag_resolver),
+    )
 
 
-def _run_operation(
-    orchestrator: FiveStepOrchestrator,
-    token: CancellationToken,
-    trace_writer: TraceWriter,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> EvaluationRunOperation:
-    def run(
-        request: WorkflowRequest,
-        *,
-        public_tests: Mapping[str, str] | None = None,
-        dependencies: tuple[str, ...] | None = None,
-        hidden_tests: str | Path | None = None,
-    ) -> WorkflowRunResult:
-        evaluation_inputs = {}
-        if public_tests is not None:
-            evaluation_inputs["public_tests"] = public_tests
-        if dependencies is not None:
-            evaluation_inputs["dependencies"] = dependencies
-        if hidden_tests is not None:
-            evaluation_inputs["hidden_tests"] = hidden_tests
-        result = orchestrator.run(
-            request, cancellation=token, **evaluation_inputs
+def _build_default_searcher(tree_source: object) -> object:
+    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+    from .engine import ScopedSearcher
+
+    return ScopedSearcher(
+        tree_source=tree_source,
+        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+    )
+
+
+def _build_default_global_searcher(
+    code_search: object, tree_source: object
+) -> object:
+    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+    from .discovery_search import GlobalSearcher
+
+    return GlobalSearcher(
+        code_search=code_search,
+        tree_source=tree_source,
+        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+        head_resolver=code_search.resolve_head_sha,
+        blob_reader=code_search.read_blob_by_path,
+    )
+
+
+def _build_default_code_search(token: str | None) -> object:
+    from .discovery_search import GitHubCodeSearchTransport
+
+    return GitHubCodeSearchTransport(token=token)
+
+
+def _resolve_scope_via_package(
+    resolver: object,
+    package: str,
+    version: str,
+    ecosystem: str,
+) -> RepoScope:
+    from .resolver import Ecosystem, PackageRef
+
+    ref = PackageRef(
+        ecosystem=Ecosystem(ecosystem),
+        name=package,
+        version=version,
+    )
+    resolved = resolver.resolve(ref)
+    return resolved.scope
+
+
+def _write_summary(report: SearchReport, *, file: TextIO) -> None:
+    cov = report.coverage
+    print(
+        f"coverage={cov.status.value} "
+        f"eligible={cov.files_eligible} "
+        f"indexed={cov.files_indexed} "
+        f"excluded={cov.files_excluded} "
+        f"matches={len(report.matches)}",
+        file=file,
+    )
+    for match in report.matches[:10]:
+        src = match.source
+        kinds = ",".join(k.value for k in match.matched_kinds)
+        print(
+            f"  {src.path}:{src.start_line}-{src.end_line} "
+            f"score={match.score:.1f} [{kinds}] "
+            f"{src.slug}@{src.commit_sha[:12]}",
+            file=file,
         )
-        _write_result(
-            result,
-            trace_writer=trace_writer,
-            stdout=stdout,
-            stderr=stderr,
-        )
-        return result
-
-    return run
+    if len(report.matches) > 10:
+        print(f"  ... and {len(report.matches) - 10} more", file=file)
 
 
 def main(
     argv: Sequence[str] | None = None,
     *,
-    config_loader: ConfigLoader = Config.default,
-    orchestrator_factory: OrchestratorFactory = build_orchestrator,
-    eval_driver_factory: EvaluationDriverFactory = build_evaluation_driver,
-    trace_writer: TraceWriter = write_trace,
+    tree_source_factory: Callable[[str | None], object] = _build_default_tree_source,
+    resolver_factory: Callable[[str | None], object] = _build_default_resolver,
+    searcher_factory: Callable[[object], object] = _build_default_searcher,
+    code_search_factory: Callable[[str | None], object] = _build_default_code_search,
+    global_searcher_factory: Callable[[object, object], object] = _build_default_global_searcher,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
-    """Parse one command and map existing application outcomes to exit codes."""
+    """Parse one command and wire resolver -> engine -> report."""
 
     out = stdout or sys.stdout
     err = stderr or sys.stderr
@@ -308,98 +257,56 @@ def main(
     except SystemExit as exc:
         return int(exc.code)
 
+    scope_error = _validate_scope_args(args)
+    if scope_error:
+        print(f"leitir: error: {scope_error}", file=err)
+        return int(ExitCode.MALFORMED_USAGE)
+
+    if not args.must:
+        print("leitir: error: at least one --must predicate is required", file=err)
+        return int(ExitCode.MALFORMED_USAGE)
+
+    token = _github_token()
+
     try:
-        config = config_loader()
-        if not isinstance(config, Config):
-            raise TypeError("configuration loader must return Config")
-        orchestrator = orchestrator_factory(config)
+        if args.global_search:
+            spec = SearchSpec(
+                mode=SearchMode.GLOBAL_DISCOVERY,
+                must=tuple(args.must),
+                should=tuple(args.should),
+                must_not=tuple(args.must_not),
+            )
+            code_search = code_search_factory(token)
+            tree_source = tree_source_factory(token)
+            searcher = global_searcher_factory(code_search, tree_source)
+            report = searcher.search(spec)
+        else:
+            if args.repo is not None:
+                scope = RepoScope(slug=args.repo, commit_sha=args.commit)
+            else:
+                resolver = resolver_factory(token)
+                scope = _resolve_scope_via_package(
+                    resolver, args.package, args.version, args.ecosystem
+                )
+
+            spec = SearchSpec(
+                mode=SearchMode.SCOPED_EXHAUSTIVE,
+                must=tuple(args.must),
+                should=tuple(args.should),
+                must_not=tuple(args.must_not),
+                scopes=(scope,),
+            )
+
+            tree_source = tree_source_factory(token)
+            searcher = searcher_factory(tree_source)
+            report = searcher.search(spec)
     except Exception as exc:
-        _safe_print(f"status=infrastructure_error error={exc}", file=err)
+        print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.INFRASTRUCTURE_FAILURE)
 
-    token = CancellationToken()
-    with _cancellation_signals(token):
-        if args.command == "run":
-            try:
-                dependencies: tuple[str, ...] = ()
-                hidden_tests: Path | None = None
-                if args.smoke_task is not None:
-                    from .evaluation import SmokeBenchmark
-
-                    benchmark = SmokeBenchmark.load()
-                    task = next(
-                        (
-                            item
-                            for item in benchmark.tasks
-                            if item.task_id == args.smoke_task
-                        ),
-                        None,
-                    )
-                    if task is None:
-                        _safe_print(
-                            "status=infrastructure_error "
-                            f"error=unknown smoke task {args.smoke_task}",
-                            file=err,
-                        )
-                        return int(ExitCode.INFRASTRUCTURE_FAILURE)
-                    request = WorkflowRequest(
-                        request_id=f"smoke-{task.task_id}",
-                        task=task.prompt,
-                        target_language=TargetLanguage.PYTHON,
-                    )
-                    dependencies = task.dependencies
-                    hidden_tests = task.hidden_test_directory
-                    result = orchestrator.run(
-                        request,
-                        cancellation=token,
-                        dependencies=dependencies,
-                        hidden_tests=hidden_tests,
-                    )
-                else:
-                    request = WorkflowRequest(
-                        request_id=uuid.uuid4().hex,
-                        task=args.task,
-                        target_language=TargetLanguage(args.language),
-                    )
-                    result = orchestrator.run(request, cancellation=token)
-            except KeyboardInterrupt:
-                token.cancel()
-                _safe_print(
-                    "status=infrastructure_error error=run returned no trace",
-                    file=err,
-                )
-                return int(ExitCode.INFRASTRUCTURE_FAILURE)
-            except Exception as exc:
-                _safe_print(
-                    f"status=infrastructure_error error={exc}",
-                    file=err,
-                )
-                return int(ExitCode.INFRASTRUCTURE_FAILURE)
-            return int(
-                _write_result(
-                    result,
-                    trace_writer=trace_writer,
-                    stdout=out,
-                    stderr=err,
-                )
-            )
-
-        try:
-            driver = eval_driver_factory(config)
-            report = driver.evaluate(
-                _run_operation(orchestrator, token, trace_writer, out, err)
-            )
-        except KeyboardInterrupt:
-            token.cancel()
-            _safe_print("status=cancelled trace=driver-managed", file=out)
-            return int(ExitCode.CANCELLED)
-        except Exception as exc:
-            _safe_print(f"status=infrastructure_error error={exc}", file=err)
-            return int(ExitCode.INFRASTRUCTURE_FAILURE)
-        if hasattr(report, "to_json") and callable(report.to_json):
-            _safe_print(report.to_json(), file=out)
-        _safe_print("status=accepted trace=driver-managed", file=out)
-        return int(ExitCode.SUCCESS)
+    print(report.to_json(), file=out)
+    _write_summary(report, file=err)
+    return int(ExitCode.SUCCESS)
 
 
 if __name__ == "__main__":
@@ -407,14 +314,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "EvaluationDriver",
-    "EvaluationDriverUnavailable",
-    "EvaluationRunOperation",
     "ExitCode",
-    "TraceWriter",
-    "build_evaluation_driver",
-    "build_orchestrator",
     "build_parser",
     "main",
-    "write_trace",
 ]

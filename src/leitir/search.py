@@ -72,6 +72,15 @@ class Predicate:
             except re.error as exc:
                 raise ValueError("regex predicate must compile") from exc
 
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "kind": self.kind.value,
+            "value": self.value,
+        }
+        if self.language is not None:
+            result["language"] = self.language
+        return result
+
 
 @dataclass(frozen=True, slots=True)
 class RepoScope:
@@ -188,6 +197,17 @@ class SourceRef:
             f"{self.path}#L{self.start_line}-L{self.end_line}"
         )
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "slug": self.slug,
+            "commit_sha": self.commit_sha,
+            "path": self.path,
+            "blob_sha": self.blob_sha,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "permalink": self.permalink,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class SourceMatch:
@@ -210,6 +230,13 @@ class SourceMatch:
             raise TypeError("matched_kinds must contain only PredicateKind")
         if not self.matched_kinds:
             raise ValueError("a match must record at least one matched predicate")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "source": self.source.to_dict(),
+            "score": self.score,
+            "matched_kinds": [k.value for k in self.matched_kinds],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +268,15 @@ class Coverage:
                 "complete coverage requires full indexing and no partial results"
             )
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status.value,
+            "files_eligible": self.files_eligible,
+            "files_indexed": self.files_indexed,
+            "files_excluded": self.files_excluded,
+            "incomplete_results": self.incomplete_results,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class SearchReport:
@@ -263,3 +299,13 @@ class SearchReport:
             raise TypeError("matches must be a tuple")
         if any(not isinstance(item, SourceMatch) for item in self.matches):
             raise TypeError("matches must contain only SourceMatch values")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "spec_digest": self.spec_digest,
+            "coverage": self.coverage.to_dict(),
+            "matches": [m.to_dict() for m in self.matches],
+        }
+
+    def to_json(self, *, indent: int | None = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, sort_keys=False)

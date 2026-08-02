@@ -248,7 +248,7 @@
       "id": "process.supply_chain_evidence",
       "dimension": "process_supply_chain",
       "weight": 1,
-      "score_eligible": true,
+      "score_eligible": false,
       "criterion": {
         "op": "eq",
         "value": 10000
@@ -257,6 +257,78 @@
         "offline": "advisory",
         "release": "required"
       },
+      "applicability": null
+    },
+    {
+      "id": "process.branch_protection",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.ci_tests",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.code_review",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.dependency_update_tool",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.fuzzing",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.pinned_dependencies",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "process.signed_releases",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
+      "applicability": {"rule": "versioned release policy proves the repository publishes no release artifacts"}
+    },
+    {
+      "id": "process.vulnerabilities",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "advisory", "release": "required"},
       "applicability": null
     },
     {

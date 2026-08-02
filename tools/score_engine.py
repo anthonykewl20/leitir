@@ -95,6 +95,38 @@ _TEST_ADEQUACY_CHECK_IDS = (
 _SCOPE_KINDS = ("production", "generated", "vendored", "fixture")
 _APPLICABILITY_KINDS = ("statements", "branches", "mutants")
 
+PINNED_OPENSSF_SCORECARD_VERSION = "v5.5.0"
+PINNED_OPENSSF_SCORECARD_COMMIT = (
+    "c395761df6afe1a69e476bc60a013a94bcbc153f"
+)
+OPENSSF_SCORECARD_API = "https://api.securityscorecards.dev/projects/github.com"
+_MAX_OPENSSF_ARTIFACT_BYTES = 16 * 1024 * 1024
+_PROCESS_CONTROL_CHECK_ID = "process.supply_chain_evidence"
+OPENSSF_SELECTED_CHECKS = (
+    ("process.branch_protection", "Branch-Protection"),
+    ("process.ci_tests", "CI-Tests"),
+    ("process.code_review", "Code-Review"),
+    ("process.dependency_update_tool", "Dependency-Update-Tool"),
+    ("process.fuzzing", "Fuzzing"),
+    ("process.pinned_dependencies", "Pinned-Dependencies"),
+    ("process.signed_releases", "Signed-Releases"),
+    ("process.vulnerabilities", "Vulnerabilities"),
+)
+_PROCESS_CHECK_IDS = (
+    _PROCESS_CONTROL_CHECK_ID,
+    *(check_id for check_id, _ in OPENSSF_SELECTED_CHECKS),
+)
+_OPENSSF_CAPABILITY_NAMES = {
+    "branch_protection",
+    "checks",
+    "contents",
+    "public_api",
+    "pull_requests",
+    "releases",
+    "repository_metadata",
+    "vulnerabilities",
+}
+
 
 ADR001_OFFLINE_GATE_TESTS = (
     "tests/test_search.py",
@@ -3279,6 +3311,745 @@ def evaluate_test_adequacy_evidence(
     )
 
 
+class OpenSSFCollectionState(str, Enum):
+    """Typed outcome of an OpenSSF Scorecard REST collection attempt."""
+
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubCapabilities:
+    """Credential-free capability metadata; token values are never accepted."""
+
+    token_kind: str
+    granted: tuple[str, ...] = ()
+    unavailable: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.token_kind not in {
+            "anonymous",
+            "classic",
+            "fine_grained",
+            "github_app",
+            "unknown",
+        }:
+            raise ValueError("token_kind is not a supported capability label")
+        for name, values in (
+            ("granted", self.granted),
+            ("unavailable", self.unavailable),
+        ):
+            if not isinstance(values, tuple):
+                raise TypeError(f"{name} capabilities must be a tuple")
+            if any(value not in _OPENSSF_CAPABILITY_NAMES for value in values):
+                raise ValueError(f"{name} contains an unknown capability")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} capabilities must be unique")
+        if set(self.granted) & set(self.unavailable):
+            raise ValueError("a capability cannot be both granted and unavailable")
+        object.__setattr__(self, "granted", tuple(sorted(self.granted)))
+        object.__setattr__(self, "unavailable", tuple(sorted(self.unavailable)))
+
+    @property
+    def token_present(self) -> bool | None:
+        if self.token_kind == "unknown":
+            return None
+        return self.token_kind != "anonymous"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "token_kind": self.token_kind,
+            "token_present": self.token_present,
+            "granted": list(self.granted),
+            "unavailable": list(self.unavailable),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OpenSSFApplicability:
+    """Evidence that satisfies one policy-owned not-applicable predicate."""
+
+    check_id: str
+    predicate: str
+    evidence: str
+
+    def __post_init__(self) -> None:
+        if self.check_id not in {item[0] for item in OPENSSF_SELECTED_CHECKS}:
+            raise ValueError("applicability check_id is not an OpenSSF-selected check")
+        if not isinstance(self.predicate, str) or not self.predicate.strip():
+            raise ValueError("applicability predicate must be non-empty text")
+        if not isinstance(self.evidence, str) or not self.evidence.strip():
+            raise ValueError("applicability evidence must be non-empty text")
+
+
+@dataclass(frozen=True, slots=True)
+class OpenSSFCollection:
+    """A raw REST artifact or a typed reason why no artifact was available."""
+
+    repository: str
+    state: OpenSSFCollectionState
+    collected_at: str
+    capabilities: GitHubCapabilities
+    reason_code: str
+    artifact: EvidenceArtifact | None = None
+    http_status: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.repository, str) or not _REPO_SLUG.fullmatch(
+            self.repository
+        ):
+            raise ValueError("repository must be an owner/repository slug")
+        if not isinstance(self.state, OpenSSFCollectionState):
+            raise TypeError("state must be an OpenSSFCollectionState")
+        _validate_openssf_timestamp(self.collected_at, "collected_at")
+        if not isinstance(self.capabilities, GitHubCapabilities):
+            raise TypeError("capabilities must be GitHubCapabilities")
+        if not isinstance(self.reason_code, str) or not _REASON_CODE.fullmatch(
+            self.reason_code
+        ):
+            raise ValueError("collection reason_code must be uppercase snake-case")
+        if self.http_status is not None and (
+            not _is_int(self.http_status) or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("http_status must be a valid HTTP status or None")
+        if self.state is OpenSSFCollectionState.AVAILABLE:
+            if not isinstance(self.artifact, EvidenceArtifact):
+                raise TypeError("available collection requires an EvidenceArtifact")
+        elif self.artifact is not None:
+            raise ValueError("unavailable or error collection cannot contain an artifact")
+
+
+@dataclass(frozen=True, slots=True)
+class OpenSSFProvenance:
+    """Pinned identity and observation metadata extracted from raw Scorecard JSON."""
+
+    repository: str
+    repository_commit: str
+    tool_version: str
+    tool_commit: str
+    observed_at: str
+    raw_artifact_sha256: str
+    capabilities: GitHubCapabilities
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.repository, str) or not self.repository.startswith(
+            "github.com/"
+        ):
+            raise ValueError("OpenSSF repository must start with github.com/")
+        if not _SHA1.fullmatch(self.repository_commit):
+            raise ValueError("OpenSSF repository commit must be a SHA-1")
+        if not isinstance(self.tool_version, str) or not self.tool_version:
+            raise ValueError("OpenSSF tool version must be non-empty text")
+        if not _SHA1.fullmatch(self.tool_commit):
+            raise ValueError("OpenSSF tool commit must be a SHA-1")
+        _validate_openssf_timestamp(self.observed_at, "OpenSSF observation time")
+        if not _SHA256.fullmatch(self.raw_artifact_sha256):
+            raise ValueError("OpenSSF raw artifact digest must be a SHA-256")
+        if not isinstance(self.capabilities, GitHubCapabilities):
+            raise TypeError("OpenSSF capabilities must be GitHubCapabilities")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "repository": self.repository,
+            "repository_commit": self.repository_commit,
+            "tool_version": self.tool_version,
+            "tool_commit": self.tool_commit,
+            "observed_at": self.observed_at,
+            "raw_artifact_sha256": self.raw_artifact_sha256,
+            "capabilities": self.capabilities.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessSupplyChainEvaluation:
+    """Selected OpenSSF facts; the upstream aggregate has no field here."""
+
+    collection_state: OpenSSFCollectionState
+    checks: tuple[CheckResult, ...]
+    provenance: OpenSSFProvenance | None
+    aggregate_disposition: str = "discarded"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.collection_state, OpenSSFCollectionState):
+            raise TypeError("collection_state must be an OpenSSFCollectionState")
+        if not isinstance(self.checks, tuple) or any(
+            not isinstance(item, CheckResult) for item in self.checks
+        ):
+            raise TypeError("checks must be a tuple of CheckResult")
+        if tuple(item.id for item in self.checks) != tuple(
+            sorted(_PROCESS_CHECK_IDS)
+        ):
+            raise ValueError("process evaluation must contain every selected check")
+        if self.provenance is not None and not isinstance(
+            self.provenance, OpenSSFProvenance
+        ):
+            raise TypeError("provenance must be OpenSSFProvenance or None")
+        if self.aggregate_disposition != "discarded":
+            raise ValueError("the OpenSSF aggregate must always be discarded")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "collection_state": self.collection_state.value,
+            "aggregate_disposition": self.aggregate_disposition,
+            "provenance": (
+                None if self.provenance is None else self.provenance.to_dict()
+            ),
+            "checks": [
+                {
+                    "id": item.id,
+                    "status": item.status.value,
+                    "score_bps": item.score_bps,
+                    "reason_code": item.reason_code,
+                    "numerator": item.numerator,
+                    "denominator": item.denominator,
+                    "exclusions": dict(item.exclusions),
+                    "evidence": [dict(entry) for entry in item.evidence],
+                }
+                for item in self.checks
+            ],
+        }
+
+
+class OpenSSFEvaluationError(ValueError):
+    """Stable reason-coded rejection of malformed or mismatched raw evidence."""
+
+    def __init__(
+        self,
+        reason_code: str,
+        message: str,
+        *,
+        provenance: OpenSSFProvenance | None = None,
+    ) -> None:
+        if not _REASON_CODE.fullmatch(reason_code):
+            raise ValueError("OpenSSF error reason must be uppercase snake-case")
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.provenance = provenance
+
+
+def _validate_openssf_timestamp(value: object, name: str) -> str:
+    from datetime import datetime
+
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError(f"{name} must be a UTC RFC3339 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a UTC RFC3339 timestamp") from exc
+    if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
+        raise ValueError(f"{name} must be a UTC RFC3339 timestamp")
+    return value
+
+
+def _utc_now_text() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def collect_openssf_scorecard(
+    repository: str,
+    *,
+    timeout_seconds: int = 30,
+    collected_at: str | None = None,
+) -> OpenSSFCollection:
+    """Fetch public raw Scorecard JSON without reading or sending a credential."""
+    from urllib import error as urllib_error
+    from urllib import request as urllib_request
+    from urllib.parse import quote
+
+    if not isinstance(repository, str) or not _REPO_SLUG.fullmatch(repository):
+        raise ValueError("repository must be an owner/repository slug")
+    _validate_positive_int(timeout_seconds, "timeout_seconds")
+    observation = collected_at or _utc_now_text()
+    _validate_openssf_timestamp(observation, "collected_at")
+    capabilities = GitHubCapabilities(
+        token_kind="anonymous", granted=("public_api",)
+    )
+    owner, name = repository.split("/", 1)
+    url = f"{OPENSSF_SCORECARD_API}/{quote(owner)}/{quote(name)}"
+    request = urllib_request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "leitir-score-engine/adr-002-s6",
+        },
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+            content = response.read(_MAX_OPENSSF_ARTIFACT_BYTES + 1)
+            status = getattr(response, "status", 200)
+    except urllib_error.HTTPError as exc:
+        state = (
+            OpenSSFCollectionState.UNAVAILABLE
+            if exc.code == 404
+            else OpenSSFCollectionState.ERROR
+        )
+        return OpenSSFCollection(
+            repository=repository,
+            state=state,
+            collected_at=observation,
+            capabilities=capabilities,
+            reason_code=(
+                "OPENSSF_API_UNAVAILABLE"
+                if state is OpenSSFCollectionState.UNAVAILABLE
+                else "OPENSSF_API_HTTP_ERROR"
+            ),
+            http_status=exc.code,
+        )
+    except (urllib_error.URLError, TimeoutError, OSError):
+        return OpenSSFCollection(
+            repository=repository,
+            state=OpenSSFCollectionState.UNAVAILABLE,
+            collected_at=observation,
+            capabilities=capabilities,
+            reason_code="OPENSSF_API_UNAVAILABLE",
+        )
+    if status != 200:
+        return OpenSSFCollection(
+            repository=repository,
+            state=OpenSSFCollectionState.ERROR,
+            collected_at=observation,
+            capabilities=capabilities,
+            reason_code="OPENSSF_API_HTTP_ERROR",
+            http_status=status,
+        )
+    if len(content) > _MAX_OPENSSF_ARTIFACT_BYTES:
+        return OpenSSFCollection(
+            repository=repository,
+            state=OpenSSFCollectionState.ERROR,
+            collected_at=observation,
+            capabilities=capabilities,
+            reason_code="OPENSSF_ARTIFACT_TOO_LARGE",
+            http_status=status,
+        )
+    artifact = EvidenceArtifact(
+        id="process.openssf-scorecard",
+        path=f".leitir-score/evidence/openssf-{owner}-{name}.json",
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+    )
+    return OpenSSFCollection(
+        repository=repository,
+        state=OpenSSFCollectionState.AVAILABLE,
+        collected_at=observation,
+        capabilities=capabilities,
+        reason_code="OPENSSF_API_ARTIFACT_COLLECTED",
+        artifact=artifact,
+        http_status=status,
+    )
+
+
+def _openssf_provenance_evidence(
+    provenance: OpenSSFProvenance | None,
+    capabilities: GitHubCapabilities,
+) -> tuple[Mapping[str, str], ...]:
+    evidence: tuple[Mapping[str, str], ...] = (
+        {
+            "kind": "github_capabilities",
+            "value": _canonical_json(capabilities.to_dict()),
+        },
+    )
+    if provenance is None:
+        return evidence
+    return evidence + tuple(
+        {"kind": kind, "value": str(value)}
+        for kind, value in (
+            ("repository", provenance.repository),
+            ("repository_commit", provenance.repository_commit),
+            ("scorecard_version", provenance.tool_version),
+            ("scorecard_commit", provenance.tool_commit),
+            ("observation_time", provenance.observed_at),
+            ("raw_artifact_sha256", provenance.raw_artifact_sha256),
+        )
+    )
+
+
+def _redacted_openssf_reason(reason: str) -> str:
+    """Defensively redact common GitHub/Bearer token forms from output evidence."""
+    reason = re.sub(r"github_pat_[A-Za-z0-9_]+", "[REDACTED]", reason)
+    reason = re.sub(r"gh[pousr]_[A-Za-z0-9_]+", "[REDACTED]", reason)
+    return re.sub(
+        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", reason
+    )
+
+
+def _openssf_unresolved_result(
+    check_id: str,
+    reason_code: str,
+    *,
+    artifact: EvidenceArtifact | None,
+    provenance: OpenSSFProvenance | None,
+    capabilities: GitHubCapabilities,
+    status: CheckStatus,
+    extra_evidence: tuple[Mapping[str, str], ...] = (),
+) -> CheckResult:
+    artifacts = () if artifact is None else (artifact,)
+    return CheckResult(
+        id=check_id,
+        status=status,
+        score_bps=None,
+        reason_code=reason_code,
+        evidence=_artifact_references(artifacts)
+        + _openssf_provenance_evidence(provenance, capabilities)
+        + extra_evidence,
+    )
+
+
+def _openssf_error_evaluation(
+    *,
+    reason_code: str,
+    artifact: EvidenceArtifact | None,
+    provenance: OpenSSFProvenance | None,
+    capabilities: GitHubCapabilities,
+    state: OpenSSFCollectionState = OpenSSFCollectionState.ERROR,
+    status: CheckStatus = CheckStatus.ERROR,
+    extra_evidence: tuple[Mapping[str, str], ...] = (),
+) -> ProcessSupplyChainEvaluation:
+    return ProcessSupplyChainEvaluation(
+        collection_state=state,
+        provenance=provenance,
+        checks=tuple(
+            sorted(
+                (
+                    _openssf_unresolved_result(
+                        check_id,
+                        reason_code,
+                        artifact=artifact,
+                        provenance=provenance,
+                        capabilities=capabilities,
+                        status=status,
+                        extra_evidence=extra_evidence,
+                    )
+                    for check_id in _PROCESS_CHECK_IDS
+                ),
+                key=lambda item: item.id,
+            )
+        ),
+    )
+
+
+def _parse_openssf_scorecard(
+    artifact: EvidenceArtifact,
+    capabilities: GitHubCapabilities,
+    expected_repository: str | None,
+) -> tuple[OpenSSFProvenance, dict[str, Mapping[str, object]], bool]:
+    try:
+        raw = _object_keys(
+            _load_json_object(artifact, "OpenSSF Scorecard JSON"),
+            {"date", "repo", "scorecard", "score", "checks"},
+            "OpenSSF Scorecard JSON",
+        )
+        repository = _object_keys(raw["repo"], {"name", "commit"}, "OpenSSF repo")
+        scorecard = _object_keys(
+            raw["scorecard"], {"version", "commit"}, "OpenSSF scorecard"
+        )
+        if not isinstance(repository["name"], str):
+            raise ValueError("OpenSSF repository name must be text")
+        provenance = OpenSSFProvenance(
+            repository=repository["name"],
+            repository_commit=repository["commit"],
+            tool_version=scorecard["version"],
+            tool_commit=scorecard["commit"],
+            observed_at=_validate_openssf_timestamp(raw["date"], "OpenSSF date"),
+            raw_artifact_sha256=artifact.sha256,
+            capabilities=capabilities,
+        )
+    except (TypeError, ValueError, KeyError) as exc:
+        raise OpenSSFEvaluationError(
+            "OPENSSF_ARTIFACT_MALFORMED", "OpenSSF artifact is malformed"
+        ) from exc
+    if expected_repository is not None and provenance.repository != (
+        f"github.com/{expected_repository}"
+    ):
+        raise OpenSSFEvaluationError(
+            "OPENSSF_REPOSITORY_MISMATCH",
+            "OpenSSF artifact repository does not match requested repository",
+            provenance=provenance,
+        )
+    if provenance.tool_version != PINNED_OPENSSF_SCORECARD_VERSION:
+        raise OpenSSFEvaluationError(
+            "OPENSSF_VERSION_MISMATCH",
+            "OpenSSF Scorecard version does not match the ADR-002 pin",
+            provenance=provenance,
+        )
+    if provenance.tool_commit != PINNED_OPENSSF_SCORECARD_COMMIT:
+        raise OpenSSFEvaluationError(
+            "OPENSSF_TOOL_COMMIT_MISMATCH",
+            "OpenSSF Scorecard commit does not match the ADR-002 pin",
+            provenance=provenance,
+        )
+    checks: dict[str, Mapping[str, object]] = {}
+    duplicate_selected = False
+    selected_names = {name for _, name in OPENSSF_SELECTED_CHECKS}
+    try:
+        for index, item in enumerate(_list_value(raw["checks"], "OpenSSF checks")):
+            if not isinstance(item, Mapping):
+                raise TypeError(f"OpenSSF check {index} must be an object")
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("OpenSSF check name must be non-empty text")
+            if name not in selected_names:
+                continue
+            check = _object_keys(
+                item,
+                {"name", "score", "reason", "details", "documentation"},
+                f"OpenSSF check {index}",
+            )
+            documentation = _object_keys(
+                check["documentation"],
+                {"short", "url"},
+                f"OpenSSF check {index} documentation",
+            )
+            score = check["score"]
+            reason = check["reason"]
+            details = check["details"]
+            if not _is_int(score) or not -1 <= score <= 10:
+                raise ValueError("OpenSSF check score must be an integer from -1 to 10")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("OpenSSF check reason must be non-empty text")
+            if details is not None and (
+                not isinstance(details, list)
+                or any(not isinstance(detail, str) for detail in details)
+            ):
+                raise ValueError("OpenSSF check details must be null or a string list")
+            if any(
+                not isinstance(documentation[field], str)
+                or not documentation[field]
+                for field in ("short", "url")
+            ):
+                raise ValueError("OpenSSF check documentation must be non-empty text")
+            if name in checks:
+                duplicate_selected = True
+            else:
+                checks[name] = check
+    except (TypeError, ValueError, KeyError) as exc:
+        raise OpenSSFEvaluationError(
+            "OPENSSF_ARTIFACT_MALFORMED",
+            "OpenSSF selected check evidence is malformed",
+            provenance=provenance,
+        ) from exc
+    return provenance, checks, duplicate_selected
+
+
+def evaluate_process_supply_chain_evidence(
+    *,
+    policy: Policy,
+    scorecard_artifact: EvidenceArtifact,
+    capabilities: GitHubCapabilities,
+    expected_repository: str | None = None,
+    applicability: tuple[OpenSSFApplicability, ...] = (),
+) -> ProcessSupplyChainEvaluation:
+    """Normalize policy-selected Scorecard checks and never its aggregate."""
+    if not isinstance(policy, Policy):
+        raise TypeError("policy must be a Policy")
+    if not isinstance(scorecard_artifact, EvidenceArtifact):
+        raise TypeError("scorecard_artifact must be an EvidenceArtifact")
+    if not isinstance(capabilities, GitHubCapabilities):
+        raise TypeError("capabilities must be GitHubCapabilities")
+    if expected_repository is not None and (
+        not isinstance(expected_repository, str)
+        or not _REPO_SLUG.fullmatch(expected_repository)
+    ):
+        raise ValueError("expected_repository must be an owner/repository slug")
+    if not isinstance(applicability, tuple) or any(
+        not isinstance(item, OpenSSFApplicability) for item in applicability
+    ):
+        raise TypeError("applicability must be a tuple of OpenSSFApplicability")
+    applicability_by_id = {item.check_id: item for item in applicability}
+    if len(applicability_by_id) != len(applicability):
+        raise ValueError("applicability check IDs must be unique")
+    for check_id in _PROCESS_CHECK_IDS:
+        _policy_check(policy, check_id)
+    try:
+        provenance, raw_checks, duplicate_selected = _parse_openssf_scorecard(
+            scorecard_artifact, capabilities, expected_repository
+        )
+    except OpenSSFEvaluationError as exc:
+        return _openssf_error_evaluation(
+            reason_code=exc.reason_code,
+            artifact=scorecard_artifact,
+            provenance=exc.provenance,
+            capabilities=capabilities,
+        )
+
+    common = _artifact_references((scorecard_artifact,)) + (
+        _openssf_provenance_evidence(provenance, capabilities)
+    )
+    expected_names = {name for _, name in OPENSSF_SELECTED_CHECKS}
+    check_set_exact = not duplicate_selected and set(raw_checks) == expected_names
+    checks: list[CheckResult] = []
+    if check_set_exact:
+        checks.append(
+            CheckResult(
+                id=_PROCESS_CONTROL_CHECK_ID,
+                status=CheckStatus.PASS,
+                score_bps=10000,
+                reason_code="OPENSSF_SELECTED_CHECK_SET_COMPLETE",
+                numerator=len(raw_checks),
+                denominator=len(expected_names),
+                evidence=common,
+            )
+        )
+    else:
+        checks.append(
+            _openssf_unresolved_result(
+                _PROCESS_CONTROL_CHECK_ID,
+                "OPENSSF_SELECTED_CHECK_SET_CHANGED",
+                artifact=scorecard_artifact,
+                provenance=provenance,
+                capabilities=capabilities,
+                status=CheckStatus.ERROR,
+                extra_evidence=(
+                    {
+                        "kind": "selected_checks_present",
+                        "value": _canonical_json(sorted(raw_checks)),
+                    },
+                ),
+            )
+        )
+
+    for check_id, openssf_name in OPENSSF_SELECTED_CHECKS:
+        applicability_proof = applicability_by_id.get(check_id)
+        if applicability_proof is not None:
+            policy_applicability = _policy_check(policy, check_id).applicability
+            if (
+                policy_applicability is None
+                or policy_applicability.rule != applicability_proof.predicate
+            ):
+                checks.append(
+                    _openssf_unresolved_result(
+                        check_id,
+                        "OPENSSF_APPLICABILITY_EVIDENCE_INVALID",
+                        artifact=scorecard_artifact,
+                        provenance=provenance,
+                        capabilities=capabilities,
+                        status=CheckStatus.ERROR,
+                    )
+                )
+            else:
+                checks.append(
+                    CheckResult(
+                        id=check_id,
+                        status=CheckStatus.NOT_APPLICABLE,
+                        score_bps=None,
+                        reason_code="OPENSSF_NOT_APPLICABLE_PROVEN",
+                        evidence=common
+                        + (
+                            {
+                                "kind": "applicability_predicate",
+                                "value": applicability_proof.predicate,
+                            },
+                            {
+                                "kind": "applicability_proof",
+                                "value": applicability_proof.evidence,
+                            },
+                        ),
+                    )
+                )
+            continue
+        raw_check = raw_checks.get(openssf_name)
+        if raw_check is None:
+            checks.append(
+                _openssf_unresolved_result(
+                    check_id,
+                    "OPENSSF_SELECTED_CHECK_MISSING",
+                    artifact=scorecard_artifact,
+                    provenance=provenance,
+                    capabilities=capabilities,
+                    status=CheckStatus.UNKNOWN,
+                )
+            )
+            continue
+        raw_score = int(raw_check["score"])
+        raw_reason = str(raw_check["reason"])
+        check_evidence = (
+            {"kind": "openssf_check", "value": openssf_name},
+            {"kind": "openssf_raw_score", "value": str(raw_score)},
+            {"kind": "openssf_reason", "value": _redacted_openssf_reason(raw_reason)},
+        )
+        if raw_score == -1:
+            folded_reason = raw_reason.casefold()
+            if (
+                "token" in folded_reason
+                or "permission" in folded_reason
+                or "authentication" in folded_reason
+                or openssf_name == "Branch-Protection"
+                and "branch_protection" in capabilities.unavailable
+            ):
+                reason_code = "OPENSSF_INSUFFICIENT_AUTH"
+            elif "unsupported" in folded_reason or "not supported" in folded_reason:
+                reason_code = "OPENSSF_CHECK_UNSUPPORTED"
+            else:
+                reason_code = "OPENSSF_CHECK_INCONCLUSIVE"
+            checks.append(
+                _openssf_unresolved_result(
+                    check_id,
+                    reason_code,
+                    artifact=scorecard_artifact,
+                    provenance=provenance,
+                    capabilities=capabilities,
+                    status=CheckStatus.UNKNOWN,
+                    extra_evidence=check_evidence,
+                )
+            )
+            continue
+        checks.append(
+            _scored_result(
+                policy=policy,
+                check_id=check_id,
+                score_bps=raw_score * 1000,
+                pass_reason="OPENSSF_CHECK_MEETS_POLICY",
+                fail_reason="OPENSSF_CHECK_BELOW_POLICY",
+                artifacts=(scorecard_artifact,),
+                evidence=_openssf_provenance_evidence(provenance, capabilities)
+                + check_evidence,
+            )
+        )
+    return ProcessSupplyChainEvaluation(
+        collection_state=OpenSSFCollectionState.AVAILABLE,
+        provenance=provenance,
+        checks=tuple(sorted(checks, key=lambda item: item.id)),
+    )
+
+
+def evaluate_process_supply_chain_collection(
+    *,
+    policy: Policy,
+    collection: OpenSSFCollection,
+    applicability: tuple[OpenSSFApplicability, ...] = (),
+) -> ProcessSupplyChainEvaluation:
+    """Evaluate a live collection while preserving unavailable as unknown."""
+    if not isinstance(collection, OpenSSFCollection):
+        raise TypeError("collection must be an OpenSSFCollection")
+    if collection.state is OpenSSFCollectionState.AVAILABLE:
+        return evaluate_process_supply_chain_evidence(
+            policy=policy,
+            scorecard_artifact=collection.artifact,
+            capabilities=collection.capabilities,
+            expected_repository=collection.repository,
+            applicability=applicability,
+        )
+    status = (
+        CheckStatus.UNKNOWN
+        if collection.state is OpenSSFCollectionState.UNAVAILABLE
+        else CheckStatus.ERROR
+    )
+    return _openssf_error_evaluation(
+        reason_code=collection.reason_code,
+        artifact=None,
+        provenance=None,
+        capabilities=collection.capabilities,
+        state=collection.state,
+        status=status,
+        extra_evidence=(
+            {"kind": "repository", "value": collection.repository},
+            {"kind": "collection_time", "value": collection.collected_at},
+        ),
+    )
+
+
 SourceIdentity = tuple[str, str, str, str, int, int]
 
 
@@ -4556,8 +5327,19 @@ __all__ = [
     "CoverageReport",
     "MaintainabilityIndexReport",
     "MutationReport",
+    "GitHubCapabilities",
+    "OPENSSF_SCORECARD_API",
+    "OPENSSF_SELECTED_CHECKS",
+    "OpenSSFApplicability",
+    "OpenSSFCollection",
+    "OpenSSFCollectionState",
+    "OpenSSFEvaluationError",
+    "OpenSSFProvenance",
     "PINNED_SCORE_TOOL_VERSIONS",
+    "PINNED_OPENSSF_SCORECARD_COMMIT",
+    "PINNED_OPENSSF_SCORECARD_VERSION",
     "Policy",
+    "ProcessSupplyChainEvaluation",
     "Producer",
     "Profile",
     "RetrievalEvaluation",
@@ -4575,6 +5357,7 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_patch_sha256",
     "collect_adr001_pytest_junit",
+    "collect_openssf_scorecard",
     "compute_retrieval_metrics",
     "decision_exit_code",
     "display_band",
@@ -4584,6 +5367,8 @@ __all__ = [
     "evaluate_code_health_evidence",
     "evaluate_global_no_exhaustiveness",
     "evaluate_output_effectiveness_evidence",
+    "evaluate_process_supply_chain_collection",
+    "evaluate_process_supply_chain_evidence",
     "evaluate_pytest_junit",
     "evaluate_result_provenance",
     "evaluate_retired_surfaces_absent",

@@ -1,5 +1,12 @@
 # Leitir v1 operations guide
 
+> **Historical — describes the retired v1 prototype.** ADR-001 slice P0r deleted
+> the pipeline this guide operates: there is no orchestrator, Docker sandbox,
+> SearXNG dependency, or OpenRouter credential any more, and the `leitir run` /
+> `leitir eval` commands it documents were removed in P4. The kernel exposes
+> `leitir search` and runs on the standard library alone. See
+> [ADR-001](adr-001-remove-hy3-deterministic-search.md).
+
 This guide describes the shipped prototype, not the broader target design.
 Leitir v1 is design-stage software and should not be treated as a production
 service or a security boundary for hostile multi-tenant workloads.

@@ -108,6 +108,24 @@ enrichment behind the existing CLI (P5–P6).
       `tests/test_global_e2e.py`, `tests/test_global_e2e_live.py`)
       Gate: offline 192 passed (P1–P5 cumulative); full suite 486 passed.
 
+- [x] P0r: Retire the v1 Hy3 pipeline (Decision #1).
+      P4 removed the v1 CLI entry points but left the pipeline shipping behind
+      `__init__.py` re-exports, so Decision #1 stayed unexecuted with no slice
+      of its own. Delete `config.py`, `contracts.py`, `discovery.py`,
+      `evaluation.py`, `expansion.py`, `extraction.py`, `openrouter.py`,
+      `orchestrator.py`, `protocols.py`, `synthesis.py`, `trace.py`,
+      `verification.py`, `_jsonutil.py`, their tests, and
+      `benchmarks/smoke-v1/`. `contracts.py` is v1: its only importers were v1
+      modules, and the kernel's contracts live in `search.py`. Reduce
+      `__init__.py` to a docstring; drop `docker`, `trafilatura` and `PyYAML`
+      with their closure, leaving no runtime dependencies.
+      Gate: offline 192 passed (P1–P5 cumulative); full suite 234 passed,
+      25 skipped.
+      Note: the import-purity gate's `urllib.request` entry is a loose proxy —
+      binding those names performs no I/O. The kernel's HTTP clients defer the
+      import into their calling methods so the gate holds unrelaxed; narrowing
+      the list to what it actually proves is left as a separate change.
+
 - [ ] P6: Deterministic ranking + pinned benchmark.
       Score normalization, tie-breaking by provenance stability, and a
       versioned benchmark suite (≥10 tasks across Python/Rust/Go) with

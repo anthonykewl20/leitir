@@ -1,0 +1,48 @@
+{
+  "src/example/core.py": [
+    {
+      "type": "function",
+      "rank": "C",
+      "endline": 42,
+      "lineno": 4,
+      "complexity": 15,
+      "name": "resolve_request",
+      "col_offset": 0,
+      "closures": []
+    },
+    {
+      "type": "function",
+      "rank": "A",
+      "endline": 50,
+      "lineno": 45,
+      "complexity": 3,
+      "name": "normalize_name",
+      "col_offset": 0,
+      "closures": []
+    }
+  ],
+  "src/example/service.py": [
+    {
+      "type": "class",
+      "rank": "B",
+      "endline": 36,
+      "lineno": 3,
+      "complexity": 8,
+      "name": "SearchService",
+      "col_offset": 0,
+      "methods": [
+        {
+          "type": "method",
+          "rank": "A",
+          "endline": 20,
+          "lineno": 7,
+          "complexity": 5,
+          "name": "search",
+          "classname": "SearchService",
+          "col_offset": 4,
+          "closures": []
+        }
+      ]
+    }
+  ]
+}

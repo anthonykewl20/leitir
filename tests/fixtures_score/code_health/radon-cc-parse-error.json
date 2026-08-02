@@ -1,0 +1,17 @@
+{
+  "src/example/core.py": [
+    {
+      "type": "function",
+      "rank": "A",
+      "endline": 8,
+      "lineno": 3,
+      "complexity": 2,
+      "name": "resolve_request",
+      "col_offset": 0,
+      "closures": []
+    }
+  ],
+  "src/example/service.py": {
+    "error": "invalid syntax (<unknown>, line 7)"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "leitir-policy-ratchet-fixture-v1",
+  "base": {
+    "code.complexity_maximum": 8600,
+    "test.line_coverage": 8000,
+    "test.branch_coverage": 7000,
+    "test.mutation_score": 8000
+  },
+  "ratcheted": {
+    "code.complexity_maximum": 8601,
+    "test.line_coverage": 8001,
+    "test.branch_coverage": 7001,
+    "test.mutation_score": 8001
+  }
+}

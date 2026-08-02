@@ -1,4 +1,4 @@
-"""Deterministic evidence scoring engine for ADR-002 S1-S4.
+"""Deterministic evidence scoring engine for ADR-002 S1-S5.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
@@ -14,6 +14,7 @@ from decimal import Decimal, ROUND_HALF_UP, localcontext
 from enum import Enum, IntEnum
 import hashlib
 from importlib import machinery
+from importlib import metadata as importlib_metadata
 import json
 import math
 import os
@@ -66,6 +67,33 @@ _OUTPUT_CHECK_IDS = (
     "output.success_at_5",
     "output.total_ordering",
 )
+
+_SCORE_TOOL_VERSIONS_SCHEMA_VERSION = "leitir-score-tool-versions-v1"
+_CODE_SCOPE_SCHEMA_VERSION = "leitir-code-scope-v1"
+_MUTMUT_EVIDENCE_SCHEMA_VERSION = "leitir-mutmut-evidence-v1"
+PINNED_SCORE_TOOL_VERSIONS = {
+    "coverage": "7.15.2",
+    "ir_measures": "0.4.3",
+    "mutmut": "3.7.0",
+    "pytrec-eval-terrier": "0.5.10",
+    "radon": "6.0.1",
+}
+_CODE_HEALTH_CHECK_IDS = (
+    "code.complexity_distribution",
+    "code.complexity_maximum",
+    "code.maintainability_index",
+    "code.production_scope_parsed",
+    "code.scope_declared",
+)
+_TEST_ADEQUACY_CHECK_IDS = (
+    "test.branch_coverage",
+    "test.coverage_scope",
+    "test.line_coverage",
+    "test.mutation_controls",
+    "test.mutation_score",
+)
+_SCOPE_KINDS = ("production", "generated", "vendored", "fixture")
+_APPLICABILITY_KINDS = ("statements", "branches", "mutants")
 
 
 ADR001_OFFLINE_GATE_TESTS = (
@@ -1494,10 +1522,14 @@ def _error_result(
     check_id: str,
     reason_code: str,
     artifacts: tuple[EvidenceArtifact, ...],
+    *,
+    status: CheckStatus = CheckStatus.ERROR,
 ) -> CheckResult:
+    if status not in {CheckStatus.ERROR, CheckStatus.UNKNOWN, CheckStatus.SKIPPED}:
+        raise ValueError("unresolved result helper requires an unresolved status")
     return CheckResult(
         id=check_id,
-        status=CheckStatus.ERROR,
+        status=status,
         score_bps=None,
         reason_code=reason_code,
         evidence=_artifact_references(artifacts),
@@ -2088,6 +2120,1165 @@ def evaluate_engine_correctness_evidence(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ScopeApplicability:
+    """A versioned N/A predicate and its human-auditable evidence."""
+
+    state: str
+    evidence: str
+
+    def __post_init__(self) -> None:
+        if self.state not in {"expected", "proven_none"}:
+            raise ValueError("scope applicability state must be expected or proven_none")
+        if not isinstance(self.evidence, str) or not self.evidence.strip():
+            raise ValueError("scope applicability requires non-empty evidence")
+
+    def to_dict(self) -> dict[str, str]:
+        return {"state": self.state, "evidence": self.evidence}
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredCodeScope:
+    """Explicit production/generated/vendored/fixture measurement universes."""
+
+    scopes: Mapping[str, tuple[str, ...]]
+    applicability: Mapping[str, ScopeApplicability]
+
+    def __post_init__(self) -> None:
+        if set(self.scopes) != set(_SCOPE_KINDS):
+            raise ValueError("code scope must explicitly declare all four scope kinds")
+        normalized_scopes: dict[str, tuple[str, ...]] = {}
+        all_paths: list[str] = []
+        for kind in _SCOPE_KINDS:
+            paths = self.scopes[kind]
+            if not isinstance(paths, tuple):
+                raise TypeError(f"{kind} scope must be a tuple")
+            for path in paths:
+                _validate_canonical_path(path, f"{kind} scope path")
+            if len(set(paths)) != len(paths):
+                raise ValueError(f"{kind} scope paths must be unique")
+            normalized_scopes[kind] = tuple(sorted(paths))
+            all_paths.extend(paths)
+        if len(set(all_paths)) != len(all_paths):
+            raise ValueError("declared scope paths must not overlap")
+        if set(self.applicability) != set(_APPLICABILITY_KINDS) or any(
+            not isinstance(item, ScopeApplicability)
+            for item in self.applicability.values()
+        ):
+            raise ValueError("scope must declare statements, branches, and mutants applicability")
+        object.__setattr__(self, "scopes", _FrozenTupleMap(normalized_scopes))
+        object.__setattr__(
+            self,
+            "applicability",
+            _FrozenApplicabilityMap(self.applicability),
+        )
+
+    @property
+    def production(self) -> tuple[str, ...]:
+        return self.scopes["production"]
+
+    @property
+    def all_paths(self) -> tuple[str, ...]:
+        return tuple(sorted(path for paths in self.scopes.values() for path in paths))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scopes": {kind: list(self.scopes[kind]) for kind in _SCOPE_KINDS},
+            "applicability": {
+                kind: self.applicability[kind].to_dict()
+                for kind in _APPLICABILITY_KINDS
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenTupleMap(Mapping[str, tuple[str, ...]]):
+    entries: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def __init__(self, value: Mapping[str, tuple[str, ...]]) -> None:
+        object.__setattr__(self, "entries", tuple(sorted(value.items())))
+
+    def __getitem__(self, key: str) -> tuple[str, ...]:
+        return dict(self.entries)[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenApplicabilityMap(Mapping[str, ScopeApplicability]):
+    entries: tuple[tuple[str, ScopeApplicability], ...]
+
+    def __init__(self, value: Mapping[str, ScopeApplicability]) -> None:
+        object.__setattr__(self, "entries", tuple(sorted(value.items())))
+
+    def __getitem__(self, key: str) -> ScopeApplicability:
+        return dict(self.entries)[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+@dataclass(frozen=True, slots=True)
+class ComplexityReport:
+    file_count: int
+    parsed_file_count: int
+    unmeasured_files: tuple[str, ...]
+    parse_error_files: tuple[str, ...]
+    block_count: int
+    maximum: int | None
+    mean_milli: int | None
+    distribution: tuple[tuple[str, int], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "file_count": self.file_count,
+            "parsed_file_count": self.parsed_file_count,
+            "measurement_coverage": {
+                "numerator": self.parsed_file_count,
+                "denominator": self.file_count,
+            },
+            "unmeasured_files": list(self.unmeasured_files),
+            "parse_error_files": list(self.parse_error_files),
+            "block_count": self.block_count,
+            "maximum": self.maximum,
+            "mean_milli": self.mean_milli,
+            "distribution": dict(self.distribution),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MaintainabilityIndexReport:
+    measured_file_count: int
+    missing_files: tuple[str, ...]
+    error_files: tuple[str, ...]
+    minimum_bps: int | None
+    maximum_bps: int | None
+    mean_bps: int | None
+    distribution: tuple[tuple[str, int], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "diagnostic_only": True,
+            "measured_file_count": self.measured_file_count,
+            "missing_files": list(self.missing_files),
+            "error_files": list(self.error_files),
+            "minimum_bps": self.minimum_bps,
+            "maximum_bps": self.maximum_bps,
+            "mean_bps": self.mean_bps,
+            "distribution": dict(self.distribution),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CodeHealthEvaluation:
+    scope: DeclaredCodeScope
+    complexity: ComplexityReport
+    maintainability_index: MaintainabilityIndexReport
+    checks: tuple[CheckResult, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope.to_dict(),
+            "complexity": self.complexity.to_dict(),
+            "maintainability_index": self.maintainability_index.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageReport:
+    declared_file_count: int
+    measured_file_count: int
+    unmeasured_files: tuple[str, ...]
+    lines_covered: int
+    lines_total: int
+    branches_covered: int
+    branches_total: int
+    per_scope_coverage: tuple[tuple[str, tuple[int, int]], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "declared_file_count": self.declared_file_count,
+            "measured_file_count": self.measured_file_count,
+            "measurement_coverage": {
+                "numerator": self.measured_file_count,
+                "denominator": self.declared_file_count,
+            },
+            "unmeasured_files": list(self.unmeasured_files),
+            "lines": {"covered": self.lines_covered, "total": self.lines_total},
+            "branches": {
+                "covered": self.branches_covered,
+                "total": self.branches_total,
+            },
+            "per_scope_measurement_coverage": {
+                kind: {"numerator": counts[0], "denominator": counts[1]}
+                for kind, counts in self.per_scope_coverage
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MutationReport:
+    counts: tuple[tuple[str, int], ...]
+    completed_valid_mutants: int
+    unresolved_mutants: int
+    excluded_mutants: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "counts": dict(self.counts),
+            "completed_valid_mutants": self.completed_valid_mutants,
+            "unresolved_mutants": self.unresolved_mutants,
+            "excluded_mutants": self.excluded_mutants,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TestAdequacyEvaluation:
+    scope: DeclaredCodeScope
+    coverage: CoverageReport
+    mutation: MutationReport
+    checks: tuple[CheckResult, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope.to_dict(),
+            "coverage": self.coverage.to_dict(),
+            "mutation": self.mutation.to_dict(),
+        }
+
+
+def _declared_code_scope(artifact: EvidenceArtifact) -> DeclaredCodeScope:
+    raw = _object_keys(
+        _load_json_object(artifact, "code scope"),
+        {"schema_version", "scopes", "applicability"},
+        "code scope",
+    )
+    if raw["schema_version"] != _CODE_SCOPE_SCHEMA_VERSION:
+        raise ValueError("code scope schema version is unsupported")
+    scopes_raw = _object_keys(raw["scopes"], set(_SCOPE_KINDS), "code scopes")
+    scopes: dict[str, tuple[str, ...]] = {}
+    for kind in _SCOPE_KINDS:
+        paths = _list_value(scopes_raw[kind], f"{kind} scope")
+        if any(not isinstance(path, str) for path in paths):
+            raise ValueError(f"{kind} scope paths must be text")
+        scopes[kind] = tuple(paths)
+    applicability_raw = _object_keys(
+        raw["applicability"], set(_APPLICABILITY_KINDS), "scope applicability"
+    )
+    applicability: dict[str, ScopeApplicability] = {}
+    for kind in _APPLICABILITY_KINDS:
+        item = _object_keys(
+            applicability_raw[kind], {"state", "evidence"}, f"{kind} applicability"
+        )
+        applicability[kind] = ScopeApplicability(
+            state=item["state"], evidence=item["evidence"]
+        )
+    return DeclaredCodeScope(scopes=scopes, applicability=applicability)
+
+
+def _score_tool_versions(artifact: EvidenceArtifact) -> Mapping[str, str]:
+    raw = _object_keys(
+        _load_json_object(artifact, "score tool versions"),
+        {"schema_version", "tools"},
+        "score tool versions",
+    )
+    if raw["schema_version"] != _SCORE_TOOL_VERSIONS_SCHEMA_VERSION:
+        raise ValueError("score tool versions schema version is unsupported")
+    tools = _object_keys(
+        raw["tools"], set(PINNED_SCORE_TOOL_VERSIONS), "score tool versions map"
+    )
+    if any(not isinstance(name, str) or not name for name in tools.values()):
+        raise ValueError("score tool versions must be non-empty text")
+    return tools
+
+
+def _require_pinned_tool(
+    versions_artifact: EvidenceArtifact, tool_name: str
+) -> None:
+    versions = _score_tool_versions(versions_artifact)
+    if versions[tool_name] != PINNED_SCORE_TOOL_VERSIONS[tool_name]:
+        raise ValueError(f"{tool_name} version does not match scoring lock")
+
+
+def _policy_check(policy: Policy, check_id: str) -> CheckPolicy:
+    if not isinstance(policy, Policy):
+        raise TypeError("policy must be a Policy")
+    try:
+        return next(item for item in policy.checks if item.id == check_id)
+    except StopIteration as exc:
+        raise ValueError(f"policy does not declare {check_id}") from exc
+
+
+def _criterion_matches(criterion: Criterion, score_bps: int) -> bool:
+    if criterion.op == "eq":
+        return score_bps == criterion.value
+    if criterion.op == "gte":
+        return score_bps >= criterion.value
+    return score_bps <= criterion.value
+
+
+def _ratio_meets_criterion(
+    criterion: Criterion, numerator: int, denominator: int
+) -> bool:
+    """Compare an exact ratio without consulting its rounded display score."""
+    left = 10000 * numerator
+    right = criterion.value * denominator
+    if criterion.op == "eq":
+        return left == right
+    if criterion.op == "gte":
+        return left >= right
+    return left <= right
+
+
+def _scored_result(
+    *,
+    policy: Policy,
+    check_id: str,
+    score_bps: int,
+    pass_reason: str,
+    fail_reason: str,
+    artifacts: tuple[EvidenceArtifact, ...],
+    numerator: int | None = None,
+    denominator: int | None = None,
+    evidence: tuple[Mapping[str, str], ...] = (),
+) -> CheckResult:
+    passed = _criterion_matches(_policy_check(policy, check_id).criterion, score_bps)
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.PASS if passed else CheckStatus.FAIL,
+        score_bps=score_bps,
+        reason_code=pass_reason if passed else fail_reason,
+        numerator=numerator,
+        denominator=denominator,
+        evidence=_artifact_references(artifacts) + evidence,
+    )
+
+
+def _ratio_result(
+    *,
+    policy: Policy,
+    check_id: str,
+    numerator: int,
+    denominator: int,
+    pass_reason: str,
+    fail_reason: str,
+    artifacts: tuple[EvidenceArtifact, ...],
+    evidence: tuple[Mapping[str, str], ...] = (),
+) -> CheckResult:
+    score_bps = proportional_score_bps(numerator, denominator)
+    if score_bps is None:
+        raise ValueError("ratio result requires a nonzero denominator")
+    passed = _ratio_meets_criterion(
+        _policy_check(policy, check_id).criterion, numerator, denominator
+    )
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.PASS if passed else CheckStatus.FAIL,
+        score_bps=score_bps,
+        reason_code=pass_reason if passed else fail_reason,
+        numerator=numerator,
+        denominator=denominator,
+        evidence=_artifact_references(artifacts) + evidence,
+    )
+
+
+def _radon_rank(complexity: int) -> str:
+    if complexity <= 5:
+        return "A"
+    if complexity <= 10:
+        return "B"
+    if complexity <= 20:
+        return "C"
+    if complexity <= 30:
+        return "D"
+    if complexity <= 40:
+        return "E"
+    return "F"
+
+
+def _radon_complexities(blocks: object, name: str) -> list[int]:
+    values: list[int] = []
+    for index, block in enumerate(_list_value(blocks, name)):
+        if not isinstance(block, Mapping):
+            raise ValueError(f"{name}[{index}] must be an object")
+        complexity = _non_negative_json_int(
+            block.get("complexity"), f"{name}[{index}].complexity"
+        )
+        if complexity < 1 or block.get("rank") != _radon_rank(complexity):
+            raise ValueError("Radon complexity and rank disagree")
+        for required_text in ("name", "type"):
+            if not isinstance(block.get(required_text), str) or not block[required_text]:
+                raise ValueError(f"Radon block {required_text} must be non-empty text")
+        values.append(complexity)
+        for nested_name in ("methods", "closures"):
+            nested = block.get(nested_name, [])
+            values.extend(_radon_complexities(nested, f"{name}[{index}].{nested_name}"))
+    return values
+
+
+def _empty_complexity_report(scope: DeclaredCodeScope) -> ComplexityReport:
+    return ComplexityReport(
+        file_count=len(scope.production),
+        parsed_file_count=0,
+        unmeasured_files=scope.production,
+        parse_error_files=(),
+        block_count=0,
+        maximum=None,
+        mean_milli=None,
+        distribution=tuple((rank, 0) for rank in "ABCDEF"),
+    )
+
+
+def _empty_mi_report(scope: DeclaredCodeScope) -> MaintainabilityIndexReport:
+    return MaintainabilityIndexReport(
+        measured_file_count=0,
+        missing_files=scope.production,
+        error_files=(),
+        minimum_bps=None,
+        maximum_bps=None,
+        mean_bps=None,
+        distribution=(("A", 0), ("B", 0), ("C", 0)),
+    )
+
+
+def evaluate_code_health_evidence(
+    *,
+    policy: Policy,
+    scope_artifact: EvidenceArtifact,
+    tool_versions: EvidenceArtifact,
+    radon_complexity: EvidenceArtifact,
+    radon_mi: EvidenceArtifact,
+) -> CodeHealthEvaluation:
+    """Consume Radon JSON without allowing missing or unparsed files to vanish."""
+    artifacts = (scope_artifact, tool_versions, radon_complexity, radon_mi)
+    try:
+        scope = _declared_code_scope(scope_artifact)
+    except (TypeError, ValueError):
+        placeholder = DeclaredCodeScope(
+            scopes={kind: () for kind in _SCOPE_KINDS},
+            applicability={
+                kind: ScopeApplicability("expected", "malformed scope evidence")
+                for kind in _APPLICABILITY_KINDS
+            },
+        )
+        return CodeHealthEvaluation(
+            scope=placeholder,
+            complexity=_empty_complexity_report(placeholder),
+            maintainability_index=_empty_mi_report(placeholder),
+            checks=tuple(
+                _error_result(check_id, "CODE_SCOPE_MALFORMED", artifacts)
+                for check_id in _CODE_HEALTH_CHECK_IDS
+            ),
+        )
+    try:
+        _require_pinned_tool(tool_versions, "radon")
+    except (TypeError, ValueError):
+        return CodeHealthEvaluation(
+            scope=scope,
+            complexity=_empty_complexity_report(scope),
+            maintainability_index=_empty_mi_report(scope),
+            checks=tuple(
+                _error_result(check_id, "RADON_VERSION_MISMATCH", artifacts)
+                for check_id in _CODE_HEALTH_CHECK_IDS
+            ),
+        )
+
+    scope_check = _binary_result(
+        "code.scope_declared",
+        True,
+        pass_reason="CODE_SCOPES_EXPLICIT",
+        fail_reason="CODE_SCOPES_AMBIGUOUS",
+        artifacts=artifacts,
+    )
+    try:
+        raw_cc = _load_json_object(radon_complexity, "Radon complexity")
+        undeclared = sorted(set(raw_cc) - set(scope.all_paths))
+        if undeclared:
+            raise ValueError("Radon measured undeclared files")
+        present = set(raw_cc) & set(scope.production)
+        unmeasured = tuple(sorted(set(scope.production) - present))
+        parse_errors: list[str] = []
+        complexities: list[int] = []
+        parsed = 0
+        for path in sorted(present):
+            value = raw_cc[path]
+            if isinstance(value, Mapping) and set(value) == {"error"}:
+                if not isinstance(value["error"], str) or not value["error"]:
+                    raise ValueError("Radon parser error must be non-empty text")
+                parse_errors.append(path)
+                continue
+            complexities.extend(_radon_complexities(value, f"Radon blocks for {path}"))
+            parsed += 1
+    except (TypeError, ValueError):
+        complexity = _empty_complexity_report(scope)
+        parser_check = _error_result(
+            "code.production_scope_parsed", "RADON_JSON_MALFORMED", artifacts
+        )
+        complexity_check = _error_result(
+            "code.complexity_maximum", "RADON_JSON_MALFORMED", artifacts
+        )
+        distribution_check = _error_result(
+            "code.complexity_distribution", "RADON_JSON_MALFORMED", artifacts
+        )
+    else:
+        distribution = tuple(
+            (rank, sum(_radon_rank(value) == rank for value in complexities))
+            for rank in "ABCDEF"
+        )
+        mean_milli = (
+            None
+            if not complexities
+            else _round_half_up_fraction(sum(complexities) * 1000, len(complexities))
+        )
+        complexity = ComplexityReport(
+            file_count=len(scope.production),
+            parsed_file_count=parsed,
+            unmeasured_files=unmeasured,
+            parse_error_files=tuple(parse_errors),
+            block_count=len(complexities),
+            maximum=max(complexities) if complexities else None,
+            mean_milli=mean_milli,
+            distribution=distribution,
+        )
+        coverage_evidence = (
+            {"kind": "parser_coverage", "value": f"{parsed}/{len(scope.production)}"},
+            {"kind": "parse_error_count", "value": str(len(parse_errors))},
+            {"kind": "unmeasured_file_count", "value": str(len(unmeasured))},
+        )
+        if parse_errors:
+            parser_check = CheckResult(
+                id="code.production_scope_parsed",
+                status=CheckStatus.ERROR,
+                score_bps=None,
+                reason_code="RADON_PARSE_FAILURE",
+                numerator=parsed,
+                denominator=len(scope.production),
+                exclusions=(("PARSE_FAILURE", len(parse_errors)),),
+                evidence=_artifact_references(artifacts)
+                + coverage_evidence
+                + tuple(
+                    {"kind": "parse_error_file", "value": path}
+                    for path in parse_errors
+                ),
+            )
+        elif unmeasured or not scope.production:
+            parser_check = CheckResult(
+                id="code.production_scope_parsed",
+                status=CheckStatus.UNKNOWN,
+                score_bps=None,
+                reason_code=(
+                    "RADON_PRODUCTION_FILE_UNMEASURED"
+                    if unmeasured
+                    else "PRODUCTION_SCOPE_EMPTY"
+                ),
+                numerator=parsed,
+                denominator=len(scope.production),
+                exclusions=(("UNMEASURED_FILE", len(unmeasured)),),
+                evidence=_artifact_references(artifacts) + coverage_evidence,
+            )
+        else:
+            parser_check = _ratio_result(
+                policy=policy,
+                check_id="code.production_scope_parsed",
+                numerator=parsed,
+                denominator=len(scope.production),
+                pass_reason="RADON_PRODUCTION_SCOPE_PARSED",
+                fail_reason="RADON_PRODUCTION_SCOPE_INCOMPLETE",
+                artifacts=artifacts,
+                evidence=coverage_evidence,
+            )
+        distribution_evidence = (
+            {"kind": "complexity_distribution", "value": _canonical_json(dict(distribution))},
+            {"kind": "complexity_block_count", "value": str(len(complexities))},
+            {"kind": "complexity_mean_milli", "value": str(mean_milli)},
+            {"kind": "complexity_maximum", "value": str(complexity.maximum)},
+        )
+        if parse_errors:
+            complexity_check = _error_result(
+                "code.complexity_maximum", "RADON_PARSE_FAILURE", artifacts
+            )
+            distribution_check = _error_result(
+                "code.complexity_distribution", "RADON_PARSE_FAILURE", artifacts
+            )
+        elif unmeasured:
+            complexity_check = _error_result(
+                "code.complexity_maximum", "RADON_SCOPE_INCOMPLETE", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+            distribution_check = _error_result(
+                "code.complexity_distribution", "RADON_SCOPE_INCOMPLETE", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+        elif complexity.maximum is None:
+            complexity_check = _error_result(
+                "code.complexity_maximum", "NO_COMPLEXITY_BLOCKS", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+            distribution_check = _error_result(
+                "code.complexity_distribution", "NO_COMPLEXITY_BLOCKS", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+        else:
+            maximum_score = max(0, 10000 - 100 * (complexity.maximum - 1))
+            complexity_check = _scored_result(
+                policy=policy,
+                check_id="code.complexity_maximum",
+                score_bps=maximum_score,
+                pass_reason="COMPLEXITY_MAXIMUM_WITHIN_POLICY",
+                fail_reason="COMPLEXITY_MAXIMUM_EXCEEDS_POLICY",
+                artifacts=artifacts,
+                numerator=1,
+                denominator=1,
+                evidence=distribution_evidence,
+            )
+            distribution_check = _binary_result(
+                "code.complexity_distribution",
+                True,
+                pass_reason="COMPLEXITY_DISTRIBUTION_REPORTED",
+                fail_reason="COMPLEXITY_DISTRIBUTION_MISSING",
+                artifacts=artifacts,
+            )
+            distribution_check = CheckResult(
+                id=distribution_check.id,
+                status=distribution_check.status,
+                score_bps=distribution_check.score_bps,
+                reason_code=distribution_check.reason_code,
+                numerator=len(complexities),
+                denominator=len(complexities),
+                evidence=distribution_check.evidence + distribution_evidence,
+            )
+
+    try:
+        raw_mi = _load_json_object(radon_mi, "Radon maintainability index")
+        if set(raw_mi) - set(scope.all_paths):
+            raise ValueError("Radon MI measured undeclared files")
+        mi_values: list[int] = []
+        mi_errors: list[str] = []
+        for path in sorted(set(raw_mi) & set(scope.production)):
+            value = raw_mi[path]
+            if isinstance(value, Mapping) and set(value) == {"error"}:
+                mi_errors.append(path)
+                continue
+            decimal = _finite_json_decimal(value, f"MI for {path}")
+            if not Decimal(0) <= decimal <= Decimal(100):
+                raise ValueError("Radon MI must be within zero and 100")
+            mi_values.append(
+                int((decimal * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            )
+        mi_missing = tuple(sorted(set(scope.production) - set(raw_mi)))
+        mi_distribution = (
+            ("A", sum(value >= 2000 for value in mi_values)),
+            ("B", sum(1000 <= value < 2000 for value in mi_values)),
+            ("C", sum(value < 1000 for value in mi_values)),
+        )
+        mi_report = MaintainabilityIndexReport(
+            measured_file_count=len(mi_values),
+            missing_files=mi_missing,
+            error_files=tuple(mi_errors),
+            minimum_bps=min(mi_values) if mi_values else None,
+            maximum_bps=max(mi_values) if mi_values else None,
+            mean_bps=(
+                _round_half_up_fraction(sum(mi_values), len(mi_values))
+                if mi_values else None
+            ),
+            distribution=mi_distribution,
+        )
+        mi_evidence = (
+            {"kind": "diagnostic_only", "value": "true"},
+            {"kind": "mi_distribution", "value": _canonical_json(dict(mi_distribution))},
+            {"kind": "mi_minimum_bps", "value": str(mi_report.minimum_bps)},
+            {"kind": "mi_maximum_bps", "value": str(mi_report.maximum_bps)},
+            {"kind": "mi_mean_bps", "value": str(mi_report.mean_bps)},
+        )
+        if mi_errors:
+            mi_check = _error_result(
+                "code.maintainability_index", "RADON_MI_PARSE_FAILURE", artifacts
+            )
+        elif mi_missing or not mi_values:
+            mi_check = _error_result(
+                "code.maintainability_index", "RADON_MI_INCOMPLETE", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+        else:
+            mi_check = CheckResult(
+                id="code.maintainability_index",
+                status=CheckStatus.PASS,
+                score_bps=mi_report.mean_bps,
+                reason_code="MI_DIAGNOSTIC_REPORTED",
+                numerator=len(mi_values),
+                denominator=len(scope.production),
+                evidence=_artifact_references(artifacts) + mi_evidence,
+            )
+    except (TypeError, ValueError):
+        mi_report = _empty_mi_report(scope)
+        mi_check = _error_result(
+            "code.maintainability_index", "RADON_MI_JSON_MALFORMED", artifacts
+        )
+
+    return CodeHealthEvaluation(
+        scope=scope,
+        complexity=complexity,
+        maintainability_index=mi_report,
+        checks=tuple(
+            sorted(
+                (
+                    scope_check,
+                    parser_check,
+                    complexity_check,
+                    distribution_check,
+                    mi_check,
+                ),
+                key=lambda item: item.id,
+            )
+        ),
+    )
+
+
+def _coverage_summary(raw: object, name: str) -> tuple[int, int, int, int]:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{name} must be an object")
+    required = {"covered_lines", "num_statements", "covered_branches", "num_branches"}
+    if not required <= set(raw):
+        raise ValueError(f"{name} is missing exact coverage counters")
+    covered_lines = _non_negative_json_int(raw["covered_lines"], f"{name}.covered_lines")
+    statements = _non_negative_json_int(raw["num_statements"], f"{name}.num_statements")
+    covered_branches = _non_negative_json_int(raw["covered_branches"], f"{name}.covered_branches")
+    branches = _non_negative_json_int(raw["num_branches"], f"{name}.num_branches")
+    if covered_lines > statements or covered_branches > branches:
+        raise ValueError(f"{name} coverage counters are inconsistent")
+    return covered_lines, statements, covered_branches, branches
+
+
+def _empty_coverage_report(scope: DeclaredCodeScope) -> CoverageReport:
+    return CoverageReport(
+        declared_file_count=len(scope.production),
+        measured_file_count=0,
+        unmeasured_files=scope.production,
+        lines_covered=0,
+        lines_total=0,
+        branches_covered=0,
+        branches_total=0,
+        per_scope_coverage=tuple((kind, (0, len(scope.scopes[kind]))) for kind in _SCOPE_KINDS),
+    )
+
+
+_MUTMUT_OUTCOMES = (
+    "killed",
+    "survived",
+    "no_test",
+    "timeout",
+    "crash",
+    "internal_error",
+    "suspicious",
+    "pending",
+    "excluded_equivalent",
+    "excluded_invalid",
+)
+
+
+def _normalize_mutmut_exit(exit_code: int | None) -> str:
+    if exit_code is None or exit_code in {2, 34}:
+        return "pending"
+    if exit_code == 1:
+        return "killed"
+    if exit_code == 0:
+        return "survived"
+    if exit_code in {5, 33}:
+        return "no_test"
+    if exit_code in {-24, 24, 36, 152, 255}:
+        return "timeout"
+    if exit_code in {-11, -9}:
+        return "crash"
+    if exit_code == 3:
+        return "internal_error"
+    return "suspicious"
+
+
+def _empty_mutation_report() -> MutationReport:
+    return MutationReport(
+        counts=tuple((name, 0) for name in _MUTMUT_OUTCOMES),
+        completed_valid_mutants=0,
+        unresolved_mutants=0,
+        excluded_mutants=0,
+    )
+
+
+def _not_applicable_result(
+    *,
+    policy: Policy,
+    check_id: str,
+    reason_code: str,
+    applicability: ScopeApplicability,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> CheckResult:
+    if _policy_check(policy, check_id).applicability is None:
+        return _error_result(check_id, "POLICY_APPLICABILITY_MISSING", artifacts)
+    return CheckResult(
+        id=check_id,
+        status=CheckStatus.NOT_APPLICABLE,
+        score_bps=None,
+        reason_code=reason_code,
+        numerator=0,
+        denominator=0,
+        evidence=_artifact_references(artifacts)
+        + ({"kind": "applicability_proof", "value": applicability.evidence},),
+    )
+
+
+def evaluate_test_adequacy_evidence(
+    *,
+    policy: Policy,
+    scope_artifact: EvidenceArtifact,
+    tool_versions: EvidenceArtifact,
+    coverage_json: EvidenceArtifact,
+    mutmut_json: EvidenceArtifact,
+) -> TestAdequacyEvaluation:
+    """Consume exact coverage counters and normalize raw mutmut exit outcomes."""
+    artifacts = (scope_artifact, tool_versions, coverage_json, mutmut_json)
+    try:
+        scope = _declared_code_scope(scope_artifact)
+    except (TypeError, ValueError):
+        scope = DeclaredCodeScope(
+            scopes={kind: () for kind in _SCOPE_KINDS},
+            applicability={
+                kind: ScopeApplicability("expected", "malformed scope evidence")
+                for kind in _APPLICABILITY_KINDS
+            },
+        )
+        return TestAdequacyEvaluation(
+            scope=scope,
+            coverage=_empty_coverage_report(scope),
+            mutation=_empty_mutation_report(),
+            checks=tuple(
+                _error_result(check_id, "CODE_SCOPE_MALFORMED", artifacts)
+                for check_id in _TEST_ADEQUACY_CHECK_IDS
+            ),
+        )
+    try:
+        _require_pinned_tool(tool_versions, "coverage")
+        _require_pinned_tool(tool_versions, "mutmut")
+    except (TypeError, ValueError):
+        return TestAdequacyEvaluation(
+            scope=scope,
+            coverage=_empty_coverage_report(scope),
+            mutation=_empty_mutation_report(),
+            checks=tuple(
+                _error_result(check_id, "SCORING_TOOL_VERSION_MISMATCH", artifacts)
+                for check_id in _TEST_ADEQUACY_CHECK_IDS
+            ),
+        )
+
+    try:
+        raw_coverage = _load_json_object(coverage_json, "coverage.py JSON")
+        meta = raw_coverage.get("meta")
+        files = raw_coverage.get("files")
+        totals = raw_coverage.get("totals")
+        if (
+            not isinstance(meta, Mapping)
+            or meta.get("version") != PINNED_SCORE_TOOL_VERSIONS["coverage"]
+            or meta.get("branch_coverage") is not True
+        ):
+            raise ValueError("coverage.py JSON version mismatch")
+        if not isinstance(files, Mapping) or not isinstance(totals, Mapping):
+            raise ValueError("coverage.py JSON files and totals must be objects")
+        if set(files) - set(scope.all_paths):
+            raise ValueError("coverage.py measured undeclared files")
+        per_file: dict[str, tuple[int, int, int, int]] = {}
+        for path, file_raw in files.items():
+            if not isinstance(path, str) or not isinstance(file_raw, Mapping):
+                raise ValueError("coverage.py file entries are malformed")
+            per_file[path] = _coverage_summary(file_raw.get("summary"), f"coverage summary for {path}")
+        total_counts = _coverage_summary(totals, "coverage totals")
+        summed_counts = tuple(sum(item[index] for item in per_file.values()) for index in range(4))
+        if total_counts != summed_counts:
+            raise ValueError("coverage.py totals disagree with file counters")
+        production_measured = sorted(set(scope.production) & set(per_file))
+        unmeasured = tuple(sorted(set(scope.production) - set(per_file)))
+        production_counts = tuple(
+            sum(per_file[path][index] for path in production_measured)
+            for index in range(4)
+        )
+        per_scope = tuple(
+            (
+                kind,
+                (
+                    len(set(scope.scopes[kind]) & set(per_file)),
+                    len(scope.scopes[kind]),
+                ),
+            )
+            for kind in _SCOPE_KINDS
+        )
+        coverage = CoverageReport(
+            declared_file_count=len(scope.production),
+            measured_file_count=len(production_measured),
+            unmeasured_files=unmeasured,
+            lines_covered=production_counts[0],
+            lines_total=production_counts[1],
+            branches_covered=production_counts[2],
+            branches_total=production_counts[3],
+            per_scope_coverage=per_scope,
+        )
+    except (TypeError, ValueError):
+        coverage = _empty_coverage_report(scope)
+        coverage_checks = (
+            _error_result("test.coverage_scope", "COVERAGE_JSON_MALFORMED", artifacts),
+            _error_result("test.line_coverage", "COVERAGE_JSON_MALFORMED", artifacts),
+            _error_result("test.branch_coverage", "COVERAGE_JSON_MALFORMED", artifacts),
+        )
+    else:
+        coverage_evidence = (
+            {"kind": "coverage_scope", "value": f"{coverage.measured_file_count}/{coverage.declared_file_count}"},
+            {"kind": "line_counts", "value": f"{coverage.lines_covered}/{coverage.lines_total}"},
+            {"kind": "branch_counts", "value": f"{coverage.branches_covered}/{coverage.branches_total}"},
+            {"kind": "per_scope_coverage", "value": _canonical_json({kind: list(counts) for kind, counts in per_scope})},
+        )
+        if unmeasured or not scope.production:
+            coverage_scope_check = CheckResult(
+                id="test.coverage_scope",
+                status=CheckStatus.UNKNOWN,
+                score_bps=None,
+                reason_code=("COVERAGE_PRODUCTION_FILE_UNMEASURED" if unmeasured else "PRODUCTION_SCOPE_EMPTY"),
+                numerator=coverage.measured_file_count,
+                denominator=coverage.declared_file_count,
+                exclusions=(("UNMEASURED_FILE", len(unmeasured)),),
+                evidence=_artifact_references(artifacts) + coverage_evidence,
+            )
+            line_check = _error_result(
+                "test.line_coverage", "COVERAGE_SCOPE_INCOMPLETE", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+            branch_check = _error_result(
+                "test.branch_coverage", "COVERAGE_SCOPE_INCOMPLETE", artifacts,
+                status=CheckStatus.UNKNOWN,
+            )
+        else:
+            coverage_scope_check = _ratio_result(
+                policy=policy,
+                check_id="test.coverage_scope",
+                numerator=coverage.measured_file_count,
+                denominator=coverage.declared_file_count,
+                pass_reason="COVERAGE_PRODUCTION_SCOPE_COMPLETE",
+                fail_reason="COVERAGE_PRODUCTION_SCOPE_INCOMPLETE",
+                artifacts=artifacts,
+                evidence=coverage_evidence,
+            )
+            if coverage.lines_total == 0:
+                if scope.applicability["statements"].state == "proven_none":
+                    line_check = _not_applicable_result(
+                        policy=policy,
+                        check_id="test.line_coverage",
+                        reason_code="NO_STATEMENTS_PROVEN",
+                        applicability=scope.applicability["statements"],
+                        artifacts=artifacts,
+                    )
+                else:
+                    line_check = CheckResult(
+                        id="test.line_coverage",
+                        status=CheckStatus.UNKNOWN,
+                        score_bps=None,
+                        reason_code="ZERO_STATEMENTS_UNRESOLVED",
+                        numerator=0,
+                        denominator=0,
+                        evidence=_artifact_references(artifacts) + coverage_evidence,
+                    )
+            else:
+                line_check = _ratio_result(
+                    policy=policy,
+                    check_id="test.line_coverage",
+                    numerator=coverage.lines_covered,
+                    denominator=coverage.lines_total,
+                    pass_reason="LINE_COVERAGE_MEETS_POLICY",
+                    fail_reason="LINE_COVERAGE_BELOW_POLICY",
+                    artifacts=artifacts,
+                    evidence=coverage_evidence,
+                )
+            if coverage.branches_total == 0:
+                if scope.applicability["branches"].state == "proven_none":
+                    branch_check = _not_applicable_result(
+                        policy=policy,
+                        check_id="test.branch_coverage",
+                        reason_code="NO_BRANCHES_PROVEN",
+                        applicability=scope.applicability["branches"],
+                        artifacts=artifacts,
+                    )
+                else:
+                    branch_check = CheckResult(
+                        id="test.branch_coverage",
+                        status=CheckStatus.UNKNOWN,
+                        score_bps=None,
+                        reason_code="ZERO_BRANCHES_UNRESOLVED",
+                        numerator=0,
+                        denominator=0,
+                        evidence=_artifact_references(artifacts) + coverage_evidence,
+                    )
+            else:
+                branch_check = _ratio_result(
+                    policy=policy,
+                    check_id="test.branch_coverage",
+                    numerator=coverage.branches_covered,
+                    denominator=coverage.branches_total,
+                    pass_reason="BRANCH_COVERAGE_MEETS_POLICY",
+                    fail_reason="BRANCH_COVERAGE_BELOW_POLICY",
+                    artifacts=artifacts,
+                    evidence=coverage_evidence,
+                )
+        coverage_checks = (coverage_scope_check, line_check, branch_check)
+
+    try:
+        raw_mutmut = _object_keys(
+            _load_json_object(mutmut_json, "mutmut evidence"),
+            {"schema_version", "tool", "clean_control", "sentinel", "mutants"},
+            "mutmut evidence",
+        )
+        if raw_mutmut["schema_version"] != _MUTMUT_EVIDENCE_SCHEMA_VERSION:
+            raise ValueError("mutmut evidence schema is unsupported")
+        tool = _object_keys(raw_mutmut["tool"], {"name", "version"}, "mutmut tool")
+        if tool != {"name": "mutmut", "version": PINNED_SCORE_TOOL_VERSIONS["mutmut"]}:
+            raise ValueError("mutmut evidence version mismatch")
+        clean = _object_keys(
+            raw_mutmut["clean_control"], {"exit_code", "tests_collected"}, "mutmut clean control"
+        )
+        sentinel = _object_keys(
+            raw_mutmut["sentinel"], {"exit_code", "expected_failure_observed"}, "mutmut sentinel"
+        )
+        clean_exit = clean["exit_code"]
+        tests_collected = _non_negative_json_int(clean["tests_collected"], "clean tests_collected")
+        sentinel_exit = sentinel["exit_code"]
+        if not _is_int(clean_exit) or not _is_int(sentinel_exit) or not isinstance(sentinel["expected_failure_observed"], bool):
+            raise ValueError("mutmut control exits are malformed")
+        counts = {name: 0 for name in _MUTMUT_OUTCOMES}
+        mutant_ids: list[str] = []
+        for item in _list_value(raw_mutmut["mutants"], "mutmut mutants"):
+            mutant = _object_keys(item, {"id", "exit_code", "exclusion"}, "mutmut mutant")
+            mutant_id = mutant["id"]
+            if not isinstance(mutant_id, str) or not mutant_id:
+                raise ValueError("mutmut mutant ID must be non-empty text")
+            mutant_ids.append(mutant_id)
+            exit_code = mutant["exit_code"]
+            if exit_code is not None and not _is_int(exit_code):
+                raise ValueError("mutmut mutant exit_code must be integer or null")
+            exclusion = mutant["exclusion"]
+            if exclusion is not None:
+                exclusion_raw = _object_keys(exclusion, {"reason", "evidence"}, "mutant exclusion")
+                reason = exclusion_raw["reason"]
+                evidence_value = exclusion_raw["evidence"]
+                if reason not in {"EQUIVALENT_MUTANT", "INVALID_MUTANT"} or not isinstance(evidence_value, str) or not evidence_value.strip():
+                    raise ValueError("mutant exclusion requires an allowed reason and evidence")
+                counts["excluded_equivalent" if reason == "EQUIVALENT_MUTANT" else "excluded_invalid"] += 1
+            else:
+                counts[_normalize_mutmut_exit(exit_code)] += 1
+        if len(set(mutant_ids)) != len(mutant_ids):
+            raise ValueError("mutmut mutant IDs must be unique")
+        completed = counts["killed"] + counts["survived"] + counts["no_test"]
+        unresolved = sum(counts[name] for name in ("timeout", "crash", "internal_error", "suspicious", "pending"))
+        excluded = counts["excluded_equivalent"] + counts["excluded_invalid"]
+        mutation = MutationReport(
+            counts=tuple((name, counts[name]) for name in _MUTMUT_OUTCOMES),
+            completed_valid_mutants=completed,
+            unresolved_mutants=unresolved,
+            excluded_mutants=excluded,
+        )
+    except (TypeError, ValueError):
+        mutation = _empty_mutation_report()
+        mutation_checks = (
+            _error_result("test.mutation_controls", "MUTMUT_EVIDENCE_MALFORMED", artifacts),
+            _error_result("test.mutation_score", "MUTMUT_EVIDENCE_MALFORMED", artifacts),
+        )
+    else:
+        mutation_evidence = (
+            {"kind": "mutation_counts", "value": _canonical_json(dict(mutation.counts))},
+            {"kind": "completed_valid_mutants", "value": str(completed)},
+            {"kind": "unresolved_mutants", "value": str(unresolved)},
+            {"kind": "excluded_mutants", "value": str(excluded)},
+        )
+        controls_pass = (
+            clean_exit == 0
+            and tests_collected > 0
+            and sentinel_exit == 1
+            and sentinel["expected_failure_observed"] is True
+        )
+        controls_check = _binary_result(
+            "test.mutation_controls",
+            controls_pass,
+            pass_reason="MUTATION_CONTROLS_VALID",
+            fail_reason="MUTATION_CONTROLS_INVALID",
+            artifacts=artifacts,
+        )
+        controls_check = CheckResult(
+            id=controls_check.id,
+            status=(controls_check.status if controls_pass else CheckStatus.ERROR),
+            score_bps=(controls_check.score_bps if controls_pass else None),
+            reason_code=controls_check.reason_code,
+            numerator=(1 if controls_pass else 0),
+            denominator=1,
+            evidence=controls_check.evidence + mutation_evidence,
+        )
+        if not controls_pass:
+            mutation_check = _error_result(
+                "test.mutation_score", "MUTATION_CONTROLS_INVALID", artifacts
+            )
+        elif unresolved:
+            mutation_check = CheckResult(
+                id="test.mutation_score",
+                status=CheckStatus.UNKNOWN,
+                score_bps=None,
+                reason_code="MUTATION_OUTCOMES_UNRESOLVED",
+                numerator=counts["killed"],
+                denominator=completed,
+                exclusions=tuple(
+                    (reason.upper(), counts[reason])
+                    for reason in ("timeout", "crash", "internal_error", "suspicious", "pending")
+                    if counts[reason]
+                ),
+                evidence=_artifact_references(artifacts) + mutation_evidence,
+            )
+        elif completed == 0:
+            if scope.applicability["mutants"].state == "proven_none":
+                mutation_check = _not_applicable_result(
+                    policy=policy,
+                    check_id="test.mutation_score",
+                    reason_code="NO_MUTANTS_PROVEN",
+                    applicability=scope.applicability["mutants"],
+                    artifacts=artifacts,
+                )
+            else:
+                mutation_check = CheckResult(
+                    id="test.mutation_score",
+                    status=CheckStatus.UNKNOWN,
+                    score_bps=None,
+                    reason_code="ZERO_COMPLETED_MUTANTS_UNRESOLVED",
+                    numerator=0,
+                    denominator=0,
+                    evidence=_artifact_references(artifacts) + mutation_evidence,
+                )
+        else:
+            mutation_check = _ratio_result(
+                policy=policy,
+                check_id="test.mutation_score",
+                numerator=counts["killed"],
+                denominator=completed,
+                pass_reason="MUTATION_SCORE_MEETS_POLICY",
+                fail_reason="MUTATION_SCORE_BELOW_POLICY",
+                artifacts=artifacts,
+                evidence=mutation_evidence,
+            )
+        mutation_checks = (controls_check, mutation_check)
+
+    return TestAdequacyEvaluation(
+        scope=scope,
+        coverage=coverage,
+        mutation=mutation,
+        checks=tuple(sorted((*coverage_checks, *mutation_checks), key=lambda item: item.id)),
+    )
+
+
 SourceIdentity = tuple[str, str, str, str, int, int]
 
 
@@ -2195,6 +3386,34 @@ class RetrievalStratum:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievalCrossCheck:
+    """Optional pinned ir_measures/pytrec comparison of S4's metric kernel."""
+
+    status: str
+    reason_code: str
+    installed_versions: tuple[tuple[str, str], ...]
+    standard_library_bps: tuple[tuple[str, int], ...]
+    authoritative_bps: tuple[tuple[str, int], ...]
+    disagreements: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.status not in {"agree", "disagree", "skipped", "error"}:
+            raise ValueError("retrieval cross-check status is invalid")
+        if not _REASON_CODE.fullmatch(self.reason_code):
+            raise ValueError("retrieval cross-check reason code is invalid")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "reason_code": self.reason_code,
+            "installed_versions": dict(self.installed_versions),
+            "standard_library_bps": dict(self.standard_library_bps),
+            "authoritative_bps": dict(self.authoritative_bps),
+            "disagreements": list(self.disagreements),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalEvaluation:
     benchmark_id: str
     manifest_sha256: str
@@ -2205,6 +3424,7 @@ class RetrievalEvaluation:
     checks: tuple[CheckResult, ...]
     authoritative_qrels: Mapping[str, Mapping[str, int]]
     authoritative_run: Mapping[str, Mapping[str, int]]
+    cross_check: RetrievalCrossCheck
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -2218,6 +3438,7 @@ class RetrievalEvaluation:
                 "language": [item.to_dict() for item in self.language_strata],
                 "predicate": [item.to_dict() for item in self.predicate_strata],
             },
+            "authoritative_cross_check": self.cross_check.to_dict(),
         }
 
 
@@ -2673,6 +3894,102 @@ def _retrieval_metric_result(
     )
 
 
+def _authoritative_retrieval_cross_check(
+    aggregate: RetrievalMetrics,
+    qrels: Mapping[str, Mapping[str, int]],
+    run: Mapping[str, Mapping[str, int]],
+) -> RetrievalCrossCheck:
+    """Cross-check through the explicitly selected pytrec provider when present."""
+    metric_names = (
+        "ndcg_at_10",
+        "reciprocal_rank_at_10",
+        "success_at_1",
+        "success_at_5",
+        "success_at_10",
+        "recall_at_10",
+    )
+    standard = tuple(
+        (name, int(_metric_bps(getattr(aggregate, name)))) for name in metric_names
+    )
+    installed: dict[str, str] = {}
+    missing: list[str] = []
+    for distribution in ("ir_measures", "pytrec-eval-terrier"):
+        try:
+            installed[distribution] = importlib_metadata.version(distribution)
+        except importlib_metadata.PackageNotFoundError:
+            missing.append(distribution)
+    versions = tuple(sorted(installed.items()))
+    mismatched = tuple(
+        name
+        for name, version in versions
+        if version != PINNED_SCORE_TOOL_VERSIONS[name]
+    )
+    if mismatched:
+        return RetrievalCrossCheck(
+            status="error",
+            reason_code="RETRIEVAL_TOOL_VERSION_MISMATCH",
+            installed_versions=versions,
+            standard_library_bps=standard,
+            authoritative_bps=(),
+            disagreements=(),
+        )
+    if missing:
+        return RetrievalCrossCheck(
+            status="skipped",
+            reason_code="SCORING_LOCK_NOT_INSTALLED",
+            installed_versions=versions,
+            standard_library_bps=standard,
+            authoritative_bps=(),
+            disagreements=(),
+        )
+    try:
+        from ir_measures import RR, Recall, Success, nDCG
+        from ir_measures.providers.pytrec_eval_provider import PytrecEvalProvider
+
+        measure_pairs = (
+            ("ndcg_at_10", nDCG @ 10),
+            ("reciprocal_rank_at_10", RR(rel=2) @ 10),
+            ("success_at_1", Success(rel=2) @ 1),
+            ("success_at_5", Success(rel=2) @ 5),
+            ("success_at_10", Success(rel=2) @ 10),
+            ("recall_at_10", Recall(rel=1) @ 10),
+        )
+        measures = [measure for _, measure in measure_pairs]
+        values = PytrecEvalProvider().evaluator(measures, dict(qrels)).calc_aggregate(
+            dict(run)
+        )
+        authoritative = tuple(
+            (name, int(_metric_bps(float(values[measure]))))
+            for name, measure in measure_pairs
+        )
+    except Exception:
+        return RetrievalCrossCheck(
+            status="error",
+            reason_code="AUTHORITATIVE_RETRIEVAL_CROSS_CHECK_ERROR",
+            installed_versions=versions,
+            standard_library_bps=standard,
+            authoritative_bps=(),
+            disagreements=(),
+        )
+    standard_map = dict(standard)
+    authoritative_map = dict(authoritative)
+    disagreements = tuple(
+        name for name in metric_names if standard_map[name] != authoritative_map[name]
+    )
+    return RetrievalCrossCheck(
+        status="disagree" if disagreements else "agree",
+        reason_code=(
+            "AUTHORITATIVE_RETRIEVAL_DISAGREEMENT"
+            if disagreements
+            else "AUTHORITATIVE_RETRIEVAL_AGREEMENT"
+        ),
+        installed_versions=versions,
+        standard_library_bps=standard,
+        authoritative_bps=authoritative,
+        disagreements=disagreements,
+    )
+
+
 def evaluate_retrieval(
     *,
     manifest: EvidenceArtifact,
@@ -2823,6 +4140,9 @@ def evaluate_retrieval(
         checks=tuple(sorted(checks, key=lambda item: item.id)),
         authoritative_qrels=authoritative_qrels,
         authoritative_run=authoritative_run,
+        cross_check=_authoritative_retrieval_cross_check(
+            aggregate, authoritative_qrels, authoritative_run
+        ),
     )
 
 
@@ -3222,26 +4542,36 @@ __all__ = [
     "CheckPolicy",
     "CheckResult",
     "CheckStatus",
+    "CodeHealthEvaluation",
     "CommandExecution",
+    "ComplexityReport",
     "Criterion",
     "Decision",
     "DimensionAssessment",
     "DimensionPolicy",
+    "DeclaredCodeScope",
     "ExitCode",
     "EvidenceArtifact",
     "GateAggregate",
+    "CoverageReport",
+    "MaintainabilityIndexReport",
+    "MutationReport",
+    "PINNED_SCORE_TOOL_VERSIONS",
     "Policy",
     "Producer",
     "Profile",
     "RetrievalEvaluation",
     "RetrievalEvaluationError",
+    "RetrievalCrossCheck",
     "RetrievalMetrics",
     "RetrievalStratum",
     "RetrievalTaskEvaluation",
     "RunEnvelope",
     "ScoreAggregate",
     "SourceSpan",
+    "ScopeApplicability",
     "Subject",
+    "TestAdequacyEvaluation",
     "canonical_json_bytes",
     "canonical_patch_sha256",
     "collect_adr001_pytest_junit",
@@ -3251,6 +4581,7 @@ __all__ = [
     "evaluate",
     "evaluate_deterministic_replay",
     "evaluate_engine_correctness_evidence",
+    "evaluate_code_health_evidence",
     "evaluate_global_no_exhaustiveness",
     "evaluate_output_effectiveness_evidence",
     "evaluate_pytest_junit",
@@ -3259,6 +4590,7 @@ __all__ = [
     "evaluate_scoped_coverage",
     "evaluate_retrieval",
     "evaluate_total_ordering",
+    "evaluate_test_adequacy_evidence",
     "load_policy",
     "policy_from_dict",
     "proportional_score_bps",

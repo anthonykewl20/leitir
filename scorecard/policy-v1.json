@@ -149,6 +149,33 @@
     {"id": "output.success_at_5", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "gte", "value": 0}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
     {"id": "output.total_ordering", "dimension": "output_effectiveness", "weight": 1, "score_eligible": true, "criterion": {"op": "eq", "value": 10000}, "modes": {"offline": "required", "release": "required"}, "applicability": null},
     {
+      "id": "code.complexity_distribution",
+      "dimension": "code_health",
+      "weight": 1,
+      "score_eligible": false,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "code.complexity_maximum",
+      "dimension": "code_health",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "gte", "value": 0},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "code.maintainability_index",
+      "dimension": "code_health",
+      "weight": 1,
+      "score_eligible": false,
+      "criterion": {"op": "gte", "value": 0},
+      "modes": {"offline": "advisory", "release": "advisory"},
+      "applicability": null
+    },
+    {
       "id": "code.production_scope_parsed",
       "dimension": "code_health",
       "weight": 1,
@@ -164,19 +191,58 @@
       "applicability": null
     },
     {
-      "id": "test.adequacy_evidence",
+      "id": "code.scope_declared",
+      "dimension": "code_health",
+      "weight": 1,
+      "score_eligible": false,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "test.branch_coverage",
       "dimension": "test_adequacy",
       "weight": 1,
       "score_eligible": true,
-      "criterion": {
-        "op": "eq",
-        "value": 10000
-      },
-      "modes": {
-        "offline": "required",
-        "release": "required"
-      },
+      "criterion": {"op": "gte", "value": 0},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": {"rule": "declared production scope proves there can be no branch exits"}
+    },
+    {
+      "id": "test.coverage_scope",
+      "dimension": "test_adequacy",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "required", "release": "required"},
       "applicability": null
+    },
+    {
+      "id": "test.line_coverage",
+      "dimension": "test_adequacy",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "gte", "value": 0},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": {"rule": "declared production scope proves there can be no executable statements"}
+    },
+    {
+      "id": "test.mutation_controls",
+      "dimension": "test_adequacy",
+      "weight": 1,
+      "score_eligible": false,
+      "criterion": {"op": "eq", "value": 10000},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": null
+    },
+    {
+      "id": "test.mutation_score",
+      "dimension": "test_adequacy",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {"op": "gte", "value": 0},
+      "modes": {"offline": "required", "release": "required"},
+      "applicability": {"rule": "declared production scope is proven non-mutable"}
     },
     {
       "id": "process.supply_chain_evidence",

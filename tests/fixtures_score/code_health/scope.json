@@ -1,0 +1,23 @@
+{
+  "schema_version": "leitir-code-scope-v1",
+  "scopes": {
+    "production": ["src/example/core.py", "src/example/service.py"],
+    "generated": ["src/example/generated_models.py"],
+    "vendored": ["vendor/example_vendor.py"],
+    "fixture": ["tests/fixtures/example_payload.py"]
+  },
+  "applicability": {
+    "statements": {
+      "state": "expected",
+      "evidence": "Both declared production modules contain executable statements."
+    },
+    "branches": {
+      "state": "expected",
+      "evidence": "Both declared production modules contain conditional exits."
+    },
+    "mutants": {
+      "state": "expected",
+      "evidence": "The declared production functions contain mutable expressions."
+    }
+  }
+}

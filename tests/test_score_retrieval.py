@@ -422,3 +422,54 @@ def test_trec_golden_fixture_is_committed_real_data():
         "ir_measures": "0.4.3",
         "pytrec_eval_terrier": "0.5.10",
     }
+
+
+def test_optional_authoritative_cross_check_is_explicit_when_absent_or_agrees():
+    manifest, qrels, run = _scenario()
+    for qrel_task, run_task in zip(qrels["tasks"], run["tasks"], strict=True):
+        support = _identity(f"{qrel_task['task_id']}-support")
+        qrel_task["judgments"].append({"grade": 1, "source": _source(support)})
+        target = run_task["results"][0]
+        target["rank"] = 2
+        target["rank_score"] = 1
+        run_task["results"] = [
+            {
+                "source": _source(support, permalink=True),
+                "score": 1.0,
+                "normalized_score": 1.0,
+                "rank": 1,
+                "rank_score": 2,
+                "matched_kinds": ["path"],
+            },
+            target,
+        ]
+    cross_check = _evaluation(manifest, qrels, run).cross_check
+
+    # Three outcomes are legitimate, and each must fail with its own diagnostic.
+    # Collapsing the non-skipped cases into one else branch reported a mismatched
+    # local install as "error != agree", which reads like a metric disagreement
+    # when it is really an environment problem.
+    if cross_check.status == "skipped":
+        assert cross_check.reason_code == "SCORING_LOCK_NOT_INSTALLED"
+        assert cross_check.authoritative_bps == ()
+    elif cross_check.status == "error":
+        assert cross_check.reason_code in {
+            "RETRIEVAL_TOOL_VERSION_MISMATCH",
+            "AUTHORITATIVE_RETRIEVAL_CROSS_CHECK_ERROR",
+        }, (
+            "cross-check errored unexpectedly: install the pinned scoring lock "
+            f"(requirements-score.txt) or none at all; got {cross_check.reason_code} "
+            f"with versions {cross_check.installed_versions}"
+        )
+    else:
+        assert cross_check.status == "agree", (
+            "authoritative scorer disagreed with the standard-library kernel: "
+            f"{cross_check.disagreements}"
+        )
+        assert cross_check.reason_code == "AUTHORITATIVE_RETRIEVAL_AGREEMENT"
+        assert cross_check.installed_versions == (
+            ("ir_measures", "0.4.3"),
+            ("pytrec-eval-terrier", "0.5.10"),
+        )
+        assert cross_check.disagreements == ()
+        assert cross_check.standard_library_bps == cross_check.authoritative_bps

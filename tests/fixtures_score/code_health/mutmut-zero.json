@@ -1,0 +1,7 @@
+{
+  "schema_version": "leitir-mutmut-evidence-v1",
+  "tool": {"name": "mutmut", "version": "3.7.0"},
+  "clean_control": {"exit_code": 0, "tests_collected": 42},
+  "sentinel": {"exit_code": 1, "expected_failure_observed": true},
+  "mutants": []
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "leitir-mutmut-evidence-v1",
+  "tool": {"name": "mutmut", "version": "3.7.0"},
+  "clean_control": {"exit_code": 0, "tests_collected": 42},
+  "sentinel": {"exit_code": 1, "expected_failure_observed": true},
+  "mutants": [
+    {"id": "src.example.core.x_resolve_request__mutmut_1", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.core.x_resolve_request__mutmut_2", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.core.x_resolve_request__mutmut_3", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.core.x_resolve_request__mutmut_4", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.core.x_resolve_request__mutmut_5", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.service.x_search__mutmut_1", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.service.x_search__mutmut_2", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.service.x_search__mutmut_3", "exit_code": 1, "exclusion": null},
+    {"id": "src.example.service.x_search__mutmut_4", "exit_code": 0, "exclusion": null},
+    {"id": "src.example.service.x_search__mutmut_5", "exit_code": 5, "exclusion": null}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "format": 3,
+    "version": "7.15.2",
+    "timestamp": "2026-08-02T00:00:00.000000",
+    "branch_coverage": true,
+    "show_contexts": false
+  },
+  "files": {
+    "src/example/core.py": {"summary": {"covered_lines": 0, "num_statements": 0, "covered_branches": 0, "num_branches": 0}},
+    "src/example/service.py": {"summary": {"covered_lines": 0, "num_statements": 0, "covered_branches": 0, "num_branches": 0}}
+  },
+  "totals": {"covered_lines": 0, "num_statements": 0, "covered_branches": 0, "num_branches": 0}
+}

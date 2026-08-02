@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leitir v2 — Editorial Engine Health Snapshot</title>
+<style>
+  :root{
+    --surface:#fcfcfb; --surface-2:#f3f2ee; --ink:#0b0b0b; --muted:#52514e; --rule:#e4e2dc;
+    --good:#0ca30c; --fair:#fab219; --serious:#ec835a; --critical:#d03b3b; --accent:#2a78d6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --surface:#1a1a19; --surface-2:#232320; --ink:#ffffff; --muted:#c3c2b7; --rule:#34332e;
+           --good:#3dd54b; --fair:#fac84a; --serious:#f09a72; --critical:#e66767; --accent:#3987e5; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:32px 20px 64px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 4px;font-size:14px}
+  .stamp{color:var(--muted);font-size:12px;margin:0 0 18px}
+  .disclaimer{background:var(--surface-2);border:1px solid var(--rule);border-radius:8px;
+    padding:10px 14px;font-size:12.5px;color:var(--muted);margin:0 0 20px}
+  .disclaimer b{color:var(--ink)}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0 0 24px}
+  .tile{background:var(--surface-2);border:1px solid var(--rule);border-radius:10px;padding:14px}
+  .tile .n{font-size:30px;font-weight:700;line-height:1}
+  .tile .l{font-size:12px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.04em}
+  .tile.crit .n{color:var(--critical)} .tile.ser .n{color:var(--serious)}
+  .tile.fair .n{color:var(--fair)} .tile.good .n{color:var(--good)}
+  section{margin:0 0 28px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+    margin:0 0 12px;border-bottom:1px solid var(--rule);padding-bottom:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+    padding:8px 8px;border-bottom:1px solid var(--rule)}
+  td{padding:10px 8px;border-bottom:1px solid var(--rule);vertical-align:top}
+  tr:hover td{background:var(--surface-2)}
+  .comp{font-weight:600;white-space:nowrap}
+  .comp small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:2px;white-space:normal}
+  .dim{color:var(--muted);font-size:11.5px;white-space:nowrap}
+  .barcell{width:200px;min-width:160px}
+  .bar{height:14px;border-radius:7px;background:var(--surface-2);overflow:hidden;border:1px solid var(--rule)}
+  .bar > i{display:block;height:100%;border-radius:7px}
+  .b-critical{background:var(--critical)} .b-serious{background:var(--serious)}
+  .b-fair{background:var(--fair)} .b-good{background:var(--good)}
+  .score{font-weight:700;font-variant-numeric:tabular-nums}
+  .ev{font-size:12px;color:var(--ink)}
+  .gap{color:var(--ink);font-size:12.5px}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:11.5px}
+  .callout{border-radius:12px;padding:16px 18px;border:1px solid var(--rule);background:var(--surface-2)}
+  .callout.next{border-left:5px solid var(--critical)}
+  .callout.win{border-left:5px solid var(--good);margin-top:12px}
+  .callout h3{margin:0 0 6px;font-size:15.5px}
+  .callout p{margin:0 0 6px;color:var(--muted);font-size:13px}
+  .callout p:last-child{margin-bottom:0}
+  .callout .pick{display:inline-block;background:var(--critical);color:#fff;font-size:11px;font-weight:700;
+    padding:2px 8px;border-radius:10px;margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase}
+  .callout.win .pick{background:var(--good)}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .foot{color:var(--muted);font-size:11.5px;margin-top:24px;border-top:1px solid var(--rule);padding-top:12px}
+  .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 20px}
+  .kv div{background:var(--surface-2);border:1px solid var(--rule);border-radius:10px;padding:12px 14px}
+  .kv .k{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .kv .v{font-size:15px;font-weight:600;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Leitir v2 — Editorial Engine Health Snapshot</h1>
+  <p class="sub">Every nut &amp; bolt of the <strong>current</strong> engine (the ADR-001 deterministic code-search kernel) reviewed against evidence in the code. Weakest on top.</p>
+  <p class="stamp">Snapshot 2026-08-02 · code @ <code>688f566</code> (main) · supersedes the v1 scorecard, which measured the dismantled Hy3 pipeline</p>
+
+  <div class="disclaimer">
+    <b>How these scores were produced.</b> This is a <b>single-reviewer editorial assessment, not an executable score</b>.
+    The cited commands and <code>file:line</code> facts are mechanically re-checkable; the assigned 0–10 values are reviewer
+    judgments and must not be used as a release gate. ADR-002 defines the deterministic replacement. <b>(1) Dimensions</b> are the product-quality
+    characteristics of <b>ISO/IEC 25010:2023 (SQuaRE)</b> — functional suitability, reliability, security, maintainability,
+    performance efficiency, compatibility, usability. <b>(2) The instrument</b> is Leitir's own proven scorecard method
+    (<code>docs/leitir-engine-scorecard.html</code>): 0–10 per component, four bands, every score verified against the actual
+    code, weakest-first, one named "main gap" per row. <b>(3) The acceptance bar</b> is ADR-001's gate policy (offline + live
+    gates, real-data e2e, pinned provenance, honest coverage). This is <em>not</em> the v1 three-model blind panel. Run the foot
+    commands to re-verify the evidence, not the editorial number.
+  </div>
+
+  <div class="tiles">
+    <div class="tile crit"><div class="n">2</div><div class="l">Critical (0–3.9)</div></div>
+    <div class="tile ser"><div class="n">0</div><div class="l">Serious (4–5.9)</div></div>
+    <div class="tile fair"><div class="n">5</div><div class="l">Fair (6–7.9)</div></div>
+    <div class="tile good"><div class="n">7</div><div class="l">Good (8–10)</div></div>
+  </div>
+
+  <div class="kv">
+    <div><div class="k">Mean health (14 bolts)</div><div class="v">7.0 / 10</div></div>
+    <div><div class="k">v1 mean (13 bolts, old engine)</div><div class="v">3.7 / 10</div></div>
+    <div><div class="k">Tests green today</div><div class="v">486 passed · 25 skipped</div></div>
+  </div>
+
+  <section>
+    <h2>Per-component health (sorted weakest first)</h2>
+    <table>
+      <thead><tr>
+        <th>Component</th><th>ISO 25010 dimension</th><th>Health</th><th>Evidence (re-checkable)</th><th>Main gap</th>
+      </tr></thead>
+      <tbody>
+
+      <tr>
+        <td class="comp">Effectiveness benchmark <small>(P6 ranking + pins)</small></td>
+        <td class="dim">Functional suitability · Maintainability/testability</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:25%"></i></div>
+          <span class="score">2.5<small>/10</small></span></td>
+        <td class="ev">ADR P6 unchecked (<code>adr-001…search.md:111-117</code>); no <code>src/leitir/ranking.py</code>; <code>benchmarks/</code> holds only the old <code>smoke-v1</code> (4 tasks).</td>
+        <td class="gap">486 tests prove the <i>machinery runs</i>, but <b>nothing measures whether search returns the right code</b> (no recall/precision pins, no expected-result corpus). The v1 "eval harness 2.0" hole, reborn.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Old-engine removal <small>(ADR-001 completion)</small></td>
+        <td class="dim">Maintainability/modularity · Functional completeness</td>
+        <td class="barcell"><div class="bar"><i class="b-critical" style="width:30%"></i></div>
+          <span class="score">3.0<small>/10</small></span></td>
+        <td class="ev">ADR says "Remove Hy3/OpenRouter from the core" + "retire the old entry points" (<code>adr-001:20-21,98</code>), yet <code>__init__.py:45-151</code> still exports the whole old pipeline; <b>294 of 486 tests (60%)</b> exercise it; <code>pyproject.toml:11-15</code> still ships <code>docker</code>/<code>trafilatura</code>/<code>PyYAML</code>; <code>README.md:27-41</code> still documents the Hy3 5-step flow.</td>
+        <td class="gap">The engine was <b>replaced, not removed</b>. ~9k lines of dead model-pipeline code, 3 unused runtime deps (incl. Docker), a public API full of dead symbols, and a README describing a machine that no longer runs — contradicting ADR-001's own decision.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Language adapters <small>(Python · Rust · Go)</small></td>
+        <td class="dim">Functional correctness · Maintainability/reuse</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:60%"></i></div>
+          <span class="score">6.0<small>/10</small></span></td>
+        <td class="ev">3 adapters × 10 predicate kinds, line-level spans; 25 tests (<code>tests/test_adapters_multi.py</code>); all green.</td>
+        <td class="gap">Spans are always <b>single-line</b> (<code>adapters.py:96-97</code> <code>start==end</code>), so multi-line defs/signatures collapse; the three adapters repeat near-identical match logic (<code>adapters.py:76-115</code> vs <code>219-256</code> vs <code>351-388</code>) — an extractable mechanic; regex-not-AST admits string/comment false positives.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Global discovery <small>(GitHub Code Search)</small></td>
+        <td class="dim">Functional suitability · Reliability</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:65%"></i></div>
+          <span class="score">6.5<small>/10</small></span></td>
+        <td class="ev">Typed predicates → query (<code>discovery_search.py:140-167</code>); hits re-validated through adapters for precise spans (<code>:213-226</code>); always <code>INDETERMINATE_GLOBAL</code> (<code>:228-234</code>); 19+10 tests; live passed today.</td>
+        <td class="gap">Hard cap of <b>30 results</b> (<code>discovery_search.py:180</code>), single page, no pagination; <code>SYMBOL_*/REGEX</code> values are dumped as raw text terms GitHub may not honor structurally; head/read errors swallowed silently (<code>:241-264</code>) so matches drop without saying why.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Scoped-exhaustive engine</td>
+        <td class="dim">Functional suitability · Performance efficiency</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:70%"></i></div>
+          <span class="score">7.0<small>/10</small></span></td>
+        <td class="ev">Enumerates every blob at the pinned commit (<code>engine.py:117-127</code>); path/content predicate split (<code>:154-161</code>); file- and span-level <code>must_not</code> (<code>:28-41,202-203</code>); 25+15 tests.</td>
+        <td class="gap">Ranking is crude — <code>score = len(must)+boost</code> (<code>engine.py:75</code>), no normalization/tie-break (that is P6); blobs read one-by-one over the API with no concurrency/cache (O(n) round-trips); a decode failure counts the file as <i>indexed</i> yet yields nothing (<code>:197-200</code>).</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Tree enumeration <small>(pinned commit)</small></td>
+        <td class="dim">Reliability · Performance efficiency</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:70%"></i></div>
+          <span class="score">7.0<small>/10</small></span></td>
+        <td class="ev">Clean port/adapter split (<code>tree.py:35-48</code>); truncation is a loud error, never silent (<code>tree.py:75-76,112-120</code>); correct git blob SHA (<code>tree.py:107-109</code>).</td>
+        <td class="gap"><code>recursive=1</code> is one shot — huge repos truncate into a hard error with no per-directory fallback; two read mechanics (base64 <code>git/blobs</code> <code>:90-97</code> vs raw <code>:99-105</code>); no retry/backoff on transient 5xx.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Package resolution <small>(PyPI · crates · Go)</small></td>
+        <td class="dim">Functional suitability · Compatibility/interop</td>
+        <td class="barcell"><div class="bar"><i class="b-fair" style="width:75%"></i></div>
+          <span class="score">7.5<small>/10</small></span></td>
+        <td class="ev">3 ecosystems → immutable <code>RepoScope</code>; annotated-tag dereference (<code>resolver.py:114-124</code>); real fixtures re-verified live today (<code>fixtures_resolver.py</code>); 14+17 tests.</td>
+        <td class="gap">Slug extraction is a heuristic over <code>project_urls</code> (<code>resolver.py:174-192</code>) — fails honestly when no GitHub link, but caps coverage; Go is github.com-only (<code>:285-288</code>); tag guessing (<code>v{x}</code>,<code>{x}</code>,<code>{name}-{x}</code>) can bind a wrong-but-valid tag; no SRI-style pin of the registry response.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">CLI boundary</td>
+        <td class="dim">Usability · Reliability</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:80%"></i></div>
+          <span class="score">8.0<small>/10</small></span></td>
+        <td class="ev">Stable <code>ExitCode</code> 0/2/3 (<code>cli.py:23-28</code>); mutually-exclusive scope modes (<code>:73-90</code>); predicate validation (<code>:47-62</code>); JSON→stdout / summary→stderr (<code>:307-308</code>); factory injection for tests (<code>:242-248</code>); 24+11 tests.</td>
+        <td class="gap">Bare <code>except Exception → INFRASTRUCTURE_FAILURE</code> (<code>cli.py:303-305</code>) can mask a programming bug as an infra fault; no <code>--version</code>; summary hard-codes top-10 (<code>:226</code>).</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Test evidence &amp; gate policy <small>(process)</small></td>
+        <td class="dim">Maintainability/testability · Reliability</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:80%"></i></div>
+          <span class="score">8.0<small>/10</small></span></td>
+        <td class="ev">Re-run today: offline gate <b>192/192</b>, full suite <b>486 passed</b>, live gate <b>9/10</b> vs real GitHub; drift-catching pinned provenance (<code>fixtures_real.py:1-6</code>); dual-gate policy in <code>adr-001:36-65</code>.</td>
+        <td class="gap">The one live failure is a sad-path test asserting <code>{404,422}</code> that got <code>403 rate-limit</code> (<code>test_search_e2e_live.py:72</code>) — it can't tell rate-limiting from a real rejection, so the live gate is flaky under anonymous limits; no coverage metric, no mutation oracle.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Secret handling / security</td>
+        <td class="dim">Security/confidentiality</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:80%"></i></div>
+          <span class="score">8.0<small>/10</small></span></td>
+        <td class="ev">Token only from <code>GH_TOKEN</code>/<code>GITHUB_TOKEN</code> (<code>cli.py:43-44</code>); Bearer header, never logged (<code>tree.py:63-64</code>, <code>resolver.py:92-93</code>); <code>redact()</code> on error text (<code>cli.py:304</code>); no secrets in fixtures.</td>
+        <td class="gap"><code>redact()</code> is regex-based and can miss novel secret shapes; anonymous default invites rate-limiting (an availability ceiling, seen in the live gate today).</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Determinism / reproducibility</td>
+        <td class="dim">Reliability/maturity</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:85%"></i></div>
+          <span class="score">8.5<small>/10</small></span></td>
+        <td class="ev">Verified by experiment today: same spec → identical <code>digest</code>; same input → <b>byte-identical</b> <code>SearchReport</code> across runs. Canonical spec (<code>search.py:135-155</code>), sorted kinds (<code>engine.py:88</code>); no model, clock, or RNG.</td>
+        <td class="gap">Holds fully for <code>scoped_exhaustive</code>; <code>global_discovery</code> resolves the <b>moving HEAD</b> (<code>discovery_search.py:117-127</code>), so a global report is a time-snapshot, not reproducible across days — honestly labeled, but a real limit on the claim.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Immutable provenance</td>
+        <td class="dim">Security/integrity &amp; non-repudiation</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:85%"></i></div>
+          <span class="score">8.5<small>/10</small></span></td>
+        <td class="ev">Every <code>SourceRef</code> carries slug + 40-char commit + path + 40-char blob SHA + span, validated (<code>search.py:169-191</code>); <code>permalink</code> (<code>:193-198</code>); real git SHA (<code>tree.py:107-109</code>). Experiment today: blob SHA matched, permalink resolved to a real GitHub URL.</td>
+        <td class="gap">In global mode the <code>commit_sha</code> is HEAD-at-query-time (<code>discovery_search.py:205</code>), so the permalink's commit is a moving ref (the blob SHA stays immutable). Scoped provenance is fully immutable; global is a snapshot.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Search contracts &amp; validation</td>
+        <td class="dim">Functional suitability · Reliability</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:90%"></i></div>
+          <span class="score">9.0<small>/10</small></span></td>
+        <td class="ev">Frozen + slotted dataclasses with exhaustive <code>__post_init__</code> validation (<code>search.py:62-73,92-98,111-127,169-191,220-232,289-301</code>); regex predicates must compile (<code>:69-73</code>); canonical sha256 <code>digest</code> (<code>:129-133</code>); 13+19 tests.</td>
+        <td class="gap">No material gap. The strongest bolt: invalid input is rejected at construction, so bad specs can never reach the engine.</td>
+      </tr>
+
+      <tr>
+        <td class="comp">Honest coverage reporting</td>
+        <td class="dim">Functional completeness · Usability/recognizability</td>
+        <td class="barcell"><div class="bar"><i class="b-good" style="width:90%"></i></div>
+          <span class="score">9.0<small>/10</small></span></td>
+        <td class="ev">Three-state <code>CoverageStatus</code>; <code>COMPLETE</code> is <b>unconstructible</b> unless <code>indexed==eligible</code> and not partial (<code>search.py:263-269</code>); oversize blob → excluded+partial (<code>engine.py:180-183</code>); read failure → partial (<code>:187-190</code>); global always indeterminate (<code>discovery_search.py:228-234</code>). Experiment today: <code>complete_for_declared_universe</code> 1/1.</td>
+        <td class="gap">Minor: exclusions are a single counter — no per-reason breakdown (size vs read-error vs decode), so an operator can't tell <i>why</i> a file was skipped.</td>
+      </tr>
+
+      </tbody>
+    </table>
+    <div class="legend">
+      <span><i class="b-critical"></i>0–3.9 critical</span>
+      <span><i class="b-serious"></i>4–5.9 serious</span>
+      <span><i class="b-fair"></i>6–7.9 fair</span>
+      <span><i class="b-good"></i>8–10 good</span>
+      <span>· dimension labels are ISO/IEC 25010:2023 characteristics</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verdict</h2>
+    <div class="callout win">
+      <span class="pick">What the rebuild fixed</span>
+      <h3>Mean health 3.7 → 7.0; the four v1 integrity failures are structurally gone</h3>
+      <p>The v1 scorecard's four worst bolts — false-green acceptance (1.0), hallucination-prone synthesis (4.5), zero
+      reproducibility, and model spend — cannot exist here by construction: there is no model, no acceptance gate to fool,
+      reports are byte-reproducible (verified today), and cost is zero. Seven of fourteen bolts now score good (8–10); the
+      contracts and the honest-coverage invariant are near-flawless because the type system, not a reviewer, enforces them.</p>
+    </div>
+    <div class="callout next">
+      <span class="pick">Two evidence-backed priorities</span>
+      <h3>1. Finish ADR-001: delete the old engine. 2. Build P6: prove the search is actually good.</h3>
+      <p><b>#1 (3.0):</b> the premise "we threw it all out" is false at the code level — <code>__init__.py</code> still exports the
+      Hy3 pipeline, 60% of tests still exercise it, <code>pyproject.toml</code> still depends on Docker/trafilatura, and the README
+      still describes it. Delete the dead modules, prune the three deps, rewrite the README, and the bolt moves to good.</p>
+      <p><b>#2 (2.5):</b> 486 green tests prove the engine <i>runs</i>; nothing proves it <i>finds the right code</i>. Ship P6
+      (<code>ranking.py</code> + <code>leitir bench</code> + ≥10 pinned tasks with expected results) so effectiveness is a gate, not a hope.</p>
+    </div>
+  </section>
+
+  <p class="foot">
+    <b>Re-verify (run from repo root):</b>
+    offline gate → <code>PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest tests/test_search.py tests/test_search_e2e.py tests/test_engine.py tests/test_engine_e2e.py tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py tests/test_cli.py tests/test_cli_e2e.py tests/test_global.py tests/test_global_e2e.py</code> (192 passed) ·
+    full suite → add <code>--ignore=tests/test_verification_docker.py</code> over all tests (486 passed, 25 skipped) ·
+    live gate → prefix <code>GH_TOKEN=$(gh auth token) LEITIR_ENABLE_LIVE_E2E=1</code> (9/10; 1 rate-limit flake).
+    Sources: ISO/IEC 25010:2023 (SQuaRE) quality model · <code>docs/leitir-engine-scorecard.html</code> (v1 instrument) · <code>docs/adr-001-remove-hy3-deterministic-search.md</code> (gate policy) · <code>docs/adr-002-deterministic-evidence-scoring-engine.md</code> (executable replacement design). Editorial and non-gating; self-contained file, honors dark mode.
+  </p>
+</div>
+</body>
+</html>

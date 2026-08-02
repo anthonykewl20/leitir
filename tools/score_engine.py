@@ -1,4 +1,4 @@
-"""Deterministic evidence scoring engine for ADR-002 S1-S7.
+"""Deterministic evidence scoring engine for ADR-002 S1-S8.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
@@ -9,11 +9,13 @@ assessment dimensions.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from enum import Enum, IntEnum
 from fractions import Fraction
 import hashlib
+from html import escape as _html_escape
 from importlib import machinery
 from importlib import metadata as importlib_metadata
 import json
@@ -21,13 +23,15 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
-from typing import Iterable, Iterator, Mapping
+import sys
+from typing import Iterable, Iterator, Mapping, Sequence, TextIO
 from xml.etree import ElementTree
 
 
 ASSESSMENT_SCHEMA_VERSION = "leitir-assessment-v1"
 POLICY_SCHEMA_VERSION = "leitir-score-policy-v1"
 RUN_ENVELOPE_SCHEMA_VERSION = "leitir-score-run-envelope-v1"
+SCORE_ENGINE_VERSION = "8"
 DIMENSION_IDS = (
     "engine_correctness",
     "output_effectiveness",
@@ -5994,12 +5998,764 @@ def load_policy(path: str | Path) -> Policy:
     return policy_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
+_ASSESSMENT_KEYS = {
+    "schema_version",
+    "profile",
+    "subject",
+    "producer",
+    "policy",
+    "checks",
+    "evidence",
+    "dimensions",
+    "aggregate",
+}
+_SCORE_KEYS = {
+    "score_bps",
+    "observed_score_bps",
+    "lower_bound_bps",
+    "upper_bound_bps",
+    "included_weight",
+    "eligible_weight",
+}
+
+
+def _render_mapping(value: object, name: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or any(
+        not isinstance(key, str) for key in value
+    ):
+        raise TypeError(f"{name} must be an object with text keys")
+    return value
+
+
+def _render_list(value: object, name: str) -> list[object]:
+    if not isinstance(value, list):
+        raise TypeError(f"{name} must be a list")
+    return value
+
+
+def _validate_render_scores(raw: Mapping[str, object], name: str) -> None:
+    for field_name in (
+        "score_bps",
+        "observed_score_bps",
+        "lower_bound_bps",
+        "upper_bound_bps",
+    ):
+        value = raw[field_name]
+        if value is not None:
+            _validate_score(value, f"{name} {field_name}")
+    for field_name in ("included_weight", "eligible_weight"):
+        _validate_non_negative_int(raw[field_name], f"{name} {field_name}")
+
+
+def _assessment_render_mapping(
+    assessment: Assessment | Mapping[str, object],
+) -> Mapping[str, object]:
+    """Validate the renderer-facing canonical shape without re-evaluating it.
+
+    Rendering deliberately does not reconstruct a gate or a score.  The
+    validation here protects the renderer from malformed input while leaving
+    every policy judgment exactly as supplied by the canonical assessment.
+    """
+    if isinstance(assessment, Assessment):
+        raw = assessment.to_dict()
+    else:
+        raw = _render_mapping(assessment, "assessment")
+    _require_exact_keys(raw, _ASSESSMENT_KEYS, "assessment")
+    if raw["schema_version"] != ASSESSMENT_SCHEMA_VERSION:
+        raise ValueError(
+            f"assessment schema_version must be {ASSESSMENT_SCHEMA_VERSION!r}"
+        )
+    try:
+        Profile(raw["profile"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("assessment profile must be offline or release") from exc
+
+    subject = _render_mapping(raw["subject"], "assessment subject")
+    producer = _render_mapping(raw["producer"], "assessment producer")
+    policy = _render_mapping(raw["policy"], "assessment policy")
+    try:
+        Subject(
+            repository=subject["repository"],
+            commit_sha=subject["commit_sha"],
+            worktree=subject["worktree"],
+            patch_sha256=subject.get("patch_sha256"),
+            untracked_sha256=subject.get("untracked_sha256"),
+        )
+        Producer(
+            name=producer["name"],
+            version=producer["version"],
+            commit_sha=producer["commit_sha"],
+        )
+    except KeyError as exc:
+        raise ValueError("assessment identity is missing a required field") from exc
+    expected_subject_keys = {"repository", "commit_sha", "worktree"}
+    if subject["worktree"] == "dirty":
+        expected_subject_keys.update({"patch_sha256", "untracked_sha256"})
+    if set(subject) != expected_subject_keys:
+        raise ValueError("assessment subject has an invalid field set")
+    if set(producer) != {"name", "version", "commit_sha"}:
+        raise ValueError("assessment producer has an invalid field set")
+    if (
+        set(policy) != {"id", "sha256"}
+        or not isinstance(policy["id"], str)
+        or not _POLICY_ID.fullmatch(policy["id"])
+        or not isinstance(policy["sha256"], str)
+        or not _SHA256.fullmatch(policy["sha256"])
+    ):
+        raise ValueError("assessment policy identity is invalid")
+
+    checks = _render_list(raw["checks"], "assessment checks")
+    check_ids: list[str] = []
+    for index, item in enumerate(checks):
+        check = _render_mapping(item, f"assessment check {index}")
+        _require_exact_keys(
+            check,
+            {
+                "id",
+                "dimension",
+                "mode",
+                "status",
+                "score_bps",
+                "weight",
+                "score_eligible",
+                "criterion",
+                "reason_code",
+                "numerator",
+                "denominator",
+                "exclusions",
+                "evidence",
+                "missing",
+            },
+            f"assessment check {index}",
+        )
+        check_id = check["id"]
+        if not isinstance(check_id, str) or not _CHECK_ID.fullmatch(check_id):
+            raise ValueError("assessment check ID is invalid")
+        check_ids.append(check_id)
+        try:
+            status = CheckStatus(check["status"])
+            CheckMode(check["mode"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("assessment check status or mode is invalid") from exc
+        if check["dimension"] not in DIMENSION_IDS:
+            raise ValueError("assessment check dimension is invalid")
+        _validate_positive_int(check["weight"], "assessment check weight")
+        if not isinstance(check["score_eligible"], bool) or not isinstance(
+            check["missing"], bool
+        ):
+            raise TypeError("assessment check flags must be bools")
+        if status in {CheckStatus.PASS, CheckStatus.FAIL}:
+            _validate_score(check["score_bps"], "assessment check score_bps")
+        elif check["score_bps"] is not None:
+            raise ValueError("unresolved assessment check score must be null")
+        if not isinstance(check["reason_code"], str) or not _REASON_CODE.fullmatch(
+            check["reason_code"]
+        ):
+            raise ValueError("assessment check reason_code is invalid")
+        criterion = _render_mapping(check["criterion"], "assessment check criterion")
+        _require_exact_keys(criterion, {"op", "value"}, "assessment criterion")
+        Criterion(op=criterion["op"], value=criterion["value"])
+        for field_name in ("numerator", "denominator"):
+            value = check[field_name]
+            if value is not None:
+                _validate_non_negative_int(value, f"assessment check {field_name}")
+        exclusions = _render_mapping(
+            check["exclusions"], "assessment check exclusions"
+        )
+        for reason_code, count in exclusions.items():
+            if not _REASON_CODE.fullmatch(reason_code):
+                raise ValueError("assessment exclusion reason is invalid")
+            _validate_non_negative_int(count, "assessment exclusion count")
+        check_evidence = _render_list(check["evidence"], "assessment check evidence")
+        for entry in check_evidence:
+            evidence_entry = _render_mapping(entry, "assessment check evidence entry")
+            if set(evidence_entry) != {"kind", "value"} or any(
+                not isinstance(value, str) or not value
+                for value in evidence_entry.values()
+            ):
+                raise ValueError("assessment check evidence entry is invalid")
+    if check_ids != sorted(check_ids) or len(set(check_ids)) != len(check_ids):
+        raise ValueError("assessment checks must have unique canonical ordering")
+
+    dimensions = _render_list(raw["dimensions"], "assessment dimensions")
+    if len(dimensions) != len(DIMENSION_IDS):
+        raise ValueError("assessment must contain all six dimensions")
+    for expected_id, item in zip(DIMENSION_IDS, dimensions, strict=True):
+        dimension = _render_mapping(item, "assessment dimension")
+        _require_exact_keys(
+            dimension, {"id", "weight", *_SCORE_KEYS}, "assessment dimension"
+        )
+        if dimension["id"] != expected_id:
+            raise ValueError("assessment dimensions are not canonically ordered")
+        _validate_positive_int(dimension["weight"], "assessment dimension weight")
+        _validate_render_scores(dimension, f"dimension {expected_id}")
+
+    aggregate = _render_mapping(raw["aggregate"], "assessment aggregate")
+    _require_exact_keys(
+        aggregate,
+        {"decision", "complete", "blockers", *_SCORE_KEYS},
+        "assessment aggregate",
+    )
+    try:
+        Decision(aggregate["decision"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("assessment decision is invalid") from exc
+    if not isinstance(aggregate["complete"], bool):
+        raise TypeError("assessment complete must be a bool")
+    _validate_render_scores(aggregate, "assessment aggregate")
+    blockers = _render_list(aggregate["blockers"], "assessment blockers")
+    parsed_blockers: list[Blocker] = []
+    for item in blockers:
+        blocker = _render_mapping(item, "assessment blocker")
+        _require_exact_keys(
+            blocker,
+            {"check_id", "kind", "status", "reason_code"},
+            "assessment blocker",
+        )
+        try:
+            parsed_blockers.append(
+                Blocker(
+                    check_id=blocker["check_id"],
+                    kind=BlockerKind(blocker["kind"]),
+                    status=CheckStatus(blocker["status"]),
+                    reason_code=blocker["reason_code"],
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("assessment blocker is invalid") from exc
+    if parsed_blockers != sorted(parsed_blockers, key=Blocker.sort_key):
+        raise ValueError("assessment blockers are not canonically ordered")
+
+    evidence = _render_list(raw["evidence"], "assessment evidence")
+    evidence_keys: list[tuple[str, str, str]] = []
+    for index, item in enumerate(evidence):
+        artifact = _render_mapping(item, f"assessment evidence {index}")
+        _require_exact_keys(
+            artifact,
+            {"id", "path", "sha256", "command", "sources"},
+            f"assessment evidence {index}",
+        )
+        key = (artifact["id"], artifact["path"], artifact["sha256"])
+        if (
+            any(not isinstance(value, str) for value in key)
+            or not _EVIDENCE_ID.fullmatch(key[0])
+            or not _SHA256.fullmatch(key[2])
+        ):
+            raise ValueError("assessment evidence identity is invalid")
+        _validate_canonical_path(key[1], "assessment evidence path")
+        command = artifact["command"]
+        if command is not None:
+            command_raw = _render_mapping(command, "assessment evidence command")
+            _require_exact_keys(
+                command_raw,
+                {"argv", "process_exit", "collector_reason_code"},
+                "assessment evidence command",
+            )
+            argv = _render_list(command_raw["argv"], "assessment evidence argv")
+            CommandExecution(
+                argv=tuple(argv),
+                process_exit=command_raw["process_exit"],
+                collector_reason_code=command_raw["collector_reason_code"],
+            )
+        sources = _render_list(artifact["sources"], "assessment evidence sources")
+        for source_item in sources:
+            source = _render_mapping(source_item, "assessment evidence source")
+            _require_exact_keys(
+                source,
+                {"path", "blob_digest", "start_line", "end_line"},
+                "assessment evidence source",
+            )
+            SourceSpan(
+                path=source["path"],
+                blob_digest=source["blob_digest"],
+                start_line=source["start_line"],
+                end_line=source["end_line"],
+            )
+        evidence_keys.append(key)
+    if evidence_keys != sorted(evidence_keys) or len(set(evidence_keys)) != len(
+        evidence_keys
+    ):
+        raise ValueError("assessment evidence must have unique canonical ordering")
+    return raw
+
+
+def _html(value: object) -> str:
+    return _html_escape(str(value), quote=True)
+
+
+def _json_cell(value: object) -> str:
+    return _html(_canonical_json(value))
+
+
+def _score_html(scores: Mapping[str, object]) -> str:
+    exact = scores["score_bps"]
+    if exact is None:
+        return (
+            '<span class="score score-unknown">unknown</span>'
+            '<span class="bounds">'
+            f'observed={_html(scores["observed_score_bps"] if scores["observed_score_bps"] is not None else "unknown")} '
+            f'lower={_html(scores["lower_bound_bps"] if scores["lower_bound_bps"] is not None else "unknown")} '
+            f'upper={_html(scores["upper_bound_bps"] if scores["upper_bound_bps"] is not None else "unknown")}'
+            "</span>"
+        )
+    return (
+        f'<span class="score score-exact">{_html(exact)}</span>'
+        f'<span class="band" data-display-only="true">{_html(display_band(exact))}</span>'
+    )
+
+
+def render_assessment_html(
+    assessment: Assessment | Mapping[str, object],
+) -> bytes:
+    """Render canonical assessment values to deterministic, escaped HTML bytes.
+
+    The renderer reads existing decision and score fields.  It never evaluates
+    a criterion, fills an unknown score, or uses a display band as a gate.
+    """
+    raw = _assessment_render_mapping(assessment)
+    subject = _render_mapping(raw["subject"], "assessment subject")
+    producer = _render_mapping(raw["producer"], "assessment producer")
+    policy = _render_mapping(raw["policy"], "assessment policy")
+    aggregate = _render_mapping(raw["aggregate"], "assessment aggregate")
+    canonical = canonical_json_bytes(raw)
+    digest = hashlib.sha256(canonical).hexdigest()
+
+    dimension_rows = "".join(
+        "<tr>"
+        f'<th scope="row">{_html(item["id"])}</th>'
+        f"<td>{_html(item['weight'])}</td>"
+        f"<td>{_score_html(item)}</td>"
+        f"<td>{_html(item['included_weight'])}/{_html(item['eligible_weight'])}</td>"
+        "</tr>"
+        for item in raw["dimensions"]
+    )
+    check_rows = "".join(
+        "<tr>"
+        f'<th scope="row">{_html(item["id"])}</th>'
+        f"<td>{_html(item['dimension'])}</td>"
+        f"<td>{_html(item['mode'])}</td>"
+        f"<td>{_html(item['status'])}</td>"
+        f"<td>{_html(item['score_bps']) if item['score_bps'] is not None else '<span class=\"score-unknown\">unknown</span>'}</td>"
+        f"<td>{_html(item['reason_code'])}</td>"
+        f"<td>{_json_cell(item['criterion'])}</td>"
+        f"<td>{_json_cell(item['numerator'])}/{_json_cell(item['denominator'])}</td>"
+        f"<td>{_json_cell(item['exclusions'])}</td>"
+        f"<td>{_json_cell(item['evidence'])}</td>"
+        "</tr>"
+        for item in raw["checks"]
+    )
+    evidence_rows = "".join(
+        "<tr>"
+        f'<th scope="row">{_html(item["id"])}</th>'
+        f"<td>{_html(item['path'])}</td>"
+        f"<td>{_html(item['sha256'])}</td>"
+        f"<td>{_json_cell(item['command'])}</td>"
+        f"<td>{_json_cell(item['sources'])}</td>"
+        "</tr>"
+        for item in raw["evidence"]
+    )
+    blocker_rows = "".join(
+        "<li>"
+        f"{_html(item['check_id'])}: {_html(item['kind'])} / "
+        f"{_html(item['status'])} / {_html(item['reason_code'])}"
+        "</li>"
+        for item in aggregate["blockers"]
+    ) or "<li>none</li>"
+    subject_rows = "".join(
+        f"<tr><th scope=\"row\">{_html(key)}</th><td>{_html(value)}</td></tr>"
+        for key, value in sorted(subject.items())
+    )
+
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leitir assessment {_html(digest)}</title>
+<style>
+body{{font-family:system-ui,sans-serif;line-height:1.4;margin:2rem;max-width:100rem}}table{{border-collapse:collapse;width:100%;margin:1rem 0 2rem}}th,td{{border:1px solid #bbb;padding:.4rem;text-align:left;vertical-align:top}}code,pre{{font-family:ui-monospace,monospace}}pre{{overflow:auto;white-space:pre-wrap}}.score{{font-weight:700}}.score-unknown{{font-weight:700;color:#6b4800}}.bounds,.band{{display:block;font-size:.9em}}.band::before{{content:"display band: "}}
+</style>
+</head>
+<body>
+<h1>Leitir canonical assessment</h1>
+<p>profile=<code>{_html(raw['profile'])}</code> decision=<code>{_html(aggregate['decision'])}</code> complete=<code>{_html(str(aggregate['complete']).lower())}</code></p>
+<p>policy=<code>{_html(policy['id'])}</code> policy_sha256=<code>{_html(policy['sha256'])}</code></p>
+<p>producer=<code>{_html(producer['name'])}</code> version=<code>{_html(producer['version'])}</code> commit=<code>{_html(producer['commit_sha'])}</code></p>
+<p>assessment_sha256=<code>{_html(digest)}</code></p>
+<h2>Overall diagnostic</h2>
+<div id="aggregate-score">{_score_html(aggregate)}</div>
+<p>evidence weight={_html(aggregate['included_weight'])}/{_html(aggregate['eligible_weight'])}</p>
+<h3>Blockers</h3><ul>{blocker_rows}</ul>
+<h2>Subject</h2><table><tbody>{subject_rows}</tbody></table>
+<h2>Dimensions</h2>
+<table><thead><tr><th>dimension</th><th>weight</th><th>score (basis points)</th><th>evidence weight</th></tr></thead><tbody>{dimension_rows}</tbody></table>
+<h2>Checks</h2>
+<table><thead><tr><th>check</th><th>dimension</th><th>mode</th><th>status</th><th>score_bps</th><th>reason_code</th><th>criterion</th><th>counts</th><th>exclusions</th><th>evidence</th></tr></thead><tbody>{check_rows}</tbody></table>
+<h2>Evidence artifacts</h2>
+<table><thead><tr><th>id</th><th>path</th><th>sha256</th><th>command</th><th>sources</th></tr></thead><tbody>{evidence_rows}</tbody></table>
+<h2>Canonical JSON</h2>
+<pre id="canonical-assessment">{_html(canonical.decode('utf-8'))}</pre>
+</body>
+</html>
+"""
+    return document.encode("utf-8")
+
+
+def render_terminal_summary(
+    assessment: Assessment | Mapping[str, object],
+) -> str:
+    """Return concise deterministic terminal text from canonical fields."""
+    raw = _assessment_render_mapping(assessment)
+    aggregate = _render_mapping(raw["aggregate"], "assessment aggregate")
+    exact = (
+        str(aggregate["score_bps"])
+        if aggregate["score_bps"] is not None
+        else "unknown"
+    )
+    observed = (
+        str(aggregate["observed_score_bps"])
+        if aggregate["observed_score_bps"] is not None
+        else "unknown"
+    )
+    lower = (
+        str(aggregate["lower_bound_bps"])
+        if aggregate["lower_bound_bps"] is not None
+        else "unknown"
+    )
+    upper = (
+        str(aggregate["upper_bound_bps"])
+        if aggregate["upper_bound_bps"] is not None
+        else "unknown"
+    )
+    digest = hashlib.sha256(canonical_json_bytes(raw)).hexdigest()
+    return (
+        f"profile={raw['profile']} decision={aggregate['decision']} "
+        f"complete={str(aggregate['complete']).lower()}\n"
+        f"score_bps={exact} observed_score_bps={observed} "
+        f"lower_bound_bps={lower} upper_bound_bps={upper}\n"
+        f"assessment_sha256={digest}\n"
+    )
+
+
+def _github_slug(repository: str) -> str | None:
+    match = re.fullmatch(
+        r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?",
+        repository,
+    )
+    return None if match is None else match.group(1)
+
+
+def _local_evidence_artifact(
+    evidence_dir: Path,
+    filename: str,
+    artifact_id: str,
+) -> EvidenceArtifact | None:
+    path = evidence_dir / filename
+    if not path.is_file():
+        return None
+    content = path.read_bytes()
+    return EvidenceArtifact(
+        id=artifact_id,
+        path=f"evidence/{filename}",
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+    )
+
+
+def _complete_artifact_set(
+    evidence_dir: Path,
+    specifications: tuple[tuple[str, str], ...],
+) -> tuple[EvidenceArtifact, ...] | None:
+    artifacts = tuple(
+        _local_evidence_artifact(evidence_dir, filename, artifact_id)
+        for filename, artifact_id in specifications
+    )
+    if any(item is None for item in artifacts):
+        return None
+    return tuple(item for item in artifacts if item is not None)
+
+
+def run_profile_assessment(
+    *,
+    root: str | Path,
+    policy: Policy,
+    profile: Profile,
+    enable_live: bool = False,
+    evidence_dir: str | Path | None = None,
+) -> Assessment:
+    """Collect the landed fixed collectors and evaluate one explicit profile."""
+    repository_root = Path(root).resolve()
+    if evidence_dir is None:
+        local_evidence = repository_root / ".leitir-score" / "evidence"
+    else:
+        evidence_path = Path(evidence_dir)
+        local_evidence = (
+            evidence_path.resolve()
+            if evidence_path.is_absolute()
+            else (repository_root / evidence_path).resolve()
+        )
+    subject = subject_from_repository(repository_root)
+    pytest_junit = collect_adr001_pytest_junit(repository_root)
+    results: list[CheckResult] = [
+        evaluate_pytest_junit(pytest_junit),
+        evaluate_retired_surfaces_absent(repository_root),
+    ]
+    artifacts: list[EvidenceArtifact] = [pytest_junit]
+
+    engine_artifacts = _complete_artifact_set(
+        local_evidence,
+        (
+            ("benchmark-run.json", "engine.benchmark-run"),
+            ("benchmark-run-repeat.json", "engine.benchmark-run-repeat"),
+            ("benchmark-run-permuted.json", "engine.benchmark-run-permuted"),
+            ("global-report.json", "engine.global-report"),
+        ),
+    )
+    if engine_artifacts is not None:
+        primary, repeated, permuted, global_report = engine_artifacts
+        results = list(
+            evaluate_engine_correctness_evidence(
+                pytest_junit=pytest_junit,
+                replay_artifacts=(primary, repeated, permuted),
+                global_report=global_report,
+                repository_root=repository_root,
+            )
+        )
+        artifacts.extend(engine_artifacts)
+
+        manifest_path = (
+            repository_root
+            / "src"
+            / "leitir"
+            / "benchmarks"
+            / "search-v1"
+            / "manifest.json"
+        )
+        qrels_path = manifest_path.with_name("qrels.json")
+        if manifest_path.is_file() and qrels_path.is_file():
+            manifest_content = manifest_path.read_bytes()
+            qrels_content = qrels_path.read_bytes()
+            manifest = EvidenceArtifact(
+                id="output.benchmark-manifest",
+                path="src/leitir/benchmarks/search-v1/manifest.json",
+                sha256=hashlib.sha256(manifest_content).hexdigest(),
+                content=manifest_content,
+            )
+            qrels = EvidenceArtifact(
+                id="output.benchmark-qrels",
+                path="src/leitir/benchmarks/search-v1/qrels.json",
+                sha256=hashlib.sha256(qrels_content).hexdigest(),
+                content=qrels_content,
+            )
+            results.extend(
+                evaluate_output_effectiveness_evidence(
+                    manifest=manifest,
+                    qrels=qrels,
+                    benchmark_run=primary,
+                )
+            )
+            artifacts.extend((manifest, qrels))
+
+    code_artifacts = _complete_artifact_set(
+        local_evidence,
+        (
+            ("code-scope.json", "code.scope"),
+            ("score-tool-versions.json", "code.tool-versions"),
+            ("radon-cc.json", "code.radon-cc"),
+            ("radon-mi.json", "code.radon-mi"),
+        ),
+    )
+    if code_artifacts is not None:
+        scope, tool_versions, radon_cc, radon_mi = code_artifacts
+        results.extend(
+            evaluate_code_health_evidence(
+                policy=policy,
+                scope_artifact=scope,
+                tool_versions=tool_versions,
+                radon_complexity=radon_cc,
+                radon_mi=radon_mi,
+            ).checks
+        )
+        artifacts.extend(code_artifacts)
+
+    test_artifacts = _complete_artifact_set(
+        local_evidence,
+        (
+            ("code-scope.json", "test.scope"),
+            ("score-tool-versions.json", "test.tool-versions"),
+            ("coverage.json", "test.coverage"),
+            ("mutmut.json", "test.mutmut"),
+        ),
+    )
+    if test_artifacts is not None:
+        scope, tool_versions, coverage, mutmut = test_artifacts
+        results.extend(
+            evaluate_test_adequacy_evidence(
+                policy=policy,
+                scope_artifact=scope,
+                tool_versions=tool_versions,
+                coverage_json=coverage,
+                mutmut_json=mutmut,
+            ).checks
+        )
+        artifacts.extend(test_artifacts)
+
+    performance_artifacts = _complete_artifact_set(
+        local_evidence,
+        (
+            ("performance-runner.json", "performance.runner"),
+            ("baseline-asv.json", "performance.baseline"),
+            ("candidate-asv.json", "performance.candidate"),
+        ),
+    )
+    if performance_artifacts is not None:
+        runner, baseline, candidate = performance_artifacts
+        results.extend(
+            evaluate_performance_evidence(
+                runner_output=runner,
+                baseline_asv=baseline,
+                candidate_asv=candidate,
+            ).checks
+        )
+        artifacts.extend(performance_artifacts)
+
+    latency = _local_evidence_artifact(
+        local_evidence,
+        "live-network-latency.json",
+        "performance.live-network-latency",
+    )
+    if latency is not None:
+        results.append(evaluate_live_network_latency(latency))
+        artifacts.append(latency)
+
+    if profile is Profile.RELEASE and enable_live:
+        repository_slug = _github_slug(subject.repository)
+        if repository_slug is None:
+            raise ValueError("release live collection requires a GitHub repository URL")
+        process_collection = collect_openssf_scorecard(repository_slug)
+        process_evaluation = evaluate_process_supply_chain_collection(
+            policy=policy,
+            collection=process_collection,
+        )
+        results.extend(process_evaluation.checks)
+        if process_collection.artifact is not None:
+            artifacts.append(process_collection.artifact)
+
+    return evaluate(
+        policy,
+        tuple(results),
+        profile=profile,
+        subject=subject,
+        producer=Producer(
+            name="leitir-score-engine",
+            version=SCORE_ENGINE_VERSION,
+            commit_sha=subject.commit_sha,
+        ),
+        evidence=tuple(artifacts),
+    )
+
+
+def _decoded_json(path: str | Path, name: str) -> object:
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"{name} contains non-finite number {value}")
+
+    try:
+        content = Path(path).read_bytes()
+        return json.loads(content, parse_constant=reject_constant)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{name} is not readable strict JSON") from exc
+
+
+def _write_output(path: str | Path, content: bytes) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="score_engine.py",
+        description="Deterministic ADR-002 evidence scoring engine",
+    )
+    commands = parser.add_subparsers(dest="operation", required=True)
+    run = commands.add_parser("run", help="collect, evaluate, and render")
+    run.add_argument("--profile", choices=[item.value for item in Profile], required=True)
+    run.add_argument("--root", default=".")
+    run.add_argument("--policy", default="scorecard/policy-v1.json")
+    run.add_argument("--evidence-dir")
+    run.add_argument("--json-out", default=".leitir-score/assessment.json")
+    run.add_argument("--html-out", default=".leitir-score/scorecard.html")
+
+    render = commands.add_parser("render", help="render a canonical assessment")
+    render.add_argument("--assessment", required=True)
+    render.add_argument("--html", required=True)
+    return parser
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Run the standalone CLI and return the pinned ADR-002 process exit."""
+    output = stdout or sys.stdout
+    errors = stderr or sys.stderr
+    parser = _build_cli_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code)
+    try:
+        if args.operation == "render":
+            raw = _assessment_render_mapping(
+                _render_mapping(
+                    _decoded_json(args.assessment, "assessment"), "assessment"
+                )
+            )
+            _write_output(args.html, render_assessment_html(raw))
+            output.write(render_terminal_summary(raw))
+            return int(decision_exit_code(Decision(raw["aggregate"]["decision"])))
+
+        profile = Profile(args.profile)
+        policy_path = Path(args.policy)
+        if not policy_path.is_absolute():
+            policy_path = Path(args.root).resolve() / policy_path
+        try:
+            policy = load_policy(policy_path)
+        except OSError as exc:
+            raise ValueError("policy is not readable") from exc
+        assessment = run_profile_assessment(
+            root=args.root,
+            policy=policy,
+            profile=profile,
+            enable_live=(
+                profile is Profile.RELEASE
+                and os.environ.get("LEITIR_ENABLE_SCORE_LIVE") == "1"
+            ),
+            evidence_dir=args.evidence_dir,
+        )
+        _write_output(args.json_out, assessment.to_bytes())
+        _write_output(args.html_out, render_assessment_html(assessment))
+        output.write(render_terminal_summary(assessment))
+        if profile is Profile.OFFLINE:
+            output.write("release_readiness=not_claimed\n")
+        return int(assessment.exit_code)
+    except OSError as exc:
+        errors.write(f"score_engine.py: infrastructure error: {exc}\n")
+        return int(ExitCode.INDETERMINATE)
+    except (TypeError, ValueError) as exc:
+        errors.write(f"score_engine.py: {exc}\n")
+        return int(ExitCode.INVALID_USAGE_OR_POLICY)
+
+
 __all__ = [
     "ADR001_OFFLINE_GATE_ARGV",
     "ADR001_OFFLINE_GATE_TESTS",
     "ASSESSMENT_SCHEMA_VERSION",
     "POLICY_SCHEMA_VERSION",
     "RUN_ENVELOPE_SCHEMA_VERSION",
+    "SCORE_ENGINE_VERSION",
     "ApplicabilityRule",
     "Assessment",
     "AssessedCheck",
@@ -6081,11 +6837,19 @@ __all__ = [
     "evaluate_total_ordering",
     "evaluate_test_adequacy_evidence",
     "load_policy",
+    "main",
     "mann_whitney_u_two_sided",
     "policy_from_dict",
     "proportional_score_bps",
+    "render_assessment_html",
+    "render_terminal_summary",
+    "run_profile_assessment",
     "score_from_counts",
     "subject_from_repository",
     "untracked_inputs_sha256",
     "weighted_score_bps",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

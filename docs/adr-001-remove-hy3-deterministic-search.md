@@ -2,6 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-08-02
+- Revised: 2026-08-02 (slice reordering + CLI integration layer)
 
 ## Context
 
@@ -38,21 +39,76 @@ Every P task ships with real-data e2e tests and must pass its gate before the
 next P task starts. A gate has two parts:
 
 - **Offline gate** (always runs): unit + real-data e2e tests, happy and sad
-  paths. Command: `python -m pytest tests/test_search.py tests/test_search_e2e.py`
+  paths.
 - **Live gate** (opt-in, needs network): re-verifies pinned real provenance
-  against GitHub, including a sad path. Command:
-  `LEITIR_ENABLE_LIVE_E2E=1 python -m pytest tests/test_search_e2e_live.py`
+  against GitHub and registries, including a sad path.
 
 Real provenance is pinned in `tests/fixtures_real.py` (python/cpython @
-`v3.11.0`). A P task is not done until both gates are green.
+`v3.11.0`) and `tests/fixtures_resolver.py` (requests, serde, testify). A P
+task is not done until both gates are green.
+
+Gate commands (cumulative — each P task appends its test files):
+
+```bash
+# Offline (current: P1–P3)
+python -m pytest tests/test_search.py tests/test_search_e2e.py \
+  tests/test_engine.py tests/test_engine_e2e.py \
+  tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py
+
+# Live (current: P1–P3)
+LEITIR_ENABLE_LIVE_E2E=1 python -m pytest \
+  tests/test_search_e2e_live.py tests/test_engine_e2e_live.py \
+  tests/test_resolver_e2e_live.py
+```
 
 ## Work (bite-sized)
+
+The slices are ordered so that each produces a testable increment and the tool
+becomes usable at the earliest point. Engine internals first (P1–P3), then the
+thin CLI shell that wires them into an executable process (P4), then engine
+enrichment behind the existing CLI (P5–P6).
 
 - [x] P1: Define `SearchSpec`, `SearchReport`, coverage contracts + tests.
       (`src/leitir/search.py`, `tests/test_search.py`,
       `tests/test_search_e2e.py`, `tests/test_search_e2e_live.py`)
       Gate: offline 32 passed; live 3 passed.
-- [ ] P2: Scoped-exhaustive MVP (strict commit pin, tree enumerate, Python adapter).
-- [ ] P3: Global discovery with honest coverage reporting.
-- [ ] P4: Strict package resolution + more language adapters.
-- [ ] P5: Deterministic ranking + pinned benchmark.
+
+- [x] P2: Scoped-exhaustive MVP (strict commit pin, tree enumerate, Python adapter).
+      (`src/leitir/tree.py`, `src/leitir/adapters.py`, `src/leitir/engine.py`,
+      `tests/test_engine.py`, `tests/test_engine_e2e.py`,
+      `tests/test_engine_e2e_live.py`)
+      Gate: offline 72 passed; live 8 passed.
+
+- [x] P3: Strict package resolution + more language adapters.
+      (`src/leitir/resolver.py`, `src/leitir/adapters.py` RustAdapter+GoAdapter,
+      `tests/test_adapters_multi.py`, `tests/test_resolver.py`,
+      `tests/test_resolver_e2e.py`, `tests/test_resolver_e2e_live.py`,
+      `tests/fixtures_resolver.py`)
+      Gate: offline 128 passed; live 15 passed.
+
+- [ ] P4: CLI shell + end-to-end wiring.
+      Replace the v1 Hy3 CLI with a `leitir search` command that wires
+      resolver → engine → report. Two input modes:
+      (a) explicit scope: `--repo owner/repo --commit <sha>` + predicates;
+      (b) package resolution: `--package name --version v --ecosystem pypi|crates|go`.
+      Output: JSON `SearchReport` to stdout; human-readable summary to stderr.
+      Retire the old `leitir run` / `leitir eval` entry points.
+      (`src/leitir/cli.py` rewrite, `tests/test_cli.py`,
+      `tests/test_cli_e2e.py`, `tests/test_cli_e2e_live.py`)
+      Gate: offline + live, happy and sad paths.
+
+- [ ] P5: Global discovery with honest coverage reporting.
+      Add a `GlobalSearcher` that uses GitHub Code Search API for
+      `GLOBAL_DISCOVERY` mode. Coverage is always `INDETERMINATE_GLOBAL`.
+      Wire into the CLI as `leitir search --global`.
+      (`src/leitir/discovery_search.py`, `tests/test_global.py`,
+      `tests/test_global_e2e.py`, `tests/test_global_e2e_live.py`)
+      Gate: offline + live, happy and sad paths.
+
+- [ ] P6: Deterministic ranking + pinned benchmark.
+      Score normalization, tie-breaking by provenance stability, and a
+      versioned benchmark suite (≥10 tasks across Python/Rust/Go) with
+      expected-result pins. `leitir bench` command.
+      (`src/leitir/ranking.py`, `src/leitir/benchmarks/`,
+      `tests/test_ranking.py`, `tests/test_bench.py`)
+      Gate: offline (benchmark pins are deterministic); live re-verification.

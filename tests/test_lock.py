@@ -50,10 +50,14 @@ class TestFullyPinnedLock:
         # A non-empty, fully pinned closure resolved from a clean environment.
         assert pins, "requirements.txt has no pins"
 
-    def test_required_direct_deps_present(self):
+    def test_test_dependency_present(self):
         pins = _read_pins()
-        for name in ["trafilatura", "docker", "pytest"]:
-            assert _normalize(name) in pins, f"missing direct dependency: {name}"
+        assert _normalize("pytest") in pins, "missing test dependency: pytest"
+
+    def test_retired_runtime_dependencies_are_absent(self):
+        pins = _read_pins()
+        for name in ["trafilatura", "docker", "pyyaml"]:
+            assert _normalize(name) not in pins, f"retired dependency remains: {name}"
 
     def test_build_tooling_present(self):
         pins = _read_pins()
@@ -62,15 +66,8 @@ class TestFullyPinnedLock:
 
     def test_transitive_closure_present(self):
         pins = _read_pins()
-        # Representative transitive packages that must accompany the direct deps.
-        for name in [
-            "lxml",
-            "requests",
-            "urllib3",
-            "charset-normalizer",
-            "pluggy",
-            "packaging",
-        ]:
+        # Representative transitive packages required by pytest and build.
+        for name in ["pluggy", "packaging"]:
             assert _normalize(name) in pins, f"missing transitive: {name}"
 
     def test_no_unpinned_or_url_requirements(self):
@@ -88,7 +85,6 @@ class TestDependencySubstitution:
     def test_pyproject_dependencies_are_abstract(self):
         """Abstract declarations carry no exact pin, so the lock can substitute."""
         deps = _pyproject()["project"]["dependencies"]
-        assert deps, "pyproject declares no runtime dependencies"
         for dep in deps:
             assert "==" not in dep, f"dependency is pre-pinned: {dep!r}"
 

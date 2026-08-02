@@ -20,6 +20,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
 
 # Modules that would only be imported if an external-effect side effect occurred.
+#
+# Presence in sys.modules is a proxy, and for ``urllib.request`` it is a loose
+# one: binding those names performs no I/O, so a module-scope import would not
+# by itself breach the stated invariant. The kernel's HTTP clients defer the
+# import into the calling methods to keep this list meaningful, which also keeps
+# a bare ``import leitir.resolver`` from materialising an HTTP stack. Narrowing
+# the list to what it really proves is a separate, reviewable change.
 FORBIDDEN_MODULES = [
     "docker",
     "trafilatura",
@@ -50,8 +57,9 @@ def test_import_leitir_does_not_load_external_effect_modules(tmp_path):
         import json, sys
         sys.path.insert(0, %r)
         import leitir
-        import leitir.cli, leitir.contracts, leitir.config
-        import leitir.logging, leitir.protocols
+        import leitir.adapters, leitir.cli, leitir.discovery_search
+        import leitir.engine, leitir.logging, leitir.resolver, leitir.search
+        import leitir.tree
         present = [m for m in %r if m in sys.modules]
         print(json.dumps({"present": present}))
         """
@@ -73,32 +81,14 @@ def test_import_writes_no_filesystem_artifact(tmp_path):
         import sys
         sys.path.insert(0, %r)
         import leitir
-        import leitir.config
-        leitir.config.Config.default().serialize()
+        import leitir.adapters, leitir.cli, leitir.discovery_search
+        import leitir.engine, leitir.logging, leitir.resolver, leitir.search
+        import leitir.tree
         """
         % str(SRC)
     )
     code, _out, err = _run_isolated(script, workdir)
     assert code == 0, f"import failed: {err}"
-    # Importing and serializing must not create any files.
+    # Importing the kernel must not create any files.
     leftovers = [p.name for p in workdir.iterdir()]
     assert leftovers == [], f"import wrote filesystem artifacts: {leftovers}"
-
-
-def test_protocols_carry_no_concrete_external_effect_implementation():
-    # The Protocol seams are runtime-checkable interfaces with no concrete
-    # side-effect implementations in the package.
-    from leitir import protocols
-
-    for name in [
-        "ModelTransport",
-        "SearchProvider",
-        "ExtractionProvider",
-        "CredentialProvider",
-        "SandboxExecutor",
-        "TraceSink",
-    ]:
-        proto = getattr(protocols, name)
-        assert hasattr(proto, "_is_protocol"), f"{name} is not a Protocol"
-        # A trivial object that does NOT implement the method is not an instance.
-        assert not isinstance(object(), proto)

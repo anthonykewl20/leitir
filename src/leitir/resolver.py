@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -94,12 +92,15 @@ class GitHubTagResolver:
         return headers
 
     def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
+
         url = f"{self._API}/repos/{slug}/git/ref/tags/{tag}"
-        request = urllib.request.Request(url, headers=self._headers())
+        request = urllib_request.Request(url, headers=self._headers())
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise ResolutionError(
                 f"tag {tag!r} not found in {slug}: HTTP {exc.code}"
             ) from exc
@@ -112,9 +113,11 @@ class GitHubTagResolver:
         raise ResolutionError(f"unexpected object type {obj['type']!r}")
 
     def _dereference_annotated_tag(self, slug: str, tag_sha: str) -> str:
+        from urllib import request as urllib_request
+
         url = f"{self._API}/repos/{slug}/git/tags/{tag_sha}"
-        request = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+        request = urllib_request.Request(url, headers=self._headers())
+        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
             payload = json.load(resp)
         obj = payload["object"]
         if obj["type"] != "commit":
@@ -141,17 +144,20 @@ class PyPIResolver:
         self._timeout = timeout
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
+
         if ref.ecosystem is not Ecosystem.PYPI:
             raise ResolutionError("PyPIResolver only handles pypi packages")
 
         url = f"{self._REGISTRY}/{ref.name}/{ref.version}/json"
-        request = urllib.request.Request(
+        request = urllib_request.Request(
             url, headers={"User-Agent": "leitir", "Accept": "application/json"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise ResolutionError(
                 f"PyPI lookup failed for {ref.name}=={ref.version}: HTTP {exc.code}"
             ) from exc
@@ -217,17 +223,20 @@ class CratesResolver:
         self._timeout = timeout
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
+
         if ref.ecosystem is not Ecosystem.CRATES:
             raise ResolutionError("CratesResolver only handles crates packages")
 
         url = f"{self._REGISTRY}/{ref.name}/{ref.version}"
-        request = urllib.request.Request(
+        request = urllib_request.Request(
             url, headers={"User-Agent": "leitir (package resolver)"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise ResolutionError(
                 f"crates.io lookup failed for {ref.name}=={ref.version}: HTTP {exc.code}"
             ) from exc
@@ -278,6 +287,9 @@ class GoResolver:
         self._timeout = timeout
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
+
         if ref.ecosystem is not Ecosystem.GO:
             raise ResolutionError("GoResolver only handles go packages")
 
@@ -293,13 +305,13 @@ class GoResolver:
         escaped = self._escape_module(module)
         version = ref.version
         info_url = f"{self._PROXY}/{escaped}/@v/{version}.info"
-        request = urllib.request.Request(
+        request = urllib_request.Request(
             info_url, headers={"User-Agent": "leitir"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise ResolutionError(
                 f"Go proxy lookup failed for {module}@{version}: HTTP {exc.code}"
             ) from exc

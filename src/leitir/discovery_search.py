@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -85,15 +83,17 @@ class GitHubCodeSearchTransport:
         return headers
 
     def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
         from urllib.parse import urlencode
 
         params = urlencode({"q": query, "per_page": min(per_page, 100), "page": page})
         url = f"{_API}/search/code?{params}"
-        request = urllib.request.Request(url, headers=self._headers())
+        request = urllib_request.Request(url, headers=self._headers())
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise CodeSearchError(f"GitHub code search failed: HTTP {exc.code}") from exc
 
         items = payload.get("items", [])
@@ -115,21 +115,26 @@ class GitHubCodeSearchTransport:
         )
 
     def resolve_head_sha(self, slug: str) -> str:
+        from urllib import error as urllib_error
+        from urllib import request as urllib_request
+
         url = f"{_API}/repos/{slug}/commits?per_page=1"
-        request = urllib.request.Request(url, headers=self._headers())
+        request = urllib_request.Request(url, headers=self._headers())
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.HTTPError as exc:
+        except urllib_error.HTTPError as exc:
             raise CodeSearchError(f"cannot resolve HEAD for {slug}: HTTP {exc.code}") from exc
         if not payload or not isinstance(payload, list):
             raise CodeSearchError(f"empty commit list for {slug}")
         return payload[0]["sha"]
 
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
+        from urllib import request as urllib_request
+
         url = f"https://raw.githubusercontent.com/{slug}/{commit_sha}/{path}"
-        request = urllib.request.Request(url, headers={"User-Agent": "leitir"})
-        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+        request = urllib_request.Request(url, headers={"User-Agent": "leitir"})
+        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
             return resp.read()
 
 

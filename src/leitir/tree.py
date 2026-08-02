@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -65,8 +63,10 @@ class GitHubTreeSource:
         return headers
 
     def _get_json(self, url: str) -> dict:
-        request = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+        from urllib import request as urllib_request
+
+        request = urllib_request.Request(url, headers=self._headers())
+        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
             return json.load(resp)
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
@@ -88,9 +88,11 @@ class GitHubTreeSource:
         return tuple(entries)
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        from urllib import request as urllib_request
+
         url = f"{self._API}/repos/{slug}/git/blobs/{blob_sha}"
-        request = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+        request = urllib_request.Request(url, headers=self._headers())
+        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
             payload = json.load(resp)
         import base64
 
@@ -99,9 +101,11 @@ class GitHubTreeSource:
     def read_blob_by_path(
         self, slug: str, commit_sha: str, path: str
     ) -> bytes:
+        from urllib import request as urllib_request
+
         url = f"{self._RAW}/{slug}/{commit_sha}/{path}"
-        request = urllib.request.Request(url, headers={"User-Agent": "leitir"})
-        with urllib.request.urlopen(request, timeout=self._timeout) as resp:
+        request = urllib_request.Request(url, headers={"User-Agent": "leitir"})
+        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
             return resp.read()
 
     @staticmethod

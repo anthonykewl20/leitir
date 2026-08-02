@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/anthonykewl20/leitir/scorecard/assessment-v1.schema.json",
+  "title": "Leitir canonical assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "subject",
+    "producer",
+    "policy",
+    "checks",
+    "dimensions",
+    "aggregate"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "leitir-assessment-v1"
+    },
+    "profile": {
+      "enum": ["offline", "release"]
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "policy": {
+      "$ref": "#/$defs/policyIdentity"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "prefixItems": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "engine_correctness"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "output_effectiveness"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "code_health"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "test_adequacy"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "process_supply_chain"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/dimension"},
+            {"properties": {"id": {"const": "performance_operability"}}}
+          ]
+        }
+      ],
+      "items": false
+    },
+    "aggregate": {
+      "$ref": "#/$defs/gateAggregate"
+    }
+  },
+  "$defs": {
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "nullableScore": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/score"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reasonCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+    },
+    "dimensionId": {
+      "enum": [
+        "engine_correctness",
+        "output_effectiveness",
+        "code_health",
+        "test_adequacy",
+        "process_supply_chain",
+        "performance_operability"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit_sha", "worktree"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "worktree": {
+          "enum": ["clean", "dirty"]
+        }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "commit_sha"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/sha1"
+        }
+      }
+    },
+    "policyIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "value"],
+      "properties": {
+        "op": {
+          "enum": ["eq", "gte", "lte"]
+        },
+        "value": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dimension",
+        "mode",
+        "status",
+        "score_bps",
+        "weight",
+        "score_eligible",
+        "criterion",
+        "reason_code",
+        "numerator",
+        "denominator",
+        "exclusions",
+        "evidence",
+        "missing"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+        },
+        "dimension": {
+          "$ref": "#/$defs/dimensionId"
+        },
+        "mode": {
+          "enum": ["required", "advisory"]
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown",
+            "error",
+            "not_applicable",
+            "skipped"
+          ]
+        },
+        "score_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "score_eligible": {
+          "type": "boolean"
+        },
+        "criterion": {
+          "$ref": "#/$defs/criterion"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/reasonCode"
+        },
+        "numerator": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "denominator": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exclusions": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/reasonCode"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "missing": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["pass", "fail"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "score_bps": {
+                "$ref": "#/$defs/score"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "score_bps": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "weight",
+        "score_bps",
+        "observed_score_bps",
+        "lower_bound_bps",
+        "upper_bound_bps",
+        "included_weight",
+        "eligible_weight"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/dimensionId"
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "score_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "observed_score_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "lower_bound_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "upper_bound_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "included_weight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_weight": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_id", "kind", "status", "reason_code"],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+        },
+        "kind": {
+          "enum": ["known_failure", "unresolved", "missing_result"]
+        },
+        "status": {
+          "enum": ["fail", "unknown", "error", "skipped"]
+        },
+        "reason_code": {
+          "$ref": "#/$defs/reasonCode"
+        }
+      }
+    },
+    "gateAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "complete",
+        "score_bps",
+        "observed_score_bps",
+        "lower_bound_bps",
+        "upper_bound_bps",
+        "included_weight",
+        "eligible_weight",
+        "blockers"
+      ],
+      "properties": {
+        "decision": {
+          "enum": ["pass", "fail", "indeterminate"]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "score_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "observed_score_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "lower_bound_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "upper_bound_bps": {
+          "$ref": "#/$defs/nullableScore"
+        },
+        "included_weight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_weight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocker"
+          }
+        }
+      }
+    }
+  }
+}

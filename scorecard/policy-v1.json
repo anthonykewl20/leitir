@@ -1,0 +1,123 @@
+{
+  "schema_version": "leitir-score-policy-v1",
+  "id": "leitir-policy-v1",
+  "dimensions": [
+    {
+      "id": "engine_correctness",
+      "weight": 1
+    },
+    {
+      "id": "output_effectiveness",
+      "weight": 1
+    },
+    {
+      "id": "code_health",
+      "weight": 1
+    },
+    {
+      "id": "test_adequacy",
+      "weight": 1
+    },
+    {
+      "id": "process_supply_chain",
+      "weight": 1
+    },
+    {
+      "id": "performance_operability",
+      "weight": 1
+    }
+  ],
+  "checks": [
+    {
+      "id": "engine.offline_contracts",
+      "dimension": "engine_correctness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "output.pinned_benchmark",
+      "dimension": "output_effectiveness",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "code.production_scope_parsed",
+      "dimension": "code_health",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "test.adequacy_evidence",
+      "dimension": "test_adequacy",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "required",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "process.supply_chain_evidence",
+      "dimension": "process_supply_chain",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "advisory",
+        "release": "required"
+      },
+      "applicability": null
+    },
+    {
+      "id": "performance.controlled_baseline",
+      "dimension": "performance_operability",
+      "weight": 1,
+      "score_eligible": true,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "advisory",
+        "release": "required"
+      },
+      "applicability": null
+    }
+  ],
+  "waivers": []
+}

@@ -1,7 +1,8 @@
 # ADR-002: Build a deterministic, evidence-bound scoring engine
 
-- Status: Proposed
+- Status: Accepted — implemented through S8; S9 in progress
 - Date: 2026-08-02
+- Revised: 2026-08-03 (S1–S8 landed)
 - Related: ADR-001 deterministic code-search kernel, especially P6
 - User-facing shape: standalone script, not a `leitir` CLI subcommand
 
@@ -651,7 +652,7 @@ its documented gate is green.
       Deliverable: this ADR with pinned source revisions, selected mechanics,
       rejected mechanics, licenses, and ownership boundaries.
 
-- [ ] S1: Assessment contracts, policy schema, and gate algebra.
+- [x] S1: Assessment contracts, policy schema, and gate algebra.
       Implement typed statuses, required/advisory mode, integer basis-point
       scores, exact/observed/lower/upper aggregation, dimension aggregation,
       gate precedence, reason codes, and exits. Add
@@ -661,7 +662,7 @@ its documented gate is green.
       Gate: hand-calculated aggregation fixtures, zero denominator, duplicate
       IDs, missing IDs, all statuses, and fail-plus-error precedence.
 
-- [ ] S2: Canonical evidence and subject provenance.
+- [x] S2: Canonical evidence and subject provenance.
       Add clean commit identity, dirty development patch digest, policy/tool/raw
       artifact digests, stable ordering, canonical JSON, and assessment SHA-256.
       Release profile rejects dirty subjects. Policy cannot specify commands;
@@ -672,7 +673,7 @@ its documented gate is green.
       `PYTHONHASHSEED` values produce byte-identical JSON and digest; tampered
       evidence and non-finite values fail closed.
 
-- [ ] S3: Offline engine-correctness collectors.
+- [x] S3: Offline engine-correctness collectors.
       Collect pytest JUnit evidence, require nonzero collection and green
       execution, consume deterministic replay/permutation checks, validate
       result provenance, and verify scoped/global coverage invariants. Reuse
@@ -682,7 +683,7 @@ its documented gate is green.
       Gate: passing, failing, zero-test, malformed-JUnit, partial-coverage,
       global-overclaim, provenance-mismatch, and nondeterministic-output cases.
 
-- [ ] S4: P6 ranked-output effectiveness adapter.
+- [x] S4: P6 ranked-output effectiveness adapter.
       Depends on ADR-001 P6's ranked benchmark run artifact. Add at least 12
       scoped qrel tasks (4 Python, 4 Rust, 4 Go), canonical SourceRef IDs,
       strict task-set validation, total-order validation, and pinned
@@ -694,7 +695,7 @@ its documented gate is green.
       grades, empty result, unjudged first result, duplicate ID, missing task,
       tie, language-stratum regression, and trec golden parity.
 
-- [ ] S5: Code-health and test-adequacy adapters.
+- [x] S5: Code-health and test-adequacy adapters.
       Consume pinned Radon and coverage.py JSON. Add parser/file-scope coverage,
       complexity maxima/distributions, exact line and branch counts, and
       mutmut outcome normalization with clean-control and sentinel evidence.
@@ -705,7 +706,7 @@ its documented gate is green.
       mutants, survived/no-test/timeout/crash/internal-error mutants, exact
       threshold equality, and policy-ratchet fixtures.
 
-- [ ] S6: Process and supply-chain adapter.
+- [x] S6: Process and supply-chain adapter.
       Consume a checksum-verified OpenSSF Scorecard v5.5.0 raw artifact and
       normalize only selected checks. Record GitHub/token capabilities,
       repository and tool commits, observation time, and raw digest. Discard
@@ -717,7 +718,7 @@ its documented gate is green.
       not-applicable, missing check, changed check set, insufficient auth, and
       fresh live happy/sad evidence.
 
-- [ ] S7: Controlled performance adapter.
+- [x] S7: Controlled performance adapter.
       Consume pinned ASV/runner output, validate environment and benchmark
       versions, require adequate samples, and apply the 1.10 magnitude plus
       `p < 0.002` rule. Live network latency remains advisory.
@@ -727,7 +728,7 @@ its documented gate is green.
       overlapping interval, missing baseline, runner mismatch, introduced
       functional failure, and benchmark-version mismatch.
 
-- [ ] S8: Deterministic HTML renderer and release profile.
+- [x] S8: Deterministic HTML renderer and release profile.
       Render the canonical assessment without adding judgments. Unknown scores
       display as unknown with bounds, not zero. Add full offline and release
       profile e2e tests and document operation. Optionally emit an unsigned

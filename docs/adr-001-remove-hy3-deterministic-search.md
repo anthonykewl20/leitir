@@ -1,8 +1,9 @@
 # ADR-001: Remove Hy3 and make Leitir a deterministic code-search kernel
 
-- Status: Proposed
+- Status: Accepted — implemented in full
 - Date: 2026-08-02
 - Revised: 2026-08-02 (slice reordering + CLI integration layer)
+- Completed: 2026-08-03 (P0r retirement + P1–P6 landed)
 
 ## Context
 

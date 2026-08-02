@@ -255,9 +255,25 @@ def test_retired_surface_absence_checks_top_level_import_surfaces(tmp_path):
     }
 
 
-def test_stale_pycache_is_not_mistaken_for_a_top_level_module_surface():
-    assert (REPO_ROOT / "src" / "leitir" / "__pycache__").is_dir()
-    assert evaluate_retired_surfaces_absent(REPO_ROOT).status is CheckStatus.PASS
+def test_stale_pycache_is_not_mistaken_for_a_top_level_module_surface(tmp_path):
+    # Built in tmp_path rather than asserted against the real repository: the
+    # scorer imports no Leitir code, so src/leitir/__pycache__ exists only if
+    # some earlier test happened to import the kernel first. Reading the live
+    # tree made this pass or fail on test order and on whether the checkout was
+    # fresh. The cached module is a retired one, so a compiled artefact alone
+    # must not count as a surviving import surface.
+    module_root = tmp_path / "src" / "leitir"
+    cache = module_root / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "openrouter.cpython-314.pyc").write_bytes(b"\x00stale")
+    (cache / "verification.cpython-314.pyc").write_bytes(b"\x00stale")
+
+    result = evaluate_retired_surfaces_absent(tmp_path)
+
+    assert result.status is CheckStatus.PASS
+    assert not [
+        entry for entry in result.evidence if entry["kind"] == "present_surface"
+    ]
 
 
 def test_pytest_collector_uses_fixed_adr001_argv_shell_false_and_sanitized_env(

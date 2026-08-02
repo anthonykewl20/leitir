@@ -1,24 +1,27 @@
-"""Deterministic assessment contracts and gate algebra for ADR-002 S1.
+"""Deterministic assessment contracts and provenance for ADR-002 S1-S2.
 
 This standalone module intentionally imports no Leitir package code.  It owns
-the policy vocabulary, integer scoring arithmetic, and non-compensating gate;
-collectors and evidence adapters belong to later ADR-002 slices.
+the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
+canonical provenance envelope; collectors and evidence adapters belong to
+later ADR-002 slices.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from enum import Enum, IntEnum
 import hashlib
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 import re
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
 
 
 ASSESSMENT_SCHEMA_VERSION = "leitir-assessment-v1"
 POLICY_SCHEMA_VERSION = "leitir-score-policy-v1"
+RUN_ENVELOPE_SCHEMA_VERSION = "leitir-score-run-envelope-v1"
 DIMENSION_IDS = (
     "engine_correctness",
     "output_effectiveness",
@@ -33,6 +36,7 @@ _POLICY_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _REASON_CODE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EVIDENCE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
 
 
 class CheckStatus(str, Enum):
@@ -108,6 +112,43 @@ def _validate_positive_int(value: object, name: str) -> None:
 def _validate_score(value: object, name: str = "score_bps") -> None:
     if not _is_int(value) or not 0 <= value <= 10000:
         raise ValueError(f"{name} must be an integer from 0 through 10000")
+
+
+def _validate_canonical_path(value: object, name: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be non-empty text")
+    path = PurePosixPath(value)
+    if path.is_absolute() or value != path.as_posix() or ".." in path.parts:
+        raise ValueError(f"{name} must be a normalized relative POSIX path")
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _FrozenTextMap(Mapping[str, str]):
+    """A sorted, immutable, hashable mapping used inside frozen contracts."""
+
+    entries: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, str]) -> _FrozenTextMap:
+        return cls(tuple(sorted(value.items())))
+
+    def __getitem__(self, key: str) -> str:
+        for item_key, item_value in self.entries:
+            if item_key == key:
+                return item_value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and dict(self.entries) == dict(other.items())
+
+    def __hash__(self) -> int:
+        return hash(self.entries)
 
 
 def _round_half_up_fraction(numerator: int, denominator: int) -> int:
@@ -328,16 +369,18 @@ class Policy:
             raise TypeError("waivers must be a tuple")
         if self.waivers:
             raise ValueError("policy v1 does not permit waivers")
+        object.__setattr__(
+            self,
+            "checks",
+            tuple(sorted(self.checks, key=lambda item: item.id)),
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "id": self.id,
             "dimensions": [item.to_dict() for item in self.dimensions],
-            "checks": [
-                item.to_dict()
-                for item in sorted(self.checks, key=lambda check: check.id)
-            ],
+            "checks": [item.to_dict() for item in self.checks],
             "waivers": [],
         }
 
@@ -346,6 +389,190 @@ class Policy:
 
     def digest(self) -> str:
         return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class CommandExecution:
+    """Exact subprocess provenance attached to one raw evidence artifact."""
+
+    argv: tuple[str, ...]
+    process_exit: int
+    collector_reason_code: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.argv, tuple) or not self.argv:
+            raise TypeError("argv must be a non-empty tuple")
+        if any(not isinstance(item, str) or not item for item in self.argv):
+            raise ValueError("argv entries must be non-empty text")
+        if not _is_int(self.process_exit):
+            raise TypeError("process_exit must be an integer")
+        if not isinstance(
+            self.collector_reason_code, str
+        ) or not _REASON_CODE.fullmatch(self.collector_reason_code):
+            raise ValueError("collector_reason_code must be uppercase snake-case")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "argv": list(self.argv),
+            "process_exit": self.process_exit,
+            "collector_reason_code": self.collector_reason_code,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpan:
+    """A source location bound to its exact repository blob."""
+
+    path: str
+    blob_digest: str
+    start_line: int | None = None
+    end_line: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_canonical_path(self.path, "source path")
+        if not isinstance(self.blob_digest, str) or not (
+            _SHA1.fullmatch(self.blob_digest) or _SHA256.fullmatch(self.blob_digest)
+        ):
+            raise ValueError("blob_digest must be a 40- or 64-char lowercase hex digest")
+        if (self.start_line is None) != (self.end_line is None):
+            raise ValueError("start_line and end_line must be provided together")
+        if self.start_line is not None and self.end_line is not None:
+            _validate_positive_int(self.start_line, "start_line")
+            _validate_positive_int(self.end_line, "end_line")
+            if self.start_line > self.end_line:
+                raise ValueError("start_line cannot exceed end_line")
+
+    def sort_key(self) -> tuple[object, ...]:
+        return (
+            self.path,
+            0 if self.start_line is None else self.start_line,
+            0 if self.end_line is None else self.end_line,
+            self.blob_digest,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "blob_digest": self.blob_digest,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceArtifact:
+    """Raw evidence bytes plus the canonical provenance retained for them.
+
+    ``content`` is evaluation input and is deliberately excluded from canonical
+    output.  Its pinned SHA-256 is verified at construction, so altered bytes
+    never reach scoring as apparently valid evidence.
+    """
+
+    id: str
+    path: str
+    sha256: str
+    content: bytes = field(repr=False, compare=False)
+    command: CommandExecution | None = None
+    sources: tuple[SourceSpan, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not _EVIDENCE_ID.fullmatch(self.id):
+            raise ValueError("evidence ID must be a lowercase stable identifier")
+        _validate_canonical_path(self.path, "evidence path")
+        if not isinstance(self.sha256, str) or not _SHA256.fullmatch(self.sha256):
+            raise ValueError("evidence sha256 must be a 64-char lowercase hex digest")
+        if not isinstance(self.content, bytes):
+            raise TypeError("evidence content must be bytes")
+        if hashlib.sha256(self.content).hexdigest() != self.sha256:
+            raise ValueError("evidence content does not match its declared sha256")
+        if self.command is not None and not isinstance(
+            self.command, CommandExecution
+        ):
+            raise TypeError("evidence command must be a CommandExecution or None")
+        if not isinstance(self.sources, tuple) or any(
+            not isinstance(item, SourceSpan) for item in self.sources
+        ):
+            raise TypeError("evidence sources must be a tuple of SourceSpan")
+        source_keys = [item.sort_key() for item in self.sources]
+        if len(set(source_keys)) != len(source_keys):
+            raise ValueError("evidence source spans must be unique")
+        object.__setattr__(
+            self,
+            "sources",
+            tuple(sorted(self.sources, key=SourceSpan.sort_key)),
+        )
+
+    @classmethod
+    def from_path(
+        cls,
+        *,
+        id: str,
+        path: str | Path,
+        canonical_path: str,
+        sha256: str,
+        command: CommandExecution | None = None,
+        sources: tuple[SourceSpan, ...] = (),
+    ) -> EvidenceArtifact:
+        if not isinstance(path, (str, Path)):
+            raise TypeError("path must be text or Path")
+        return cls(
+            id=id,
+            path=canonical_path,
+            sha256=sha256,
+            content=Path(path).read_bytes(),
+            command=command,
+            sources=sources,
+        )
+
+    def sort_key(self) -> tuple[str, str, str]:
+        return (self.id, self.path, self.sha256)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "path": self.path,
+            "sha256": self.sha256,
+            "command": None if self.command is None else self.command.to_dict(),
+            "sources": [item.to_dict() for item in self.sources],
+        }
+
+
+def _normalized_exclusions(
+    exclusions: object,
+) -> tuple[tuple[str, int], ...]:
+    if not isinstance(exclusions, tuple):
+        raise TypeError("exclusions must be a tuple of (reason, count) pairs")
+    exclusion_names: list[str] = []
+    for item in exclusions:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError("exclusions must contain (reason, count) tuples")
+        reason, count = item
+        if not isinstance(reason, str) or not _REASON_CODE.fullmatch(reason):
+            raise ValueError("exclusion reasons must be uppercase snake-case")
+        _validate_non_negative_int(count, "exclusion count")
+        exclusion_names.append(reason)
+    if len(set(exclusion_names)) != len(exclusion_names):
+        raise ValueError("exclusion reasons must be unique")
+    return tuple(sorted(exclusions))
+
+
+def _normalized_check_evidence(
+    evidence: object,
+) -> tuple[Mapping[str, str], ...]:
+    if not isinstance(evidence, tuple):
+        raise TypeError("evidence must be a tuple of mappings")
+    normalized: list[_FrozenTextMap] = []
+    for item in evidence:
+        if not isinstance(item, Mapping):
+            raise TypeError("evidence must be a tuple of mappings")
+        if set(item) != {"kind", "value"}:
+            raise ValueError("evidence entries require exactly kind and value")
+        if any(
+            not isinstance(value, str) or not value.strip() for value in item.values()
+        ):
+            raise ValueError("evidence kind and value must be non-empty text")
+        normalized.append(_FrozenTextMap.from_mapping(item))
+    return tuple(sorted(normalized, key=lambda item: (item["kind"], item["value"])))
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,31 +613,12 @@ class CheckResult:
                 CheckStatus.FAIL,
             }:
                 raise ValueError("a zero denominator cannot produce pass or fail")
-        if not isinstance(self.exclusions, tuple):
-            raise TypeError("exclusions must be a tuple of (reason, count) pairs")
-        exclusion_names: list[str] = []
-        for item in self.exclusions:
-            if not isinstance(item, tuple) or len(item) != 2:
-                raise TypeError("exclusions must contain (reason, count) tuples")
-            reason, count = item
-            if not isinstance(reason, str) or not _REASON_CODE.fullmatch(reason):
-                raise ValueError("exclusion reasons must be uppercase snake-case")
-            _validate_non_negative_int(count, "exclusion count")
-            exclusion_names.append(reason)
-        if len(set(exclusion_names)) != len(exclusion_names):
-            raise ValueError("exclusion reasons must be unique")
-        if not isinstance(self.evidence, tuple):
-            raise TypeError("evidence must be a tuple of mappings")
-        for item in self.evidence:
-            if not isinstance(item, Mapping):
-                raise TypeError("evidence must be a tuple of mappings")
-            if set(item) != {"kind", "value"}:
-                raise ValueError("evidence entries require exactly kind and value")
-            if any(
-                not isinstance(value, str) or not value.strip()
-                for value in item.values()
-            ):
-                raise ValueError("evidence kind and value must be non-empty text")
+        object.__setattr__(
+            self, "exclusions", _normalized_exclusions(self.exclusions)
+        )
+        object.__setattr__(
+            self, "evidence", _normalized_check_evidence(self.evidence)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +662,12 @@ class AssessedCheck:
             self.reason_code
         ):
             raise ValueError("reason_code must be uppercase snake-case")
+        object.__setattr__(
+            self, "exclusions", _normalized_exclusions(self.exclusions)
+        )
+        object.__setattr__(
+            self, "evidence", _normalized_check_evidence(self.evidence)
+        )
         if not isinstance(self.missing, bool):
             raise TypeError("missing must be a bool")
 
@@ -470,7 +684,7 @@ class AssessedCheck:
             "reason_code": self.reason_code,
             "numerator": self.numerator,
             "denominator": self.denominator,
-            "exclusions": dict(sorted(self.exclusions)),
+            "exclusions": dict(self.exclusions),
             "evidence": [dict(item) for item in self.evidence],
             "missing": self.missing,
         }
@@ -562,10 +776,26 @@ class Blocker:
     reason_code: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.check_id, str) or not _CHECK_ID.fullmatch(
+            self.check_id
+        ):
+            raise ValueError("blocker check_id must be lowercase dotted snake-case")
         if not isinstance(self.kind, BlockerKind):
             raise TypeError("kind must be a BlockerKind")
         if not isinstance(self.status, CheckStatus):
             raise TypeError("status must be a CheckStatus")
+        if not isinstance(self.reason_code, str) or not _REASON_CODE.fullmatch(
+            self.reason_code
+        ):
+            raise ValueError("blocker reason_code must be uppercase snake-case")
+
+    def sort_key(self) -> tuple[int, str, str]:
+        precedence = {
+            BlockerKind.KNOWN_FAILURE: 0,
+            BlockerKind.MISSING_RESULT: 1,
+            BlockerKind.UNRESOLVED: 1,
+        }
+        return (precedence[self.kind], self.check_id, self.reason_code)
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -596,6 +826,11 @@ class GateAggregate:
             not isinstance(item, Blocker) for item in self.blockers
         ):
             raise TypeError("blockers must be a tuple of Blocker")
+        object.__setattr__(
+            self,
+            "blockers",
+            tuple(sorted(self.blockers, key=Blocker.sort_key)),
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -608,11 +843,13 @@ class GateAggregate:
 
 @dataclass(frozen=True, slots=True)
 class Subject:
-    """Minimal subject identity required by the canonical v1 shape."""
+    """Repository commit identity, including development-tree provenance."""
 
     repository: str
     commit_sha: str
     worktree: str
+    patch_sha256: str | None = None
+    untracked_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.repository, str) or not self.repository.strip():
@@ -623,13 +860,29 @@ class Subject:
             raise ValueError("commit_sha must be a 40-char git SHA")
         if self.worktree not in {"clean", "dirty"}:
             raise ValueError("worktree must be clean or dirty")
+        if self.worktree == "clean":
+            if self.patch_sha256 is not None or self.untracked_sha256 is not None:
+                raise ValueError("a clean subject cannot contain dirty-tree digests")
+        else:
+            if not isinstance(self.patch_sha256, str) or not _SHA256.fullmatch(
+                self.patch_sha256
+            ):
+                raise ValueError("a dirty subject requires patch_sha256")
+            if not isinstance(self.untracked_sha256, str) or not _SHA256.fullmatch(
+                self.untracked_sha256
+            ):
+                raise ValueError("a dirty subject requires untracked_sha256")
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
             "repository": self.repository,
             "commit_sha": self.commit_sha,
             "worktree": self.worktree,
         }
+        if self.worktree == "dirty":
+            result["patch_sha256"] = self.patch_sha256
+            result["untracked_sha256"] = self.untracked_sha256
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,7 +913,7 @@ class Producer:
 
 @dataclass(frozen=True, slots=True)
 class Assessment:
-    """Canonical S1 assessment artifact."""
+    """Canonical assessment artifact whose exact bytes define its identity."""
 
     schema_version: str
     profile: Profile
@@ -671,6 +924,7 @@ class Assessment:
     checks: tuple[AssessedCheck, ...]
     dimensions: tuple[DimensionAssessment, ...]
     aggregate: GateAggregate
+    evidence: tuple[EvidenceArtifact, ...] = ()
 
     def __post_init__(self) -> None:
         if self.schema_version != ASSESSMENT_SCHEMA_VERSION:
@@ -706,6 +960,23 @@ class Assessment:
             )
         if not isinstance(self.aggregate, GateAggregate):
             raise TypeError("aggregate must be a GateAggregate")
+        if not isinstance(self.evidence, tuple) or any(
+            not isinstance(item, EvidenceArtifact) for item in self.evidence
+        ):
+            raise TypeError("evidence must be a tuple of EvidenceArtifact")
+        evidence_ids = [item.id for item in self.evidence]
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise ValueError("assessment evidence IDs must be unique")
+        object.__setattr__(
+            self,
+            "checks",
+            tuple(sorted(self.checks, key=lambda item: item.id)),
+        )
+        object.__setattr__(
+            self,
+            "evidence",
+            tuple(sorted(self.evidence, key=EvidenceArtifact.sort_key)),
+        )
 
     @property
     def exit_code(self) -> ExitCode:
@@ -719,6 +990,7 @@ class Assessment:
             "producer": self.producer.to_dict(),
             "policy": {"id": self.policy_id, "sha256": self.policy_sha256},
             "checks": [item.to_dict() for item in self.checks],
+            "evidence": [item.to_dict() for item in self.evidence],
             "dimensions": [item.to_dict() for item in self.dimensions],
             "aggregate": self.aggregate.to_dict(),
         }
@@ -726,13 +998,303 @@ class Assessment:
     def to_json(self) -> str:
         return _canonical_json(self.to_dict())
 
+    def to_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict())
+
+    def digest(self) -> str:
+        return hashlib.sha256(self.to_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class RunEnvelope:
+    """Volatile execution metadata bound to, but outside, an assessment."""
+
+    subject_sha256: str
+    started_at_utc: str
+    finished_at_utc: str
+    duration_ns: int
+    host: Mapping[str, str]
+    log_paths: tuple[str, ...]
+    schema_version: str = RUN_ENVELOPE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != RUN_ENVELOPE_SCHEMA_VERSION:
+            raise ValueError(
+                f"schema_version must be {RUN_ENVELOPE_SCHEMA_VERSION!r}"
+            )
+        if not isinstance(self.subject_sha256, str) or not _SHA256.fullmatch(
+            self.subject_sha256
+        ):
+            raise ValueError("subject_sha256 must be a 64-char sha256 hex string")
+        for name in ("started_at_utc", "finished_at_utc"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be non-empty text")
+        _validate_non_negative_int(self.duration_ns, "duration_ns")
+        if not isinstance(self.host, Mapping) or any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(value, str)
+            or not value
+            for key, value in self.host.items()
+        ):
+            raise TypeError("host must map non-empty text keys to text values")
+        object.__setattr__(self, "host", _FrozenTextMap.from_mapping(self.host))
+        if not isinstance(self.log_paths, tuple) or any(
+            not isinstance(item, str) or not item for item in self.log_paths
+        ):
+            raise TypeError("log_paths must be a tuple of non-empty text paths")
+        object.__setattr__(self, "log_paths", tuple(sorted(self.log_paths)))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "subject": {"sha256": self.subject_sha256},
+            "started_at_utc": self.started_at_utc,
+            "finished_at_utc": self.finished_at_utc,
+            "duration_ns": self.duration_ns,
+            "host": dict(self.host),
+            "log_paths": list(self.log_paths),
+        }
+
+    def to_json(self) -> str:
+        return _canonical_json(self.to_dict())
+
 
 def _canonical_json(value: object) -> str:
+    return canonical_json_bytes(value).decode("utf-8")
+
+
+def canonical_json_bytes(value: object) -> bytes:
+    """Serialize the canonical compact UTF-8 representation used for identity."""
     return json.dumps(
         value,
         allow_nan=False,
+        ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
+    ).encode("utf-8")
+
+
+def canonical_patch_sha256(patch: bytes) -> str:
+    """Hash the exact bytes emitted by the engine's fixed canonical diff argv."""
+    if not isinstance(patch, bytes):
+        raise TypeError("patch must be bytes")
+    return hashlib.sha256(patch).hexdigest()
+
+
+def untracked_inputs_sha256(inputs: Mapping[str, bytes]) -> str:
+    """Hash a sorted canonical manifest of untracked paths and content digests."""
+    if not isinstance(inputs, Mapping):
+        raise TypeError("inputs must map canonical paths to bytes")
+    manifest: list[dict[str, object]] = []
+    for path, content in inputs.items():
+        _validate_canonical_path(path, "untracked path")
+        if not isinstance(content, bytes):
+            raise TypeError("untracked input content must be bytes")
+        manifest.append(
+            {
+                "path": path,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size": len(content),
+            }
+        )
+    manifest.sort(key=lambda item: str(item["path"]).encode("utf-8"))
+    return hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
+
+
+_CANONICAL_GIT_WORKTREE_CONFIG = (
+    "-c",
+    "core.quotePath=false",
+    "-c",
+    f"core.excludesFile={os.devnull}",
+    "-c",
+    "core.filemode=true",
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.safecrlf=false",
+    "-c",
+    "core.eol=lf",
+    "-c",
+    f"core.attributesFile={os.devnull}",
+    "-c",
+    "filter.lfs.clean=",
+    "-c",
+    "filter.lfs.smudge=",
+    "-c",
+    "filter.lfs.process=",
+    "-c",
+    "filter.lfs.required=false",
+)
+
+
+class _GitCommand(Enum):
+    """Engine-owned Git argv; policy and callers can select no command text."""
+
+    REPOSITORY = ("git", "remote", "get-url", "origin")
+    COMMIT = ("git", "rev-parse", "--verify", "HEAD")
+    STATUS = (
+        "git",
+        *_CANONICAL_GIT_WORKTREE_CONFIG,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    )
+    PATCH = (
+        "git",
+        *_CANONICAL_GIT_WORKTREE_CONFIG,
+        "-c",
+        "color.ui=false",
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--diff-algorithm=myers",
+        "--no-indent-heuristic",
+        "--ignore-submodules=none",
+        "--submodule=short",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "HEAD",
+        "--",
+    )
+    UNTRACKED = (
+        "git",
+        "-c",
+        "core.quotePath=false",
+        "-c",
+        f"core.excludesFile={os.devnull}",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+    )
+
+
+def _sanitized_git_environment() -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment.update(
+        {
+            "GIT_ATTR_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LANG": "C",
+            "LC_ALL": "C",
+        }
+    )
+    return environment
+
+
+def _run_fixed_git(root: Path, command: _GitCommand) -> bytes:
+    import subprocess
+
+    completed = subprocess.run(
+        command.value,
+        cwd=str(root),
+        shell=False,
+        check=False,
+        capture_output=True,
+        env=_sanitized_git_environment(),
+    )
+    if completed.returncode != 0:
+        raise ValueError(
+            f"fixed git command {command.name.lower()} failed with exit "
+            f"{completed.returncode}"
+        )
+    if not isinstance(completed.stdout, bytes):
+        raise TypeError("fixed git command stdout must be bytes")
+    return completed.stdout
+
+
+def _single_utf8_line(value: bytes, name: str) -> str:
+    try:
+        decoded = value.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{name} must be UTF-8") from exc
+    if not decoded or "\n" in decoded or "\r" in decoded:
+        raise ValueError(f"{name} must contain exactly one non-empty line")
+    return decoded
+
+
+def _read_untracked_inputs(root: Path, encoded_paths: bytes) -> dict[str, bytes]:
+    inputs: dict[str, bytes] = {}
+    for encoded_path in encoded_paths.split(b"\0"):
+        if not encoded_path:
+            continue
+        try:
+            path = encoded_path.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("untracked paths must be UTF-8") from exc
+        _validate_canonical_path(path, "untracked path")
+        local_path = root / Path(*PurePosixPath(path).parts)
+        if local_path.is_symlink():
+            content = os.fsencode(os.readlink(local_path))
+        else:
+            if not local_path.is_file():
+                raise ValueError(f"untracked input is not a regular file: {path}")
+            content = local_path.read_bytes()
+        inputs[path] = content
+    return inputs
+
+
+def subject_from_repository(
+    root: str | Path,
+    *,
+    repository: str | None = None,
+) -> Subject:
+    """Read subject identity with fixed Git argv and no import-time execution."""
+    if not isinstance(root, (str, Path)):
+        raise TypeError("root must be text or Path")
+    repository_root = Path(root).resolve()
+    if not repository_root.is_dir():
+        raise ValueError("root must be an existing directory")
+    if repository is not None and (
+        not isinstance(repository, str) or not repository.strip()
+    ):
+        raise ValueError("repository must be non-empty text or None")
+    if repository is None:
+        try:
+            repository_url = _single_utf8_line(
+                _run_fixed_git(repository_root, _GitCommand.REPOSITORY),
+                "repository URL",
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "origin repository URL is unavailable; pass the repository= keyword"
+            ) from exc
+    else:
+        repository_url = repository
+    commit_sha = _single_utf8_line(
+        _run_fixed_git(repository_root, _GitCommand.COMMIT),
+        "commit SHA",
+    )
+    status = _run_fixed_git(repository_root, _GitCommand.STATUS)
+    if not status:
+        return Subject(
+            repository=repository_url,
+            commit_sha=commit_sha,
+            worktree="clean",
+        )
+    patch = _run_fixed_git(repository_root, _GitCommand.PATCH)
+    untracked_paths = _run_fixed_git(repository_root, _GitCommand.UNTRACKED)
+    untracked_inputs = _read_untracked_inputs(repository_root, untracked_paths)
+    return Subject(
+        repository=repository_url,
+        commit_sha=commit_sha,
+        worktree="dirty",
+        patch_sha256=canonical_patch_sha256(patch),
+        untracked_sha256=untracked_inputs_sha256(untracked_inputs),
     )
 
 
@@ -870,6 +1432,7 @@ def evaluate(
     profile: Profile,
     subject: Subject,
     producer: Producer,
+    evidence: tuple[EvidenceArtifact, ...] = (),
 ) -> Assessment:
     """Apply policy metadata, score dimensions, and evaluate the hard gate."""
     if not isinstance(policy, Policy):
@@ -884,6 +1447,15 @@ def evaluate(
         raise TypeError("subject must be a Subject")
     if not isinstance(producer, Producer):
         raise TypeError("producer must be a Producer")
+    if not isinstance(evidence, tuple) or any(
+        not isinstance(item, EvidenceArtifact) for item in evidence
+    ):
+        raise TypeError("evidence must be a tuple of EvidenceArtifact")
+    evidence_ids = [item.id for item in evidence]
+    if len(set(evidence_ids)) != len(evidence_ids):
+        raise ValueError("submitted evidence IDs must be unique")
+    if profile is Profile.RELEASE and subject.worktree == "dirty":
+        raise ValueError("release profile requires a clean subject worktree")
     result_ids = [item.id for item in results]
     if len(set(result_ids)) != len(result_ids):
         raise ValueError("submitted check IDs must be unique")
@@ -893,9 +1465,21 @@ def evaluate(
         raise ValueError(
             "results contain policy-unknown check IDs: " + ", ".join(unexpected)
         )
+    referenced_artifacts = {
+        entry["value"]
+        for result in results
+        for entry in result.evidence
+        if entry["kind"] == "artifact"
+    }
+    missing_artifacts = sorted(referenced_artifacts - set(evidence_ids))
+    if missing_artifacts:
+        raise ValueError(
+            "results reference missing evidence artifacts: "
+            + ", ".join(missing_artifacts)
+        )
     submitted = {item.id: item for item in results}
     assessed: list[AssessedCheck] = []
-    for check_policy in sorted(policy.checks, key=lambda item: item.id):
+    for check_policy in policy.checks:
         result = submitted.get(check_policy.id)
         missing = result is None
         if result is None:
@@ -956,6 +1540,7 @@ def evaluate(
         checks=assessed_checks,
         dimensions=dimensions,
         aggregate=_gate(assessed_checks, scores),
+        evidence=evidence,
     )
 
 
@@ -1074,6 +1659,7 @@ def load_policy(path: str | Path) -> Policy:
 __all__ = [
     "ASSESSMENT_SCHEMA_VERSION",
     "POLICY_SCHEMA_VERSION",
+    "RUN_ENVELOPE_SCHEMA_VERSION",
     "ApplicabilityRule",
     "Assessment",
     "AssessedCheck",
@@ -1083,17 +1669,23 @@ __all__ = [
     "CheckPolicy",
     "CheckResult",
     "CheckStatus",
+    "CommandExecution",
     "Criterion",
     "Decision",
     "DimensionAssessment",
     "DimensionPolicy",
     "ExitCode",
+    "EvidenceArtifact",
     "GateAggregate",
     "Policy",
     "Producer",
     "Profile",
+    "RunEnvelope",
     "ScoreAggregate",
+    "SourceSpan",
     "Subject",
+    "canonical_json_bytes",
+    "canonical_patch_sha256",
     "decision_exit_code",
     "display_band",
     "evaluate",
@@ -1101,5 +1693,7 @@ __all__ = [
     "policy_from_dict",
     "proportional_score_bps",
     "score_from_counts",
+    "subject_from_repository",
+    "untracked_inputs_sha256",
     "weighted_score_bps",
 ]

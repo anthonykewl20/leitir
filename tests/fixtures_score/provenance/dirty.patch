@@ -1,0 +1,7 @@
+diff --git a/example.py b/example.py
+index 78981922613b2afb6025042ff6bd878ac1994e85..422c2b7ab3b3c668038da977e4e93a5fc623169c 100644
+--- a/example.py
++++ b/example.py
+@@ -1 +1 @@
+-print("before")
++print("after")

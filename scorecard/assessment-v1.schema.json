@@ -10,6 +10,7 @@
     "subject",
     "producer",
     "policy",
+    "evidence",
     "checks",
     "dimensions",
     "aggregate"
@@ -29,6 +30,12 @@
     },
     "policy": {
       "$ref": "#/$defs/policyIdentity"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceArtifact"
+      }
     },
     "checks": {
       "type": "array",
@@ -136,8 +143,33 @@
         },
         "worktree": {
           "enum": ["clean", "dirty"]
+        },
+        "patch_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "untracked_sha256": {
+          "$ref": "#/$defs/sha256"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"worktree": {"const": "dirty"}},
+            "required": ["worktree"]
+          },
+          "then": {
+            "required": ["patch_sha256", "untracked_sha256"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {"required": ["patch_sha256"]},
+                {"required": ["untracked_sha256"]}
+              ]
+            }
+          }
+        }
+      ]
     },
     "producer": {
       "type": "object",
@@ -321,6 +353,61 @@
         "value": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "commandExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "process_exit", "collector_reason_code"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "process_exit": {"type": "integer"},
+        "collector_reason_code": {"$ref": "#/$defs/reasonCode"}
+      }
+    },
+    "sourceSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "blob_digest", "start_line", "end_line"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "blob_digest": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "start_line": {
+          "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+        },
+        "end_line": {
+          "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+        }
+      }
+    },
+    "evidenceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256", "command", "sources"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]*$"
+        },
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "command": {
+          "oneOf": [
+            {"$ref": "#/$defs/commandExecution"},
+            {"type": "null"}
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/sourceSpan"}
         }
       }
     },

@@ -10,13 +10,14 @@ The kernel accepts a typed `SearchSpec`, returns a provenance-bound
 `SearchReport`, resolves packages across PyPI/crates/Go, ranks deterministically,
 and ships a pinned 12-task benchmark behind `leitir bench`.
 
-**ADR-002 is implemented through S8**, with S9 (dogfood) in progress. The
+**ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
 provenance, and collectors for engine correctness, retrieval effectiveness,
 code health, test adequacy, supply chain, and controlled performance, plus a
-deterministic renderer and release profile.
+deterministic renderer, release profile, and a published self-assessment
+guarded by a regeneration drift check.
 
-Offline suite: **448 passed, 29 skipped**. The 29 skips are opt-in live tests
+Offline suite: **460 passed, 29 skipped**. The 29 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
@@ -64,8 +65,8 @@ the scoring engine's gate precedence.
 
 ## Open work
 
-- **ADR-002 S9** — dogfood: publish the generated assessment, add the
-  regeneration drift check, retire the manual scorecards.
+- **Collect the 29 missing required results** so the assessment resolves to a
+  real score instead of honest bounds. Collect evidence; never relax policy.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require
   these to be adopted in a separate reviewable change once a measured corpus
   exists; no slice may bundle them with an implementation.

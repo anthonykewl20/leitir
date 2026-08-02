@@ -1,8 +1,8 @@
 # ADR-002: Build a deterministic, evidence-bound scoring engine
 
-- Status: Accepted — implemented through S8; S9 in progress
+- Status: Accepted — implemented in full
 - Date: 2026-08-02
-- Revised: 2026-08-03 (S1–S8 landed)
+- Completed: 2026-08-03 (S1–S9 landed)
 - Related: ADR-001 deterministic code-search kernel, especially P6
 - User-facing shape: standalone script, not a `leitir` CLI subcommand
 
@@ -739,7 +739,7 @@ its documented gate is green.
       is byte-identical; process exits 0/1/2/3 are pinned; release cannot pass
       with any required unresolved evidence.
 
-- [ ] S9: Dogfood on Leitir and retire the manual current score.
+- [x] S9: Dogfood on Leitir and retire the manual current score.
       Run the scorer against a clean pinned Leitir commit, publish canonical
       JSON plus generated HTML, add a regeneration drift check, and label the
       v1/v2 scorecards historical. Do not tune policy, exclusions, qrels, or

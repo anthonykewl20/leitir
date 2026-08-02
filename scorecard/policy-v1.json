@@ -345,6 +345,21 @@
         "release": "required"
       },
       "applicability": null
+    },
+    {
+      "id": "performance.live_network_latency",
+      "dimension": "performance_operability",
+      "weight": 1,
+      "score_eligible": false,
+      "criterion": {
+        "op": "eq",
+        "value": 10000
+      },
+      "modes": {
+        "offline": "advisory",
+        "release": "advisory"
+      },
+      "applicability": null
     }
   ],
   "waivers": []

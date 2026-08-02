@@ -1,0 +1,13 @@
+{
+  "schema_version": "leitir-live-network-latency-v1",
+  "measurements": [
+    {
+      "endpoint": "github-api",
+      "samples_ms": [84, 91, 103]
+    },
+    {
+      "endpoint": "python-registry",
+      "samples_ms": [115, 127, 148]
+    }
+  ]
+}

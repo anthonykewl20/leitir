@@ -1,4 +1,4 @@
-"""Deterministic evidence scoring engine for ADR-002 S1-S5.
+"""Deterministic evidence scoring engine for ADR-002 S1-S7.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from enum import Enum, IntEnum
+from fractions import Fraction
 import hashlib
 from importlib import machinery
 from importlib import metadata as importlib_metadata
@@ -115,6 +116,31 @@ OPENSSF_SELECTED_CHECKS = (
 _PROCESS_CHECK_IDS = (
     _PROCESS_CONTROL_CHECK_ID,
     *(check_id for check_id, _ in OPENSSF_SELECTED_CHECKS),
+)
+
+PINNED_ASV_VERSION = "0.6.6"
+_ASV_RESULT_SCHEMA_VERSION = 2
+_PERFORMANCE_RUNNER_SCHEMA_VERSION = "leitir-performance-runner-v1"
+_LIVE_LATENCY_SCHEMA_VERSION = "leitir-live-network-latency-v1"
+_PERFORMANCE_CONTROL_CHECK_ID = "performance.controlled_baseline"
+_PERFORMANCE_LATENCY_CHECK_ID = "performance.live_network_latency"
+_PERFORMANCE_MAGNITUDE_FACTOR = Decimal("1.10")
+_PERFORMANCE_P_THRESHOLD = Decimal("0.002")
+_PERFORMANCE_MIN_SAMPLES = 6
+_ASV_RESULT_COLUMNS = (
+    "result",
+    "params",
+    "version",
+    "started_at",
+    "duration",
+    "stats_ci_99_a",
+    "stats_ci_99_b",
+    "stats_q_25",
+    "stats_q_75",
+    "stats_number",
+    "stats_repeat",
+    "samples",
+    "profile",
 )
 _OPENSSF_CAPABILITY_NAMES = {
     "branch_protection",
@@ -4050,6 +4076,676 @@ def evaluate_process_supply_chain_collection(
     )
 
 
+class PerformanceEvaluationError(ValueError):
+    """A controlled-performance contract fault with a stable reason code."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+@dataclass(frozen=True, slots=True)
+class MannWhitneyResult:
+    """Two-sided Mann-Whitney normal approximation with tie correction."""
+
+    u: Decimal
+    variance: Fraction
+    z: Decimal
+    p_value: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceSampleSummary:
+    """Raw samples plus extrema; no average can hide their distribution."""
+
+    samples: tuple[Decimal, ...]
+    minimum: Decimal
+    maximum: Decimal
+
+    @property
+    def count(self) -> int:
+        return len(self.samples)
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceBenchmarkComparison:
+    name: str
+    benchmark_version: str
+    baseline_median: Decimal
+    candidate_median: Decimal | None
+    baseline: PerformanceSampleSummary
+    candidate: PerformanceSampleSummary | None
+    mann_whitney: MannWhitneyResult | None
+    status: CheckStatus
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceEvaluation:
+    asv_version: str
+    environment_fingerprint: str
+    comparisons: tuple[PerformanceBenchmarkComparison, ...]
+    checks: tuple[CheckResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ASVBenchmarkResult:
+    name: str
+    median: Decimal | None
+    version: str
+    samples: tuple[Decimal, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ASVRun:
+    params: Mapping[str, object]
+    python: str
+    requirements: Mapping[str, object]
+    env_name: str
+    env_vars: Mapping[str, object]
+    benchmarks: Mapping[str, _ASVBenchmarkResult]
+
+
+def _performance_json_object(
+    artifact: EvidenceArtifact, name: str
+) -> Mapping[str, object]:
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"{name} contains non-finite number {value}")
+
+    try:
+        decoded = json.loads(
+            artifact.content,
+            parse_float=Decimal,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", f"{name} is not strict JSON"
+        ) from exc
+    if not isinstance(decoded, Mapping):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", f"{name} must be a JSON object"
+        )
+    return decoded
+
+
+def _performance_decimal(value: object, name: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", f"{name} must be a JSON number"
+        )
+    result = Decimal(value)
+    if not result.is_finite() or result <= 0:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", f"{name} must be finite and positive"
+        )
+    return result
+
+
+def _asv_run(artifact: EvidenceArtifact, name: str) -> _ASVRun:
+    raw = _performance_json_object(artifact, name)
+    expected_keys = {
+        "version",
+        "commit_hash",
+        "env_name",
+        "date",
+        "params",
+        "python",
+        "requirements",
+        "env_vars",
+        "durations",
+        "result_columns",
+        "results",
+    }
+    if set(raw) != expected_keys or raw["version"] != _ASV_RESULT_SCHEMA_VERSION:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} is not pinned ASV v2 output"
+        )
+    columns = raw["result_columns"]
+    if not isinstance(columns, list) or tuple(columns) != _ASV_RESULT_COLUMNS:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH",
+            f"{name} result columns do not match pinned ASV",
+        )
+    if not isinstance(raw["commit_hash"], str) or not _SHA1.fullmatch(
+        raw["commit_hash"]
+    ):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} commit hash is invalid"
+        )
+    params = raw["params"]
+    requirements = raw["requirements"]
+    env_vars = raw["env_vars"]
+    durations = raw["durations"]
+    results = raw["results"]
+    if not all(
+        isinstance(item, Mapping)
+        for item in (params, requirements, env_vars, durations)
+    ):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} environment fields are invalid"
+        )
+    if not isinstance(raw["python"], str) or not raw["python"]:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} python is invalid"
+        )
+    if not isinstance(raw["env_name"], str) or not raw["env_name"]:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} environment name is invalid"
+        )
+    if not isinstance(results, Mapping) or not results:
+        raise PerformanceEvaluationError(
+            (
+                "PERFORMANCE_BASELINE_MISSING"
+                if name == "baseline"
+                else "PERFORMANCE_HARNESS_ERROR"
+            ),
+            f"{name} contains no benchmark results",
+        )
+    benchmarks: dict[str, _ASVBenchmarkResult] = {}
+    for benchmark_name, raw_values in results.items():
+        if not isinstance(benchmark_name, str) or not benchmark_name:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} benchmark name is invalid"
+            )
+        if (
+            not isinstance(raw_values, list)
+            or len(raw_values) < 3
+            or len(raw_values) > len(columns)
+        ):
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} benchmark row is invalid"
+            )
+        # ASV's compact v2 writer may omit trailing null columns from a row.
+        values = dict(zip(columns, raw_values))
+        if values["params"] != []:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH",
+                "parameterized ASV benchmarks require separately named policy checks",
+            )
+        result_values = values["result"]
+        sample_values = values.get("samples")
+        version = values["version"]
+        if not isinstance(result_values, list) or len(result_values) != 1:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} result value is invalid"
+            )
+        if not isinstance(version, str) or not version:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_BENCHMARK_VERSION_MISMATCH",
+                f"{name} benchmark version is missing",
+            )
+        median = (
+            None
+            if result_values[0] is None
+            else _performance_decimal(result_values[0], f"{name} median")
+        )
+        if sample_values is None and median is None:
+            samples_raw = None
+        elif not isinstance(sample_values, list) or len(sample_values) != 1:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} samples are invalid"
+            )
+        else:
+            samples_raw = sample_values[0]
+        if samples_raw is None:
+            samples: tuple[Decimal, ...] = ()
+        elif isinstance(samples_raw, list):
+            samples = tuple(
+                _performance_decimal(item, f"{name} sample") for item in samples_raw
+            )
+        else:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} samples are invalid"
+            )
+        benchmarks[benchmark_name] = _ASVBenchmarkResult(
+            name=benchmark_name,
+            median=median,
+            version=version,
+            samples=samples,
+        )
+    return _ASVRun(
+        params=params,
+        python=raw["python"],
+        requirements=requirements,
+        env_name=raw["env_name"],
+        env_vars=env_vars,
+        benchmarks=benchmarks,
+    )
+
+
+def _controlled_runner(
+    artifact: EvidenceArtifact,
+) -> tuple[str, tuple[str, ...], str | None]:
+    raw = _performance_json_object(artifact, "controlled runner output")
+    expected = {
+        "schema_version",
+        "asv_version",
+        "controlled",
+        "environment_fingerprint",
+        "interleave_order",
+        "harness_error",
+    }
+    if set(raw) != expected or raw["schema_version"] != _PERFORMANCE_RUNNER_SCHEMA_VERSION:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", "controlled runner output has an invalid schema"
+        )
+    if raw["asv_version"] != PINNED_ASV_VERSION:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ASV_VERSION_MISMATCH", "ASV version does not match the pin"
+        )
+    if raw["controlled"] is not True:
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_RUNNER_MISMATCH", "runner is not declared controlled"
+        )
+    fingerprint = raw["environment_fingerprint"]
+    if not isinstance(fingerprint, str) or not _SHA256.fullmatch(fingerprint):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_ENVIRONMENT_MISMATCH", "environment fingerprint is invalid"
+        )
+    order = raw["interleave_order"]
+    if (
+        not isinstance(order, list)
+        or len(order) < 2
+        or any(
+            not isinstance(item, str) or item not in {"baseline", "candidate"}
+            for item in order
+        )
+        or order.count("baseline") != order.count("candidate")
+        or any(left == right for left, right in zip(order, order[1:]))
+    ):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_NOT_INTERLEAVED",
+            "baseline and candidate were not run in alternating order",
+        )
+    harness_error = raw["harness_error"]
+    if harness_error is not None and (
+        not isinstance(harness_error, str) or not harness_error.strip()
+    ):
+        raise PerformanceEvaluationError(
+            "PERFORMANCE_HARNESS_ERROR", "harness error must be text or null"
+        )
+    return fingerprint, tuple(order), harness_error
+
+
+def _mann_whitney_decimal_samples(
+    values: Iterable[int | float | Decimal], name: str
+) -> tuple[Decimal, ...]:
+    samples: list[Decimal] = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+            raise TypeError(f"{name} samples must be numbers")
+        sample = Decimal(str(value))
+        if not sample.is_finite():
+            raise ValueError(f"{name} samples must be finite")
+        samples.append(sample)
+    if not samples:
+        raise ValueError(f"{name} samples must not be empty")
+    return tuple(samples)
+
+
+def mann_whitney_u_two_sided(
+    first: Iterable[int | float | Decimal],
+    second: Iterable[int | float | Decimal],
+) -> MannWhitneyResult:
+    """Return a two-sided asymptotic U test with ties and continuity correction.
+
+    The approximation is policy-owned and only used after the six-sample floor.
+    Ranks and tie variance are exact integer/Fraction arithmetic; only the final
+    normal survival function uses ``math.erfc``.
+    """
+    first_samples = _mann_whitney_decimal_samples(first, "first")
+    second_samples = _mann_whitney_decimal_samples(second, "second")
+    tagged = sorted(
+        [(value, 0) for value in first_samples]
+        + [(value, 1) for value in second_samples],
+        key=lambda item: item[0],
+    )
+    rank_sum_twice = 0
+    tie_term = 0
+    start = 0
+    while start < len(tagged):
+        end = start + 1
+        while end < len(tagged) and tagged[end][0] == tagged[start][0]:
+            end += 1
+        doubled_rank = start + end + 1
+        rank_sum_twice += doubled_rank * sum(
+            group == 0 for _, group in tagged[start:end]
+        )
+        tie_count = end - start
+        tie_term += tie_count**3 - tie_count
+        start = end
+    n_first = len(first_samples)
+    n_second = len(second_samples)
+    total = n_first + n_second
+    u_first_twice = rank_sum_twice - n_first * (n_first + 1)
+    u_second_twice = 2 * n_first * n_second - u_first_twice
+    u_twice = min(u_first_twice, u_second_twice)
+    variance = Fraction(n_first * n_second, 12) * (
+        Fraction(total + 1) - Fraction(tie_term, total * (total - 1))
+    )
+    if variance == 0:
+        z = 0.0
+        p_value = 1.0
+    else:
+        mean_u = Fraction(n_first * n_second, 2)
+        distance = abs(Fraction(u_twice, 2) - mean_u)
+        corrected = max(Fraction(0), distance - Fraction(1, 2))
+        z = float(corrected) / math.sqrt(float(variance))
+        p_value = min(1.0, math.erfc(z / math.sqrt(2.0)))
+    return MannWhitneyResult(
+        u=Decimal(u_twice) / Decimal(2),
+        variance=variance,
+        z=Decimal(str(z)),
+        p_value=Decimal(str(p_value)),
+    )
+
+
+def _sample_summary(samples: tuple[Decimal, ...]) -> PerformanceSampleSummary:
+    return PerformanceSampleSummary(
+        samples=samples,
+        minimum=min(samples),
+        maximum=max(samples),
+    )
+
+
+def _performance_result(
+    *,
+    status: CheckStatus,
+    reason_code: str,
+    artifacts: tuple[EvidenceArtifact, ...],
+    comparisons: tuple[PerformanceBenchmarkComparison, ...],
+) -> CheckResult:
+    evidence: list[Mapping[str, str]] = list(_artifact_references(artifacts))
+    for item in comparisons:
+        evidence.extend(
+            (
+                {"kind": "benchmark", "value": item.name},
+                {"kind": "baseline_median", "value": str(item.baseline_median)},
+                {"kind": "baseline_sample_count", "value": str(item.baseline.count)},
+                {"kind": "baseline_minimum", "value": str(item.baseline.minimum)},
+                {"kind": "baseline_maximum", "value": str(item.baseline.maximum)},
+            )
+        )
+        if item.candidate_median is not None and item.candidate is not None:
+            evidence.extend(
+                (
+                    {"kind": "candidate_median", "value": str(item.candidate_median)},
+                    {"kind": "candidate_sample_count", "value": str(item.candidate.count)},
+                    {"kind": "candidate_minimum", "value": str(item.candidate.minimum)},
+                    {"kind": "candidate_maximum", "value": str(item.candidate.maximum)},
+                )
+            )
+        if item.mann_whitney is not None:
+            evidence.extend(
+                (
+                    {"kind": "mann_whitney_u", "value": str(item.mann_whitney.u)},
+                    {"kind": "mann_whitney_p", "value": str(item.mann_whitney.p_value)},
+                )
+            )
+    return CheckResult(
+        id=_PERFORMANCE_CONTROL_CHECK_ID,
+        status=status,
+        score_bps=(10000 if status is CheckStatus.PASS else 0)
+        if status in {CheckStatus.PASS, CheckStatus.FAIL}
+        else None,
+        reason_code=reason_code,
+        evidence=tuple(evidence),
+    )
+
+
+def _failed_performance_evaluation(
+    reason_code: str,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> PerformanceEvaluation:
+    return PerformanceEvaluation(
+        asv_version=PINNED_ASV_VERSION,
+        environment_fingerprint="unknown",
+        comparisons=(),
+        checks=(
+            _error_result(
+                _PERFORMANCE_CONTROL_CHECK_ID,
+                reason_code,
+                artifacts,
+                status=CheckStatus.ERROR,
+            ),
+        ),
+    )
+
+
+def evaluate_performance_evidence(
+    *,
+    runner_output: EvidenceArtifact,
+    baseline_asv: EvidenceArtifact | None,
+    candidate_asv: EvidenceArtifact,
+) -> PerformanceEvaluation:
+    """Evaluate pinned, interleaved ASV results without collecting benchmarks."""
+    supplied = tuple(
+        item
+        for item in (runner_output, baseline_asv, candidate_asv)
+        if isinstance(item, EvidenceArtifact)
+    )
+    if not isinstance(runner_output, EvidenceArtifact):
+        raise TypeError("runner_output must be an EvidenceArtifact")
+    if baseline_asv is not None and not isinstance(baseline_asv, EvidenceArtifact):
+        raise TypeError("baseline_asv must be an EvidenceArtifact or None")
+    if not isinstance(candidate_asv, EvidenceArtifact):
+        raise TypeError("candidate_asv must be an EvidenceArtifact")
+    if baseline_asv is None:
+        return _failed_performance_evaluation("PERFORMANCE_BASELINE_MISSING", supplied)
+    try:
+        fingerprint, _, harness_error = _controlled_runner(runner_output)
+        if harness_error is not None:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_HARNESS_ERROR", "controlled runner reported a harness error"
+            )
+        baseline = _asv_run(baseline_asv, "baseline")
+        candidate = _asv_run(candidate_asv, "candidate")
+        run_fingerprint = baseline.params.get("environment_fingerprint")
+        if (
+            run_fingerprint != fingerprint
+            or candidate.params.get("environment_fingerprint") != fingerprint
+        ):
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ENVIRONMENT_MISMATCH", "ASV environment fingerprints do not match"
+            )
+        if baseline.params != candidate.params:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_RUNNER_MISMATCH", "ASV machine parameters do not match"
+            )
+        if (
+            baseline.python != candidate.python
+            or baseline.requirements != candidate.requirements
+            or baseline.env_name != candidate.env_name
+            or baseline.env_vars != candidate.env_vars
+        ):
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_ENVIRONMENT_MISMATCH", "ASV environments do not match"
+            )
+        if set(baseline.benchmarks) != set(candidate.benchmarks):
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_HARNESS_ERROR", "baseline and candidate benchmark sets differ"
+            )
+        comparisons: list[PerformanceBenchmarkComparison] = []
+        for benchmark_name in sorted(baseline.benchmarks):
+            before = baseline.benchmarks[benchmark_name]
+            after = candidate.benchmarks[benchmark_name]
+            if before.version != after.version:
+                raise PerformanceEvaluationError(
+                    "PERFORMANCE_BENCHMARK_VERSION_MISMATCH",
+                    f"benchmark version changed for {benchmark_name}",
+                )
+            if before.median is None or not before.samples:
+                raise PerformanceEvaluationError(
+                    "PERFORMANCE_BASELINE_MISSING",
+                    f"successful baseline is missing for {benchmark_name}",
+                )
+            baseline_summary = _sample_summary(before.samples)
+            if after.median is None:
+                comparisons.append(
+                    PerformanceBenchmarkComparison(
+                        name=benchmark_name,
+                        benchmark_version=before.version,
+                        baseline_median=before.median,
+                        candidate_median=None,
+                        baseline=baseline_summary,
+                        candidate=None,
+                        mann_whitney=None,
+                        status=CheckStatus.FAIL,
+                        reason_code="PERFORMANCE_CANDIDATE_FUNCTIONAL_FAILURE",
+                    )
+                )
+                continue
+            if not after.samples:
+                raise PerformanceEvaluationError(
+                    "PERFORMANCE_HARNESS_ERROR",
+                    f"candidate samples are missing for {benchmark_name}",
+                )
+            candidate_summary = _sample_summary(after.samples)
+            if (
+                baseline_summary.count < _PERFORMANCE_MIN_SAMPLES
+                or candidate_summary.count < _PERFORMANCE_MIN_SAMPLES
+            ):
+                status = CheckStatus.UNKNOWN
+                reason_code = "PERFORMANCE_INSUFFICIENT_SAMPLES"
+                statistic = None
+            elif after.median <= before.median * _PERFORMANCE_MAGNITUDE_FACTOR:
+                status = CheckStatus.PASS
+                reason_code = "PERFORMANCE_NO_HARD_REGRESSION"
+                statistic = None
+            else:
+                statistic = mann_whitney_u_two_sided(before.samples, after.samples)
+                if statistic.p_value < _PERFORMANCE_P_THRESHOLD:
+                    status = CheckStatus.FAIL
+                    reason_code = "PERFORMANCE_SIGNIFICANT_REGRESSION"
+                else:
+                    status = CheckStatus.UNKNOWN
+                    reason_code = "PERFORMANCE_REGRESSION_INCONCLUSIVE"
+            comparisons.append(
+                PerformanceBenchmarkComparison(
+                    name=benchmark_name,
+                    benchmark_version=before.version,
+                    baseline_median=before.median,
+                    candidate_median=after.median,
+                    baseline=baseline_summary,
+                    candidate=candidate_summary,
+                    mann_whitney=statistic,
+                    status=status,
+                    reason_code=reason_code,
+                )
+            )
+    except PerformanceEvaluationError as exc:
+        return _failed_performance_evaluation(exc.reason_code, supplied)
+    normalized = tuple(comparisons)
+    failures = tuple(item for item in normalized if item.status is CheckStatus.FAIL)
+    unresolved = tuple(item for item in normalized if item.status is CheckStatus.UNKNOWN)
+    if failures:
+        status = CheckStatus.FAIL
+        reason_code = (
+            "PERFORMANCE_CANDIDATE_FUNCTIONAL_FAILURE"
+            if any(
+                item.reason_code == "PERFORMANCE_CANDIDATE_FUNCTIONAL_FAILURE"
+                for item in failures
+            )
+            else "PERFORMANCE_SIGNIFICANT_REGRESSION"
+        )
+    elif unresolved:
+        status = CheckStatus.UNKNOWN
+        reason_code = (
+            "PERFORMANCE_INSUFFICIENT_SAMPLES"
+            if any(
+                item.reason_code == "PERFORMANCE_INSUFFICIENT_SAMPLES"
+                for item in unresolved
+            )
+            else "PERFORMANCE_REGRESSION_INCONCLUSIVE"
+        )
+    else:
+        status = CheckStatus.PASS
+        reason_code = "PERFORMANCE_NO_HARD_REGRESSION"
+    check = _performance_result(
+        status=status,
+        reason_code=reason_code,
+        artifacts=supplied,
+        comparisons=normalized,
+    )
+    return PerformanceEvaluation(
+        asv_version=PINNED_ASV_VERSION,
+        environment_fingerprint=fingerprint,
+        comparisons=normalized,
+        checks=(check,),
+    )
+
+
+def evaluate_live_network_latency(artifact: EvidenceArtifact) -> CheckResult:
+    """Validate and retain latency diagnostics without applying a threshold."""
+    if not isinstance(artifact, EvidenceArtifact):
+        raise TypeError("artifact must be an EvidenceArtifact")
+    try:
+        raw = _performance_json_object(artifact, "live network latency")
+        if (
+            set(raw) != {"schema_version", "measurements"}
+            or raw["schema_version"] != _LIVE_LATENCY_SCHEMA_VERSION
+        ):
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_LATENCY_HARNESS_ERROR",
+                "latency evidence has an invalid schema",
+            )
+        measurements = raw["measurements"]
+        if not isinstance(measurements, list) or not measurements:
+            raise PerformanceEvaluationError(
+                "PERFORMANCE_LATENCY_UNAVAILABLE", "latency evidence has no measurements"
+            )
+        evidence: list[Mapping[str, str]] = list(_artifact_references((artifact,)))
+        sample_count = 0
+        for measurement in measurements:
+            if not isinstance(measurement, Mapping) or set(measurement) != {
+                "endpoint",
+                "samples_ms",
+            }:
+                raise PerformanceEvaluationError(
+                    "PERFORMANCE_LATENCY_HARNESS_ERROR", "latency measurement is invalid"
+                )
+            endpoint = measurement["endpoint"]
+            samples = measurement["samples_ms"]
+            if (
+                not isinstance(endpoint, str)
+                or not endpoint
+                or not isinstance(samples, list)
+                or not samples
+            ):
+                raise PerformanceEvaluationError(
+                    "PERFORMANCE_LATENCY_UNAVAILABLE", "latency measurement is incomplete"
+                )
+            parsed = tuple(
+                _performance_decimal(item, "latency sample") for item in samples
+            )
+            sample_count += len(parsed)
+            evidence.extend(
+                (
+                    {"kind": "endpoint", "value": endpoint},
+                    {"kind": "sample_count", "value": str(len(parsed))},
+                    {"kind": "minimum_ms", "value": str(min(parsed))},
+                    {"kind": "maximum_ms", "value": str(max(parsed))},
+                )
+            )
+        return CheckResult(
+            id=_PERFORMANCE_LATENCY_CHECK_ID,
+            status=CheckStatus.PASS,
+            score_bps=10000,
+            reason_code="PERFORMANCE_LATENCY_OBSERVED_ADVISORY",
+            numerator=sample_count,
+            denominator=sample_count,
+            evidence=tuple(evidence),
+        )
+    except PerformanceEvaluationError as exc:
+        return _error_result(
+            _PERFORMANCE_LATENCY_CHECK_ID,
+            exc.reason_code,
+            (artifact,),
+            status=CheckStatus.UNKNOWN,
+        )
+
+
 SourceIdentity = tuple[str, str, str, str, int, int]
 
 
@@ -5327,6 +6023,7 @@ __all__ = [
     "CoverageReport",
     "MaintainabilityIndexReport",
     "MutationReport",
+    "MannWhitneyResult",
     "GitHubCapabilities",
     "OPENSSF_SCORECARD_API",
     "OPENSSF_SELECTED_CHECKS",
@@ -5338,7 +6035,12 @@ __all__ = [
     "PINNED_SCORE_TOOL_VERSIONS",
     "PINNED_OPENSSF_SCORECARD_COMMIT",
     "PINNED_OPENSSF_SCORECARD_VERSION",
+    "PINNED_ASV_VERSION",
     "Policy",
+    "PerformanceBenchmarkComparison",
+    "PerformanceEvaluation",
+    "PerformanceEvaluationError",
+    "PerformanceSampleSummary",
     "ProcessSupplyChainEvaluation",
     "Producer",
     "Profile",
@@ -5367,6 +6069,8 @@ __all__ = [
     "evaluate_code_health_evidence",
     "evaluate_global_no_exhaustiveness",
     "evaluate_output_effectiveness_evidence",
+    "evaluate_performance_evidence",
+    "evaluate_live_network_latency",
     "evaluate_process_supply_chain_collection",
     "evaluate_process_supply_chain_evidence",
     "evaluate_pytest_junit",
@@ -5377,6 +6081,7 @@ __all__ = [
     "evaluate_total_ordering",
     "evaluate_test_adequacy_evidence",
     "load_policy",
+    "mann_whitney_u_two_sided",
     "policy_from_dict",
     "proportional_score_bps",
     "score_from_counts",

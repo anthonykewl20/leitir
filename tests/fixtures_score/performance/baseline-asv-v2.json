@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "commit_hash": "1111111111111111111111111111111111111111",
+  "env_name": "virtualenv-py3.11",
+  "date": 1785715200000,
+  "params": {
+    "machine": "leitir-controlled-linux-x86_64",
+    "arch": "x86_64",
+    "cpu": "pinned-cpu-set-2",
+    "os": "Linux controlled-runner",
+    "ram": "16GB",
+    "environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "python": "3.11",
+  "requirements": {
+    "leitir": "0.1.0"
+  },
+  "env_vars": {
+    "PYTHONHASHSEED": "0"
+  },
+  "durations": {
+    "build": 1.25
+  },
+  "result_columns": [
+    "result",
+    "params",
+    "version",
+    "started_at",
+    "duration",
+    "stats_ci_99_a",
+    "stats_ci_99_b",
+    "stats_q_25",
+    "stats_q_75",
+    "stats_number",
+    "stats_repeat",
+    "samples",
+    "profile"
+  ],
+  "results": {
+    "benchmarks.TimeSearch.time_scoped_query": [
+      [100],
+      [],
+      "time-scoped-query-v1",
+      1785715201000,
+      0.8,
+      [90],
+      [107],
+      [94],
+      [104],
+      [1],
+      [8],
+      [[90, 92, 94, 97, 100, 102, 104, 107]]
+    ]
+  }
+}

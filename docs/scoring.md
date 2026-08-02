@@ -10,10 +10,15 @@ Run the locally collectible profile and write canonical JSON plus deterministic
 HTML:
 
 ```bash
-PYTHONPATH=src python tools/score_engine.py run --profile offline \
+PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python \
+  tools/score_engine.py run --profile offline \
   --json-out .leitir-score/assessment.json \
   --html-out .leitir-score/scorecard.html
 ```
+
+Use the `uv` invocation above: the fixed offline collector launches `python -m
+pytest`, so a bare interpreter without the test lock cannot produce valid test
+evidence.
 
 Run the release profile with opt-in live OpenSSF/GitHub evidence:
 
@@ -99,6 +104,65 @@ scores into the files. Then rerun the profile command. Every consumed byte is
 SHA-256-bound into the assessment. Missing, partial, malformed, mismatched, or
 unapproved evidence remains unresolved or becomes a known policy failure as
 defined by its adapter.
+
+Collector-generated formats are normalized only where their schemas contain
+non-semantic run volatility. Pytest JUnit drops suite `timestamp` and
+`hostname` plus every `time`/`duration` attribute; coverage.py JSON drops
+`meta.timestamp`; ASV drops orchestration dates and durations while retaining
+the benchmark samples and controlled-machine identity. The assessment evidence
+entry names the versioned normalization and its `sha256` identifies the
+canonical bytes used by evaluation. The exact pre-normalization byte digest is
+recorded separately in `.leitir-score/run-envelope.json`, alongside host and
+run timing, so raw provenance remains visible without changing assessment
+identity. OpenSSF's provider observation date and performance samples remain
+canonical evidence because they identify the measured snapshot, not local
+collector overhead.
+
+## Published Leitir assessment
+
+The canonical dogfood result is
+[`scorecard/leitir-assessment.json`](../scorecard/leitir-assessment.json); the
+generated view is
+[`scorecard/leitir-assessment.html`](../scorecard/leitir-assessment.html). It
+assesses clean commit
+`379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a` with the offline profile. The
+published gate is honestly `indeterminate`, its exact score is `unknown`, its
+observed score is `10000`, and its bounds are `476` through `10000`; it makes no
+release-readiness claim because 29 required results remain uncollected.
+
+Regenerate it without reading identity from a dirty developer worktree:
+
+```bash
+subject_dir=$(mktemp -d)
+git clone --quiet --no-hardlinks --no-checkout . "$subject_dir/pinned-subject"
+git -C "$subject_dir/pinned-subject" checkout --quiet --detach \
+  379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a
+git -C "$subject_dir/pinned-subject" remote set-url origin \
+  https://github.com/anthonykewl20/leitir.git
+PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python \
+  tools/score_engine.py run --profile offline \
+  --root "$subject_dir/pinned-subject" \
+  --json-out "$PWD/scorecard/leitir-assessment.json" \
+  --html-out "$PWD/scorecard/leitir-assessment.html" \
+  --run-envelope-out "$PWD/.leitir-score/run-envelope.json"
+```
+
+Exit 3 is expected for this published indeterminate result. The regeneration
+gate is `tests/test_score_dogfood.py`. It builds its own temporary clean clone
+at the pin and byte-compares both regenerated files with the published files.
+Therefore a hand edit to either JSON or HTML fails, as does a scorer/renderer
+change whose artifact was not regenerated. The current worktree may be dirty:
+it supplies the scorer code under test but is never represented as the clean
+subject. The test also asserts that none of the following manual snapshots is
+an evidence path:
+
+- `docs/leitir-engine-scorecard.html`
+- `docs/leitir-engine-scorecard.png`
+- `docs/leitir-engine-scorecard-v2.html`
+
+Those three files are historical, dated manual research snapshots only. They
+must never be consumed as scorer evidence; their editorial values are not a
+replacement for the canonical unknown-with-bounds result.
 
 ## Rendering contract
 

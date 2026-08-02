@@ -73,6 +73,10 @@ result into a pass. Run against this repository it currently declines to pass
 itself, because most required evidence has never been collected here — see
 [docs/scoring.md](docs/scoring.md).
 
+The published current result is the generated
+[HTML assessment](scorecard/leitir-assessment.html), whose canonical source is
+[JSON](scorecard/leitir-assessment.json).
+
 ## Tests
 
 ```bash
@@ -92,7 +96,10 @@ against GitHub is opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`.
 Historical, describing the retired v1 synthesis pipeline:
 [PRD](docs/PRD.md), [operations guide](docs/operations.md),
 [smoke evaluation](docs/smoke-evaluation.md), and the manual
-[engine health scorecard](docs/leitir-engine-scorecard.html).
+[v1 engine health scorecard](docs/leitir-engine-scorecard.html), its
+[historical PNG snapshot](docs/leitir-engine-scorecard.png), and the manual
+[v2 editorial scorecard](docs/leitir-engine-scorecard-v2.html). These manual
+snapshots are never scorer evidence.
 
 ## Repository layout
 

@@ -17,6 +17,7 @@ from tools.score_engine import (
     evaluate_performance_evidence,
     load_policy,
     mann_whitney_u_two_sided,
+    _local_evidence_artifact,
 )
 
 
@@ -71,6 +72,41 @@ def _evaluation(
         baseline_asv=baseline if baseline is not None else _fixture("baseline-asv-v2.json"),
         candidate_asv=candidate or _fixture("candidate-asv-v2.json"),
     )
+
+
+def test_asv_orchestration_time_is_noncanonical_but_samples_remain_bound(tmp_path):
+    first = _raw("candidate-asv-v2.json")
+    second = json.loads(json.dumps(first))
+    second["date"] = 1999999999999
+    second["durations"] = {"build": 99.5}
+    columns = second["result_columns"]
+    row = second["results"]["benchmarks.TimeSearch.time_scoped_query"]
+    row[columns.index("started_at")] = 1999999999998
+    row[columns.index("duration")] = 88.5
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    path = evidence_dir / "candidate-asv.json"
+    path.write_bytes(canonical_json_bytes(first))
+    first_artifact = _local_evidence_artifact(
+        evidence_dir, "candidate-asv.json", "performance.candidate"
+    )
+    path.write_bytes(canonical_json_bytes(second))
+    second_artifact = _local_evidence_artifact(
+        evidence_dir, "candidate-asv.json", "performance.candidate"
+    )
+    row[columns.index("samples")][0][0] += 1
+    path.write_bytes(canonical_json_bytes(second))
+    changed_artifact = _local_evidence_artifact(
+        evidence_dir, "candidate-asv.json", "performance.candidate"
+    )
+
+    assert first_artifact is not None
+    assert second_artifact is not None
+    assert changed_artifact is not None
+    assert first_artifact.raw_sha256 != second_artifact.raw_sha256
+    assert first_artifact.sha256 == second_artifact.sha256
+    assert changed_artifact.sha256 != second_artifact.sha256
+    assert first_artifact.normalization == "asv-json-volatile-v1"
 
 
 def test_exact_1_10_magnitude_boundary_passes_with_decimal_arithmetic():

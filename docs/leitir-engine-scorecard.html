@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leitir v1 — Engine Scorecard (expert consensus)</title>
+<title>Historical — Leitir v1 Engine Scorecard (expert consensus)</title>
 <style>
   :root{
     --surface:#fcfcfb; --surface-2:#f3f2ee; --ink:#0b0b0b; --muted:#52514e; --rule:#e4e2dc;
@@ -18,6 +18,9 @@
     font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     padding:32px 20px 64px}
   .wrap{max-width:1040px;margin:0 auto}
+  .historical-banner{max-width:1040px;margin:0 auto 20px;padding:14px 16px;border:3px solid #b42318;
+    background:#fff1f0;color:#5c0b07;font-weight:600;border-radius:8px}
+  .historical-banner a{color:#7a271a}
   h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em}
   .sub{color:var(--muted);margin:0 0 4px;font-size:14px}
   .stamp{color:var(--muted);font-size:12px;margin:0 0 18px}
@@ -63,6 +66,13 @@
 </style>
 </head>
 <body>
+<aside class="historical-banner" role="note">
+  HISTORICAL MANUAL RESEARCH SNAPSHOT — dated 2026-07-25. This document and its PNG
+  are not executable evidence and must never be consumed by the scorer. See the
+  <a href="../scorecard/leitir-assessment.html">current generated assessment</a>,
+  <a href="adr-001-remove-hy3-deterministic-search.md">ADR-001</a>, and
+  <a href="adr-002-deterministic-evidence-scoring-engine.md">ADR-002</a>.
+</aside>
 <div class="wrap">
   <h1>Leitir v1 — Engine Scorecard</h1>
   <p class="sub">Every nut &amp; bolt scored 0–10 by three expert reviewers <strong>blind</strong>, independently. Weakest on top.</p>

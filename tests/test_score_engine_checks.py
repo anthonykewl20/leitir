@@ -74,6 +74,45 @@ def _replays() -> tuple[EvidenceArtifact, ...]:
     )
 
 
+def _collected_junit(
+    tmp_path: Path,
+    monkeypatch,
+    content: bytes,
+    *,
+    process_exit: int = 0,
+) -> EvidenceArtifact:
+    (tmp_path / "src").mkdir(exist_ok=True)
+
+    def fake_run(_argv, **_kwargs):
+        output = tmp_path / ".leitir-score" / "evidence" / "adr001-offline-junit.xml"
+        output.write_bytes(content)
+        return SimpleNamespace(returncode=process_exit)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return collect_adr001_pytest_junit(tmp_path)
+
+
+def _ten_test_junit(*, passed: int, skipped: int, timestamp: str) -> bytes:
+    cases = [
+        f'<testcase classname="tests.test_engine" name="test_pass_{index}" time="0.001" />'
+        for index in range(passed)
+    ]
+    cases.extend(
+        f'<testcase classname="tests.test_engine" name="test_skip_{index}" time="0.002">'
+        '<skipped type="pytest.skip" message="offline prerequisite unavailable">'
+        "offline prerequisite unavailable</skipped></testcase>"
+        for index in range(skipped)
+    )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<testsuites name="pytest tests"><testsuite name="pytest" errors="0" '
+        f'failures="0" skipped="{skipped}" tests="{passed + skipped}" '
+        f'time="9.999" timestamp="{timestamp}" hostname="volatile-host">'
+        + "".join(cases)
+        + "</testsuite></testsuites>"
+    ).encode("utf-8")
+
+
 def test_passing_engine_vector_is_policy_complete_and_canonical():
     junit = _junit("pytest-pass.xml", 0)
     replay_artifacts = _replays()
@@ -180,6 +219,111 @@ def test_non_green_exit_with_skips_cannot_have_a_perfect_failure_score():
     assert result.score_bps < 10000
     assert result.reason_code == "PYTEST_NON_GREEN_EXIT"
     assert result.exclusions == (("PYTEST_SKIPPED", 1),)
+
+
+@pytest.mark.parametrize(
+    ("passed", "skipped", "process_exit", "status", "score_bps", "reason_code"),
+    [
+        (0, 10, 0, CheckStatus.SKIPPED, None, "PYTEST_ALL_TESTS_SKIPPED"),
+        (8, 2, 0, CheckStatus.FAIL, 8000, "PYTEST_TESTS_SKIPPED"),
+        (5, 5, 1, CheckStatus.FAIL, 5000, "PYTEST_NON_GREEN_EXIT"),
+    ],
+)
+def test_collector_canonicalization_preserves_skip_arithmetic(
+    tmp_path,
+    monkeypatch,
+    passed,
+    skipped,
+    process_exit,
+    status,
+    score_bps,
+    reason_code,
+):
+    artifact = _collected_junit(
+        tmp_path,
+        monkeypatch,
+        _ten_test_junit(
+            passed=passed,
+            skipped=skipped,
+            timestamp="2026-08-03T00:00:00+00:00",
+        ),
+        process_exit=process_exit,
+    )
+
+    result = evaluate_pytest_junit(artifact)
+
+    assert (result.status, result.score_bps, result.reason_code) == (
+        status,
+        score_bps,
+        reason_code,
+    )
+    assert (result.numerator, result.denominator) == (passed, passed + skipped)
+    assert artifact.normalization == "pytest-junit-volatile-v1"
+
+
+def test_fresh_junit_collections_have_stable_identity_but_real_changes_do_not(
+    tmp_path, monkeypatch
+):
+    first = _collected_junit(
+        tmp_path,
+        monkeypatch,
+        _ten_test_junit(
+            passed=8,
+            skipped=2,
+            timestamp="2026-08-03T00:00:00+00:00",
+        ),
+    )
+    second_content = _ten_test_junit(
+        passed=8,
+        skipped=2,
+        timestamp="2030-01-01T12:34:56+00:00",
+    ).replace(b'time="9.999"', b'time="0.123"').replace(
+        b'hostname="volatile-host"', b'hostname="another-host"'
+    )
+    second = _collected_junit(tmp_path, monkeypatch, second_content)
+    changed = _collected_junit(
+        tmp_path,
+        monkeypatch,
+        second_content.replace(b'name="test_pass_0"', b'name="test_changed_0"'),
+    )
+
+    assert first.raw_sha256 != second.raw_sha256
+    assert first.sha256 == second.sha256
+    assert first.content == second.content
+    assert changed.sha256 != second.sha256
+
+    policy = load_policy(REPO_ROOT / "scorecard" / "policy-v1.json")
+    subject = Subject("https://example.invalid/leitir", "1" * 40, "clean")
+    producer = Producer("leitir-score-engine", "8", "2" * 40)
+
+    def assessed(artifact):
+        return evaluate(
+            policy,
+            (evaluate_pytest_junit(artifact),),
+            profile=Profile.OFFLINE,
+            subject=subject,
+            producer=producer,
+            evidence=(artifact,),
+        )
+
+    assert assessed(first).digest() == assessed(second).digest()
+    assert assessed(changed).digest() != assessed(second).digest()
+
+
+def test_collector_canonicalization_keeps_lied_exit_zero_collection_failed(
+    tmp_path, monkeypatch
+):
+    content = (FIXTURES / "pytest-zero.xml").read_bytes()
+    artifact = _collected_junit(
+        tmp_path, monkeypatch, content, process_exit=0
+    )
+
+    result = evaluate_pytest_junit(artifact)
+
+    assert artifact.normalization == "pytest-junit-volatile-v1"
+    assert result.status is CheckStatus.FAIL
+    assert result.score_bps == 0
+    assert result.reason_code == "PYTEST_ZERO_TESTS_COLLECTED"
 
 
 def test_partial_scoped_coverage_is_a_known_failure():

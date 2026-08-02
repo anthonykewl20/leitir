@@ -261,6 +261,39 @@ def test_api_404_collection_is_typed_unavailable_and_never_passes(monkeypatch):
     assert all(item.score_bps is None for item in evaluation.checks)
 
 
+def test_local_collection_clock_does_not_change_unavailable_check_evidence(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise urllib.error.HTTPError(
+            "https://api.securityscorecards.dev/projects/github.com/example/missing",
+            404,
+            "Not Found",
+            {},
+            None,
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", unavailable)
+    policy = load_policy(POLICY_PATH)
+    first = evaluate_process_supply_chain_collection(
+        policy=policy,
+        collection=collect_openssf_scorecard(
+            "example/missing", collected_at="2026-08-03T00:00:00Z"
+        ),
+    )
+    second = evaluate_process_supply_chain_collection(
+        policy=policy,
+        collection=collect_openssf_scorecard(
+            "example/missing", collected_at="2030-01-01T12:34:56Z"
+        ),
+    )
+
+    assert first.checks == second.checks
+    assert not any(
+        entry["kind"] == "collection_time"
+        for check in first.checks
+        for entry in check.evidence
+    )
+
+
 def test_unsupported_is_unknown_not_not_applicable():
     raw = _raw()
     _replace_check(

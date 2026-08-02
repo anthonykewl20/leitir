@@ -26,6 +26,7 @@ from tools.score_engine import (
     Policy,
     Producer,
     Profile,
+    RawEvidenceProvenance,
     RunEnvelope,
     SourceSpan,
     Subject,
@@ -634,6 +635,30 @@ def test_run_envelope_copies_host_mapping_before_freezing():
         "hostname": "builder-a",
         "platform": "linux",
     }
+
+
+def test_raw_collector_digest_lives_in_run_envelope_not_assessment_identity():
+    assessment = _assessment()
+    raw = RawEvidenceProvenance(
+        id="engine.pytest-junit",
+        path=".leitir-score/evidence/adr001-offline-junit.xml",
+        raw_sha256="b" * 64,
+        canonical_sha256="c" * 64,
+        normalization="pytest-junit-volatile-v1",
+    )
+    envelope = RunEnvelope(
+        subject_sha256=assessment.digest(),
+        started_at_utc="2026-08-02T00:00:00Z",
+        finished_at_utc="2026-08-02T00:00:01Z",
+        duration_ns=1,
+        host={"hostname": "builder-a"},
+        log_paths=(),
+        raw_evidence=(raw,),
+    )
+
+    assert envelope.to_dict()["raw_evidence"] == [raw.to_dict()]
+    assert raw.raw_sha256 in envelope.to_json()
+    assert raw.raw_sha256 not in assessment.to_json()
 
 
 def test_assessment_digest_is_pinned_by_real_fixture_bytes():

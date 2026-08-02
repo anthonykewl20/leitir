@@ -13,6 +13,7 @@ from tools.score_engine import (
     evaluate_code_health_evidence,
     load_policy,
     policy_from_dict,
+    _local_evidence_artifact,
 )
 
 
@@ -52,6 +53,38 @@ def _evaluation(*, cc=None, mi=None, versions=None, policy=None):
 
 def _check(evaluation, check_id: str):
     return next(item for item in evaluation.checks if item.id == check_id)
+
+
+def test_coverage_timestamp_is_noncanonical_but_measurement_changes_are_bound(
+    tmp_path,
+):
+    first = json.loads((FIXTURES / "coverage.json").read_text(encoding="utf-8"))
+    second = json.loads(json.dumps(first))
+    second["meta"]["timestamp"] = "2030-01-01T12:34:56.000000"
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    path = evidence_dir / "coverage.json"
+    path.write_bytes(canonical_json_bytes(first))
+    first_artifact = _local_evidence_artifact(
+        evidence_dir, "coverage.json", "test.coverage"
+    )
+    path.write_bytes(canonical_json_bytes(second))
+    second_artifact = _local_evidence_artifact(
+        evidence_dir, "coverage.json", "test.coverage"
+    )
+    second["totals"]["covered_lines"] -= 1
+    path.write_bytes(canonical_json_bytes(second))
+    changed_artifact = _local_evidence_artifact(
+        evidence_dir, "coverage.json", "test.coverage"
+    )
+
+    assert first_artifact is not None
+    assert second_artifact is not None
+    assert changed_artifact is not None
+    assert first_artifact.raw_sha256 != second_artifact.raw_sha256
+    assert first_artifact.sha256 == second_artifact.sha256
+    assert changed_artifact.sha256 != second_artifact.sha256
+    assert first_artifact.normalization == "coverage-json-volatile-v1"
 
 
 def test_real_radon_fixture_reports_scope_maximum_distribution_counts_and_coverage():

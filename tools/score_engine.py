@@ -1,4 +1,4 @@
-"""Deterministic evidence scoring engine for ADR-002 S1-S8.
+"""Deterministic evidence scoring engine for ADR-002 S1-S9.
 
 This standalone module intentionally imports no Leitir package code.  It owns
 the policy vocabulary, integer scoring arithmetic, non-compensating gate, and
@@ -31,7 +31,7 @@ from xml.etree import ElementTree
 ASSESSMENT_SCHEMA_VERSION = "leitir-assessment-v1"
 POLICY_SCHEMA_VERSION = "leitir-score-policy-v1"
 RUN_ENVELOPE_SCHEMA_VERSION = "leitir-score-run-envelope-v1"
-SCORE_ENGINE_VERSION = "8"
+SCORE_ENGINE_VERSION = "9"
 DIMENSION_IDS = (
     "engine_correctness",
     "output_effectiveness",
@@ -47,6 +47,7 @@ _REASON_CODE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
+_NORMALIZATION_ID = re.compile(r"^[a-z][a-z0-9-]*-v[1-9][0-9]*$")
 _REPO_SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -623,11 +624,15 @@ class SourceSpan:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceArtifact:
-    """Raw evidence bytes plus the canonical provenance retained for them.
+    """Evidence bytes plus the canonical provenance retained for them.
 
     ``content`` is evaluation input and is deliberately excluded from canonical
     output.  Its pinned SHA-256 is verified at construction, so altered bytes
-    never reach scoring as apparently valid evidence.
+    never reach scoring as apparently valid evidence.  Collector formats may
+    normalize explicitly identified volatile fields before constructing the
+    artifact.  In that case ``raw_content`` and ``raw_sha256`` retain the exact
+    collected-byte identity for a separate run envelope; they never enter the
+    canonical assessment digest.
     """
 
     id: str
@@ -636,6 +641,9 @@ class EvidenceArtifact:
     content: bytes = field(repr=False, compare=False)
     command: CommandExecution | None = None
     sources: tuple[SourceSpan, ...] = ()
+    normalization: str | None = None
+    raw_sha256: str | None = field(default=None, repr=False, compare=False)
+    raw_content: bytes | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, str) or not _EVIDENCE_ID.fullmatch(self.id):
@@ -647,6 +655,28 @@ class EvidenceArtifact:
             raise TypeError("evidence content must be bytes")
         if hashlib.sha256(self.content).hexdigest() != self.sha256:
             raise ValueError("evidence content does not match its declared sha256")
+        normalized_fields = (
+            self.normalization,
+            self.raw_sha256,
+            self.raw_content,
+        )
+        if any(item is not None for item in normalized_fields):
+            if not all(item is not None for item in normalized_fields):
+                raise ValueError(
+                    "normalized evidence requires normalization, raw_sha256, and raw_content"
+                )
+            if not isinstance(self.normalization, str) or not _NORMALIZATION_ID.fullmatch(
+                self.normalization
+            ):
+                raise ValueError("evidence normalization must be a versioned identifier")
+            if not isinstance(self.raw_sha256, str) or not _SHA256.fullmatch(
+                self.raw_sha256
+            ):
+                raise ValueError("raw evidence sha256 must be lowercase SHA-256")
+            if not isinstance(self.raw_content, bytes):
+                raise TypeError("raw evidence content must be bytes")
+            if hashlib.sha256(self.raw_content).hexdigest() != self.raw_sha256:
+                raise ValueError("raw evidence content does not match its declared sha256")
         if self.command is not None and not isinstance(
             self.command, CommandExecution
         ):
@@ -690,12 +720,53 @@ class EvidenceArtifact:
         return (self.id, self.path, self.sha256)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "id": self.id,
             "path": self.path,
             "sha256": self.sha256,
             "command": None if self.command is None else self.command.to_dict(),
             "sources": [item.to_dict() for item in self.sources],
+        }
+        if self.normalization is not None:
+            result["normalization"] = self.normalization
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class RawEvidenceProvenance:
+    """Exact collected-byte identity kept outside assessment identity."""
+
+    id: str
+    path: str
+    raw_sha256: str
+    canonical_sha256: str
+    normalization: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not _EVIDENCE_ID.fullmatch(self.id):
+            raise ValueError("raw evidence ID must be a lowercase stable identifier")
+        _validate_canonical_path(self.path, "raw evidence path")
+        for value, name in (
+            (self.raw_sha256, "raw_sha256"),
+            (self.canonical_sha256, "canonical_sha256"),
+        ):
+            if not isinstance(value, str) or not _SHA256.fullmatch(value):
+                raise ValueError(f"{name} must be lowercase SHA-256")
+        if not isinstance(self.normalization, str) or not _NORMALIZATION_ID.fullmatch(
+            self.normalization
+        ):
+            raise ValueError("raw evidence normalization must be versioned")
+
+    def sort_key(self) -> tuple[str, str, str, str]:
+        return (self.id, self.path, self.canonical_sha256, self.raw_sha256)
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "path": self.path,
+            "raw_sha256": self.raw_sha256,
+            "canonical_sha256": self.canonical_sha256,
+            "normalization": self.normalization,
         }
 
 
@@ -1177,6 +1248,7 @@ class RunEnvelope:
     duration_ns: int
     host: Mapping[str, str]
     log_paths: tuple[str, ...]
+    raw_evidence: tuple[RawEvidenceProvenance, ...] = ()
     schema_version: str = RUN_ENVELOPE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -1207,6 +1279,18 @@ class RunEnvelope:
         ):
             raise TypeError("log_paths must be a tuple of non-empty text paths")
         object.__setattr__(self, "log_paths", tuple(sorted(self.log_paths)))
+        if not isinstance(self.raw_evidence, tuple) or any(
+            not isinstance(item, RawEvidenceProvenance) for item in self.raw_evidence
+        ):
+            raise TypeError("raw_evidence must be a tuple of RawEvidenceProvenance")
+        raw_keys = [item.sort_key() for item in self.raw_evidence]
+        if len(set(raw_keys)) != len(raw_keys):
+            raise ValueError("run-envelope raw evidence entries must be unique")
+        object.__setattr__(
+            self,
+            "raw_evidence",
+            tuple(sorted(self.raw_evidence, key=RawEvidenceProvenance.sort_key)),
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1217,6 +1301,7 @@ class RunEnvelope:
             "duration_ns": self.duration_ns,
             "host": dict(self.host),
             "log_paths": list(self.log_paths),
+            "raw_evidence": [item.to_dict() for item in self.raw_evidence],
         }
 
     def to_json(self) -> str:
@@ -1476,19 +1561,77 @@ def _sanitized_collector_environment(root: Path) -> dict[str, str]:
     }
 
 
+_JUNIT_VOLATILE_ATTRIBUTES = frozenset(
+    {"timestamp", "hostname", "time", "duration"}
+)
+
+
+def _canonicalize_pytest_junit(content: bytes) -> bytes:
+    """Return C14N XML with only collector-runtime attributes removed."""
+    if len(content) > _MAX_JUNIT_BYTES:
+        raise ValueError("JUnit artifact exceeds the fixed size limit")
+    upper = content.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise ValueError("JUnit artifact must not contain DTD or entity declarations")
+    try:
+        root = ElementTree.fromstring(content)
+    except (ElementTree.ParseError, ValueError) as exc:
+        raise ValueError("JUnit artifact is malformed XML") from exc
+    for element in root.iter():
+        for attribute in tuple(element.attrib):
+            if _xml_local_name(attribute) in _JUNIT_VOLATILE_ATTRIBUTES:
+                del element.attrib[attribute]
+    serialized = ElementTree.tostring(root, encoding="unicode")
+    return ElementTree.canonicalize(serialized).encode("utf-8")
+
+
+def _normalized_evidence_artifact(
+    *,
+    id: str,
+    path: str,
+    raw_content: bytes,
+    canonical_content: bytes,
+    normalization: str,
+    command: CommandExecution | None = None,
+) -> EvidenceArtifact:
+    """Bind canonical evaluation bytes and exact raw bytes without conflating them."""
+    return EvidenceArtifact(
+        id=id,
+        path=path,
+        sha256=hashlib.sha256(canonical_content).hexdigest(),
+        content=canonical_content,
+        command=command,
+        normalization=normalization,
+        raw_sha256=hashlib.sha256(raw_content).hexdigest(),
+        raw_content=raw_content,
+    )
+
+
 def _pytest_collector_artifact(
     *, content: bytes, process_exit: int, reason_code: str
 ) -> EvidenceArtifact:
-    return EvidenceArtifact(
+    command = CommandExecution(
+        argv=ADR001_OFFLINE_GATE_ARGV,
+        process_exit=process_exit,
+        collector_reason_code=reason_code,
+    )
+    try:
+        canonical = _canonicalize_pytest_junit(content)
+    except ValueError:
+        return EvidenceArtifact(
+            id="engine.pytest-junit",
+            path=_PYTEST_JUNIT_PATH,
+            sha256=hashlib.sha256(content).hexdigest(),
+            content=content,
+            command=command,
+        )
+    return _normalized_evidence_artifact(
         id="engine.pytest-junit",
         path=_PYTEST_JUNIT_PATH,
-        sha256=hashlib.sha256(content).hexdigest(),
-        content=content,
-        command=CommandExecution(
-            argv=ADR001_OFFLINE_GATE_ARGV,
-            process_exit=process_exit,
-            collector_reason_code=reason_code,
-        ),
+        raw_content=content,
+        canonical_content=canonical,
+        normalization="pytest-junit-volatile-v1",
+        command=command,
     )
 
 
@@ -4075,7 +4218,6 @@ def evaluate_process_supply_chain_collection(
         status=status,
         extra_evidence=(
             {"kind": "repository", "value": collection.repository},
-            {"kind": "collection_time", "value": collection.collected_at},
         ),
     )
 
@@ -6230,11 +6372,14 @@ def _assessment_render_mapping(
     evidence_keys: list[tuple[str, str, str]] = []
     for index, item in enumerate(evidence):
         artifact = _render_mapping(item, f"assessment evidence {index}")
-        _require_exact_keys(
-            artifact,
-            {"id", "path", "sha256", "command", "sources"},
-            f"assessment evidence {index}",
-        )
+        base_keys = {"id", "path", "sha256", "command", "sources"}
+        artifact_keys = frozenset(artifact)
+        allowed_keys = {
+            frozenset(base_keys),
+            frozenset({*base_keys, "normalization"}),
+        }
+        if artifact_keys not in allowed_keys:
+            raise ValueError(f"assessment evidence {index} has an invalid field set")
         key = (artifact["id"], artifact["path"], artifact["sha256"])
         if (
             any(not isinstance(value, str) for value in key)
@@ -6242,6 +6387,12 @@ def _assessment_render_mapping(
             or not _SHA256.fullmatch(key[2])
         ):
             raise ValueError("assessment evidence identity is invalid")
+        normalization = artifact.get("normalization")
+        if normalization is not None and (
+            not isinstance(normalization, str)
+            or not _NORMALIZATION_ID.fullmatch(normalization)
+        ):
+            raise ValueError("assessment evidence normalization is invalid")
         _validate_canonical_path(key[1], "assessment evidence path")
         command = artifact["command"]
         if command is not None:
@@ -6349,6 +6500,7 @@ def render_assessment_html(
         f'<th scope="row">{_html(item["id"])}</th>'
         f"<td>{_html(item['path'])}</td>"
         f"<td>{_html(item['sha256'])}</td>"
+        f"<td>{_html(item.get('normalization', 'none'))}</td>"
         f"<td>{_json_cell(item['command'])}</td>"
         f"<td>{_json_cell(item['sources'])}</td>"
         "</tr>"
@@ -6392,7 +6544,7 @@ body{{font-family:system-ui,sans-serif;line-height:1.4;margin:2rem;max-width:100
 <h2>Checks</h2>
 <table><thead><tr><th>check</th><th>dimension</th><th>mode</th><th>status</th><th>score_bps</th><th>reason_code</th><th>criterion</th><th>counts</th><th>exclusions</th><th>evidence</th></tr></thead><tbody>{check_rows}</tbody></table>
 <h2>Evidence artifacts</h2>
-<table><thead><tr><th>id</th><th>path</th><th>sha256</th><th>command</th><th>sources</th></tr></thead><tbody>{evidence_rows}</tbody></table>
+<table><thead><tr><th>id</th><th>path</th><th>canonical sha256</th><th>normalization</th><th>command</th><th>sources</th></tr></thead><tbody>{evidence_rows}</tbody></table>
 <h2>Canonical JSON</h2>
 <pre id="canonical-assessment">{_html(canonical.decode('utf-8'))}</pre>
 </body>
@@ -6437,12 +6589,103 @@ def render_terminal_summary(
     )
 
 
+def _run_envelope_for_assessment(
+    assessment: Assessment,
+    *,
+    started_at_utc: str,
+    finished_at_utc: str,
+    duration_ns: int,
+) -> RunEnvelope:
+    import platform
+    import socket
+
+    raw_evidence = tuple(
+        RawEvidenceProvenance(
+            id=artifact.id,
+            path=artifact.path,
+            raw_sha256=str(artifact.raw_sha256),
+            canonical_sha256=artifact.sha256,
+            normalization=str(artifact.normalization),
+        )
+        for artifact in assessment.evidence
+        if artifact.raw_sha256 is not None
+    )
+    return RunEnvelope(
+        subject_sha256=assessment.digest(),
+        started_at_utc=started_at_utc,
+        finished_at_utc=finished_at_utc,
+        duration_ns=duration_ns,
+        host={
+            "hostname": socket.gethostname(),
+            "machine": platform.machine() or "unknown",
+            "platform": platform.system() or "unknown",
+            "python": platform.python_version(),
+        },
+        log_paths=(),
+        raw_evidence=raw_evidence,
+    )
+
+
 def _github_slug(repository: str) -> str | None:
     match = re.fullmatch(
         r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?",
         repository,
     )
     return None if match is None else match.group(1)
+
+
+def _strict_json_for_normalization(content: bytes, name: str) -> object:
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"{name} contains non-finite number {value}")
+
+    try:
+        return json.loads(content, parse_constant=reject_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"{name} is not strict JSON") from exc
+
+
+def _canonicalize_coverage_json(content: bytes) -> bytes:
+    """Remove coverage.py's report-generation timestamp, retaining measurements."""
+    raw = _strict_json_for_normalization(content, "coverage evidence")
+    if not isinstance(raw, dict) or not isinstance(raw.get("meta"), dict):
+        raise ValueError("coverage evidence has no metadata object")
+    meta = raw["meta"]
+    if "timestamp" not in meta:
+        raise ValueError("coverage evidence has no volatile timestamp")
+    del meta["timestamp"]
+    return canonical_json_bytes(raw)
+
+
+def _canonicalize_asv_json(content: bytes) -> bytes:
+    """Remove ASV orchestration timestamps/durations but retain benchmark samples."""
+    raw = _strict_json_for_normalization(content, "ASV evidence")
+    if not isinstance(raw, dict):
+        raise ValueError("ASV evidence must be an object")
+    columns = raw.get("result_columns")
+    results = raw.get("results")
+    if (
+        raw.get("version") != _ASV_RESULT_SCHEMA_VERSION
+        or not isinstance(columns, list)
+        or not isinstance(results, dict)
+        or "date" not in raw
+        or "durations" not in raw
+    ):
+        raise ValueError("ASV evidence has no recognized volatile fields")
+    try:
+        volatile_indexes = tuple(
+            columns.index(name) for name in ("started_at", "duration")
+        )
+    except ValueError as exc:
+        raise ValueError("ASV result columns omit volatile fields") from exc
+    raw["date"] = None
+    raw["durations"] = {}
+    for row in results.values():
+        if not isinstance(row, list):
+            raise ValueError("ASV result row must be a list")
+        for index in volatile_indexes:
+            if index < len(row):
+                row[index] = None
+    return canonical_json_bytes(raw)
 
 
 def _local_evidence_artifact(
@@ -6454,6 +6697,31 @@ def _local_evidence_artifact(
     if not path.is_file():
         return None
     content = path.read_bytes()
+    normalized: tuple[bytes, str] | None = None
+    try:
+        if artifact_id == "test.coverage":
+            normalized = (
+                _canonicalize_coverage_json(content),
+                "coverage-json-volatile-v1",
+            )
+        elif artifact_id in {"performance.baseline", "performance.candidate"}:
+            normalized = (
+                _canonicalize_asv_json(content),
+                "asv-json-volatile-v1",
+            )
+    except ValueError:
+        # Malformed bytes remain intact so the owning adapter can fail closed
+        # with its established domain reason code.
+        normalized = None
+    if normalized is not None:
+        canonical_content, normalization = normalized
+        return _normalized_evidence_artifact(
+            id=artifact_id,
+            path=f"evidence/{filename}",
+            raw_content=content,
+            canonical_content=canonical_content,
+            normalization=normalization,
+        )
     return EvidenceArtifact(
         id=artifact_id,
         path=f"evidence/{filename}",
@@ -6685,6 +6953,9 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     run.add_argument("--evidence-dir")
     run.add_argument("--json-out", default=".leitir-score/assessment.json")
     run.add_argument("--html-out", default=".leitir-score/scorecard.html")
+    run.add_argument(
+        "--run-envelope-out", default=".leitir-score/run-envelope.json"
+    )
 
     render = commands.add_parser("render", help="render a canonical assessment")
     render.add_argument("--assessment", required=True)
@@ -6725,6 +6996,10 @@ def main(
             policy = load_policy(policy_path)
         except OSError as exc:
             raise ValueError("policy is not readable") from exc
+        import time
+
+        started_at_utc = _utc_now_text()
+        started_ns = time.monotonic_ns()
         assessment = run_profile_assessment(
             root=args.root,
             policy=policy,
@@ -6735,8 +7010,20 @@ def main(
             ),
             evidence_dir=args.evidence_dir,
         )
+        finished_ns = time.monotonic_ns()
+        finished_at_utc = _utc_now_text()
         _write_output(args.json_out, assessment.to_bytes())
         _write_output(args.html_out, render_assessment_html(assessment))
+        envelope_path = Path(args.run_envelope_out)
+        if not envelope_path.is_absolute():
+            envelope_path = Path(args.root).resolve() / envelope_path
+        envelope = _run_envelope_for_assessment(
+            assessment,
+            started_at_utc=started_at_utc,
+            finished_at_utc=finished_at_utc,
+            duration_ns=finished_ns - started_ns,
+        )
+        _write_output(envelope_path, envelope.to_json().encode("utf-8"))
         output.write(render_terminal_summary(assessment))
         if profile is Profile.OFFLINE:
             output.write("release_readiness=not_claimed\n")
@@ -6806,6 +7093,7 @@ __all__ = [
     "RetrievalMetrics",
     "RetrievalStratum",
     "RetrievalTaskEvaluation",
+    "RawEvidenceProvenance",
     "RunEnvelope",
     "ScoreAggregate",
     "SourceSpan",

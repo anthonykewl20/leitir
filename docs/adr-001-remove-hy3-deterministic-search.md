@@ -50,18 +50,19 @@ task is not done until both gates are green.
 Gate commands (cumulative — each P task appends its test files):
 
 ```bash
-# Offline (current: P1–P5)
+# Offline (current: P1–P6)
 python -m pytest tests/test_search.py tests/test_search_e2e.py \
   tests/test_engine.py tests/test_engine_e2e.py \
   tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py \
   tests/test_cli.py tests/test_cli_e2e.py \
-  tests/test_global.py tests/test_global_e2e.py
+  tests/test_global.py tests/test_global_e2e.py \
+  tests/test_ranking.py tests/test_bench.py
 
-# Live (current: P1–P5)
+# Live (current: P1–P6)
 LEITIR_ENABLE_LIVE_E2E=1 python -m pytest \
   tests/test_search_e2e_live.py tests/test_engine_e2e_live.py \
   tests/test_resolver_e2e_live.py tests/test_cli_e2e_live.py \
-  tests/test_global_e2e_live.py
+  tests/test_global_e2e_live.py tests/test_bench_e2e_live.py
 ```
 
 ## Work (bite-sized)
@@ -126,10 +127,25 @@ enrichment behind the existing CLI (P5–P6).
       import into their calling methods so the gate holds unrelaxed; narrowing
       the list to what it actually proves is left as a separate change.
 
-- [ ] P6: Deterministic ranking + pinned benchmark.
+- [x] P6: Deterministic ranking + pinned benchmark.
       Score normalization, tie-breaking by provenance stability, and a
-      versioned benchmark suite (≥10 tasks across Python/Rust/Go) with
+      versioned benchmark suite (12 tasks: 4 Python, 4 Rust, 4 Go) with
       expected-result pins. `leitir bench` command.
-      (`src/leitir/ranking.py`, `src/leitir/benchmarks/`,
-      `tests/test_ranking.py`, `tests/test_bench.py`)
-      Gate: offline (benchmark pins are deterministic); live re-verification.
+      (`src/leitir/ranking.py`, `src/leitir/bench.py`,
+      `src/leitir/benchmarks/search-v1/`, `tests/test_ranking.py`,
+      `tests/test_bench.py`, `tests/test_bench_e2e_live.py`)
+      Ranking applies ADR-002 §7's mandated total order
+      `(-normalized_score, slug, commit_sha, path, blob_sha, start_line,
+      end_line)` and assigns unique descending `rank_score` values, so the S4
+      adapter can hand pytrec unique scores and trec_eval's equal-score
+      document-ID ordering cannot reorder these results. Duplicate result
+      identities are rejected per §7. Normalization is min-max over Decimal
+      parsed from the score's text form, so it never depends on binary
+      floating-point evaluation order.
+      The runner executes every task through an injected searcher and does not
+      consult `expected_results`; qrels and metrics belong to S4. Per §7 no
+      metric floor or baseline ratchet is introduced here.
+      Gate: offline 221 passed (P1–P6 cumulative); full suite 263 passed,
+      26 skipped; live re-verification 1 passed. Run artifact byte-identical
+      under PYTHONHASHSEED 0/1/12345/99999. All 12 pins re-verified against the
+      GitHub contents API (blob SHA and line content) on 2026-08-02.

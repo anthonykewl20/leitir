@@ -69,6 +69,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     search = commands.add_parser("search", help="search a pinned code corpus")
+    bench = commands.add_parser(
+        "bench",
+        help="run the pinned search benchmark",
+    )
+    bench.add_argument(
+        "--manifest",
+        default=None,
+        help="local benchmark manifest (default: packaged search-v1)",
+    )
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -175,6 +184,18 @@ def _build_default_searcher(tree_source: object) -> object:
     )
 
 
+def _build_default_benchmark_runner(searcher: object) -> object:
+    from .bench import BenchmarkRunner
+
+    return BenchmarkRunner(searcher)
+
+
+def _load_benchmark_manifest(path: str | None) -> object:
+    from .bench import load_manifest
+
+    return load_manifest(path)
+
+
 def _build_default_global_searcher(
     code_search: object, tree_source: object
 ) -> object:
@@ -244,6 +265,7 @@ def main(
     searcher_factory: Callable[[object], object] = _build_default_searcher,
     code_search_factory: Callable[[str | None], object] = _build_default_code_search,
     global_searcher_factory: Callable[[object, object], object] = _build_default_global_searcher,
+    benchmark_runner_factory: Callable[[object], object] = _build_default_benchmark_runner,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -256,6 +278,28 @@ def main(
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return int(exc.code)
+
+    if args.command == "bench":
+        token = _github_token()
+        try:
+            manifest = _load_benchmark_manifest(args.manifest)
+            tree_source = tree_source_factory(token)
+            searcher = searcher_factory(tree_source)
+            runner = benchmark_runner_factory(searcher)
+            run = runner.run(manifest)
+        except Exception as exc:
+            print(f"leitir: error: {redact(str(exc))}", file=err)
+            return int(ExitCode.INFRASTRUCTURE_FAILURE)
+
+        print(run.to_json(), file=out)
+        result_count = sum(len(task.results) for task in run.tasks)
+        print(
+            f"benchmark={run.benchmark_id} "
+            f"tasks={len(run.tasks)} results={result_count} "
+            f"artifact_sha256={run.digest()}",
+            file=err,
+        )
+        return int(ExitCode.SUCCESS)
 
     scope_error = _validate_scope_args(args)
     if scope_error:

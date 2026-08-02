@@ -1,0 +1,306 @@
+{
+  "schema_version": "leitir-benchmark-manifest-v1",
+  "benchmark_id": "search-v1",
+  "tasks": [
+    {
+      "id": "python-cpython-quote-definition",
+      "language": "python",
+      "scope": {
+        "slug": "python/cpython",
+        "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2"
+      },
+      "must": [
+        {"kind": "path", "value": "Lib/urllib/parse.py", "language": "python"},
+        {"kind": "symbol_definition", "value": "quote", "language": "python"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "python/cpython",
+          "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2",
+          "path": "Lib/urllib/parse.py",
+          "blob_sha": "d70a6943f0a73924ae56187db691792aa1f3ffc5",
+          "start_line": 816,
+          "end_line": 816
+        }
+      ],
+      "pin_source": "tests/fixtures_real.py (python/cpython v3.11.0); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "python-cpython-urlencode-definition",
+      "language": "python",
+      "scope": {
+        "slug": "python/cpython",
+        "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2"
+      },
+      "must": [
+        {"kind": "path", "value": "Lib/urllib/parse.py", "language": "python"},
+        {"kind": "symbol_definition", "value": "urlencode", "language": "python"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "python/cpython",
+          "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2",
+          "path": "Lib/urllib/parse.py",
+          "blob_sha": "d70a6943f0a73924ae56187db691792aa1f3ffc5",
+          "start_line": 912,
+          "end_line": 912
+        }
+      ],
+      "pin_source": "tests/fixtures_real.py (python/cpython v3.11.0); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "python-cpython-urlparse-definition",
+      "language": "python",
+      "scope": {
+        "slug": "python/cpython",
+        "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2"
+      },
+      "must": [
+        {"kind": "path", "value": "Lib/urllib/parse.py", "language": "python"},
+        {"kind": "symbol_definition", "value": "urlparse", "language": "python"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "python/cpython",
+          "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2",
+          "path": "Lib/urllib/parse.py",
+          "blob_sha": "d70a6943f0a73924ae56187db691792aa1f3ffc5",
+          "start_line": 366,
+          "end_line": 366
+        }
+      ],
+      "pin_source": "tests/fixtures_real.py (python/cpython v3.11.0); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "python-cpython-urlsplit-definition",
+      "language": "python",
+      "scope": {
+        "slug": "python/cpython",
+        "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2"
+      },
+      "must": [
+        {"kind": "path", "value": "Lib/urllib/parse.py", "language": "python"},
+        {"kind": "symbol_definition", "value": "urlsplit", "language": "python"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "python/cpython",
+          "commit_sha": "deaf509e8fc6e0363bd6f26d52ad42f976ec42f2",
+          "path": "Lib/urllib/parse.py",
+          "blob_sha": "d70a6943f0a73924ae56187db691792aa1f3ffc5",
+          "start_line": 434,
+          "end_line": 434
+        }
+      ],
+      "pin_source": "tests/fixtures_real.py (python/cpython v3.11.0); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "rust-serde-deserialize-definition",
+      "language": "rust",
+      "scope": {
+        "slug": "serde-rs/serde",
+        "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61"
+      },
+      "must": [
+        {"kind": "path", "value": "serde/src/de/mod.rs", "language": "rust"},
+        {"kind": "symbol_definition", "value": "Deserialize", "language": "rust"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "serde-rs/serde",
+          "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61",
+          "path": "serde/src/de/mod.rs",
+          "blob_sha": "ca29ec610bfb24b5035521364a34e3b5cc089e74",
+          "start_line": 531,
+          "end_line": 531
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (serde 1.0.152); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "rust-serde-deserializer-definition",
+      "language": "rust",
+      "scope": {
+        "slug": "serde-rs/serde",
+        "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61"
+      },
+      "must": [
+        {"kind": "path", "value": "serde/src/de/mod.rs", "language": "rust"},
+        {"kind": "symbol_definition", "value": "Deserializer", "language": "rust"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "serde-rs/serde",
+          "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61",
+          "path": "serde/src/de/mod.rs",
+          "blob_sha": "ca29ec610bfb24b5035521364a34e3b5cc089e74",
+          "start_line": 905,
+          "end_line": 905
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (serde 1.0.152); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "rust-serde-serialize-definition",
+      "language": "rust",
+      "scope": {
+        "slug": "serde-rs/serde",
+        "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61"
+      },
+      "must": [
+        {"kind": "path", "value": "serde/src/ser/mod.rs", "language": "rust"},
+        {"kind": "symbol_definition", "value": "Serialize", "language": "rust"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "serde-rs/serde",
+          "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61",
+          "path": "serde/src/ser/mod.rs",
+          "blob_sha": "5c45426e802e7e75f5b2bb2f9417a18c9c43150b",
+          "start_line": 218,
+          "end_line": 218
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (serde 1.0.152); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "rust-serde-serializer-definition",
+      "language": "rust",
+      "scope": {
+        "slug": "serde-rs/serde",
+        "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61"
+      },
+      "must": [
+        {"kind": "path", "value": "serde/src/ser/mod.rs", "language": "rust"},
+        {"kind": "symbol_definition", "value": "Serializer", "language": "rust"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "serde-rs/serde",
+          "commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61",
+          "path": "serde/src/ser/mod.rs",
+          "blob_sha": "5c45426e802e7e75f5b2bb2f9417a18c9c43150b",
+          "start_line": 333,
+          "end_line": 333
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (serde 1.0.152); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "go-testify-contains-definition",
+      "language": "go",
+      "scope": {
+        "slug": "stretchr/testify",
+        "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58"
+      },
+      "must": [
+        {"kind": "path", "value": "assert/assertions.go", "language": "go"},
+        {"kind": "symbol_definition", "value": "Contains", "language": "go"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "stretchr/testify",
+          "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
+          "path": "assert/assertions.go",
+          "blob_sha": "fa1245b18973813eb1733379db6480d448873c3d",
+          "start_line": 769,
+          "end_line": 769
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (testify v1.8.1); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "go-testify-elements-match-definition",
+      "language": "go",
+      "scope": {
+        "slug": "stretchr/testify",
+        "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58"
+      },
+      "must": [
+        {"kind": "path", "value": "assert/assertions.go", "language": "go"},
+        {"kind": "symbol_definition", "value": "ElementsMatch", "language": "go"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "stretchr/testify",
+          "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
+          "path": "assert/assertions.go",
+          "blob_sha": "fa1245b18973813eb1733379db6480d448873c3d",
+          "start_line": 936,
+          "end_line": 936
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (testify v1.8.1); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "go-testify-equal-definition",
+      "language": "go",
+      "scope": {
+        "slug": "stretchr/testify",
+        "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58"
+      },
+      "must": [
+        {"kind": "path", "value": "assert/assertions.go", "language": "go"},
+        {"kind": "symbol_definition", "value": "Equal", "language": "go"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "stretchr/testify",
+          "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
+          "path": "assert/assertions.go",
+          "blob_sha": "fa1245b18973813eb1733379db6480d448873c3d",
+          "start_line": 336,
+          "end_line": 336
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (testify v1.8.1); blob and line reverified via GitHub contents/raw APIs"
+    },
+    {
+      "id": "go-testify-no-error-definition",
+      "language": "go",
+      "scope": {
+        "slug": "stretchr/testify",
+        "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58"
+      },
+      "must": [
+        {"kind": "path", "value": "assert/assertions.go", "language": "go"},
+        {"kind": "symbol_definition", "value": "NoError", "language": "go"}
+      ],
+      "should": [],
+      "must_not": [],
+      "expected_results": [
+        {
+          "slug": "stretchr/testify",
+          "commit_sha": "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
+          "path": "assert/assertions.go",
+          "blob_sha": "fa1245b18973813eb1733379db6480d448873c3d",
+          "start_line": 1387,
+          "end_line": 1387
+        }
+      ],
+      "pin_source": "tests/fixtures_resolver.py (testify v1.8.1); blob and line reverified via GitHub contents/raw APIs"
+    }
+  ]
+}

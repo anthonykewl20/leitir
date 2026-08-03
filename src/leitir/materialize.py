@@ -254,8 +254,8 @@ def _verify_extracted_tree(
     *,
     max_files: int,
     max_bytes: int,
-) -> bool | str:
-    """Return ``True`` for full verification or ``"sampled"`` for a sample."""
+) -> tuple[bool | str, int]:
+    """Return verification status and the number of EOL-normalized files."""
     import hashlib
 
     from leitir.tree import GitHubTreeSource
@@ -328,6 +328,7 @@ def _verify_extracted_tree(
             bounded.append(selected[0])
         selected = bounded
 
+    text_normalized = 0
     for relative in selected:
         path = extracted.get(relative)
         entry = expected.get(relative)
@@ -335,10 +336,22 @@ def _verify_extracted_tree(
             raise VerificationError(f"missing extracted regular file: {relative}")
         if entry is None:
             raise VerificationError(f"extracted file is absent from Git tree: {relative}")
-        actual = GitHubTreeSource.git_blob_sha(path.read_bytes())
+        extracted_bytes = path.read_bytes()
+        actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
-            raise VerificationError(f"Git blob digest mismatch: {relative}")
-    return "sampled" if sampled else True
+            read_at_commit = getattr(tree_source, "read_blob_at_commit", None)
+            if read_at_commit is not None:
+                blob_bytes = read_at_commit(f"{owner}/{repo}", commit_sha, relative)
+            else:
+                # Compatibility for injected TreeSource implementations. The
+                # blob SHA came from the pinned commit's tree listing.
+                blob_bytes = tree_source.read_blob(  # type: ignore[attr-defined]
+                    f"{owner}/{repo}", entry.blob_sha  # type: ignore[attr-defined]
+                )
+            if extracted_bytes not in (blob_bytes, blob_bytes.replace(b"\n", b"\r\n")):
+                raise VerificationError(f"Git blob digest mismatch: {relative}")
+            text_normalized += 1
+    return ("sampled" if sampled else True), text_normalized
 
 
 def materialize_github_repo(
@@ -424,7 +437,7 @@ def materialize_github_repo(
                     max_rate_limit_delay=max_rate_limit_delay,
                     sleeper=sleeper,
                 )
-            verified: bool | str = _verify_extracted_tree(
+            verified, text_normalized = _verify_extracted_tree(
                 staging,
                 owner,
                 repo,
@@ -437,6 +450,12 @@ def materialize_github_repo(
         else:
             verified = False
             verified_at = None
+            text_normalized = 0
+        verification_notes = (
+            [f"text-normalized: {text_normalized} file(s)"]
+            if text_normalized
+            else []
+        )
         fetched_at = _utc_now()
         manifest: dict[str, object] = dict(manifest_fields or {})
         manifest.update(
@@ -453,6 +472,7 @@ def materialize_github_repo(
                 "subpath": subpath,
                 "verified": verified,
                 "verified_at": verified_at,
+                "verification_notes": verification_notes,
             }
         )
         _write_manifest(staging / MANIFEST_NAME, manifest)

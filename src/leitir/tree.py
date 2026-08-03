@@ -138,6 +138,31 @@ class GitHubTreeSource:
                 f"cannot read blob {slug}/{blob_sha}: {_http.describe_failure(exc)}"
             ) from exc
 
+    def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
+        """Read a path's exact bytes through the contents API at a commit."""
+        from urllib.parse import quote, urlencode
+        from urllib.request import Request, urlopen
+
+        encoded_path = quote(path, safe="/")
+        url = (
+            f"{self._base_url}/repos/{slug}/contents/{encoded_path}"
+            f"?{urlencode({'ref': commit_sha})}"
+        )
+        headers = self._headers()
+        headers["Accept"] = "application/vnd.github.raw+json"
+
+        def _fetch() -> bytes:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return resp.read()
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise TreeReadError(
+                f"cannot read blob {slug}/{commit_sha}/{path}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
+
     def read_blob_by_path(
         self, slug: str, commit_sha: str, path: str
     ) -> bytes:

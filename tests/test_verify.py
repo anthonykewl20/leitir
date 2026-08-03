@@ -73,9 +73,35 @@ def test_matching_tree_is_fully_verified(tmp_path):
     files = {"README.md": b"proof\n", "src/demo.py": b"answer = 42\n"}
     with routed_server(_routes(files, _tree(files))) as server:
         target = _materialize(tmp_path, server.base_url)
+        paths = server.state.request_paths
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["verified"] is True
     assert manifest["verified_at"].endswith("Z")
+    assert manifest["verification_notes"] == []
+    assert paths == [
+        f"/acme/demo/tar.gz/{SHA}",
+        f"/repos/acme/demo/git/trees/{SHA}",
+    ]
+
+
+def test_crlf_archive_variant_is_verified_via_pinned_contents(tmp_path):
+    blob = b"first line\nsecond line\n"
+    archive_files = {"docs/proof.txt": blob.replace(b"\n", b"\r\n")}
+    routes = _routes(archive_files, _tree({"docs/proof.txt": blob}))
+    routes["/repos/acme/demo/contents/docs/proof.txt"] = (200, {}, blob)
+
+    with routed_server(routes) as server:
+        target = _materialize(tmp_path, server.base_url)
+        paths = server.state.request_paths
+
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["verified"] is True
+    assert manifest["verification_notes"] == ["text-normalized: 1 file(s)"]
+    assert paths == [
+        f"/acme/demo/tar.gz/{SHA}",
+        f"/repos/acme/demo/git/trees/{SHA}",
+        "/repos/acme/demo/contents/docs/proof.txt",
+    ]
 
 
 def test_over_cap_uses_deterministic_sample(tmp_path):
@@ -98,8 +124,10 @@ def test_over_cap_uses_deterministic_sample(tmp_path):
 
 
 def test_digest_mismatch_is_hard_failure_and_cleans_staging(tmp_path):
-    files = {"proof.txt": b"proof"}
-    routes = _routes(files, _tree(files, overrides={"proof.txt": "0" * 40}))
+    blob = b"proof\n"
+    files = {"proof.txt": b"pr00f\n"}
+    routes = _routes(files, _tree({"proof.txt": blob}))
+    routes["/repos/acme/demo/contents/proof.txt"] = (200, {}, blob)
     with routed_server(routes) as server:
         with pytest.raises(MaterializationError, match="VerificationError"):
             _materialize(tmp_path, server.base_url)

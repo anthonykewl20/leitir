@@ -78,6 +78,7 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "tag": "v1",
         "verified": False,
         "verified_at": None,
+        "verification_notes": [],
     }
     assert manifest["fetched_at"].endswith("Z")
     assert manifest["verified"] is False

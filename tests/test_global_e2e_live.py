@@ -71,3 +71,45 @@ class TestLiveGlobalSadPaths:
         assert code == ExitCode.SUCCESS
         payload = json.loads(out)
         assert payload["coverage"]["status"] == "indeterminate_global"
+
+
+class TestLiveTransportDirect:
+    """Drive GitHubCodeSearchTransport directly against the real GitHub API.
+
+    Proves the transport + retry wiring succeeds on the real happy path (the
+    retry path itself is proven against a real local server in
+    test_http_retry_real.py; transient failures cannot be forced on live
+    GitHub). Loops twice to confirm stability across consecutive calls.
+    """
+
+    def _token(self) -> str | None:
+        return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+    @pytest.mark.parametrize("iteration", range(2))
+    def test_real_code_search_returns_hits(self, iteration):
+        from leitir.discovery_search import GitHubCodeSearchTransport
+
+        transport = GitHubCodeSearchTransport(token=self._token())
+        page = transport.search("urlencode language:python path:urllib", per_page=5)
+        assert page.total_count > 0
+        assert len(page.hits) >= 1
+        hit = page.hits[0]
+        assert "/" in hit.slug
+        assert len(hit.blob_sha) == 40
+
+    @pytest.mark.parametrize("iteration", range(2))
+    def test_real_resolve_head_sha(self, iteration):
+        from leitir.discovery_search import GitHubCodeSearchTransport
+
+        transport = GitHubCodeSearchTransport(token=self._token())
+        sha = transport.resolve_head_sha("python/cpython")
+        assert len(sha) == 40
+
+    def test_real_404_is_fatal_not_retried(self):
+        # Resolving HEAD for a repo that does not exist returns a real 404,
+        # which must surface immediately (fatal) rather than be retried.
+        from leitir.discovery_search import CodeSearchError, GitHubCodeSearchTransport
+
+        transport = GitHubCodeSearchTransport(token=self._token(), max_attempts=4)
+        with pytest.raises(CodeSearchError, match="HTTP 40"):
+            transport.resolve_head_sha("leitir/no-such-repo-xyz-999")

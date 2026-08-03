@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
+
+from leitir import _http
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,7 @@ class BlobEntry:
     path: str
     blob_sha: str
     size: int
+    mode: str | None = None
 
     def __post_init__(self) -> None:
         if not self.path or not self.path.strip():
@@ -28,6 +31,8 @@ class BlobEntry:
             raise ValueError("blob_sha must be a 40-char hex string")
         if self.size < 0:
             raise ValueError("size must be non-negative")
+        if self.mode is not None and not isinstance(self.mode, str):
+            raise ValueError("mode must be a string when provided")
 
 
 @runtime_checkable
@@ -49,9 +54,30 @@ class GitHubTreeSource:
     _API = "https://api.github.com"
     _RAW = "https://raw.githubusercontent.com"
 
-    def __init__(self, token: str | None = None, timeout: int = 60) -> None:
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 60,
+        *,
+        base_url: str = _API,
+        raw_base_url: str = _RAW,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         self._token = token
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._raw_base_url = raw_base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -62,16 +88,21 @@ class GitHubTreeSource:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 
-    def _get_json(self, url: str) -> dict:
-        from urllib import request as urllib_request
+    def _get_json(self, url: str, headers: dict[str, str]) -> dict:
+        from urllib.request import Request, urlopen
 
-        request = urllib_request.Request(url, headers=self._headers())
-        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-            return json.load(resp)
+        def _fetch() -> dict:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise TreeReadError(f"GitHub API call failed: {_http.describe_failure(exc)}") from exc
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
-        url = f"{self._API}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
-        payload = self._get_json(url)
+        url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
+        payload = self._get_json(url, self._headers())
         if payload.get("truncated"):
             raise TreeTruncatedError(slug, commit_sha)
         entries: list[BlobEntry] = []
@@ -83,30 +114,50 @@ class GitHubTreeSource:
                     path=item["path"],
                     blob_sha=item["sha"],
                     size=item.get("size", 0),
+                    mode=item.get("mode"),
                 )
             )
         return tuple(entries)
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
-        from urllib import request as urllib_request
-
-        url = f"{self._API}/repos/{slug}/git/blobs/{blob_sha}"
-        request = urllib_request.Request(url, headers=self._headers())
-        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-            payload = json.load(resp)
         import base64
+        from urllib.request import Request, urlopen
 
-        return base64.b64decode(payload["content"])
+        url = f"{self._base_url}/repos/{slug}/git/blobs/{blob_sha}"
+        headers = self._headers()
+
+        def _fetch() -> bytes:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                payload = json.load(resp)
+            return base64.b64decode(payload["content"])
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise TreeReadError(
+                f"cannot read blob {slug}/{blob_sha}: {_http.describe_failure(exc)}"
+            ) from exc
 
     def read_blob_by_path(
         self, slug: str, commit_sha: str, path: str
     ) -> bytes:
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
-        url = f"{self._RAW}/{slug}/{commit_sha}/{path}"
-        request = urllib_request.Request(url, headers={"User-Agent": "leitir"})
-        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-            return resp.read()
+        url = f"{self._raw_base_url}/{slug}/{commit_sha}/{path}"
+
+        def _fetch() -> bytes:
+            with urlopen(
+                Request(url, headers={"User-Agent": "leitir"}), timeout=self._timeout
+            ) as resp:
+                return resp.read()
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise TreeReadError(
+                f"cannot read blob {slug}/{commit_sha}/{path}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
 
     @staticmethod
     def git_blob_sha(data: bytes) -> str:
@@ -122,3 +173,7 @@ class TreeTruncatedError(Exception):
         )
         self.slug = slug
         self.commit_sha = commit_sha
+
+
+class TreeReadError(Exception):
+    """A GitHub tree/blob HTTP call failed after categorized retry."""

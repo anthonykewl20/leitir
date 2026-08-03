@@ -12,8 +12,9 @@ import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
+from leitir import _http
 from leitir.search import RepoScope
 
 
@@ -78,9 +79,28 @@ class GitHubTagResolver:
 
     _API = "https://api.github.com"
 
-    def __init__(self, token: str | None = None, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         self._token = token
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -92,17 +112,20 @@ class GitHubTagResolver:
         return headers
 
     def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
-        url = f"{self._API}/repos/{slug}/git/ref/tags/{tag}"
-        request = urllib_request.Request(url, headers=self._headers())
+        url = f"{self._base_url}/repos/{slug}/git/ref/tags/{tag}"
+        headers = self._headers()
+
+        def _fetch() -> dict:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                payload = json.load(resp)
-        except urllib_error.HTTPError as exc:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
-                f"tag {tag!r} not found in {slug}: HTTP {exc.code}"
+                f"tag {tag!r} not found in {slug}: {_http.describe_failure(exc)}"
             ) from exc
 
         obj = payload["object"]
@@ -113,12 +136,22 @@ class GitHubTagResolver:
         raise ResolutionError(f"unexpected object type {obj['type']!r}")
 
     def _dereference_annotated_tag(self, slug: str, tag_sha: str) -> str:
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
-        url = f"{self._API}/repos/{slug}/git/tags/{tag_sha}"
-        request = urllib_request.Request(url, headers=self._headers())
-        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-            payload = json.load(resp)
+        url = f"{self._base_url}/repos/{slug}/git/tags/{tag_sha}"
+        headers = self._headers()
+
+        def _fetch() -> dict:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
+        try:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"cannot dereference annotated tag {tag_sha} in {slug}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
         obj = payload["object"]
         if obj["type"] != "commit":
             raise ResolutionError(
@@ -138,28 +171,49 @@ class PyPIResolver:
     _REGISTRY = "https://pypi.org/pypi"
 
     def __init__(
-        self, tag_resolver: GitHubTagResolver, timeout: int = 30
+        self,
+        tag_resolver: GitHubTagResolver,
+        timeout: int = 30,
+        *,
+        base_url: str = _REGISTRY,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
         if ref.ecosystem is not Ecosystem.PYPI:
             raise ResolutionError("PyPIResolver only handles pypi packages")
 
-        url = f"{self._REGISTRY}/{ref.name}/{ref.version}/json"
-        request = urllib_request.Request(
-            url, headers={"User-Agent": "leitir", "Accept": "application/json"}
-        )
+        url = f"{self._base_url}/{ref.name}/{ref.version}/json"
+
+        def _fetch() -> dict:
+            with urlopen(
+                Request(url, headers={"User-Agent": "leitir", "Accept": "application/json"}),
+                timeout=self._timeout,
+            ) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                payload = json.load(resp)
-        except urllib_error.HTTPError as exc:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
-                f"PyPI lookup failed for {ref.name}=={ref.version}: HTTP {exc.code}"
+                f"PyPI lookup failed for {ref.name}=={ref.version}: "
+                f"{_http.describe_failure(exc)}"
             ) from exc
 
         slug = self._extract_github_slug(payload)
@@ -217,28 +271,49 @@ class CratesResolver:
     _REGISTRY = "https://crates.io/api/v1/crates"
 
     def __init__(
-        self, tag_resolver: GitHubTagResolver, timeout: int = 30
+        self,
+        tag_resolver: GitHubTagResolver,
+        timeout: int = 30,
+        *,
+        base_url: str = _REGISTRY,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
         if ref.ecosystem is not Ecosystem.CRATES:
             raise ResolutionError("CratesResolver only handles crates packages")
 
-        url = f"{self._REGISTRY}/{ref.name}/{ref.version}"
-        request = urllib_request.Request(
-            url, headers={"User-Agent": "leitir (package resolver)"}
-        )
+        url = f"{self._base_url}/{ref.name}/{ref.version}"
+
+        def _fetch() -> dict:
+            with urlopen(
+                Request(url, headers={"User-Agent": "leitir (package resolver)"}),
+                timeout=self._timeout,
+            ) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                payload = json.load(resp)
-        except urllib_error.HTTPError as exc:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
-                f"crates.io lookup failed for {ref.name}=={ref.version}: HTTP {exc.code}"
+                f"crates.io lookup failed for {ref.name}=={ref.version}: "
+                f"{_http.describe_failure(exc)}"
             ) from exc
 
         version_info = payload.get("version", {})
@@ -281,14 +356,30 @@ class GoResolver:
     _PROXY = "https://proxy.golang.org"
 
     def __init__(
-        self, tag_resolver: GitHubTagResolver, timeout: int = 30
+        self,
+        tag_resolver: GitHubTagResolver,
+        timeout: int = 30,
+        *,
+        base_url: str = _PROXY,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
         if ref.ecosystem is not Ecosystem.GO:
             raise ResolutionError("GoResolver only handles go packages")
@@ -304,16 +395,21 @@ class GoResolver:
 
         escaped = self._escape_module(module)
         version = ref.version
-        info_url = f"{self._PROXY}/{escaped}/@v/{version}.info"
-        request = urllib_request.Request(
-            info_url, headers={"User-Agent": "leitir"}
-        )
+        info_url = f"{self._base_url}/{escaped}/@v/{version}.info"
+
+        def _fetch() -> dict:
+            with urlopen(
+                Request(info_url, headers={"User-Agent": "leitir"}),
+                timeout=self._timeout,
+            ) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                json.load(resp)
-        except urllib_error.HTTPError as exc:
+            self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
-                f"Go proxy lookup failed for {module}@{version}: HTTP {exc.code}"
+                f"Go proxy lookup failed for {module}@{version}: "
+                f"{_http.describe_failure(exc)}"
             ) from exc
 
         tag = version

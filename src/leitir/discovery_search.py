@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
+from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.engine import score_content
 from leitir.search import (
@@ -28,6 +29,7 @@ from leitir.search import (
 from leitir.tree import TreeSource
 
 _API = "https://api.github.com"
+_RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -68,33 +70,66 @@ class CodeSearchPort(Protocol):
 class GitHubCodeSearchTransport:
     """Production CodeSearchPort backed by the GitHub REST API."""
 
-    def __init__(self, token: str | None = None, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        raw_base_url: str = _RAW,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         self._token = token
         self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._raw_base_url = raw_base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
 
     def _headers(self) -> dict[str, str]:
+        from urllib.parse import urlsplit
+
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "leitir",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        if self._token:
+        endpoint = urlsplit(self._base_url)
+        if (
+            self._token
+            and endpoint.scheme == "https"
+            and endpoint.hostname == "api.github.com"
+        ):
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 
     def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
         from urllib.parse import urlencode
+        from urllib.request import Request, urlopen
 
         params = urlencode({"q": query, "per_page": min(per_page, 100), "page": page})
-        url = f"{_API}/search/code?{params}"
-        request = urllib_request.Request(url, headers=self._headers())
+        url = f"{self._base_url}/search/code?{params}"
+        headers = self._headers()
+
+        def _fetch() -> dict:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                payload = json.load(resp)
-        except urllib_error.HTTPError as exc:
-            raise CodeSearchError(f"GitHub code search failed: HTTP {exc.code}") from exc
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise CodeSearchError(
+                f"GitHub code search failed: {_http.describe_failure(exc)}"
+            ) from exc
 
         items = payload.get("items", [])
         hits: list[CodeSearchHit] = []
@@ -115,27 +150,43 @@ class GitHubCodeSearchTransport:
         )
 
     def resolve_head_sha(self, slug: str) -> str:
-        from urllib import error as urllib_error
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
-        url = f"{_API}/repos/{slug}/commits?per_page=1"
-        request = urllib_request.Request(url, headers=self._headers())
+        url = f"{self._base_url}/repos/{slug}/commits?per_page=1"
+        headers = self._headers()
+
+        def _fetch() -> list:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
         try:
-            with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-                payload = json.load(resp)
-        except urllib_error.HTTPError as exc:
-            raise CodeSearchError(f"cannot resolve HEAD for {slug}: HTTP {exc.code}") from exc
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise CodeSearchError(
+                f"cannot resolve HEAD for {slug}: {_http.describe_failure(exc)}"
+            ) from exc
         if not payload or not isinstance(payload, list):
             raise CodeSearchError(f"empty commit list for {slug}")
         return payload[0]["sha"]
 
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
-        from urllib import request as urllib_request
+        from urllib.request import Request, urlopen
 
-        url = f"https://raw.githubusercontent.com/{slug}/{commit_sha}/{path}"
-        request = urllib_request.Request(url, headers={"User-Agent": "leitir"})
-        with urllib_request.urlopen(request, timeout=self._timeout) as resp:
-            return resp.read()
+        url = f"{self._raw_base_url}/{slug}/{commit_sha}/{path}"
+
+        def _fetch() -> bytes:
+            with urlopen(
+                Request(url, headers={"User-Agent": "leitir"}), timeout=self._timeout
+            ) as resp:
+                return resp.read()
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise CodeSearchError(
+                f"cannot read blob {slug}/{commit_sha}/{path}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
 
 
 class CodeSearchError(Exception):

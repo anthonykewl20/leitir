@@ -391,6 +391,7 @@ def _run_corpus_command(
 ) -> int:
     from .corpus import INDEX_NAME, materialize_source, remove_source
     from .docpointers import POINTERS_NAME
+    from .materialize import MANIFEST_NAME
 
     try:
         root = _corpus_root(args, err)
@@ -424,7 +425,7 @@ def _run_corpus_command(
         resolver = resolver_factory(token)
         heads = code_search_factory(token)
         cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
-        paths: list[Path] = []
+        paths: list[tuple[Path, str | None]] = []
         fetch_options = {}
         if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
             fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
@@ -442,7 +443,6 @@ def _run_corpus_command(
                     f"leitir: {parsed.name}: version {resolved.ref.version} from {detection_source}",
                     file=err,
                 )
-            print(f"leitir: materializing {raw}", file=err)
             path = materialize_source(
                 raw,
                 resolved,
@@ -450,12 +450,31 @@ def _run_corpus_command(
                 name=parsed.name,
                 tag=tag,
                 version_source=version_source,
+                on_fetch=lambda raw=raw: print(
+                    f"leitir: materializing {raw}", file=err
+                ),
                 **fetch_options,
             )
-            paths.append(path.absolute())
+            manifest = json.loads((path / MANIFEST_NAME).read_text(encoding="utf-8"))
+            recorded_subpath = manifest.get("subpath")
+            subpath = recorded_subpath if isinstance(recorded_subpath, str) else None
+            paths.append((path.absolute(), subpath))
         if args.command == "get":
-            for path in paths:
-                print(path, file=out)
+            for path, subpath in paths:
+                if subpath is None:
+                    print(path, file=out)
+                    continue
+                package_path = path / subpath
+                inside_target = package_path.resolve().is_relative_to(path.resolve())
+                if inside_target and package_path.exists():
+                    print(package_path, file=out)
+                else:
+                    print(path, file=out)
+                    print(
+                        f"leitir: warning: recorded subpath {subpath!r} does not exist "
+                        f"inside {path}; using repository root",
+                        file=err,
+                    )
         return int(ExitCode.SUCCESS)
     except Exception as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)

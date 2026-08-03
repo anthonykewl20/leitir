@@ -14,7 +14,7 @@ from _http_server import routed_server, scripted_server, json_body
 SHA = "b" * 40
 
 
-def _tarball() -> bytes:
+def _tarball(*, package_subpath: str | None = None) -> bytes:
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
         for name, content in (("proof.txt", b"proof\n"), ("README.md", b"read me\n")):
@@ -24,6 +24,13 @@ def _tarball() -> bytes:
         docs = tarfile.TarInfo(f"demo-{SHA}/docs")
         docs.type = tarfile.DIRTYPE
         archive.addfile(docs)
+        if package_subpath is not None:
+            content = b'{"name":"@scope/demo"}\n'
+            member = tarfile.TarInfo(
+                f"demo-{SHA}/{package_subpath}/package.json"
+            )
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
     return data.getvalue()
 
 
@@ -51,9 +58,10 @@ def test_get_prints_usable_path_and_cache_hit(tmp_path, monkeypatch):
         legacy["docs_urls"] = ["https://legacy.example/docs"]
         manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
 
-        code, second_out, _ = _invoke(argv)
+        code, second_out, second_err = _invoke(argv)
         assert code == ExitCode.SUCCESS
         assert second_out.strip() == path
+        assert "materializing" not in second_err
         assert server.state.served_count == 1
 
         backfilled = json.loads(manifest_path.read_text())
@@ -195,7 +203,7 @@ def test_explicit_version_beats_lockfile(tmp_path, monkeypatch):
     assert "from requirements.txt" not in err
 
 
-def test_scoped_npm_monorepo_subpath_is_recorded(tmp_path, monkeypatch):
+def test_scoped_npm_monorepo_get_prints_existing_subpath(tmp_path, monkeypatch):
     routes = {
         "/%40scope%2Fdemo": (
             200,
@@ -214,7 +222,53 @@ def test_scoped_npm_monorepo_subpath_is_recorded(tmp_path, monkeypatch):
                 }
             ),
         ),
-        "/repos/acme/demo/git/ref/tags/v1.2": (
+        "/repos/acme/demo/git/ref/tags/%40scope%2Fdemo%401.2": (
+            200,
+            {},
+            json_body({"object": {"type": "commit", "sha": SHA}}),
+        ),
+        f"/acme/demo/tar.gz/{SHA}": (
+            200,
+            {},
+            _tarball(package_subpath="packages/scoped-demo"),
+        ),
+    }
+    with routed_server(routes) as server:
+        monkeypatch.setenv("LEITIR_NPM_BASE_URL", server.base_url)
+        monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
+        monkeypatch.setenv("LEITIR_CODELOAD_BASE_URL", server.base_url)
+        code, out, err = _invoke(["get", "npm:@scope/demo", "--root", str(tmp_path), "--no-verify"])
+    assert code == ExitCode.SUCCESS, err
+    package_path = Path(out.strip())
+    assert package_path.name == "scoped-demo"
+    assert (package_path / "package.json").is_file()
+    manifest = json.loads(
+        (package_path.parents[1] / "leitir-manifest.json").read_text()
+    )
+    assert manifest["ecosystem"] == "npm"
+    assert manifest["version"] == "1.2"
+    assert manifest["subpath"] == "packages/scoped-demo"
+
+
+def test_get_missing_recorded_subpath_prints_root_and_warns(tmp_path, monkeypatch):
+    routes = {
+        "/%40scope%2Fdemo": (
+            200,
+            {},
+            json_body(
+                {
+                    "versions": {
+                        "1.2": {
+                            "repository": {
+                                "url": "github:acme/demo",
+                                "directory": "packages/missing",
+                            }
+                        }
+                    }
+                }
+            ),
+        ),
+        "/repos/acme/demo/git/ref/tags/%40scope%2Fdemo%401.2": (
             200,
             {},
             json_body({"object": {"type": "commit", "sha": SHA}}),
@@ -225,12 +279,14 @@ def test_scoped_npm_monorepo_subpath_is_recorded(tmp_path, monkeypatch):
         monkeypatch.setenv("LEITIR_NPM_BASE_URL", server.base_url)
         monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
         monkeypatch.setenv("LEITIR_CODELOAD_BASE_URL", server.base_url)
-        code, out, err = _invoke(["get", "npm:@scope/demo", "--root", str(tmp_path), "--no-verify"])
+        code, out, err = _invoke(
+            ["get", "npm:@scope/demo@1.2", "--root", str(tmp_path), "--no-verify"]
+        )
     assert code == ExitCode.SUCCESS, err
-    manifest = json.loads((Path(out.strip()) / "leitir-manifest.json").read_text())
-    assert manifest["ecosystem"] == "npm"
-    assert manifest["version"] == "1.2"
-    assert manifest["subpath"] == "packages/scoped-demo"
+    root = Path(out.strip())
+    assert (root / "leitir-manifest.json").is_file()
+    assert "warning: recorded subpath 'packages/missing' does not exist" in err
+    assert "using repository root" in err
 
 
 def test_failure_is_exit_one_clean_stderr_and_no_stdout(tmp_path):

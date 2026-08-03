@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import os
 import shutil
@@ -117,6 +118,7 @@ def materialize_source(
     name: str | None = None,
     tag: str | None = None,
     version_source: str | None = None,
+    on_fetch: Callable[[], None] | None = None,
     **fetch_options: object,
 ) -> Path:
     """Ensure a resolved source is materialized and indexed exactly once."""
@@ -152,6 +154,7 @@ def materialize_source(
         tag=source_tag,
         subpath=subpath,
         manifest_fields=manifest_fields,
+        on_fetch=on_fetch,
         **fetch_options,  # type: ignore[arg-type]
     )
     manifest = read_valid_manifest(target, owner, repo, scope.commit_sha)

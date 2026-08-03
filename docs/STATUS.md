@@ -27,8 +27,9 @@ the ADR) and extends it with commit-SHA pinning, integrity verification,
 multi-ecosystem lockfile version detection, and a normative agent
 workflow, an agent skill, and a pinned fetch-correctness benchmark.
 
-Offline suite: **900 passed, 37 skipped**. The 37 skips are opt-in live tests
-behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
+Offline suite: **899 passed, 39 skipped**. The 39 skips are opt-in live tests
+behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`. The opt-in
+live gate is **40 passed, 1 skipped, 897 deselected**.
 
 ## What the scorer says about Leitir
 

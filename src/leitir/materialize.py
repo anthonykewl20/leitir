@@ -377,6 +377,7 @@ def materialize_github_repo(
     tree_base_url: str = "https://api.github.com",
     verification_max_files: int = VERIFY_MAX_FILES,
     verification_max_bytes: int = VERIFY_MAX_BYTES,
+    on_fetch: Callable[[], None] | None = None,
 ) -> Path:
     """Download and safely extract an exact GitHub commit into the corpus."""
     from urllib.parse import urlsplit
@@ -418,6 +419,8 @@ def materialize_github_repo(
         with urlopen(Request(url, headers=headers), timeout=timeout) as response:
             return response.read()
 
+    if on_fetch is not None:
+        on_fetch()
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-", dir=target.parent))
     try:

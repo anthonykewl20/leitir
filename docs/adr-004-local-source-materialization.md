@@ -138,6 +138,17 @@ Observed in opensrc at 59 commits (2026-08-03):
    there is **no fallback to a default branch**, ever. An unresolvable tag is
    a hard, descriptive error.
 
+   **npm tag inference.** For exact npm versions, leitir tries tags in this
+   order through the existing exact tag-to-SHA resolver: `<name>@<version>`,
+   `v<version>`, then `<version>`. It does not enumerate refs or fuzzy-match a
+   fallback: that could select a sibling monorepo package sharing the version.
+   The design adapts the package-tag conventions of
+   [changesets/changesets](https://github.com/changesets/changesets), the
+   independent/fixed versioning conventions of
+   [lerna/lerna](https://github.com/lerna/lerna), and pnpm's exact matching of
+   real refs in [pnpm/pnpm](https://github.com/pnpm/pnpm) (all MIT; design is
+   re-implemented in Python, no code is copied, attribution kept in this ADR).
+
 2. **Two roots, one layout.**
    - Global: `~/.leitir/` (override `LEITIR_HOME`).
    - Project-local: `leitir get --local ...` targets `./.leitir-refs/` and
@@ -180,7 +191,9 @@ Observed in opensrc at 59 commits (2026-08-03):
 
 8. **CLI.**
    - `leitir get <spec>...` — ensure cached, print absolute path(s) to stdout,
-     progress to stderr.
+     using a recorded monorepo subpath when it exists; if it is missing on
+     disk, print the repository root and warn on stderr. Progress stays on
+     stderr.
    - `leitir fetch <spec>...` — pre-fetch without printing paths.
    - `leitir list [--json]`, `leitir remove <spec>`, `leitir clean [--repos]`.
    - Flags: `--root <dir>`, `--local`, `--cwd <dir>`, `--no-verify`.

@@ -101,6 +101,28 @@ def test_attacker_host_rejected():
 
 def test_tag_miss_is_hard_error_without_default_branch_fallback():
     tags = Tags(hits=())
-    with pytest.raises(ResolutionError, match="no default-branch fallback"):
+    with pytest.raises(ResolutionError, match="no default-branch fallback") as error:
         _resolve(_payload(), tags=tags)
-    assert tags.calls == [("acme/demo", "v1.2.0"), ("acme/demo", "1.2.0")]
+    assert "'demo@1.2.0', 'v1.2.0', '1.2.0'" in str(error.value)
+    assert tags.calls == [
+        ("acme/demo", "demo@1.2.0"),
+        ("acme/demo", "v1.2.0"),
+        ("acme/demo", "1.2.0"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "hit", "expected_calls"),
+    [
+        ("@scope/demo", "@scope/demo@1.2.0", ["@scope/demo@1.2.0"]),
+        ("demo", "v1.2.0", ["demo@1.2.0", "v1.2.0"]),
+        ("demo", "1.2.0", ["demo@1.2.0", "v1.2.0", "1.2.0"]),
+    ],
+)
+def test_npm_tag_candidates_are_tried_in_order_and_stop_at_first_success(
+    name, hit, expected_calls
+):
+    tags = Tags(hits=(hit,))
+    resolved = _resolve(_payload(), name=name, tags=tags)
+    assert resolved.tag == hit
+    assert tags.calls == [("acme/demo", tag) for tag in expected_calls]

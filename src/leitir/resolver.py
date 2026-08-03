@@ -696,7 +696,8 @@ class NpmResolver:
             extract_docs_urls(ref.ecosystem, payload, version=ref.version)
         )
 
-        for tag in (f"v{ref.version}", ref.version):
+        candidates = (f"{ref.name}@{ref.version}", f"v{ref.version}", ref.version)
+        for tag in candidates:
             try:
                 sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
                 return ResolvedPackage(
@@ -709,8 +710,9 @@ class NpmResolver:
                 )
             except ResolutionError:
                 pass
+        tried = ", ".join(repr(tag) for tag in candidates)
         raise ResolutionError(
-            f"neither tag v{ref.version!s} nor {ref.version!s} exists in {slug}; "
+            f"none of the npm tag candidates [{tried}] exists in {slug}; "
             "npm resolution has no default-branch fallback"
         )
 

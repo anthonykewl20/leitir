@@ -1,0 +1,42 @@
+{
+  "schema_version": "leitir-corpus-benchmark-manifest-v1",
+  "benchmark_id": "corpus-v1",
+  "tasks": [
+    {
+      "id": "npm-zod-3-22-0",
+      "spec": "npm:zod@3.22.0",
+      "expected_owner": "colinhacks",
+      "expected_repo": "zod",
+      "expected_commit_sha": "fba438cddea800b081a15aefc8b1efea2eccf7af",
+      "expected_files": [{"path": "package.json", "content_line": "  \"version\": \"3.22.0\","}],
+      "pin_source": "npm registry plus GitHub contents API, reverified 2026-08-03"
+    },
+    {
+      "id": "pypi-requests-2-31-0",
+      "spec": "pypi:requests@2.31.0",
+      "expected_owner": "psf",
+      "expected_repo": "requests",
+      "expected_commit_sha": "147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+      "expected_files": [{"path": "README.md", "content_line": "# Requests"}],
+      "pin_source": "PyPI registry plus GitHub contents API, reverified 2026-08-03"
+    },
+    {
+      "id": "repo-octocat-hello-world",
+      "spec": "octocat/Hello-World",
+      "expected_owner": "octocat",
+      "expected_repo": "Hello-World",
+      "expected_commit_sha": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+      "expected_files": [{"path": "README", "content_line": "Hello World!"}],
+      "pin_source": "GitHub repository and contents APIs, reverified 2026-08-03"
+    },
+    {
+      "id": "crates-serde-1-0-152",
+      "spec": "crates:serde@1.0.152",
+      "expected_owner": "serde-rs",
+      "expected_repo": "serde",
+      "expected_commit_sha": "ccf9c6fc072378ea8c4f15df1024e258d35d6e61",
+      "expected_files": [{"path": "README.md", "content_line": "**Serde is a framework for *ser*ializing and *de*serializing Rust data structures efficiently and generically.**"}],
+      "pin_source": "crates.io registry plus GitHub contents API, reverified 2026-08-03"
+    }
+  ]
+}

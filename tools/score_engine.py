@@ -6480,13 +6480,14 @@ def render_assessment_html(
         "</tr>"
         for item in raw["dimensions"]
     )
+    unknown_cell = '<span class="score-unknown">unknown</span>'
     check_rows = "".join(
         "<tr>"
         f'<th scope="row">{_html(item["id"])}</th>'
         f"<td>{_html(item['dimension'])}</td>"
         f"<td>{_html(item['mode'])}</td>"
         f"<td>{_html(item['status'])}</td>"
-        f"<td>{_html(item['score_bps']) if item['score_bps'] is not None else '<span class=\"score-unknown\">unknown</span>'}</td>"
+        f"<td>{_html(item['score_bps']) if item['score_bps'] is not None else unknown_cell}</td>"
         f"<td>{_html(item['reason_code'])}</td>"
         f"<td>{_json_cell(item['criterion'])}</td>"
         f"<td>{_json_cell(item['numerator'])}/{_json_cell(item['denominator'])}</td>"

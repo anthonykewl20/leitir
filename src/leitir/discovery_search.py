@@ -149,10 +149,15 @@ class GitHubCodeSearchTransport:
             incomplete_results=bool(payload.get("incomplete_results", False)),
         )
 
-    def resolve_head_sha(self, slug: str) -> str:
+    def resolve_head_sha(self, slug: str, branch: str | None = None) -> str:
+        """Resolve a repository's default HEAD, or an explicitly named branch."""
         from urllib.request import Request, urlopen
+        from urllib.parse import urlencode
 
-        url = f"{self._base_url}/repos/{slug}/commits?per_page=1"
+        query = {"per_page": 1}
+        if branch is not None:
+            query = {"sha": branch, "per_page": 1}
+        url = f"{self._base_url}/repos/{slug}/commits?{urlencode(query)}"
         headers = self._headers()
 
         def _fetch() -> list:
@@ -163,11 +168,14 @@ class GitHubCodeSearchTransport:
             payload = self._retry(_fetch)
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise CodeSearchError(
-                f"cannot resolve HEAD for {slug}: {_http.describe_failure(exc)}"
+                f"cannot resolve {branch or 'HEAD'} for {slug}: {_http.describe_failure(exc)}"
             ) from exc
         if not payload or not isinstance(payload, list):
-            raise CodeSearchError(f"empty commit list for {slug}")
-        return payload[0]["sha"]
+            raise CodeSearchError(f"empty commit list for {slug} at {branch or 'HEAD'}")
+        sha = payload[0].get("sha")
+        if not isinstance(sha, str) or not _SHA1.fullmatch(sha):
+            raise CodeSearchError(f"invalid commit returned for {slug} at {branch or 'HEAD'}")
+        return sha
 
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
         from urllib.request import Request, urlopen

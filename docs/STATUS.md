@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-03)
+# Leitir — Status (2026-08-04)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -17,7 +17,17 @@ code health, test adequacy, supply chain, and controlled performance, plus a
 deterministic renderer, release profile, and a published self-assessment
 guarded by a regeneration drift check.
 
-Offline suite: **460 passed, 29 skipped**. The 29 skips are opt-in live tests
+**ADR-004 is implemented; slices M1–M7 are complete.** It adds a local
+source materialization layer (corpus): SHA-pinned, verified, complete
+source trees shelved into a gitignored folder with provenance manifests
+and documentation pointers, so AI agents reference proven open-source
+code instead of generating from scratch. The design re-implements the
+fetch-and-cache model of vercel-labs/opensrc (Apache-2.0; attribution in
+the ADR) and extends it with commit-SHA pinning, integrity verification,
+multi-ecosystem lockfile version detection, and a normative agent
+workflow, an agent skill, and a pinned fetch-correctness benchmark.
+
+Offline suite: **900 passed, 37 skipped**. The 37 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir

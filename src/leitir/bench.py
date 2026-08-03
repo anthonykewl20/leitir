@@ -373,8 +373,8 @@ def manifest_from_dict(raw: object) -> BenchmarkManifest:
         raise ValueError(f"benchmark manifest is missing {exc.args[0]!r}") from exc
 
 
-def load_manifest(path: str | Path | None = None) -> BenchmarkManifest:
-    """Load the shipped search-v1 manifest or an explicit local manifest."""
+def load_manifest(path: str | Path | None = None) -> object:
+    """Load the default, a named packaged benchmark, or a local manifest."""
     if path is None:
         from importlib import resources
 
@@ -385,8 +385,22 @@ def load_manifest(path: str | Path | None = None) -> BenchmarkManifest:
     else:
         if not isinstance(path, (str, Path)):
             raise TypeError("path must be text, Path, or None")
-        text = Path(path).read_text(encoding="utf-8")
-    return manifest_from_dict(json.loads(text))
+        candidate = Path(path)
+        if isinstance(path, str) and not candidate.exists() and _TASK_ID.fullmatch(path):
+            from importlib import resources
+
+            manifest_path = resources.files("leitir").joinpath(
+                "benchmarks", path, "manifest.json"
+            )
+            text = manifest_path.read_text(encoding="utf-8")
+        else:
+            text = candidate.read_text(encoding="utf-8")
+    raw = json.loads(text)
+    if isinstance(raw, dict) and raw.get("schema_version") == "leitir-corpus-benchmark-manifest-v1":
+        from leitir.corpus_bench import manifest_from_dict as corpus_manifest_from_dict
+
+        return corpus_manifest_from_dict(raw)
+    return manifest_from_dict(raw)
 
 
 __all__ = [

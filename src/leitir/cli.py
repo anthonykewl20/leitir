@@ -1,15 +1,26 @@
-"""Thin command-line boundary for Leitir's deterministic code-search kernel."""
+"""Command-line boundary for search and local source materialization.
+
+For offline integration tests, the corpus wiring honors
+``LEITIR_CODELOAD_BASE_URL``, ``LEITIR_GITHUB_API_BASE_URL``,
+``LEITIR_NPM_BASE_URL``, ``LEITIR_PYPI_BASE_URL``, ``LEITIR_CRATES_BASE_URL``, and
+``LEITIR_GO_PROXY_BASE_URL``. Production defaults remain the official HTTPS
+services.
+"""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
 from enum import IntEnum
+import json
 import os
+from pathlib import Path
+import shutil
 import sys
 from typing import Protocol, TextIO
 
 from .logging import redact
+from .spec import CorpusSpec, parse_corpus_spec
 from .search import (
     Predicate,
     PredicateKind,
@@ -24,6 +35,7 @@ class ExitCode(IntEnum):
     """Stable process outcomes for automation."""
 
     SUCCESS = 0
+    CORPUS_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
 
@@ -76,8 +88,39 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument(
         "--manifest",
         default=None,
-        help="local benchmark manifest (default: packaged search-v1)",
+        help="local manifest or packaged benchmark id (default: search-v1)",
     )
+
+    for command, help_text in (
+        ("get", "materialize sources and print their local paths"),
+        ("fetch", "materialize sources without printing their paths"),
+    ):
+        corpus_command = commands.add_parser(command, help=help_text)
+        corpus_command.add_argument("specs", nargs="+", metavar="spec")
+        roots = corpus_command.add_mutually_exclusive_group()
+        roots.add_argument("--root", default=None, help="corpus root directory")
+        roots.add_argument(
+            "--local",
+            action="store_true",
+            help="use ./.leitir-refs and ensure it is gitignored",
+        )
+        corpus_command.add_argument(
+            "--cwd",
+            default=None,
+            help="project directory used for lockfile resolution",
+        )
+        corpus_command.add_argument(
+            "--no-verify",
+            action="store_true",
+            help="skip Git tree verification and record the source as unverified",
+        )
+
+    list_command = commands.add_parser("list", help="list materialized sources")
+    list_command.add_argument("--json", action="store_true", dest="as_json")
+    remove = commands.add_parser("remove", help="remove a materialized source")
+    remove.add_argument("spec")
+    clean = commands.add_parser("clean", help="empty the source corpus")
+    clean.add_argument("--repos", action="store_true")
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -103,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--ecosystem",
         default=None,
-        choices=("pypi", "crates", "go"),
+        choices=("npm", "pypi", "crates", "go"),
         help="package ecosystem",
     )
 
@@ -163,14 +206,32 @@ def _build_default_resolver(token: str | None) -> object:
         GitHubTagResolver,
         GoResolver,
         MultiResolver,
+        NpmResolver,
         PyPIResolver,
     )
 
-    tag_resolver = GitHubTagResolver(token=token)
+    tag_options = {}
+    github_api = os.environ.get("LEITIR_GITHUB_API_BASE_URL")
+    if github_api:
+        tag_options["base_url"] = github_api
+    tag_resolver = GitHubTagResolver(token=token, **tag_options)
+    pypi_options = {}
+    npm_options = {}
+    crates_options = {}
+    go_options = {}
+    if os.environ.get("LEITIR_PYPI_BASE_URL"):
+        pypi_options["base_url"] = os.environ["LEITIR_PYPI_BASE_URL"]
+    if os.environ.get("LEITIR_NPM_BASE_URL"):
+        npm_options["base_url"] = os.environ["LEITIR_NPM_BASE_URL"]
+    if os.environ.get("LEITIR_CRATES_BASE_URL"):
+        crates_options["base_url"] = os.environ["LEITIR_CRATES_BASE_URL"]
+    if os.environ.get("LEITIR_GO_PROXY_BASE_URL"):
+        go_options["base_url"] = os.environ["LEITIR_GO_PROXY_BASE_URL"]
     return MultiResolver(
-        pypi=PyPIResolver(tag_resolver),
-        crates=CratesResolver(tag_resolver),
-        go=GoResolver(tag_resolver),
+        pypi=PyPIResolver(tag_resolver, **pypi_options),
+        crates=CratesResolver(tag_resolver, **crates_options),
+        go=GoResolver(tag_resolver, **go_options),
+        npm=NpmResolver(tag_resolver, **npm_options),
     )
 
 
@@ -214,7 +275,191 @@ def _build_default_global_searcher(
 def _build_default_code_search(token: str | None) -> object:
     from .discovery_search import GitHubCodeSearchTransport
 
-    return GitHubCodeSearchTransport(token=token)
+    options = {}
+    github_api = os.environ.get("LEITIR_GITHUB_API_BASE_URL")
+    if github_api:
+        options["base_url"] = github_api
+    return GitHubCodeSearchTransport(token=token, **options)
+
+
+def _ensure_local_gitignore(cwd: Path) -> str:
+    gitignore = cwd / ".gitignore"
+    line = ".leitir-refs/"
+    try:
+        existing = gitignore.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        gitignore.write_text(line + "\n", encoding="utf-8")
+        return f"created {gitignore} with {line}"
+    rules = {item.strip() for item in existing.splitlines() if item.strip() and not item.lstrip().startswith("#")}
+    if rules.intersection({line, ".leitir-refs", "/.leitir-refs/", "/.leitir-refs", ".leitir-refs/**"}):
+        return f"{gitignore} already covers {line}"
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    with gitignore.open("a", encoding="utf-8") as handle:
+        handle.write(separator + line + "\n")
+    return f"appended {line} to {gitignore}"
+
+
+def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
+    from .corpus import resolve_root
+
+    if getattr(args, "local", False):
+        cwd = Path.cwd()
+        print(f"leitir: {_ensure_local_gitignore(cwd)}", file=err)
+        return (cwd / ".leitir-refs").absolute()
+    return resolve_root(getattr(args, "root", None))
+
+
+def _resolve_corpus_spec(
+    parsed: CorpusSpec, resolver: object, heads: object, cwd: Path
+) -> tuple[object, str | None, str | None, str | None]:
+    from .lockfiles import detect_installed_version_with_source
+    from .resolver import Ecosystem, PackageRef
+
+    if parsed.ecosystem is not None:
+        ecosystem = Ecosystem(parsed.ecosystem)
+        version = parsed.version
+        version_source = "explicit"
+        detection_source = None
+        if version is None:
+            detected = detect_installed_version_with_source(parsed.ecosystem, parsed.name, cwd)
+            if detected is not None:
+                version = detected.version
+                version_source = "lockfile"
+                detection_source = detected.source
+            else:
+                version = resolver.latest_version(ecosystem, parsed.name)
+                version_source = "latest"
+        return (
+            resolver.resolve(PackageRef(ecosystem, parsed.name, version)),
+            None,
+            version_source,
+            detection_source,
+        )
+
+    if parsed.ref_kind == "sha":
+        return RepoScope(parsed.name, parsed.ref), None, None, None
+    if parsed.ref_kind == "tag":
+        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
+        return RepoScope(parsed.name, sha), parsed.ref, None, None
+    if parsed.ref_kind == "branch":
+        sha = heads.resolve_head_sha(parsed.name, parsed.ref)
+    else:
+        sha = heads.resolve_head_sha(parsed.name)
+    return RepoScope(parsed.name, sha), None, None, None
+
+
+def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
+    from .corpus import load_sources
+    from .materialize import MANIFEST_NAME
+
+    entries = load_sources(root)
+    rendered = []
+    for entry in entries:
+        version = None
+        verification = "unverified"
+        try:
+            manifest = json.loads((root / entry["path"] / MANIFEST_NAME).read_text(encoding="utf-8"))
+            version = manifest.get("version")
+            if manifest.get("verified") is True:
+                verification = "verified"
+            elif manifest.get("verified") == "sampled":
+                verification = "sampled"
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+            pass
+        rendered.append((entry, version, verification))
+    if as_json:
+        payload = [dict(entry, verification=verification) for entry, _, verification in rendered]
+        print(json.dumps(payload, indent=2, sort_keys=True), file=out)
+        return
+    for entry, version, verification in rendered:
+        version_text = f" {version}" if version else ""
+        path = (root / entry["path"]).absolute()
+        print(
+            f"{entry['name']}{version_text} {entry['owner']}/{entry['repo']}@{entry['commit_sha']} "
+            f"{verification} {path} {entry['fetched_at']}",
+            file=out,
+        )
+
+
+def _run_corpus_command(
+    args: argparse.Namespace,
+    *,
+    resolver_factory: Callable[[str | None], object],
+    code_search_factory: Callable[[str | None], object],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    from .corpus import INDEX_NAME, materialize_source, remove_source
+    from .docpointers import POINTERS_NAME
+
+    try:
+        root = _corpus_root(args, err)
+        if args.command == "list":
+            _corpus_list(root, as_json=args.as_json, out=out)
+            return int(ExitCode.SUCCESS)
+        if args.command == "remove":
+            parsed = parse_corpus_spec(args.spec)
+            if parsed.ecosystem is None and parsed.ref_kind == "head":
+                owner, repo = parsed.name.split("/", 1)
+                sha = None
+            else:
+                token = _github_token()
+                resolver = resolver_factory(token)
+                heads = code_search_factory(token)
+                resolved, _, _, _ = _resolve_corpus_spec(parsed, resolver, heads, Path.cwd())
+                scope = resolved.scope if hasattr(resolved, "scope") else resolved
+                owner, repo = scope.slug.split("/", 1)
+                sha = scope.commit_sha
+            removed = remove_source(root, owner, repo, sha)
+            print(f"leitir: {'removed' if removed else 'not found'} {args.spec}", file=err)
+            return int(ExitCode.SUCCESS)
+        if args.command == "clean":
+            shutil.rmtree(root / "repos", ignore_errors=True)
+            (root / INDEX_NAME).unlink(missing_ok=True)
+            (root / POINTERS_NAME).unlink(missing_ok=True)
+            print(f"leitir: cleaned {root}", file=err)
+            return int(ExitCode.SUCCESS)
+
+        token = _github_token()
+        resolver = resolver_factory(token)
+        heads = code_search_factory(token)
+        cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+        paths: list[Path] = []
+        fetch_options = {}
+        if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
+            fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
+        fetch_options["verify"] = not args.no_verify
+        if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
+            fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+        for raw in args.specs:
+            print(f"leitir: resolving {raw} (cwd={cwd})", file=err)
+            parsed = parse_corpus_spec(raw)
+            resolved, tag, version_source, detection_source = _resolve_corpus_spec(
+                parsed, resolver, heads, cwd
+            )
+            if version_source == "lockfile":
+                print(
+                    f"leitir: {parsed.name}: version {resolved.ref.version} from {detection_source}",
+                    file=err,
+                )
+            print(f"leitir: materializing {raw}", file=err)
+            path = materialize_source(
+                raw,
+                resolved,
+                root=root,
+                name=parsed.name,
+                tag=tag,
+                version_source=version_source,
+                **fetch_options,
+            )
+            paths.append(path.absolute())
+        if args.command == "get":
+            for path in paths:
+                print(path, file=out)
+        return int(ExitCode.SUCCESS)
+    except Exception as exc:
+        print(f"leitir: error: {redact(str(exc))}", file=err)
+        return int(ExitCode.CORPUS_FAILURE)
 
 
 def _resolve_scope_via_package(
@@ -283,9 +528,16 @@ def main(
         token = _github_token()
         try:
             manifest = _load_benchmark_manifest(args.manifest)
-            tree_source = tree_source_factory(token)
-            searcher = searcher_factory(tree_source)
-            runner = benchmark_runner_factory(searcher)
+            from .corpus_bench import CorpusBenchmarkManifest, CorpusBenchmarkRunner
+
+            if isinstance(manifest, CorpusBenchmarkManifest):
+                runner = CorpusBenchmarkRunner(
+                    resolver_factory(token), code_search_factory(token), token
+                )
+            else:
+                tree_source = tree_source_factory(token)
+                searcher = searcher_factory(tree_source)
+                runner = benchmark_runner_factory(searcher)
             run = runner.run(manifest)
         except Exception as exc:
             print(f"leitir: error: {redact(str(exc))}", file=err)
@@ -300,6 +552,15 @@ def main(
             file=err,
         )
         return int(ExitCode.SUCCESS)
+
+    if args.command in {"get", "fetch", "list", "remove", "clean"}:
+        return _run_corpus_command(
+            args,
+            resolver_factory=resolver_factory,
+            code_search_factory=code_search_factory,
+            out=out,
+            err=err,
+        )
 
     scope_error = _validate_scope_args(args)
     if scope_error:

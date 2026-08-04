@@ -96,6 +96,12 @@ def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]
     return payload
 
 
+def merge_parity_result(target: str | os.PathLike[str], result: object) -> dict[str, object]:
+    """Atomically add a typed parity result to a source manifest."""
+    fields = result.manifest_fields()  # type: ignore[attr-defined]
+    return update_manifest(target, fields)
+
+
 def _validate_identity(owner: str, repo: str, commit_sha: str) -> None:
     if not _NAME.fullmatch(owner):
         raise ValueError("owner must be a repository owner")
@@ -167,6 +173,15 @@ def read_valid_manifest(
         return None
     if verified is False and payload.get("verified_at") is not None:
         return None
+    if "parity" in payload and payload.get("parity") not in {"exact", "drift", "unknown"}:
+        return None
+    for field in ("files_compared", "only_in_git", "only_in_artifact"):
+        if field in payload and (
+            not isinstance(payload[field], int)
+            or isinstance(payload[field], bool)
+            or payload[field] < 0
+        ):
+            return None
     return payload
 
 

@@ -58,7 +58,7 @@ def test_import_leitir_does_not_load_external_effect_modules(tmp_path):
         sys.path.insert(0, %r)
         import leitir
         import leitir.adapters, leitir.cli, leitir.discovery_search
-        import leitir.engine, leitir.logging, leitir.resolver, leitir.search
+        import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree
         present = [m for m in %r if m in sys.modules]
         print(json.dumps({"present": present}))
@@ -82,7 +82,7 @@ def test_import_writes_no_filesystem_artifact(tmp_path):
         sys.path.insert(0, %r)
         import leitir
         import leitir.adapters, leitir.cli, leitir.discovery_search
-        import leitir.engine, leitir.logging, leitir.resolver, leitir.search
+        import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree
         """
         % str(SRC)

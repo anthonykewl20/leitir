@@ -97,9 +97,15 @@ Ordered by dependency (matching decision 12): C1-C10.
       (`bitbucket.org`) are unauthenticated; public repos (the anonymous
       default) are unaffected.
 
-- [ ] C2: Registry-artifact parity module and manifest parity fields.
-      (`src/leitir/parity.py`, `src/leitir/materialize.py`, `src/leitir/spec.py`, `tests/test_parity.py`, `tests/test_parity_e2e.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C2: Registry-artifact parity module and manifest parity fields.
+      (`src/leitir/parity.py`, `src/leitir/materialize.py`, `src/leitir/resolver.py`,
+      `src/leitir/corpus.py`, `tests/test_parity.py`, `tests/test_parity_e2e.py`)
+      Gate: offline targeted 65 passed, 1 skipped; full suite 952 passed, 44 skipped
+      (Python 3.11); live 3 passed (npm). Parity verdicts: `exact` (full byte+set
+      identity, rare), `drift` (any byte or file-set difference, informative and
+      non-blocking), `unknown` (no artifact or retrieval failure). Checksum
+      mismatch is fail-closed (`ChecksumMismatchError`); artifact extraction
+      reuses the tar/zip safe-extraction guards; HTTPS-only with redirect checks.
 
 - [ ] C3: Byte-exact resolution order, artifact checksum verification, and source mode in manifest.
       (`src/leitir/resolver.py`, `src/leitir/materialize.py`, `src/leitir/spec.py`, `tests/test_resolver_byte_exact.py`, `tests/test_materialize_artifact.py`)
@@ -140,7 +146,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | Slice | Status | Gate result |
 |-------|--------|-------------|
 | C1 | done | offline targeted 137; full 942 passed, 43 skipped (3.11); live GitLab passed, Bitbucket blocked by anonymous 429 (no token) |
-| C2 | not started | not started |
+| C2 | done | offline targeted 65, 1 skipped; full 952 passed, 44 skipped (3.11); live 3 (npm) |
 | C3 | not started | not started |
 | C4 | not started | not started |
 | C5 | not started | not started |

@@ -12,6 +12,7 @@ from typing import Any
 
 from leitir.materialize import (
     materialize_repo,
+    merge_parity_result,
     read_valid_manifest,
     target_path,
     update_manifest,
@@ -121,11 +122,18 @@ def materialize_source(
     host: str = "github.com",
     repository_resolver: object | None = None,
     on_fetch: Callable[[], None] | None = None,
+    parity_fetcher: object | None = None,
     **fetch_options: object,
 ) -> Path:
     """Ensure a resolved source is materialized and indexed exactly once."""
     corpus_root = resolve_root(root)
-    manifest_fields: dict[str, object] = {"docs_urls": []}
+    manifest_fields: dict[str, object] = {
+        "docs_urls": [],
+        "parity": "unknown",
+        "files_compared": 0,
+        "only_in_git": 0,
+        "only_in_artifact": 0,
+    }
     if isinstance(resolved, ResolvedPackage):
         scope = resolved.scope
         source_name = name or resolved.ref.name
@@ -164,6 +172,33 @@ def materialize_source(
     )
     if manifest is None:
         raise RuntimeError("materializer returned a source without a valid manifest")
+    if isinstance(resolved, ResolvedPackage) and resolved.ref.ecosystem.value in {
+        "npm",
+        "pypi",
+        "crates",
+    }:
+        from leitir.parity import (
+            UNKNOWN_PARITY,
+            ArtifactInfo,
+            RegistryArtifactFetcher,
+            package_parity,
+        )
+
+        artifact = resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
+        if manifest.get("parity") not in {"exact", "drift"}:
+            parity = package_parity(
+                resolved.ref.ecosystem.value,
+                resolved.ref.name,
+                resolved.ref.version,
+                target / subpath if subpath else target,
+                artifact=artifact,
+                fetcher=(
+                    parity_fetcher
+                    if isinstance(parity_fetcher, RegistryArtifactFetcher)
+                    else None
+                ),
+            ) if artifact is not None else UNKNOWN_PARITY
+            manifest = merge_parity_result(target, parity)
     if "entry_points" not in manifest:
         from leitir.docpointers import discover_entry_points
 

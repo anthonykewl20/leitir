@@ -12,10 +12,13 @@ import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from leitir import _http
 from leitir.search import RepoScope
+
+if TYPE_CHECKING:
+    from leitir.parity import ArtifactInfo
 
 
 class Ecosystem(str, Enum):
@@ -59,6 +62,7 @@ class ResolvedPackage:
     registry_url: str
     subpath: str | None = None
     docs_urls: tuple[str, ...] = ()
+    artifact: ArtifactInfo | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, PackageRef):
@@ -575,6 +579,7 @@ class PyPIResolver:
             tag=tag,
             registry_url=f"https://pypi.org/project/{ref.name}/{ref.version}/",
             docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
+            artifact=self._artifact(ref, payload),
         )
 
     def latest_version(self, name: str) -> str:
@@ -601,6 +606,12 @@ class PyPIResolver:
         if not isinstance(version, str) or not version.strip():
             raise ResolutionError(f"PyPI returned no latest version for {name}")
         return version
+
+    @staticmethod
+    def _artifact(ref: PackageRef, payload: object) -> ArtifactInfo | None:
+        from leitir.parity import artifact_from_metadata
+
+        return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
 
     def _extract_github_slug(self, payload: dict) -> str | None:
         info = payload.get("info", {})
@@ -708,6 +719,7 @@ class CratesResolver:
             tag=tag,
             registry_url=f"https://crates.io/crates/{ref.name}/{ref.version}",
             docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
+            artifact=self._artifact(ref, payload),
         )
 
     def latest_version(self, name: str) -> str:
@@ -734,6 +746,12 @@ class CratesResolver:
         if not isinstance(version, str) or not version.strip():
             raise ResolutionError(f"crates.io returned no latest version for {name}")
         return version
+
+    @staticmethod
+    def _artifact(ref: PackageRef, payload: object) -> ArtifactInfo | None:
+        from leitir.parity import artifact_from_metadata
+
+        return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
 
     def _resolve_first_tag(
         self, slug: str, name: str, version: str
@@ -1023,6 +1041,7 @@ class NpmResolver:
                     registry_url=f"https://www.npmjs.com/package/{encoded}/v/{ref.version}",
                     subpath=directory,
                     docs_urls=docs_urls,
+                    artifact=self._artifact(ref, payload),
                 )
             except ResolutionError:
                 pass
@@ -1031,6 +1050,12 @@ class NpmResolver:
             f"none of the npm tag candidates [{tried}] exists in {slug}; "
             "npm resolution has no default-branch fallback"
         )
+
+    @staticmethod
+    def _artifact(ref: PackageRef, payload: object) -> ArtifactInfo | None:
+        from leitir.parity import artifact_from_metadata
+
+        return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
 
 
 class MultiResolver:

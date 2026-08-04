@@ -55,6 +55,8 @@ def test_invalid_commit_sha_is_rejected():
 def test_invalid_slug_is_rejected():
     with pytest.raises(ValueError):
         RepoScope("no-slash", SHA)
+    with pytest.raises(ValueError):
+        RepoScope("group/../repo", SHA)
 
 
 def test_regex_predicate_must_compile():

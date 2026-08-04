@@ -23,6 +23,16 @@ def test_resolves_ref_to_lowercase_commit_sha():
     assert server.state.request_paths == ["/projects/owner%2Frepo/repository/commits/release%2F1"]
 
 
+def test_resolves_subgroup_project_ref_with_encoded_full_path():
+    with hs.scripted_server([(200, {}, hs.json_body({"id": SHA.upper()}))]) as server:
+        assert _resolver(server.base_url).resolve_tag_to_sha(
+            "group/subgroup/project", "main"
+        ) == SHA
+    assert server.state.request_paths == [
+        "/projects/group%2Fsubgroup%2Fproject/repository/commits/main"
+    ]
+
+
 def test_commit_sha_input_is_verified_through_api():
     with hs.scripted_server([(200, {}, hs.json_body({"id": SHA}))]) as server:
         assert _resolver(server.base_url).resolve_ref_to_sha("owner/repo", SHA) == SHA
@@ -104,3 +114,14 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
 def test_live_ref_resolves_to_pinned_commit():
     resolver = GitLabResolver()
     assert resolver.resolve_tag_to_sha(fx.GITLAB_SLUG, fx.GITLAB_REF) == fx.GITLAB_COMMIT_SHA
+
+
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
+)
+def test_live_subgroup_ref_resolves_to_pinned_commit():
+    resolver = GitLabResolver()
+    assert resolver.resolve_tag_to_sha(
+        fx.GITLAB_SUBGROUP_SLUG, fx.GITLAB_SUBGROUP_REF
+    ) == fx.GITLAB_SUBGROUP_COMMIT_SHA

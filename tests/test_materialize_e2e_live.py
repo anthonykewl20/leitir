@@ -52,6 +52,21 @@ def test_materializes_pinned_gitlab_repository(tmp_path):
     assert manifest["verified"] in (True, "sampled")
 
 
+def test_materializes_pinned_gitlab_subgroup_repository(tmp_path):
+    target = materialize_repo(
+        tmp_path,
+        f"gitlab:{fx.GITLAB_SUBGROUP_SLUG}@{fx.GITLAB_SUBGROUP_COMMIT_SHA}",
+        RepoScope(fx.GITLAB_SUBGROUP_SLUG, fx.GITLAB_SUBGROUP_COMMIT_SHA),
+        host="gitlab.com",
+        resolver=GitLabResolver(),
+    )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert target == tmp_path / "repos" / "gitlab.com" / fx.GITLAB_SUBGROUP_SLUG / fx.GITLAB_SUBGROUP_COMMIT_SHA
+    assert manifest["owner"] == "gl-demo-ultimate-cwoolley/cwoolley-gitlab-test-subgroup"
+    assert manifest["repo"] == "cwoolley-gitlab-test-project-1"
+    assert manifest["verified"] in (True, "sampled")
+
+
 def test_materializes_pinned_bitbucket_repository(tmp_path):
     target = materialize_repo(
         tmp_path,

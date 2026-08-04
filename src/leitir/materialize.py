@@ -106,13 +106,25 @@ def merge_parity_result(target: str | os.PathLike[str], result: object) -> dict[
     return update_manifest(target, fields)
 
 
-def _validate_identity(owner: str, repo: str, commit_sha: str) -> None:
-    if not _NAME.fullmatch(owner):
-        raise ValueError("owner must be a repository owner")
-    if not _NAME.fullmatch(repo):
-        raise ValueError("repo must be a repository name")
+def _normalize_identity(
+    owner: str, repo: str, commit_sha: str, host: str
+) -> tuple[str, str, tuple[str, ...]]:
+    parts = tuple(f"{owner}/{repo}".split("/"))
+    if host != "gitlab.com" and len(parts) != 2:
+        raise ValueError("repository identity must contain exactly two segments")
+    if len(parts) < 2 or any(
+        part in {".", ".."} or not _NAME.fullmatch(part) for part in parts
+    ):
+        raise ValueError("repository identity contains an invalid path segment")
     if not _SHA1.fullmatch(commit_sha):
         raise ValueError("commit_sha must be a 40-char lowercase hex SHA")
+    return "/".join(parts[:-1]), parts[-1], parts
+
+
+def _validate_identity(
+    owner: str, repo: str, commit_sha: str, host: str = "github.com"
+) -> None:
+    _normalize_identity(owner, repo, commit_sha, host)
 
 
 def target_path(
@@ -124,10 +136,10 @@ def target_path(
     host: str = "github.com",
 ) -> Path:
     """Return the canonical target path for one pinned hosted repository."""
-    _validate_identity(owner, repo, commit_sha)
     if host not in _HOST_METADATA:
         raise ValueError(f"unsupported repository host {host!r}")
-    return Path(root) / "repos" / host / owner / repo / commit_sha
+    _owner, _repo, parts = _normalize_identity(owner, repo, commit_sha, host)
+    return Path(root).joinpath("repos", host, *parts, commit_sha)
 
 
 def read_valid_manifest(
@@ -141,6 +153,10 @@ def read_valid_manifest(
     """Read a manifest only when it identifies exactly the requested source."""
     metadata = _HOST_METADATA.get(host)
     if metadata is None:
+        return None
+    try:
+        owner, repo, _parts = _normalize_identity(owner, repo, commit_sha, host)
+    except ValueError:
         return None
     fetch_method, canonical_base = metadata
     try:
@@ -581,7 +597,7 @@ def _materialize_hosted_repo(
     on_fetch: Callable[[], None] | None = None,
     archive_root: str | None = None,
 ) -> Path:
-    _validate_identity(owner, repo, commit_sha)
+    owner, repo, _parts = _normalize_identity(owner, repo, commit_sha, host)
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("spec must be non-empty")
     metadata = _HOST_METADATA.get(host)
@@ -783,6 +799,7 @@ def materialize_repo(
 ) -> Path:
     """Materialize a :class:`RepoScope` through its host-native resolver."""
     owner, repo = scope.slug.split("/", 1)
+    owner, repo, _parts = _normalize_identity(owner, repo, scope.commit_sha, host)
     if host == "github.com":
         return materialize_github_repo(
             root, spec, owner, repo, scope.commit_sha, **kwargs  # type: ignore[arg-type]

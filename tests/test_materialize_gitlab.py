@@ -67,6 +67,38 @@ def test_cli_materializes_verified_gitlab_repository(tmp_path):
     assert server.state.request_paths[0] == "/archive"
 
 
+def test_cli_materializes_verified_gitlab_subgroup_repository(tmp_path):
+    responses = [
+        (200, {}, _tarball()),
+        (200, {}, hs.json_body(_tree())),
+        (200, {}, hs.json_body({"size": len(CONTENT)})),
+    ]
+    slug = "group/subgroup/demo"
+    with hs.scripted_server(responses) as server:
+        resolver = _resolver(server)
+        multi = type("Resolver", (), {"_repository_resolvers": {"gitlab.com": resolver}})()
+        out, err = io.StringIO(), io.StringIO()
+        code = main(
+            ["get", f"gitlab:{slug}@{SHA}", "--root", str(tmp_path)],
+            resolver_factory=lambda _token: multi,
+            code_search_factory=lambda _token: object(),
+            stdout=out,
+            stderr=err,
+        )
+    target = tmp_path / "repos/gitlab.com/group/subgroup/demo" / SHA
+    assert code == ExitCode.SUCCESS, err.getvalue()
+    assert out.getvalue().strip() == str(target)
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["owner"] == "group/subgroup"
+    assert manifest["repo"] == "demo"
+    assert manifest["repo_url"] == f"https://gitlab.com/{slug}"
+    assert manifest["verified"] is True
+    assert server.state.request_paths[1:] == [
+        f"/projects/group%2Fsubgroup%2Fdemo/repository/tree?ref={SHA}&recursive=true&per_page=100&page=1",
+        f"/projects/group%2Fsubgroup%2Fdemo/repository/blobs/{GitHubTreeSource.git_blob_sha(CONTENT)}",
+    ]
+
+
 def test_gitlab_archive_404_cleans_target(tmp_path):
     with hs.scripted_server([(404, {}, b"missing")]) as server:
         with pytest.raises(MaterializationError, match="HTTP 404"):

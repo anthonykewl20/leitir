@@ -12,7 +12,6 @@ from urllib.parse import unquote, urlsplit
 
 
 _SHA1 = re.compile(r"^[0-9a-fA-F]{40}$")
-_OWNER = re.compile(r"^[A-Za-z0-9_.-]+$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+$")
 _NPM_NAME = re.compile(r"^(?:[A-Za-z0-9_.~-][A-Za-z0-9_.~-]*|@[A-Za-z0-9_.~-]+/[A-Za-z0-9_.~-]+)$")
 _PREFIXES = {
@@ -35,7 +34,8 @@ _REPOSITORY_HOSTS = {
 _SUPPORTED_FORMS = (
     "npm:name[@version], pypi:name[@version], crates:name[@version], "
     "go:module[@version], owner/repo[@ref|#ref], "
-    "github|gitlab|bitbucket:owner/repo[@ref|#ref], or an HTTPS repository URL"
+    "github|bitbucket:owner/repo[@ref|#ref], "
+    "gitlab:group[/subgroup...]/project[@ref|#ref], or an HTTPS repository URL"
 )
 
 
@@ -73,9 +73,14 @@ def _repo_result(
     kind: str | None,
     host: str = "github.com",
 ) -> CorpusSpec:
-    if repo.endswith(".git"):
-        repo = repo[:-4]
-    if not _OWNER.fullmatch(owner) or not _REPO.fullmatch(repo):
+    parts = [owner, *repo.split("/")]
+    if parts[-1].endswith(".git"):
+        parts[-1] = parts[-1][:-4]
+    if host != "gitlab.com" and len(parts) != 2:
+        raise _fail(raw, "invalid repository owner or repository name")
+    if len(parts) < 2 or any(
+        part in {".", ".."} or not _REPO.fullmatch(part) for part in parts
+    ):
         raise _fail(raw, "invalid repository owner or repository name")
     if ref is not None and (not ref or any(ch.isspace() for ch in ref)):
         raise _fail(raw, "repository ref must be non-empty and contain no whitespace")
@@ -83,7 +88,7 @@ def _repo_result(
         kind = "head"
     elif _SHA1.fullmatch(ref):
         ref, kind = ref.lower(), "sha"
-    return CorpusSpec(raw, None, f"{owner}/{repo}", ref=ref, ref_kind=kind, host=host)
+    return CorpusSpec(raw, None, "/".join(parts), ref=ref, ref_kind=kind, host=host)
 
 
 def _parse_repo_shorthand(
@@ -104,9 +109,9 @@ def _parse_repo_shorthand(
     else:
         slug, ref, kind = value, None, None
     parts = slug.split("/")
-    if len(parts) != 2:
+    if len(parts) < 2 or (host != "gitlab.com" and len(parts) != 2):
         return None
-    return _repo_result(raw, parts[0], parts[1], ref, kind, host)
+    return _repo_result(raw, parts[0], "/".join(parts[1:]), ref, kind, host)
 
 
 def _parse_repository_url(raw: str) -> CorpusSpec:
@@ -127,27 +132,50 @@ def _parse_repository_url(raw: str) -> CorpusSpec:
         raise _fail(raw, "repository URL contains unsupported authority data")
     if parsed.query or parsed.fragment:
         raise _fail(raw, "repository URL must not contain a query or fragment")
-    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    encoded_parts = parsed.path.split("/")
+    if encoded_parts and encoded_parts[0] == "":
+        encoded_parts = encoded_parts[1:]
+    if encoded_parts and encoded_parts[-1] == "":
+        encoded_parts = encoded_parts[:-1]
+    if any(not part for part in encoded_parts):
+        raise _fail(raw, "repository URL contains an empty path segment")
+    parts = [unquote(part) for part in encoded_parts]
     if len(parts) < 2:
         raise _fail(raw, "repository URL must include owner and repository")
     ref = None
     kind = None
-    if len(parts) > 2:
-        if (
-            host == "gitlab.com"
-            and len(parts) >= 5
-            and parts[2] == "-"
-            and parts[3] in {"tree", "blob"}
-        ):
-            ref = parts[4]
-        elif len(parts) >= 4 and parts[2] in (
+    project_parts = parts
+    if host == "gitlab.com":
+        marker = next(
+            (
+                index
+                for index in range(2, len(parts) - 2)
+                if parts[index] == "-" and parts[index + 1] in {"tree", "blob"}
+            ),
+            None,
+        )
+        if marker is not None:
+            project_parts = parts[:marker]
+            ref = parts[marker + 2]
+            kind = "branch"
+        elif "-" in parts[2:]:
+            raise _fail(raw, "unsupported repository URL path")
+        elif len(parts) >= 4 and parts[2] in {"tree", "blob"}:
+            project_parts = parts[:2]
+            ref = parts[3]
+            kind = "branch"
+    elif len(parts) > 2:
+        if len(parts) >= 4 and parts[2] in (
             {"src"} if host == "bitbucket.org" else {"tree", "blob"}
         ):
+            project_parts = parts[:2]
             ref = parts[3]
+            kind = "branch"
         else:
             raise _fail(raw, "unsupported repository URL path")
-        kind = "branch"
-    return _repo_result(raw, parts[0], parts[1], ref, kind, host)
+    return _repo_result(
+        raw, project_parts[0], "/".join(project_parts[1:]), ref, kind, host
+    )
 
 
 def _split_package(raw: str, ecosystem: str, value: str) -> CorpusSpec:

@@ -401,6 +401,8 @@ def materialize_source(
     )
     if manifest is None:
         raise RuntimeError("materializer returned a source without a valid manifest")
+    owner = str(manifest["owner"])
+    repo = str(manifest["repo"])
     if isinstance(resolved, ResolvedPackage) and resolved.ref.ecosystem.value in {
         "npm",
         "pypi",
@@ -552,6 +554,9 @@ def remove_source(
     repo_path = target_path(
         corpus_root, owner, repo, probe_sha, host=host
     ).parent
+    if host == "gitlab.com":
+        parts = f"{owner}/{repo}".split("/")
+        owner, repo = "/".join(parts[:-1]), parts[-1]
     removal_path = repo_path / commit_sha if commit_sha else repo_path
     existed = removal_path.exists()
     if existed:

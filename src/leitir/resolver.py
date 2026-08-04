@@ -377,7 +377,9 @@ class GitLabResolver(_HostedRepoResolver):
     def _project(slug: str) -> str:
         from urllib.parse import quote
 
-        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug) is None:
+        if re.fullmatch(
+            r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", slug
+        ) is None or any(part in {".", ".."} for part in slug.split("/")):
             raise ResolutionError(f"invalid GitLab repository slug {slug!r}")
         return quote(slug, safe="")
 

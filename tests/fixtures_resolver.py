@@ -28,6 +28,10 @@ GITLAB_SLUG = "gitlab-org/gitlab-test"
 GITLAB_REF = "master"
 GITLAB_COMMIT_SHA = "ddd0f15ae83993f5cb66a927a28673882e99100b"
 
+GITLAB_SUBGROUP_SLUG = "gl-demo-ultimate-cwoolley/cwoolley-gitlab-test-subgroup/cwoolley-gitlab-test-project-1"
+GITLAB_SUBGROUP_REF = "main"
+GITLAB_SUBGROUP_COMMIT_SHA = "a7a8aed282e6dd4b0b38b525e2864527344c16f6"
+
 BITBUCKET_SLUG = "atlassian_tutorial/helloworld"
 BITBUCKET_REF = "master"
 BITBUCKET_COMMIT_SHA = "65d938f39f364da3f90767e008022ffe45c562af"

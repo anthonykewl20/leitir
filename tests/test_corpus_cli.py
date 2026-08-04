@@ -226,3 +226,42 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
     payload = json.loads(expected.read_text(encoding="utf-8"))
     assert payload["methods"] == ["ast"]
     assert payload["symbols"][0]["qualified_name"] == "demo.public"
+
+
+def test_examples_materializes_ensures_api_and_prints_cache_path(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    corpus = tmp_path / "corpus"
+
+    def fake_materialize(spec, resolved, **options):
+        source = corpus / f"repos/github.com/acme/demo/{SHA}"
+        (source / "examples").mkdir(parents=True)
+        (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
+        (source / "examples" / "use.py").write_text("public(1)\n", encoding="utf-8")
+        (source / "leitir-manifest.json").write_text(
+            json.dumps({"version": "1.0.0", "entry_points": ["examples/"]}),
+            encoding="utf-8",
+        )
+        write_sources(
+            corpus,
+            [{
+                "name": "acme/demo", "host": "github.com", "owner": "acme",
+                "repo": "demo", "commit_sha": SHA,
+                "path": f"repos/github.com/acme/demo/{SHA}",
+                "fetched_at": "2026-08-04T00:00:00Z",
+            }],
+        )
+        return source
+
+    monkeypatch.setattr(leitir.corpus, "materialize_source", fake_materialize)
+    code, out, err = _invoke(["examples", f"acme/demo@{SHA}", "--root", str(corpus)])
+
+    expected = corpus / "examples/github.com/acme/demo/1.0.0/index.json"
+    assert code == ExitCode.SUCCESS
+    assert out.strip() == str(expected)
+    assert "extracting API surface" in err and "extracting examples" in err
+    payload = json.loads(expected.read_text(encoding="utf-8"))
+    assert payload["snippets"][0]["path"] == "examples/use.py"
+    pointers = (corpus / "POINTERS.md").read_text(encoding="utf-8")
+    assert "api/github.com/acme/demo/1.0.0/index.json" in pointers
+    assert "examples/github.com/acme/demo/1.0.0/index.json" in pointers

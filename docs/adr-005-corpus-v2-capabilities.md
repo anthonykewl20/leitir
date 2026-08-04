@@ -179,9 +179,18 @@ Ordered by dependency (matching decision 12): C1-C10.
       hook so a parser-backed extractor can replace it without changing the
       `ApiIndex` contract. Deterministic (sorted symbols/modules).
 
-- [ ] C8: Usage-example extraction with symbol ranking and `POINTERS.md` API links.
-      (`src/leitir/examples.py`, `src/leitir/docpointers.py`, `tests/test_examples.py`, `tests/test_docpointers.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C8: Usage-example extraction with symbol ranking and `POINTERS.md` API links.
+      (`src/leitir/examples.py`, `src/leitir/docpointers.py`, `src/leitir/corpus.py`,
+      `src/leitir/cli.py`, `tests/test_examples.py`, `tests/test_docpointers.py`)
+      Gate: offline targeted 50 passed; full suite 1000 passed, 45 skipped
+      (Python 3.11); live n/a (network-independent). `leitir examples <spec>`
+      scans `tests/`/`examples/`/`docs/`/`README*` for fenced markdown blocks and
+      whole code files, matches them against the C7 API index's public symbols
+      (identifier-boundary), drops zero-symbol snippets, and ranks top-N (default
+      10) by matched-symbol count then path/line/length, with `file:line`
+      provenance. Cached at `examples/<registry>/<name>/<version>/index.json`.
+      `POINTERS.md` gains a per-source "API surface" section linking the API +
+      examples indexes when present (additive, no existing sections changed).
 
 - [ ] C9: Version diffing command and JSON output.
       (`src/leitir/diff.py`, `src/leitir/apisurface.py`, `tests/test_diff.py`, `tests/test_diff_e2e.py`)
@@ -204,6 +213,6 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C5 | done | offline targeted 41; full 977 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C6 | done | offline targeted 39; full 986 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C7 | done | offline targeted 43; full 991 passed, 45 skipped (3.11); live n/a (network-independent) |
-| C8 | not started | not started |
+| C8 | done | offline targeted 50; full 1000 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C9 | not started | not started |
 | C10 | not started | not started |

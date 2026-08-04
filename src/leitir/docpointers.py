@@ -130,6 +130,7 @@ def _source_sort_key(entry: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _render_source(root: Path, entry: Mapping[str, Any]) -> list[str]:
+    from leitir.corpus import api_index_path, examples_index_path
     from leitir.materialize import MANIFEST_NAME, update_manifest
 
     relative = str(entry.get("path", ""))
@@ -177,6 +178,24 @@ def _render_source(root: Path, entry: Mapping[str, Any]) -> list[str]:
         lines.extend(f"  - `{point}`" for point in valid_points)
     else:
         lines.append("- Practice entry points: none found")
+    if manifest:
+        cache_entry = dict(entry)
+        cache_manifest = dict(manifest)
+        indexes = []
+        try:
+            api_path = api_index_path(root, cache_entry, cache_manifest)
+            examples_path = examples_index_path(root, cache_entry, cache_manifest)
+            if api_path.is_file():
+                indexes.append(("API index", api_path.relative_to(root).as_posix()))
+            if examples_path.is_file():
+                indexes.append(("Examples index", examples_path.relative_to(root).as_posix()))
+        except (KeyError, OSError, ValueError):
+            indexes = []
+        if indexes:
+            lines.append("- API surface:")
+            lines.extend(
+                f"  - {label}: [`{path}`]({path})" for label, path in indexes
+            )
     lines.append("")
     return lines
 

@@ -170,6 +170,63 @@ def read_api_index(
     return payload if isinstance(payload, dict) else None
 
 
+def examples_index_path(
+    root: str | os.PathLike[str] | None,
+    entry: dict[str, Any],
+    manifest: dict[str, object],
+) -> Path:
+    """Return the deterministic examples cache path for one source identity."""
+    registry = str(manifest.get("ecosystem") or entry["host"])
+    name = str(entry["name"])
+    version = str(manifest.get("version") or entry["commit_sha"])
+    for label, value, allow_parts in (
+        ("registry", registry, False),
+        ("name", name, True),
+        ("version", version, False),
+    ):
+        candidate = Path(value)
+        if not value or candidate.is_absolute() or ".." in candidate.parts or (not allow_parts and len(candidate.parts) != 1):
+            raise ValueError(f"invalid examples cache {label}: {value!r}")
+    return resolve_root(root) / "examples" / registry / name / version / "index.json"
+
+
+def write_examples_index(
+    root: str | os.PathLike[str] | None,
+    entry: dict[str, Any],
+    manifest: dict[str, object],
+    index: dict[str, object],
+) -> Path:
+    """Atomically cache an examples index and return its absolute path."""
+    path = examples_index_path(root, entry, manifest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=".index.json.tmp-", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(index, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return path.absolute()
+
+
+def read_examples_index(
+    root: str | os.PathLike[str] | None,
+    entry: dict[str, Any],
+    manifest: dict[str, object],
+) -> dict[str, object] | None:
+    """Read a valid cached examples index, or return ``None``."""
+    try:
+        payload = json.loads(examples_index_path(root, entry, manifest).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def shelve_imported_sources(
     staging: Path,
     root: str | os.PathLike[str] | None,

@@ -175,6 +175,31 @@ def test_pointers_content_is_deterministic_and_sorted(tmp_path):
     assert PRIMARY_REFERENCE in text
 
 
+def test_pointers_links_existing_api_and_examples_indexes(tmp_path):
+    alpha = _source(
+        tmp_path, "alpha", SHA_A, docs_urls=[], entry_points=[], version="1.0"
+    )
+    api = tmp_path / "api/github.com/alpha/1.0/index.json"
+    examples = tmp_path / "examples/github.com/alpha/1.0/index.json"
+    api.parent.mkdir(parents=True)
+    examples.parent.mkdir(parents=True)
+    api.write_text("{}", encoding="utf-8")
+    examples.write_text("{}", encoding="utf-8")
+
+    text = regenerate_pointers(tmp_path, [alpha]).read_text(encoding="utf-8")
+
+    assert "- API surface:" in text
+    assert "`api/github.com/alpha/1.0/index.json`" in text
+    assert "`examples/github.com/alpha/1.0/index.json`" in text
+    assert text.index("Practice entry points") < text.index("API surface")
+
+
+def test_pointers_omits_api_surface_when_indexes_are_absent(tmp_path):
+    alpha = _source(tmp_path, "alpha", SHA_A, docs_urls=[], entry_points=[])
+    text = regenerate_pointers(tmp_path, [alpha]).read_text(encoding="utf-8")
+    assert "API surface" not in text
+
+
 def test_pointers_backfill_only_legacy_manifests(tmp_path):
     legacy = _source(
         tmp_path, "legacy", SHA_A, docs_urls=["https://legacy.test/docs"], entry_points=[]

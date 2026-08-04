@@ -25,6 +25,18 @@ pytestmark = pytest.mark.skipif(
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 
 
+def _anonymous_bitbucket_rate_limit(exc):
+    current = exc
+    while current is not None:
+        if getattr(current, "code", None) == 429 or getattr(current, "status", None) == 429:
+            return True
+        message = str(current).lower()
+        if "http 429" in message or "rate limit" in message or "too many requests" in message:
+            return True
+        current = current.__cause__
+    return False
+
+
 def test_materializes_pinned_small_repository(tmp_path):
     target = materialize_github_repo(
         tmp_path, "octocat/Hello-World", "octocat", "Hello-World", SHA
@@ -68,13 +80,18 @@ def test_materializes_pinned_gitlab_subgroup_repository(tmp_path):
 
 
 def test_materializes_pinned_bitbucket_repository(tmp_path):
-    target = materialize_repo(
-        tmp_path,
-        f"bitbucket:{fx.BITBUCKET_SLUG}@{fx.BITBUCKET_COMMIT_SHA}",
-        RepoScope(fx.BITBUCKET_SLUG, fx.BITBUCKET_COMMIT_SHA),
-        host="bitbucket.org",
-        resolver=BitbucketResolver(),
-    )
+    try:
+        target = materialize_repo(
+            tmp_path,
+            f"bitbucket:{fx.BITBUCKET_SLUG}@{fx.BITBUCKET_COMMIT_SHA}",
+            RepoScope(fx.BITBUCKET_SLUG, fx.BITBUCKET_COMMIT_SHA),
+            host="bitbucket.org",
+            resolver=BitbucketResolver(),
+        )
+    except Exception as exc:
+        if not os.environ.get("BITBUCKET_TOKEN") and _anonymous_bitbucket_rate_limit(exc):
+            pytest.skip("anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)")
+        raise
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["host"] == "bitbucket.org"
     assert manifest["verified"] in (True, "sampled")

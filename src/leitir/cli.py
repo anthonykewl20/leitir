@@ -136,6 +136,11 @@ def build_parser() -> argparse.ArgumentParser:
     lock_roots.add_argument("--root", default=None, help="corpus root directory")
     lock_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     lock.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
+    lock.add_argument(
+        "--best-effort",
+        action="store_true",
+        help="continue when individual dependencies cannot be materialized",
+    )
     sbom = commands.add_parser("sbom", help="emit an SBOM for the materialized corpus")
     sbom.add_argument("--format", choices=("spdx", "cyclonedx"), default="spdx")
     sbom.add_argument("--cwd", default=None, help="project directory containing lockfiles")
@@ -566,15 +571,26 @@ def _run_corpus_command(
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                 fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+            failures: list[dict[str, str]] = []
             summary = lock_project(
                 cwd,
                 resolver,
                 root=root,
                 on_resolve=lambda spec: print(f"leitir: resolving {spec}", file=err),
                 on_fetch=lambda spec: print(f"leitir: materializing {spec}", file=err),
+                on_failure=lambda spec, reason: print(
+                    f"leitir: failed {spec}: {redact(reason)}", file=err
+                ),
+                best_effort=args.best_effort,
+                failures=failures,
                 **fetch_options,
             )
-            print(json.dumps({"cwd": str(cwd), "dependencies": summary}, sort_keys=True), file=out)
+            payload: dict[str, object] = {"cwd": str(cwd), "dependencies": summary}
+            if args.best_effort:
+                payload["failures"] = failures
+            print(json.dumps(payload, sort_keys=True), file=out)
+            if args.best_effort and not summary and failures:
+                return int(ExitCode.CORPUS_FAILURE)
             return int(ExitCode.SUCCESS)
         heads = code_search_factory(token)
         cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()

@@ -15,6 +15,8 @@ import tomllib
 import json
 from pathlib import Path
 
+import pytest
+
 from leitir.corpus import lock_project
 from leitir.materialize import MANIFEST_NAME
 from leitir.resolver import ResolvedPackage
@@ -152,3 +154,62 @@ def test_lock_project_materializes_every_transitive_and_records_closure(tmp_path
         manifest = json.loads((corpus / name / MANIFEST_NAME).read_text())
         assert manifest["graph"] == "complete"
         assert [edge["name"] for edge in manifest["deps"]] == ["a", "b"]
+
+
+def test_lock_project_best_effort_continues_and_sorts_failures(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "package-lock.json").write_text(json.dumps({
+        "lockfileVersion": 3,
+        "packages": {
+            "node_modules/a": {"version": "1.0.0"},
+            "node_modules/b": {"version": "2.0.0"},
+            "node_modules/c": {"version": "3.0.0"},
+        },
+    }))
+    corpus = tmp_path / "corpus"
+    failures = []
+    reported = []
+
+    class Resolver:
+        def resolve(self, ref):
+            if ref.name in {"a", "c"}:
+                raise RuntimeError(f"cannot resolve {ref.name}")
+            return ResolvedPackage(
+                ref, RepoScope("acme/b", "b" * 40), ref.version, "https://example.invalid"
+            )
+
+    def materializer(spec, resolved, **options):
+        target = corpus / resolved.ref.name
+        target.mkdir(parents=True)
+        (target / MANIFEST_NAME).write_text(json.dumps({"spec": spec}))
+        return target
+
+    result = lock_project(
+        project,
+        Resolver(),
+        root=corpus,
+        materializer=materializer,
+        best_effort=True,
+        failures=failures,
+        on_failure=lambda spec, error: reported.append((spec, error)),
+    )
+    assert [item["spec"] for item in result] == ["npm:b@2.0.0"]
+    assert failures == [
+        {"spec": "npm:a@1.0.0", "error": "cannot resolve a"},
+        {"spec": "npm:c@3.0.0", "error": "cannot resolve c"},
+    ]
+    assert [spec for spec, _ in reported] == ["npm:a@1.0.0", "npm:c@3.0.0"]
+
+
+def test_lock_project_default_remains_fail_closed(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text("a==1.0.0\nb==2.0.0\n")
+
+    class Resolver:
+        def resolve(self, ref):
+            raise RuntimeError(f"cannot resolve {ref.name}")
+
+    with pytest.raises(RuntimeError, match="cannot resolve a"):
+        lock_project(project, Resolver(), root=tmp_path / "corpus")

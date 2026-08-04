@@ -106,6 +106,14 @@ def merge_parity_result(target: str | os.PathLike[str], result: object) -> dict[
     return update_manifest(target, fields)
 
 
+def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
+    """Return whether the selected Git tree has a top-level tests directory."""
+    tree = target / subpath if subpath else target
+    if not tree.is_dir():
+        return False
+    return any(child.is_dir() and child.name.casefold() == "tests" for child in tree.iterdir())
+
+
 def _normalize_identity(
     owner: str, repo: str, commit_sha: str, host: str
 ) -> tuple[str, str, tuple[str, ...]]:
@@ -198,6 +206,10 @@ def read_valid_manifest(
     if verified is False and payload.get("verified_at") is not None:
         return None
     if source is not None and source not in {"registry-artifact", "git-commit"}:
+        return None
+    if "has_tests" in payload and payload.get("has_tests") is not None and not isinstance(
+        payload.get("has_tests"), bool
+    ):
         return None
     artifact_fields = ("artifact_kind", "artifact_checksum")
     if source == "registry-artifact":
@@ -674,6 +686,7 @@ def _materialize_hosted_repo(
                 "verified_at": verified_at,
                 "verification_notes": verification_notes,
                 "source": "git-commit",
+                "has_tests": has_top_level_tests(staging, subpath),
             }
         )
         _write_manifest(staging / MANIFEST_NAME, manifest)
@@ -774,6 +787,7 @@ def materialize_artifact(
                 "verified_at": now,
                 "verification_notes": [],
                 "source": "registry-artifact",
+                "has_tests": None,
                 "artifact_kind": artifact.artifact_kind,
                 "artifact_checksum": artifact.checksum,
             }

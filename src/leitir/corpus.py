@@ -14,7 +14,6 @@ from leitir.materialize import (
     ArtifactRetrievalError,
     materialize_artifact,
     materialize_repo,
-    merge_parity_result,
     read_valid_manifest,
     target_path,
     update_manifest,
@@ -408,6 +407,7 @@ def materialize_source(
         "pypi",
         "crates",
     }:
+        from leitir.materialize import has_top_level_tests
         from leitir.parity import (
             UNKNOWN_PARITY,
             RegistryArtifactFetcher,
@@ -416,6 +416,7 @@ def materialize_source(
         )
 
         if manifest.get("parity") not in {"exact", "drift"}:
+            has_tests: bool | None = None
             if manifest.get("source") == "registry-artifact":
                 temporary_root = Path(tempfile.mkdtemp(prefix="leitir-git-parity-"))
                 try:
@@ -435,6 +436,7 @@ def materialize_source(
                         },
                     )
                     git_tree = git_target / subpath if subpath else git_target
+                    has_tests = has_top_level_tests(git_target, subpath)
                     parity = compare_trees(git_tree, target)
                 except Exception:
                     parity = UNKNOWN_PARITY
@@ -453,7 +455,10 @@ def materialize_source(
                         else None
                     ),
                 ) if artifact is not None else UNKNOWN_PARITY
-            manifest = merge_parity_result(target, parity)
+            fields = parity.manifest_fields()
+            if manifest.get("source") == "registry-artifact":
+                fields["has_tests"] = has_tests
+            manifest = update_manifest(target, fields)
     if "entry_points" not in manifest:
         from leitir.docpointers import discover_entry_points
 
@@ -490,6 +495,9 @@ def lock_project(
     root: str | os.PathLike[str] | None = None,
     on_resolve: Callable[[str], None] | None = None,
     on_fetch: Callable[[str], None] | None = None,
+    on_failure: Callable[[str, str], None] | None = None,
+    best_effort: bool = False,
+    failures: list[dict[str, str]] | None = None,
     materializer: Callable[..., Path] = materialize_source,
     **fetch_options: object,
 ) -> list[dict[str, object]]:
@@ -502,32 +510,43 @@ def lock_project(
     for closure in dependency_closures(directory):
         deps = [edge.as_dict() for edge in closure.deps]
         for edge in closure.deps:
-            if on_resolve is not None:
-                on_resolve(edge.spec)
-            resolved = resolver.resolve(
-                PackageRef(Ecosystem(closure.ecosystem), edge.name, edge.version)
-            )
-            target = materializer(
-                edge.spec,
-                resolved,
-                root=corpus_root,
-                name=edge.name,
-                version_source="lockfile",
-                on_fetch=(
-                    (lambda spec=edge.spec: on_fetch(spec))
-                    if on_fetch is not None
-                    else None
-                ),
-                **fetch_options,
-            )
-            update_manifest(target, {"graph": closure.graph, "deps": deps})
-            results.append(
-                {
-                    "spec": edge.spec,
-                    "path": str(target.absolute()),
-                    "graph": closure.graph,
-                }
-            )
+            try:
+                if on_resolve is not None:
+                    on_resolve(edge.spec)
+                resolved = resolver.resolve(
+                    PackageRef(Ecosystem(closure.ecosystem), edge.name, edge.version)
+                )
+                target = materializer(
+                    edge.spec,
+                    resolved,
+                    root=corpus_root,
+                    name=edge.name,
+                    version_source="lockfile",
+                    on_fetch=(
+                        (lambda spec=edge.spec: on_fetch(spec))
+                        if on_fetch is not None
+                        else None
+                    ),
+                    **fetch_options,
+                )
+                update_manifest(target, {"graph": closure.graph, "deps": deps})
+                results.append(
+                    {
+                        "spec": edge.spec,
+                        "path": str(target.absolute()),
+                        "graph": closure.graph,
+                    }
+                )
+            except Exception as exc:
+                if not best_effort:
+                    raise
+                failure = {"spec": edge.spec, "error": str(exc)}
+                if failures is not None:
+                    failures.append(failure)
+                if on_failure is not None:
+                    on_failure(edge.spec, str(exc))
+    if failures is not None:
+        failures.sort(key=lambda item: (item["spec"], item["error"]))
     return results
 
 

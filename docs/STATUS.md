@@ -41,7 +41,7 @@ deterministic license inference (C6); API surface extraction via
 version diffing via `leitir diff` (C9); and deterministic trust scoring
 via `leitir trust` surfaced in `leitir list` (C10).
 
-Offline suite: **1013 passed, 46 skipped**. The 46 skips are opt-in live tests
+Offline suite: **1032 passed, 48 skipped**. The 48 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
@@ -89,16 +89,13 @@ the scoring engine's gate precedence.
 
 ## Open work
 
-- **Bitbucket live re-verification** — the C1 live gate is green for GitLab;
-  Bitbucket live is blocked by an anonymous HTTP 429 on this host (no
-  `BITBUCKET_TOKEN`). The offline fixture suite covers Bitbucket correctness;
-  re-run the live gate with a token to fully close C1.
+- **Bitbucket live re-verification** — Bitbucket live tests now skip cleanly
+  under anonymous rate-limiting (no `BITBUCKET_TOKEN`) instead of failing the
+  gate; the offline fixture suite covers Bitbucket correctness. Fully running
+  the Bitbucket live path still requires a token.
 - **Private Bitbucket archive auth** — `BITBUCKET_TOKEN` is attached only to
   `api.bitbucket.org`, so private Bitbucket archive downloads (`bitbucket.org`)
   are unauthenticated. Public repos (the anonymous default) are unaffected.
-- **`leitir lock` best-effort hardening** — lock is currently fail-closed per
-  dep (one unresolvable dep aborts the run); a best-effort mode that skips and
-  reports unresolvable deps is deferred.
 - **Collect the 29 missing required results** so the assessment resolves to a
   real score instead of honest bounds. Collect evidence; never relax policy.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require

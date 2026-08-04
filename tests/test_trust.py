@@ -74,3 +74,25 @@ def test_partial_checksum_is_unknown(tmp_path):
     factor = _by_factor(compute_trust({"artifact_kind": "sdist"}, tmp_path))["artifact_checksum"]
     assert factor["score"] == 50
     assert factor["evidence"]["state"] == "unknown"
+
+
+def test_cached_git_test_presence_overrides_artifact_tree(tmp_path):
+    present = _by_factor(
+        compute_trust({"source": "registry-artifact", "has_tests": True}, tmp_path)
+    )["tests"]
+    (tmp_path / "tests").mkdir()
+    absent = _by_factor(
+        compute_trust({"source": "registry-artifact", "has_tests": False}, tmp_path)
+    )["tests"]
+    assert present["score"] == 100
+    assert absent["score"] == 0
+
+
+def test_artifact_test_presence_is_neutral_when_unknown(tmp_path):
+    for manifest in (
+        {"source": "registry-artifact"},
+        {"source": "registry-artifact", "has_tests": None},
+    ):
+        factor = _by_factor(compute_trust(manifest, tmp_path))["tests"]
+        assert factor["score"] == 50
+        assert factor["evidence"]["state"] == "unknown"

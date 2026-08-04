@@ -106,7 +106,20 @@ def _documentation(manifest: Mapping[str, object]) -> dict[str, object]:
     )
 
 
-def _tests(target_path: Path) -> dict[str, object]:
+def _tests(manifest: Mapping[str, object], target_path: Path) -> dict[str, object]:
+    cached = manifest.get("has_tests")
+    if isinstance(cached, bool):
+        return _factor(
+            "tests",
+            100 if cached else 0,
+            {"state": "present" if cached else "absent", "reason": "cached Git tree tests/ presence"},
+        )
+    if cached is None and manifest.get("source") == "registry-artifact":
+        return _factor(
+            "tests",
+            50,
+            {"state": "unknown", "reason": "Git tree tests/ presence is unknown"},
+        )
     try:
         present = (target_path / "tests").is_dir()
     except OSError:
@@ -164,7 +177,7 @@ def compute_trust(manifest: Mapping[str, object], target_path: str | Path) -> Tr
         _parity(manifest),
         _license(manifest, target),
         _documentation(manifest),
-        _tests(target),
+        _tests(manifest, target),
         _checksum(manifest),
         _age(manifest),
     ]

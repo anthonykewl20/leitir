@@ -171,6 +171,58 @@ def test_lock_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     assert seen["resolver"] is resolver
 
 
+def test_lock_best_effort_emits_failures_and_reports_each_one(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def fake_lock(directory, resolver, **options):
+        options["on_failure"]("npm:z@1.0.0", "unavailable")
+        options["failures"].append({"spec": "npm:z@1.0.0", "error": "unavailable"})
+        return [{"spec": "npm:a@1.0.0", "path": "/cache/a", "graph": "complete"}]
+
+    monkeypatch.setattr(leitir.corpus, "lock_project", fake_lock)
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["lock", "--best-effort", "--cwd", str(project), "--root", str(tmp_path / "corpus")],
+        resolver_factory=lambda _token: object(),
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.SUCCESS
+    assert json.loads(out.getvalue())["failures"] == [
+        {"spec": "npm:z@1.0.0", "error": "unavailable"}
+    ]
+    assert "leitir: failed npm:z@1.0.0: unavailable" in err.getvalue()
+
+
+def test_lock_best_effort_returns_failure_when_nothing_materialized(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def fake_lock(directory, resolver, **options):
+        options["on_failure"]("npm:z@1.0.0", "unavailable")
+        options["failures"].append({"spec": "npm:z@1.0.0", "error": "unavailable"})
+        return []
+
+    monkeypatch.setattr(leitir.corpus, "lock_project", fake_lock)
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["lock", "--best-effort", "--cwd", str(project), "--root", str(tmp_path / "corpus")],
+        resolver_factory=lambda _token: object(),
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.CORPUS_FAILURE
+    assert json.loads(out.getvalue())["dependencies"] == []
+    assert json.loads(out.getvalue())["failures"] == [
+        {"spec": "npm:z@1.0.0", "error": "unavailable"}
+    ]
+
+
 def test_sbom_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     import leitir.sbom
 

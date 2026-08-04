@@ -13,6 +13,18 @@ from leitir.resolver import BitbucketResolver, ResolutionError
 SHA = "a" * 40
 
 
+def _anonymous_rate_limit(exc):
+    current = exc
+    while current is not None:
+        if getattr(current, "code", None) == 429 or getattr(current, "status", None) == 429:
+            return True
+        message = str(current).lower()
+        if "http 429" in message or "rate limit" in message or "too many requests" in message:
+            return True
+        current = current.__cause__
+    return False
+
+
 def _resolver(base_url, **kwargs):
     return BitbucketResolver(base_url=base_url, sleeper=lambda _: None, **kwargs)
 
@@ -102,4 +114,10 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
 )
 def test_live_ref_resolves_to_pinned_commit():
     resolver = BitbucketResolver()
-    assert resolver.resolve_tag_to_sha(fx.BITBUCKET_SLUG, fx.BITBUCKET_REF) == fx.BITBUCKET_COMMIT_SHA
+    try:
+        actual = resolver.resolve_tag_to_sha(fx.BITBUCKET_SLUG, fx.BITBUCKET_REF)
+    except Exception as exc:
+        if not os.environ.get("BITBUCKET_TOKEN") and _anonymous_rate_limit(exc):
+            pytest.skip("anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)")
+        raise
+    assert actual == fx.BITBUCKET_COMMIT_SHA

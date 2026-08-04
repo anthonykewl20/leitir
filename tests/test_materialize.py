@@ -69,6 +69,7 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "commit_sha": SHA,
         "fetch_method": "codeload-tarball",
         "fetched_at": manifest["fetched_at"],
+        "has_tests": False,
         "host": "github.com",
         "owner": "example",
         "repo": "demo",

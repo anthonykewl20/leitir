@@ -74,6 +74,7 @@ def test_materialize_verified_artifact_manifest(tmp_path):
     assert manifest["artifact_checksum"] == artifact.checksum
     assert manifest["verified"] is True
     assert manifest["verified_at"]
+    assert manifest["has_tests"] is None
 
 
 def test_checksum_mismatch_leaves_nothing_shelved(tmp_path):
@@ -119,7 +120,10 @@ def test_no_artifact_falls_back_to_git_and_records_unknown_parity(tmp_path):
 
 def test_artifact_tree_is_shelved_and_compared_with_git(tmp_path):
     artifact_data = _tar("package", {"index.js": b"artifact\n"})
-    git_archive = _tar(f"demo-{SHA}", {"index.js": b"git\n", "git.txt": b"only\n"})
+    git_archive = _tar(
+        f"demo-{SHA}",
+        {"index.js": b"git\n", "git.txt": b"only\n", "Tests/test.js": b"test\n"},
+    )
     with scripted_server([(200, {}, git_archive)]) as server:
         target = materialize_source(
             "npm:demo@1.0.0",
@@ -138,8 +142,26 @@ def test_artifact_tree_is_shelved_and_compared_with_git(tmp_path):
     assert manifest["source"] == "registry-artifact"
     assert manifest["parity"] == "drift"
     assert manifest["files_compared"] == 1
-    assert manifest["only_in_git"] == 1
+    assert manifest["only_in_git"] == 2
     assert manifest["only_in_artifact"] == 0
+    assert manifest["has_tests"] is True
+
+
+def test_artifact_records_unknown_tests_when_git_tree_cannot_be_fetched(tmp_path):
+    artifact_data = _tar("package", {"index.js": b"artifact\n"})
+    with scripted_server([(429, {"Retry-After": "0"}, b"")]) as server:
+        target = materialize_source(
+            "npm:demo@1.0.0",
+            _resolved(_artifact(artifact_data)),
+            root=tmp_path,
+            base_url=server.base_url,
+            max_attempts=1,
+            verify=False,
+            parity_fetcher=RegistryArtifactFetcher(get_bytes=lambda _url: artifact_data),
+        )
+    manifest = json.loads((target / MANIFEST_NAME).read_text())
+    assert manifest["parity"] == "unknown"
+    assert manifest["has_tests"] is None
 
 
 @pytest.mark.skipif(

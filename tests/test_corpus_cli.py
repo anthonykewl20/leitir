@@ -169,3 +169,25 @@ def test_lock_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     assert "materializing npm:a@1.0.0" in err.getvalue()
     assert seen["directory"] == project
     assert seen["resolver"] is resolver
+
+
+def test_sbom_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
+    import leitir.sbom
+
+    corpus = tmp_path / "corpus"
+    project = tmp_path / "project"
+    project.mkdir()
+    seen = {}
+
+    def fake_generate(root, directory, format):
+        seen.update(root=root, directory=directory, format=format)
+        return {"bomFormat": "CycloneDX"}
+
+    monkeypatch.setattr(leitir.sbom, "generate_sbom", fake_generate)
+    code, out, err = _invoke([
+        "sbom", "--format", "cyclonedx", "--cwd", str(project), "--root", str(corpus)
+    ])
+    assert code == ExitCode.SUCCESS
+    assert json.loads(out) == {"bomFormat": "CycloneDX"}
+    assert "generated cyclonedx SBOM" in err
+    assert seen == {"root": corpus, "directory": project, "format": "cyclonedx"}

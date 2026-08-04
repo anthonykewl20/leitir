@@ -152,9 +152,18 @@ Ordered by dependency (matching decision 12): C1-C10.
       non-empty destination, and installs via atomic moves with rollback. Safe
       extraction reuses the `_extract_tarball` guards.
 
-- [ ] C6: SBOM generation over closure with SPDX/CycloneDX output.
-      (`src/leitir/sbom.py`, `src/leitir/lockfiles.py`, `tests/test_sbom.py`, `tests/test_sbom_spdx.py`, `tests/test_sbom_cyclonedx.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C6: SBOM generation over closure with SPDX/CycloneDX output.
+      (`src/leitir/sbom.py`, `src/leitir/cli.py`, `tests/test_sbom.py`,
+      `tests/test_sbom_spdx.py`, `tests/test_sbom_cyclonedx.py`)
+      Gate: offline targeted 39 passed; full suite 986 passed, 45 skipped
+      (Python 3.11); live n/a (network-independent). `leitir sbom
+      [--format spdx|cyclonedx] [--cwd]` emits SPDX 2.3 or CycloneDX 1.5 JSON
+      from the materialized corpus + closure (package nodes, versions, resolved
+      SHAs, checksums, license fields, dependency edges). License inference is a
+      deterministic ladder (manifest → LICENSE/LICENCE/COPYING SPDX marker →
+      filename heuristic) recording `method`/`confidence`; unresolved is `unknown`,
+      never guessed. Deterministic output (fixed timestamp, sorted
+      packages/relationships, content-derived SPDX namespace).
 
 - [ ] C7: API surface extraction and index caching.
       (`src/leitir/apisurface.py`, `src/leitir/materialize.py`, `tests/test_apisurface.py`, `tests/test_apisurface_heuristic.py`)
@@ -183,7 +192,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C3 | done | offline targeted 71, 2 skipped; full 958 passed, 45 skipped (3.11); live 7 |
 | C4 | done | offline targeted 68; full 968 passed, 45 skipped (3.11); live not added (offline-covered) |
 | C5 | done | offline targeted 41; full 977 passed, 45 skipped (3.11); live n/a (network-independent) |
-| C6 | not started | not started |
+| C6 | done | offline targeted 39; full 986 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C7 | not started | not started |
 | C8 | not started | not started |
 | C9 | not started | not started |

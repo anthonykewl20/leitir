@@ -127,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
     lock_roots.add_argument("--root", default=None, help="corpus root directory")
     lock_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     lock.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
+    sbom = commands.add_parser("sbom", help="emit an SBOM for the materialized corpus")
+    sbom.add_argument("--format", choices=("spdx", "cyclonedx"), default="spdx")
+    sbom.add_argument("--cwd", default=None, help="project directory containing lockfiles")
+    sbom_roots = sbom.add_mutually_exclusive_group()
+    sbom_roots.add_argument("--root", default=None, help="corpus root directory")
+    sbom_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
     import_command = commands.add_parser("import", help="import an immutable corpus snapshot")
@@ -462,6 +468,14 @@ def _run_corpus_command(
             print(json.dumps({"root": str(root), "sources": len(entries)}, sort_keys=True), file=out)
             print(f"leitir: imported {len(entries)} source(s) into {root}", file=err)
             return int(ExitCode.SUCCESS)
+        if args.command == "sbom":
+            from .sbom import generate_sbom
+
+            cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+            document = generate_sbom(root, cwd, args.format)
+            print(json.dumps(document, indent=2, sort_keys=True), file=out)
+            print(f"leitir: generated {args.format} SBOM from {root}", file=err)
+            return int(ExitCode.SUCCESS)
 
         token = _github_token()
         resolver = resolver_factory(token)
@@ -641,7 +655,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import"}:
+    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

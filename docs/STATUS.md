@@ -41,7 +41,7 @@ deterministic license inference (C6); API surface extraction via
 version diffing via `leitir diff` (C9); and deterministic trust scoring
 via `leitir trust` surfaced in `leitir list` (C10).
 
-Offline suite: **1032 passed, 48 skipped**. The 48 skips are opt-in live tests
+Offline suite: **1035 passed, 48 skipped**. The 48 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir

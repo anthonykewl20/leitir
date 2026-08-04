@@ -165,9 +165,19 @@ Ordered by dependency (matching decision 12): C1-C10.
       never guessed. Deterministic output (fixed timestamp, sorted
       packages/relationships, content-derived SPDX namespace).
 
-- [ ] C7: API surface extraction and index caching.
-      (`src/leitir/apisurface.py`, `src/leitir/materialize.py`, `tests/test_apisurface.py`, `tests/test_apisurface_heuristic.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C7: API surface extraction and index caching.
+      (`src/leitir/apisurface.py`, `src/leitir/corpus.py`, `src/leitir/cli.py`,
+      `tests/test_apisurface.py`, `tests/test_apisurface_heuristic.py`)
+      Gate: offline targeted 43 passed; full suite 991 passed, 45 skipped
+      (Python 3.11); live n/a (network-independent). `leitir api <spec>` resolves
+      + materializes the spec, extracts the public API surface, and caches
+      `api/<registry>/<name>/<version>/index.json` under the corpus root. Python
+      uses stdlib `ast` for exact extraction (signatures, annotations, defaults,
+      `*args`/`**kwargs`, docstrings; private `_`-prefixed and unparseable files
+      skipped), labeled `method: "ast"`. JS/TS uses a conservative line-based
+      heuristic labeled `method: "heuristic"`, with a `register_extractor` plugin
+      hook so a parser-backed extractor can replace it without changing the
+      `ApiIndex` contract. Deterministic (sorted symbols/modules).
 
 - [ ] C8: Usage-example extraction with symbol ranking and `POINTERS.md` API links.
       (`src/leitir/examples.py`, `src/leitir/docpointers.py`, `tests/test_examples.py`, `tests/test_docpointers.py`)
@@ -193,7 +203,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C4 | done | offline targeted 68; full 968 passed, 45 skipped (3.11); live not added (offline-covered) |
 | C5 | done | offline targeted 41; full 977 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C6 | done | offline targeted 39; full 986 passed, 45 skipped (3.11); live n/a (network-independent) |
-| C7 | not started | not started |
+| C7 | done | offline targeted 43; full 991 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C8 | not started | not started |
 | C9 | not started | not started |
 | C10 | not started | not started |

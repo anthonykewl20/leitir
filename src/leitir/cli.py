@@ -133,6 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
     sbom_roots = sbom.add_mutually_exclusive_group()
     sbom_roots.add_argument("--root", default=None, help="corpus root directory")
     sbom_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    api = commands.add_parser("api", help="extract and cache a materialized source API")
+    api.add_argument("spec")
+    api_roots = api.add_mutually_exclusive_group()
+    api_roots.add_argument("--root", default=None, help="corpus root directory")
+    api_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    api.set_defaults(cwd=None, no_verify=False)
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
     import_command = commands.add_parser("import", help="import an immutable corpus snapshot")
@@ -450,6 +456,7 @@ def _run_corpus_command(
             return int(ExitCode.SUCCESS)
         if args.command == "clean":
             shutil.rmtree(root / "repos", ignore_errors=True)
+            shutil.rmtree(root / "api", ignore_errors=True)
             (root / INDEX_NAME).unlink(missing_ok=True)
             (root / POINTERS_NAME).unlink(missing_ok=True)
             print(f"leitir: cleaned {root}", file=err)
@@ -507,7 +514,9 @@ def _run_corpus_command(
         fetch_options["verify"] = not args.no_verify
         if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
             fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
-        for raw in args.specs:
+        raw_specs = args.specs if hasattr(args, "specs") else [args.spec]
+        api_paths: list[Path] = []
+        for raw in raw_specs:
             print(f"leitir: resolving {raw} (cwd={cwd})", file=err)
             parsed = parse_corpus_spec(raw)
             resolved, tag, version_source, detection_source = _resolve_corpus_spec(
@@ -539,10 +548,32 @@ def _run_corpus_command(
                 **fetch_options,
             )
             manifest = json.loads((path / MANIFEST_NAME).read_text(encoding="utf-8"))
+            if args.command == "api":
+                from .apisurface import extract_api_surface
+                from .corpus import load_sources, write_api_index
+
+                entry = next(
+                    entry
+                    for entry in load_sources(root)
+                    if (root / entry["path"]).absolute() == path.absolute()
+                )
+                recorded_subpath = manifest.get("subpath")
+                scan_path = path / recorded_subpath if isinstance(recorded_subpath, str) else path
+                language_hint = manifest.get("ecosystem")
+                print(f"leitir: extracting API surface for {raw}", file=err)
+                index = extract_api_surface(
+                    scan_path,
+                    str(language_hint) if language_hint in {"pypi", "npm"} else None,
+                )
+                api_paths.append(write_api_index(root, entry, manifest, index))
+                continue
             recorded_subpath = manifest.get("subpath")
             subpath = recorded_subpath if isinstance(recorded_subpath, str) else None
             paths.append((path.absolute(), subpath))
-        if args.command == "get":
+        if args.command == "api":
+            for api_path in api_paths:
+                print(api_path, file=out)
+        elif args.command == "get":
             for path, subpath in paths:
                 if subpath is None:
                     print(path, file=out)
@@ -655,7 +686,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom"}:
+    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom", "api"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

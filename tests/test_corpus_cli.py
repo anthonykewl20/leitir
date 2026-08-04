@@ -191,3 +191,38 @@ def test_sbom_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     assert json.loads(out) == {"bomFormat": "CycloneDX"}
     assert "generated cyclonedx SBOM" in err
     assert seen == {"root": corpus, "directory": project, "format": "cyclonedx"}
+
+
+def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    corpus = tmp_path / "corpus"
+
+    def fake_materialize(spec, resolved, **options):
+        source = corpus / f"repos/github.com/acme/demo/{SHA}"
+        source.mkdir(parents=True)
+        (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
+        (source / "leitir-manifest.json").write_text(
+            json.dumps({"version": "1.0.0"}), encoding="utf-8"
+        )
+        write_sources(
+            corpus,
+            [{
+                "name": "acme/demo", "host": "github.com", "owner": "acme",
+                "repo": "demo", "commit_sha": SHA,
+                "path": f"repos/github.com/acme/demo/{SHA}",
+                "fetched_at": "2026-08-04T00:00:00Z",
+            }],
+        )
+        return source
+
+    monkeypatch.setattr(leitir.corpus, "materialize_source", fake_materialize)
+    code, out, err = _invoke(["api", f"acme/demo@{SHA}", "--root", str(corpus)])
+
+    expected = corpus / f"api/github.com/acme/demo/1.0.0/index.json"
+    assert code == ExitCode.SUCCESS
+    assert out.strip() == str(expected)
+    assert "resolving" in err and "extracting API surface" in err
+    payload = json.loads(expected.read_text(encoding="utf-8"))
+    assert payload["methods"] == ["ast"]
+    assert payload["symbols"][0]["qualified_name"] == "demo.public"

@@ -46,7 +46,8 @@ def test_live_sveltekit_package_uses_name_tag_and_materializes_verified(tmp_path
     )
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert resolved.subpath == "packages/kit"
-    assert (target / "packages" / "kit").is_dir()
     assert manifest["commit_sha"] == SHA
     assert manifest["tag"] == TAG
+    assert manifest["source"] == "registry-artifact"
     assert manifest["verified"] in (True, "sampled")
+    assert (target / "package.json").is_file()

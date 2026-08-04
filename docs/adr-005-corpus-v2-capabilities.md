@@ -205,9 +205,17 @@ Ordered by dependency (matching decision 12): C1-C10.
       honestly when unavailable). `--json` is stable/sorted; exit 0 whenever output
       is produced (empty diff is valid).
 
-- [ ] C10: Trust scoring and `leitir list` surfacing.
-      (`src/leitir/trust.py`, `src/leitir/cli.py`, `src/leitir/materialize.py`, `tests/test_trust.py`, `tests/test_cli_list.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C10: Trust scoring and `leitir list` surfacing.
+      (`src/leitir/trust.py`, `src/leitir/cli.py`, `src/leitir/materialize.py`,
+      `src/leitir/corpus.py`, `tests/test_trust.py`, `tests/test_cli_list.py`)
+      Gate: offline targeted 37 passed; full suite 1013 passed, 46 skipped
+      (Python 3.11); live n/a (cached/offline). `leitir trust <spec>` computes a
+      deterministic 0–100 score (weights: verification 20, parity 15, license 15,
+      docs 10, tests 10, artifact checksum 15, age 15) from cached evidence +
+      the materialized tree, records `trust_score`/`trust_breakdown` in the
+      manifest, and `leitir list` surfaces it. No network/wall-clock: age is
+      measured at cached fetch time; missing evidence is `unknown` + neutral,
+      never guessed.
 
 ## Progress
 
@@ -224,4 +232,4 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C7 | done | offline targeted 43; full 991 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C8 | done | offline targeted 50; full 1000 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C9 | done | offline targeted 35, 1 skipped; full 1007 passed, 46 skipped (3.11); live 3 (PyPI) |
-| C10 | not started | not started |
+| C10 | done | offline targeted 37; full 1013 passed, 46 skipped (3.11); live n/a (cached/offline) |

@@ -223,6 +223,30 @@ def read_valid_manifest(
             or payload[field] < 0
         ):
             return None
+    if "trust_score" in payload and (
+        not isinstance(payload["trust_score"], int)
+        or isinstance(payload["trust_score"], bool)
+        or not 0 <= payload["trust_score"] <= 100
+    ):
+        return None
+    if "trust_breakdown" in payload:
+        breakdown = payload["trust_breakdown"]
+        if not isinstance(breakdown, list):
+            return None
+        for factor in breakdown:
+            if not isinstance(factor, dict) or set(factor) != {"factor", "score", "weight", "evidence"}:
+                return None
+            if not isinstance(factor["factor"], str) or not factor["factor"]:
+                return None
+            for field in ("score", "weight"):
+                if (
+                    not isinstance(factor[field], int)
+                    or isinstance(factor[field], bool)
+                    or not 0 <= factor[field] <= 100
+                ):
+                    return None
+            if not isinstance(factor["evidence"], dict):
+                return None
     return payload
 
 

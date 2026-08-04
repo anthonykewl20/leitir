@@ -113,6 +113,25 @@ def enumerate_shelved_sources(
     return result
 
 
+def record_trust(
+    spec: str, root: str | os.PathLike[str] | None = None
+) -> tuple[dict[str, Any], object, Path]:
+    """Compute and persist trust for one uniquely matching shelved source."""
+    from leitir.trust import compute_trust
+
+    sources = enumerate_shelved_sources(root)
+    exact = [item for item in sources if item[1].get("spec") == spec]
+    matches = exact or [item for item in sources if item[0].get("name") == spec]
+    if not matches:
+        raise ValueError(f"source is not materialized: {spec}")
+    if len(matches) != 1:
+        raise ValueError(f"source spec is ambiguous: {spec}")
+    entry, manifest, target = matches[0]
+    result = compute_trust(manifest, target)
+    update_manifest(target, result.as_dict())
+    return entry, result, target
+
+
 def api_index_path(
     root: str | os.PathLike[str] | None,
     entry: dict[str, Any],

@@ -117,6 +117,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_command = commands.add_parser("list", help="list materialized sources")
     list_command.add_argument("--json", action="store_true", dest="as_json")
+    list_roots = list_command.add_mutually_exclusive_group()
+    list_roots.add_argument("--root", default=None, help="corpus root directory")
+    list_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    trust = commands.add_parser("trust", help="compute cached trust evidence for a source")
+    trust.add_argument("spec")
+    trust.add_argument("--json", action="store_true", dest="as_json")
+    trust_roots = trust.add_mutually_exclusive_group()
+    trust_roots.add_argument("--root", default=None, help="corpus root directory")
+    trust_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     remove = commands.add_parser("remove", help="remove a materialized source")
     remove.add_argument("spec")
     clean = commands.add_parser("clean", help="empty the source corpus")
@@ -396,8 +405,11 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
     for entry in entries:
         version = None
         verification = "unverified"
+        manifest: object = {}
         try:
             manifest = json.loads((root / entry["path"] / MANIFEST_NAME).read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise TypeError("manifest must be an object")
             version = manifest.get("version")
             if manifest.get("verified") is True:
                 verification = "verified"
@@ -405,17 +417,26 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
                 verification = "sampled"
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
             pass
-        rendered.append((entry, version, verification))
+        trust_score = manifest.get("trust_score") if isinstance(manifest, dict) else None
+        if not isinstance(trust_score, int) or isinstance(trust_score, bool) or not 0 <= trust_score <= 100:
+            trust_score = None
+        rendered.append((entry, version, verification, trust_score))
     if as_json:
-        payload = [dict(entry, verification=verification) for entry, _, verification in rendered]
+        payload = []
+        for entry, _, verification, trust_score in rendered:
+            item = dict(entry, verification=verification)
+            if trust_score is not None:
+                item["trust_score"] = trust_score
+            payload.append(item)
         print(json.dumps(payload, indent=2, sort_keys=True), file=out)
         return
-    for entry, version, verification in rendered:
+    for entry, version, verification, trust_score in rendered:
         version_text = f" {version}" if version else ""
         path = (root / entry["path"]).absolute()
         print(
             f"{entry['name']}{version_text} {entry['owner']}/{entry['repo']}@{entry['commit_sha']} "
-            f"{verification} {path} {entry['fetched_at']}",
+            f"{verification} trust={trust_score if trust_score is not None else 'unknown'} "
+            f"{path} {entry['fetched_at']}",
             file=out,
         )
 
@@ -436,6 +457,22 @@ def _run_corpus_command(
         root = _corpus_root(args, err)
         if args.command == "list":
             _corpus_list(root, as_json=args.as_json, out=out)
+            return int(ExitCode.SUCCESS)
+        if args.command == "trust":
+            from .corpus import record_trust
+
+            entry, result, target = record_trust(args.spec, root)
+            payload = dict(result.as_dict(), spec=args.spec, name=entry["name"], path=str(target.absolute()))
+            if args.as_json:
+                print(json.dumps(payload, indent=2, sort_keys=True), file=out)
+            else:
+                print(f"{entry['name']} trust={result.score}", file=out)
+                for factor in result.breakdown:
+                    print(
+                        f"  {factor['factor']}: {factor['score']}/100 "
+                        f"weight={factor['weight']} evidence={json.dumps(factor['evidence'], sort_keys=True)}",
+                        file=out,
+                    )
             return int(ExitCode.SUCCESS)
         if args.command == "diff":
             from .diff import GitHubReleaseNotes, diff_packages
@@ -741,7 +778,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "diff"}:
+    if args.command in {"get", "fetch", "list", "trust", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "diff"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

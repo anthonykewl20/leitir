@@ -10,12 +10,41 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import TypeAlias
 
 ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
+
+
+@dataclass(frozen=True, slots=True)
+class SignatureChange:
+    qualified_name: str
+    before: str
+    after: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "qualified_name": self.qualified_name,
+            "before": self.before,
+            "after": self.after,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ApiDiff:
+    added: tuple[dict[str, object], ...]
+    removed: tuple[dict[str, object], ...]
+    changed: tuple[SignatureChange, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "added": [dict(symbol) for symbol in self.added],
+            "removed": [dict(symbol) for symbol in self.removed],
+            "changed": [change.as_dict() for change in self.changed],
+        }
 
 _PYTHON_EXTENSIONS = {".py"}
 _JAVASCRIPT_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs"}
@@ -315,4 +344,43 @@ def _records(index: ApiIndex, field: str) -> list[dict[str, object]]:
     return [dict(item) for item in value]
 
 
-__all__ = ["ApiIndex", "Extractor", "extract_api_surface", "register_extractor"]
+def diff_api_indexes(index_a: ApiIndex, index_b: ApiIndex) -> ApiDiff:
+    """Return deterministic public-symbol additions, removals, and signature changes."""
+    symbols_a = _records(index_a, "symbols")
+    symbols_b = _records(index_b, "symbols")
+
+    def grouped(symbols: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+        result: dict[str, list[dict[str, object]]] = {}
+        for symbol in symbols:
+            name = symbol.get("qualified_name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("API symbol has invalid qualified_name")
+            result.setdefault(name, []).append(symbol)
+        return result
+
+    by_name_a = grouped(symbols_a)
+    by_name_b = grouped(symbols_b)
+    added = tuple(by_name_b[name][0] for name in sorted(by_name_b.keys() - by_name_a.keys()))
+    removed = tuple(by_name_a[name][0] for name in sorted(by_name_a.keys() - by_name_b.keys()))
+    changed: list[SignatureChange] = []
+    for name in sorted(by_name_a.keys() & by_name_b.keys()):
+        old_records = by_name_a[name]
+        new_records = by_name_b[name]
+        if len(old_records) != 1 or len(new_records) != 1:
+            continue
+        before = old_records[0].get("signature")
+        after = new_records[0].get("signature")
+        if isinstance(before, str) and isinstance(after, str) and before != after:
+            changed.append(SignatureChange(name, before, after))
+    return ApiDiff(added=added, removed=removed, changed=tuple(changed))
+
+
+__all__ = [
+    "ApiDiff",
+    "ApiIndex",
+    "Extractor",
+    "SignatureChange",
+    "diff_api_indexes",
+    "extract_api_surface",
+    "register_extractor",
+]

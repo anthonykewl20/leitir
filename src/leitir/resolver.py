@@ -12,6 +12,7 @@ import json
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from leitir import _http
@@ -95,6 +96,47 @@ class PackageResolver(Protocol):
 
 class ResolutionError(Exception):
     """The package could not be resolved deterministically."""
+
+
+def resolve_corpus_spec(
+    parsed: object, resolver: object, heads: object, cwd: Path
+) -> tuple[object, str | None, str | None, str | None]:
+    """Resolve a parsed corpus spec using lockfile/latest and repository rules."""
+    from leitir.lockfiles import detect_installed_version_with_source
+    from leitir.spec import CorpusSpec
+
+    if not isinstance(parsed, CorpusSpec):
+        raise TypeError("parsed must be a CorpusSpec")
+    if parsed.ecosystem is not None:
+        ecosystem = Ecosystem(parsed.ecosystem)
+        version = parsed.version
+        version_source = "explicit"
+        detection_source = None
+        if version is None:
+            detected = detect_installed_version_with_source(parsed.ecosystem, parsed.name, cwd)
+            if detected is not None:
+                version = detected.version
+                version_source = "lockfile"
+                detection_source = detected.source
+            else:
+                version = resolver.latest_version(ecosystem, parsed.name)
+                version_source = "latest"
+        return (
+            resolver.resolve(PackageRef(ecosystem, parsed.name, version)),
+            None,
+            version_source,
+            detection_source,
+        )
+    if parsed.ref_kind == "sha":
+        return RepoScope(parsed.name, parsed.ref), None, None, None
+    if parsed.ref_kind == "tag":
+        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host) if parsed.host not in (None, "github.com") else resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
+        return RepoScope(parsed.name, sha), parsed.ref, None, None
+    if parsed.host not in (None, "github.com"):
+        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref or "HEAD", host=parsed.host)
+        return RepoScope(parsed.name, sha), None, None, None
+    sha = heads.resolve_head_sha(parsed.name, parsed.ref) if parsed.ref_kind == "branch" else heads.resolve_head_sha(parsed.name)
+    return RepoScope(parsed.name, sha), None, None, None
 
 
 class GitHubTagResolver:

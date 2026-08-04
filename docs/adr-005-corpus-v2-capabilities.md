@@ -192,9 +192,18 @@ Ordered by dependency (matching decision 12): C1-C10.
       `POINTERS.md` gains a per-source "API surface" section linking the API +
       examples indexes when present (additive, no existing sections changed).
 
-- [ ] C9: Version diffing command and JSON output.
-      (`src/leitir/diff.py`, `src/leitir/apisurface.py`, `tests/test_diff.py`, `tests/test_diff_e2e.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C9: Version diffing command and JSON output.
+      (`src/leitir/diff.py`, `src/leitir/apisurface.py`, `src/leitir/resolver.py`,
+      `src/leitir/cli.py`, `tests/test_diff.py`, `tests/test_diff_e2e.py`)
+      Gate: offline targeted 35 passed, 1 skipped; full suite 1007 passed, 46 skipped
+      (Python 3.11); live 3 passed (PyPI). `leitir diff <spec_a> <spec_b> [--json]`
+      resolves both versions (lockfile/latest fallback via a shared
+      `resolve_corpus_spec`), auto-materializes missing versions, and emits a typed
+      `DiffReport`: file-level changes (added/removed/modified by exact bytes,
+      excluding the manifest), API-level symbol diff (added/removed/signature-changed
+      via `diff_api_indexes`), and best-effort GitHub release notes (omitted
+      honestly when unavailable). `--json` is stable/sorted; exit 0 whenever output
+      is produced (empty diff is valid).
 
 - [ ] C10: Trust scoring and `leitir list` surfacing.
       (`src/leitir/trust.py`, `src/leitir/cli.py`, `src/leitir/materialize.py`, `tests/test_trust.py`, `tests/test_cli_list.py`)
@@ -214,5 +223,5 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C6 | done | offline targeted 39; full 986 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C7 | done | offline targeted 43; full 991 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C8 | done | offline targeted 50; full 1000 passed, 45 skipped (3.11); live n/a (network-independent) |
-| C9 | not started | not started |
+| C9 | done | offline targeted 35, 1 skipped; full 1007 passed, 46 skipped (3.11); live 3 (PyPI) |
 | C10 | not started | not started |

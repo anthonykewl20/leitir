@@ -145,6 +145,14 @@ def build_parser() -> argparse.ArgumentParser:
     examples_roots.add_argument("--root", default=None, help="corpus root directory")
     examples_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     examples.set_defaults(cwd=None, no_verify=False)
+    diff = commands.add_parser("diff", help="diff two resolved source versions")
+    diff.add_argument("spec_a")
+    diff.add_argument("spec_b")
+    diff.add_argument("--json", action="store_true", dest="as_json")
+    diff.add_argument("--cwd", default=None, help="project directory used for lockfile resolution")
+    diff_roots = diff.add_mutually_exclusive_group()
+    diff_roots.add_argument("--root", default=None, help="corpus root directory")
+    diff_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
     import_command = commands.add_parser("import", help="import an immutable corpus snapshot")
@@ -348,48 +356,35 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
 def _resolve_corpus_spec(
     parsed: CorpusSpec, resolver: object, heads: object, cwd: Path
 ) -> tuple[object, str | None, str | None, str | None]:
-    from .lockfiles import detect_installed_version_with_source
-    from .resolver import Ecosystem, PackageRef
+    from .resolver import resolve_corpus_spec
 
-    if parsed.ecosystem is not None:
-        ecosystem = Ecosystem(parsed.ecosystem)
-        version = parsed.version
-        version_source = "explicit"
-        detection_source = None
-        if version is None:
-            detected = detect_installed_version_with_source(parsed.ecosystem, parsed.name, cwd)
-            if detected is not None:
-                version = detected.version
-                version_source = "lockfile"
-                detection_source = detected.source
-            else:
-                version = resolver.latest_version(ecosystem, parsed.name)
-                version_source = "latest"
-        return (
-            resolver.resolve(PackageRef(ecosystem, parsed.name, version)),
-            None,
-            version_source,
-            detection_source,
-        )
+    return resolve_corpus_spec(parsed, resolver, heads, cwd)
 
-    if parsed.ref_kind == "sha":
-        return RepoScope(parsed.name, parsed.ref), None, None, None
-    if parsed.ref_kind == "tag":
-        if parsed.host in (None, "github.com"):
-            sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
-        else:
-            sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host)
-        return RepoScope(parsed.name, sha), parsed.ref, None, None
-    if parsed.host not in (None, "github.com"):
-        sha = resolver.resolve_tag_to_sha(
-            parsed.name, parsed.ref or "HEAD", host=parsed.host
-        )
-        return RepoScope(parsed.name, sha), None, None, None
-    if parsed.ref_kind == "branch":
-        sha = heads.resolve_head_sha(parsed.name, parsed.ref)
-    else:
-        sha = heads.resolve_head_sha(parsed.name)
-    return RepoScope(parsed.name, sha), None, None, None
+
+def _write_diff_human(report: object, out: TextIO) -> None:
+    for heading, values in (
+        ("Added files", report.files.added),
+        ("Removed files", report.files.removed),
+        ("Modified files", report.files.modified),
+    ):
+        print(f"{heading} ({len(values)}):", file=out)
+        for value in values:
+            print(f"  {value}", file=out)
+    for heading, values in (
+        ("Added symbols", report.api.added),
+        ("Removed symbols", report.api.removed),
+    ):
+        print(f"{heading} ({len(values)}):", file=out)
+        for value in values:
+            print(f"  {value['qualified_name']}", file=out)
+    print(f"Changed signatures ({len(report.api.changed)}):", file=out)
+    for value in report.api.changed:
+        print(f"  {value.qualified_name}: {value.before} -> {value.after}", file=out)
+    if report.release_notes:
+        print(f"Release notes ({len(report.release_notes)}):", file=out)
+        for note in report.release_notes:
+            print(f"  {note.tag}: {note.url}", file=out)
+            print(note.body, file=out)
 
 
 def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
@@ -441,6 +436,38 @@ def _run_corpus_command(
         root = _corpus_root(args, err)
         if args.command == "list":
             _corpus_list(root, as_json=args.as_json, out=out)
+            return int(ExitCode.SUCCESS)
+        if args.command == "diff":
+            from .diff import GitHubReleaseNotes, diff_packages
+
+            token = _github_token()
+            resolver = resolver_factory(token)
+            heads = code_search_factory(token)
+            cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+            fetch_options: dict[str, object] = {}
+            if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
+                fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
+            if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
+                fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+            notes_options = {}
+            if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
+                notes_options["base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+            report = diff_packages(
+                args.spec_a,
+                args.spec_b,
+                corpus_root=root,
+                resolver=resolver,
+                heads=heads,
+                cwd=cwd,
+                release_notes=GitHubReleaseNotes(token, **notes_options),
+                fetch_options=fetch_options,
+                on_resolve=lambda spec: print(f"leitir: resolving {spec} (cwd={cwd})", file=err),
+                on_materialize=lambda spec: print(f"leitir: materializing {spec}", file=err),
+            )
+            if args.as_json:
+                print(report.to_json(), file=out)
+            else:
+                _write_diff_human(report, out)
             return int(ExitCode.SUCCESS)
         if args.command == "remove":
             parsed = parse_corpus_spec(args.spec)
@@ -714,7 +741,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples"}:
+    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "diff"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

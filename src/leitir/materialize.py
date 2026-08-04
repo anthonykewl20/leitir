@@ -110,6 +110,16 @@ def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
     return any(child.is_dir() and child.name.casefold() == "tests" for child in tree.iterdir())
 
 
+def _prune_empty(path: Path, stop: Path) -> None:
+    """Remove empty parent directories created for a shelved source, up to stop."""
+    while path != stop and path.is_dir():
+        try:
+            path.rmdir()
+        except OSError:
+            break
+        path = path.parent
+
+
 def _normalize_identity(
     owner: str, repo: str, commit_sha: str, host: str
 ) -> tuple[str, str, tuple[str, ...]]:
@@ -701,6 +711,7 @@ def _materialize_hosted_repo(
             target, owner, repo, commit_sha, host=host
         ) is None:
             shutil.rmtree(target, ignore_errors=True)
+        _prune_empty(target.parent, Path(root))
         if isinstance(exc, MaterializationError):
             raise
         raise MaterializationError(
@@ -800,6 +811,7 @@ def materialize_artifact(
         return target
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
+        _prune_empty(target.parent, Path(root))
         raise
 
 

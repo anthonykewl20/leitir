@@ -104,6 +104,8 @@ def test_http_failure_cleans_partial_target_and_uses_domain_error(tmp_path):
     target = tmp_path / "repos/github.com/example/demo" / SHA
     assert not target.exists()
     assert not list(target.parent.glob(f".{SHA}.tmp-*"))
+    # Failed materialization must not leave orphan empty parent directories.
+    assert not (tmp_path / "repos").exists()
 
 
 def test_transient_http_failure_is_retried(tmp_path):

@@ -27,16 +27,21 @@ the ADR) and extends it with commit-SHA pinning, integrity verification,
 multi-ecosystem lockfile version detection, and a normative agent
 workflow, an agent skill, and a pinned fetch-correctness benchmark.
 
-**ADR-005 is in progress.** Slices C1–C9 are landed: GitLab/Bitbucket
-host-aware resolvers and materialization (C1); registry-artifact parity
-(C2); byte-exact artifact-first resolution (C3); transitive dependency
-closure via `leitir lock` (C4); immutable snapshot export/import (C5);
-SBOM generation via `leitir sbom` (C6); API surface extraction via
+**ADR-005 is implemented; slices C1–C10 are complete.** It extends the
+corpus from a verified git-tree shelf into a verified, byte-exact,
+reproducible, analyzable dependency source: GitLab/Bitbucket host-aware
+resolvers and materialization (C1); registry-artifact parity
+`exact|drift|unknown` with fail-closed checksum verification (C2);
+byte-exact artifact-first resolution with `source` provenance (C3);
+transitive dependency closure via `leitir lock` (C4); immutable snapshot
+`export`/`import` with fail-closed, verify-all-before-shelve rehydration
+(C5); SBOM generation via `leitir sbom` SPDX 2.3 / CycloneDX 1.5 with
+deterministic license inference (C6); API surface extraction via
 `leitir api` (C7); usage-example extraction via `leitir examples` (C8);
-and version diffing via `leitir diff` with file/API diffs and best-effort
-release notes (C9). Slice C10 remains.
+version diffing via `leitir diff` (C9); and deterministic trust scoring
+via `leitir trust` surfaced in `leitir list` (C10).
 
-Offline suite: **1007 passed, 46 skipped**. The 46 skips are opt-in live tests
+Offline suite: **1013 passed, 46 skipped**. The 46 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
@@ -84,8 +89,6 @@ the scoring engine's gate precedence.
 
 ## Open work
 
-- **ADR-005 C2–C10** — registry-artifact parity, byte-exact resolution,
-  transitive closure, snapshots, SBOM, API surface, examples, diff, trust.
 - **Bitbucket live re-verification** — the C1 live gate is green for GitLab;
   Bitbucket live is blocked by an anonymous HTTP 429 on this host (no
   `BITBUCKET_TOKEN`). The offline fixture suite covers Bitbucket correctness;
@@ -93,6 +96,9 @@ the scoring engine's gate precedence.
 - **Private Bitbucket archive auth** — `BITBUCKET_TOKEN` is attached only to
   `api.bitbucket.org`, so private Bitbucket archive downloads (`bitbucket.org`)
   are unauthenticated. Public repos (the anonymous default) are unaffected.
+- **`leitir lock` best-effort hardening** — lock is currently fail-closed per
+  dep (one unresolvable dep aborts the run); a best-effort mode that skips and
+  reports unresolvable deps is deferred.
 - **Collect the 29 missing required results** so the assessment resolves to a
   real score instead of honest bounds. Collect evidence; never relax policy.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require

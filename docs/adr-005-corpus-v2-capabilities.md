@@ -1,6 +1,6 @@
 # ADR-005: Corpus v2 — artifact parity, byte-exact resolution, snapshots, and agent-value capabilities
 
-- Status: Accepted (design decided, implementation pending; ADR-004 slices are all done)
+- Status: Implemented (slices C1–C10 complete; all offline gates green)
 - Date: 2026-08-04
 - Related: ADR-001 deterministic code-search kernel, ADR-003 categorized HTTP retry, ADR-004 local source materialization layer
 - Layer: `src/leitir/resolver.py` extension, new `src/leitir/parity.py`, `src/leitir/snapshot.py`, `src/leitir/sbom.py`, `src/leitir/apisurface.py`, `src/leitir/examples.py`, `src/leitir/trust.py`, `src/leitir/diff.py`, `src/leitir/lockfiles.py` extension, CLI extension

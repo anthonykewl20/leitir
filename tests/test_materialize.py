@@ -73,6 +73,7 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "owner": "example",
         "repo": "demo",
         "repo_url": "https://github.com/example/demo",
+        "source": "git-commit",
         "spec": "example/demo#v1",
         "subpath": None,
         "tag": "v1",

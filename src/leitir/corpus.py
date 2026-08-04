@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from leitir.materialize import (
+    ArtifactRetrievalError,
+    materialize_artifact,
     materialize_repo,
     merge_parity_result,
     read_valid_manifest,
@@ -155,18 +157,50 @@ def materialize_source(
         raise TypeError("resolved must be a RepoScope or ResolvedPackage")
 
     owner, repo = scope.slug.split("/", 1)
-    target = materialize_repo(
-        corpus_root,
-        spec,
-        scope,
-        host=host,
-        resolver=repository_resolver,
-        tag=source_tag,
-        subpath=subpath,
-        manifest_fields=manifest_fields,
-        on_fetch=on_fetch,
-        **fetch_options,  # type: ignore[arg-type]
-    )
+    artifact = None
+    if isinstance(resolved, ResolvedPackage):
+        from leitir.parity import ArtifactInfo
+
+        artifact = resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
+    if artifact is not None:
+        try:
+            target = materialize_artifact(
+                corpus_root,
+                spec,
+                scope,
+                artifact,
+                tag=source_tag,
+                subpath=None,
+                manifest_fields=manifest_fields,
+                fetcher=parity_fetcher,
+                on_fetch=on_fetch,
+            )
+        except ArtifactRetrievalError:
+            target = materialize_repo(
+                corpus_root,
+                spec,
+                scope,
+                host=host,
+                resolver=repository_resolver,
+                tag=source_tag,
+                subpath=subpath,
+                manifest_fields=manifest_fields,
+                on_fetch=on_fetch,
+                **fetch_options,  # type: ignore[arg-type]
+            )
+    else:
+        target = materialize_repo(
+            corpus_root,
+            spec,
+            scope,
+            host=host,
+            resolver=repository_resolver,
+            tag=source_tag,
+            subpath=subpath,
+            manifest_fields=manifest_fields,
+            on_fetch=on_fetch,
+            **fetch_options,  # type: ignore[arg-type]
+        )
     manifest = read_valid_manifest(
         target, owner, repo, scope.commit_sha, host=host
     )
@@ -179,25 +213,49 @@ def materialize_source(
     }:
         from leitir.parity import (
             UNKNOWN_PARITY,
-            ArtifactInfo,
             RegistryArtifactFetcher,
+            compare_trees,
             package_parity,
         )
 
-        artifact = resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
         if manifest.get("parity") not in {"exact", "drift"}:
-            parity = package_parity(
-                resolved.ref.ecosystem.value,
-                resolved.ref.name,
-                resolved.ref.version,
-                target / subpath if subpath else target,
-                artifact=artifact,
-                fetcher=(
-                    parity_fetcher
-                    if isinstance(parity_fetcher, RegistryArtifactFetcher)
-                    else None
-                ),
-            ) if artifact is not None else UNKNOWN_PARITY
+            if manifest.get("source") == "registry-artifact":
+                temporary_root = Path(tempfile.mkdtemp(prefix="leitir-git-parity-"))
+                try:
+                    git_target = materialize_repo(
+                        temporary_root,
+                        spec,
+                        scope,
+                        host=host,
+                        resolver=repository_resolver,
+                        tag=source_tag,
+                        subpath=subpath,
+                        verify=fetch_options.get("verify", True),
+                        **{
+                            key: value
+                            for key, value in fetch_options.items()
+                            if key != "verify"
+                        },
+                    )
+                    git_tree = git_target / subpath if subpath else git_target
+                    parity = compare_trees(git_tree, target)
+                except Exception:
+                    parity = UNKNOWN_PARITY
+                finally:
+                    shutil.rmtree(temporary_root, ignore_errors=True)
+            else:
+                parity = package_parity(
+                    resolved.ref.ecosystem.value,
+                    resolved.ref.name,
+                    resolved.ref.version,
+                    target / subpath if subpath else target,
+                    artifact=artifact,
+                    fetcher=(
+                        parity_fetcher
+                        if isinstance(parity_fetcher, RegistryArtifactFetcher)
+                        else None
+                    ),
+                ) if artifact is not None else UNKNOWN_PARITY
             manifest = merge_parity_result(target, parity)
     if "entry_points" not in manifest:
         from leitir.docpointers import discover_entry_points

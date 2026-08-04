@@ -107,9 +107,19 @@ Ordered by dependency (matching decision 12): C1-C10.
       mismatch is fail-closed (`ChecksumMismatchError`); artifact extraction
       reuses the tar/zip safe-extraction guards; HTTPS-only with redirect checks.
 
-- [ ] C3: Byte-exact resolution order, artifact checksum verification, and source mode in manifest.
-      (`src/leitir/resolver.py`, `src/leitir/materialize.py`, `src/leitir/spec.py`, `tests/test_resolver_byte_exact.py`, `tests/test_materialize_artifact.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C3: Byte-exact resolution order, artifact checksum verification, and source mode in manifest.
+      (`src/leitir/materialize.py`, `src/leitir/corpus.py`, `src/leitir/parity.py`,
+      `tests/test_resolver_byte_exact.py`, `tests/test_materialize_artifact.py`,
+      `tests/test_materialize.py`)
+      Gate: offline targeted 71 passed, 2 skipped; full suite 958 passed, 45 skipped
+      (Python 3.11); live 7 passed. Package resolution is artifact-first: when a
+      registry artifact exists it is downloaded, checksum-verified (fail-closed
+      `ChecksumMismatchError`), and shelved with `source: registry-artifact`,
+      `artifact_kind`, `artifact_checksum`, `verified: true`. Artifact retrieval
+      failure falls back to the git-commit path (`source: git-commit`). Parity is
+      still computed: artifact-sourced trees fetch the git tree into a temp root
+      for comparison (reverse parity); git-sourced trees use C2's `package_parity`.
+      Repo-only sources are unaffected.
 
 - [ ] C4: Transitive dependency closure lock expansion and graph capture.
       (`src/leitir/lockfiles.py`, `src/leitir/materialize.py`, `tests/test_lockfiles.py`, `tests/test_lockfiles_closure.py`)
@@ -147,7 +157,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 |-------|--------|-------------|
 | C1 | done | offline targeted 137; full 942 passed, 43 skipped (3.11); live GitLab passed, Bitbucket blocked by anonymous 429 (no token) |
 | C2 | done | offline targeted 65, 1 skipped; full 952 passed, 44 skipped (3.11); live 3 (npm) |
-| C3 | not started | not started |
+| C3 | done | offline targeted 71, 2 skipped; full 958 passed, 45 skipped (3.11); live 7 |
 | C4 | not started | not started |
 | C5 | not started | not started |
 | C6 | not started | not started |

@@ -28,11 +28,13 @@ multi-ecosystem lockfile version detection, and a normative agent
 workflow, an agent skill, and a pinned fetch-correctness benchmark.
 
 **ADR-005 is in progress.** Slices C1 (GitLab/Bitbucket host-aware
-resolvers and auth, plus host-aware repository materialization) and C2
+resolvers and auth, plus host-aware repository materialization), C2
 (registry-artifact parity: `exact|drift|unknown` verdicts with fail-closed
-checksum verification) are landed. Slices C3–C10 remain.
+checksum verification), and C3 (byte-exact artifact-first resolution with
+`source: registry-artifact|git-commit` provenance and checksum-verified
+shelving) are landed. Slices C4–C10 remain.
 
-Offline suite: **952 passed, 44 skipped**. The 44 skips are opt-in live tests
+Offline suite: **958 passed, 45 skipped**. The 45 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir

@@ -49,6 +49,10 @@ class VerificationError(Exception):
     """An extracted tree does not match its pinned Git tree listing."""
 
 
+class ArtifactRetrievalError(MaterializationError):
+    """A registry artifact could not be retrieved after retrying."""
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -145,6 +149,10 @@ def read_valid_manifest(
         return None
     if not isinstance(payload, dict):
         return None
+    source = payload.get("source")
+    fetch_method = (
+        "registry-artifact" if source == "registry-artifact" else fetch_method
+    )
     expected = {
         "host": host,
         "owner": owner,
@@ -172,6 +180,18 @@ def read_valid_manifest(
     ):
         return None
     if verified is False and payload.get("verified_at") is not None:
+        return None
+    if source is not None and source not in {"registry-artifact", "git-commit"}:
+        return None
+    artifact_fields = ("artifact_kind", "artifact_checksum")
+    if source == "registry-artifact":
+        if verified is not True:
+            return None
+        if payload.get("artifact_kind") not in {"npm-tarball", "sdist", "crate"}:
+            return None
+        if not isinstance(payload.get("artifact_checksum"), str) or not payload["artifact_checksum"]:
+            return None
+    elif any(field in payload for field in artifact_fields):
         return None
     if "parity" in payload and payload.get("parity") not in {"exact", "drift", "unknown"}:
         return None
@@ -530,6 +550,9 @@ def _materialize_hosted_repo(
         else None
     )
     if existing is not None:
+        if existing.get("source") is None:
+            existing["source"] = "git-commit"
+            _write_manifest(target / MANIFEST_NAME, existing)
         if not verify:
             if "verified" not in existing:
                 existing.update(verified=False, verified_at=None)
@@ -589,6 +612,7 @@ def _materialize_hosted_repo(
                 "verified": verified,
                 "verified_at": verified_at,
                 "verification_notes": verification_notes,
+                "source": "git-commit",
             }
         )
         _write_manifest(staging / MANIFEST_NAME, manifest)
@@ -608,6 +632,99 @@ def _materialize_hosted_repo(
             f"materialization failed for {owner}/{repo}@{commit_sha}: "
             f"{_failure_detail(exc)}"
         ) from exc
+
+
+def materialize_artifact(
+    root: str | os.PathLike[str],
+    spec: str,
+    scope: RepoScope,
+    artifact: object,
+    *,
+    tag: str | None = None,
+    subpath: str | None = None,
+    manifest_fields: Mapping[str, object] | None = None,
+    fetcher: object | None = None,
+    on_fetch: Callable[[], None] | None = None,
+) -> Path:
+    """Authenticate and safely materialize a registry source artifact."""
+    import hashlib
+
+    from leitir.parity import (
+        ArtifactInfo,
+        ChecksumMismatchError,
+        RegistryArtifactFetcher,
+        extract_artifact,
+    )
+
+    if not isinstance(artifact, ArtifactInfo):
+        raise TypeError("artifact must be an ArtifactInfo")
+    if not isinstance(spec, str) or not spec.strip():
+        raise ValueError("spec must be non-empty")
+    owner, repo = scope.slug.split("/", 1)
+    _validate_identity(owner, repo, scope.commit_sha)
+    target = target_path(root, owner, repo, scope.commit_sha)
+    existing = (
+        read_valid_manifest(target, owner, repo, scope.commit_sha)
+        if target.is_dir()
+        else None
+    )
+    if (
+        existing is not None
+        and existing.get("source") == "registry-artifact"
+        and existing.get("artifact_kind") == artifact.artifact_kind
+        and existing.get("artifact_checksum") == artifact.checksum
+    ):
+        return target
+
+    client = fetcher or RegistryArtifactFetcher()
+    if on_fetch is not None:
+        on_fetch()
+    try:
+        data = client.fetch(artifact)  # type: ignore[attr-defined]
+    except Exception as exc:
+        raise ArtifactRetrievalError(
+            f"artifact retrieval failed for {spec}: {_failure_detail(exc)}"
+        ) from exc
+    actual = hashlib.new(artifact.algorithm, data).hexdigest()
+    if actual.lower() != artifact.digest.lower():
+        raise ChecksumMismatchError(
+            f"{artifact.artifact_kind} checksum mismatch: expected {artifact.checksum}"
+        )
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-", dir=target.parent))
+    try:
+        extract_artifact(data, staging)
+        now = _utc_now()
+        manifest: dict[str, object] = dict(manifest_fields or {})
+        manifest.update(
+            {
+                "spec": spec,
+                "host": "github.com",
+                "owner": owner,
+                "repo": repo,
+                "commit_sha": scope.commit_sha,
+                "tag": tag,
+                "repo_url": f"https://github.com/{owner}/{repo}",
+                "fetched_at": now,
+                "fetch_method": "registry-artifact",
+                "subpath": subpath,
+                "verified": True,
+                "verified_at": now,
+                "verification_notes": [],
+                "source": "registry-artifact",
+                "artifact_kind": artifact.artifact_kind,
+                "artifact_checksum": artifact.checksum,
+            }
+        )
+        _write_manifest(staging / MANIFEST_NAME, manifest)
+        if target.exists():
+            shutil.rmtree(target)
+        os.replace(staging, target)
+        return target
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def materialize_repo(

@@ -102,7 +102,7 @@ def artifact_from_metadata(
             if isinstance(url, str) and isinstance(digest, str):
                 try:
                     return ArtifactInfo(
-                        "pypi-sdist",
+                        "sdist",
                         url,
                         "sha256",
                         digest.lower(),

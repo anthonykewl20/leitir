@@ -171,8 +171,12 @@ class SourceRef:
     end_line: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.slug, str) or not _REPO_SLUG.fullmatch(self.slug):
-            raise ValueError("slug must look like 'owner/repo'")
+        if (
+            not isinstance(self.slug, str)
+            or not _REPO_SLUG.fullmatch(self.slug)
+            or any(part in {".", ".."} for part in self.slug.split("/"))
+        ):
+            raise ValueError("slug must contain at least two safe repository path segments")
         if not isinstance(self.commit_sha, str) or not _SHA1.fullmatch(
             self.commit_sha
         ):

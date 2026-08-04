@@ -59,6 +59,13 @@ def test_invalid_slug_is_rejected():
         RepoScope("group/../repo", SHA)
 
 
+def test_source_ref_rejects_unsafe_slug_segments():
+    with pytest.raises(ValueError):
+        SourceRef("group/../repo", SHA, "x.py", BLOB, 1, 2)
+    with pytest.raises(ValueError):
+        SourceRef("a/./b", SHA, "x.py", BLOB, 1, 2)
+
+
 def test_regex_predicate_must_compile():
     with pytest.raises(ValueError):
         Predicate(PredicateKind.REGEX, "([")

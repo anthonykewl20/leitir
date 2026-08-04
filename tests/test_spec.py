@@ -90,6 +90,8 @@ def test_repository_host_is_preserved(raw, host):
         "https://gitlab.com/group//project",
         "https://gitlab.com/group/../project",
         "https://gitlab.com/group/subgroup/project/-/issues/1",
+        "https://gitlab.com/group/-/tree/main",
+        "gitlab:group/-",
         "owner/repo#",
         "npm:",
         "@babel",

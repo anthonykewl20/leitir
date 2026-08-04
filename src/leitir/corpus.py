@@ -457,7 +457,9 @@ def materialize_source(
                 ) if artifact is not None else UNKNOWN_PARITY
             fields = parity.manifest_fields()
             if manifest.get("source") == "registry-artifact":
-                fields["has_tests"] = has_tests
+                fields["has_tests"] = (
+                    has_tests if has_tests is not None else manifest.get("has_tests")
+                )
             manifest = update_manifest(target, fields)
     if "entry_points" not in manifest:
         from leitir.docpointers import discover_entry_points

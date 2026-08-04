@@ -100,12 +100,6 @@ def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]
     return payload
 
 
-def merge_parity_result(target: str | os.PathLike[str], result: object) -> dict[str, object]:
-    """Atomically add a typed parity result to a source manifest."""
-    fields = result.manifest_fields()  # type: ignore[attr-defined]
-    return update_manifest(target, fields)
-
-
 def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
     """Return whether the selected Git tree has a top-level tests directory."""
     tree = target / subpath if subpath else target

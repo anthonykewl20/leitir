@@ -79,7 +79,7 @@ def _repo_result(
     if host != "gitlab.com" and len(parts) != 2:
         raise _fail(raw, "invalid repository owner or repository name")
     if len(parts) < 2 or any(
-        part in {".", ".."} or not _REPO.fullmatch(part) for part in parts
+        part in {".", "..", "-"} or not _REPO.fullmatch(part) for part in parts
     ):
         raise _fail(raw, "invalid repository owner or repository name")
     if ref is not None and (not ref or any(ch.isspace() for ch in ref)):

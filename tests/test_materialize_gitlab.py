@@ -9,7 +9,7 @@ import pytest
 import _http_server as hs
 from leitir.cli import ExitCode, main
 from leitir.materialize import MaterializationError, materialize_repo
-from leitir.resolver import GitLabResolver
+from leitir.resolver import Ecosystem, GitLabResolver, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
 from leitir.tree import GitHubTreeSource
 
@@ -65,6 +65,42 @@ def test_cli_materializes_verified_gitlab_repository(tmp_path):
     assert manifest["fetch_method"] == "gitlab-archive"
     assert manifest["verified"] is True
     assert server.state.request_paths[0] == "/archive"
+
+
+def test_cli_materializes_go_package_through_resolved_gitlab_host(tmp_path):
+    responses = [
+        (200, {}, _tarball()),
+        (200, {}, hs.json_body(_tree())),
+        (200, {}, hs.json_body({"size": len(CONTENT)})),
+    ]
+    with hs.scripted_server(responses) as server:
+        hosted = _resolver(server)
+
+        class Resolver:
+            _repository_resolvers = {"gitlab.com": hosted}
+
+            def resolve(self, ref):
+                assert ref == PackageRef(Ecosystem.GO, "gitlab.com/owner/demo", "v1.0.0")
+                return ResolvedPackage(
+                    ref,
+                    RepoScope("owner/demo", SHA),
+                    "v1.0.0",
+                    "https://pkg.go.dev/gitlab.com/owner/demo@v1.0.0",
+                    host="gitlab.com",
+                )
+
+        out, err = io.StringIO(), io.StringIO()
+        code = main(
+            ["get", "go:gitlab.com/owner/demo@v1.0.0", "--root", str(tmp_path)],
+            resolver_factory=lambda _token: Resolver(),
+            code_search_factory=lambda _token: object(),
+            stdout=out,
+            stderr=err,
+        )
+    target = tmp_path / "repos/gitlab.com/owner/demo" / SHA
+    assert code == ExitCode.SUCCESS, err.getvalue()
+    assert out.getvalue().strip() == str(target)
+    assert json.loads((target / "leitir-manifest.json").read_text())["host"] == "gitlab.com"
 
 
 def test_cli_materializes_verified_gitlab_subgroup_repository(tmp_path):

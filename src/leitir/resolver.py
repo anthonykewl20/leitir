@@ -65,6 +65,7 @@ class ResolvedPackage:
     subpath: str | None = None
     docs_urls: tuple[str, ...] = ()
     artifact: ArtifactInfo | None = None
+    host: str = "github.com"
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, PackageRef):
@@ -86,6 +87,8 @@ class ResolvedPackage:
             for url in self.docs_urls
         ):
             raise ValueError("docs_urls must be a tuple of HTTP(S) URLs")
+        if self.host not in {"github.com", "gitlab.com", "bitbucket.org"}:
+            raise ValueError(f"unsupported repository host {self.host!r}")
 
 
 @runtime_checkable
@@ -377,6 +380,7 @@ class GitLabResolver(_HostedRepoResolver):
         return self._sha(self._get_json(url), "id", self._HOST)
 
     resolve_ref_to_sha = resolve_tag_to_sha
+    resolve_commit_to_sha = resolve_tag_to_sha
 
     def archive_url(self, slug: str, commit_sha: str) -> str:
         from urllib.parse import urlencode
@@ -493,6 +497,7 @@ class BitbucketResolver(_HostedRepoResolver):
         return self._sha(self._get_json(url), "hash", "bitbucket.org")
 
     resolve_ref_to_sha = resolve_tag_to_sha
+    resolve_commit_to_sha = resolve_tag_to_sha
 
     def archive_url(self, slug: str, commit_sha: str) -> str:
         sha = self._sha({"sha": commit_sha}, "sha", "bitbucket.org")
@@ -833,7 +838,7 @@ class CratesResolver:
 
 
 class GoResolver:
-    """Resolves a Go module + version to a GitHub RepoScope."""
+    """Resolves a Go module + version to its supported repository host."""
 
     _PROXY = "https://proxy.golang.org"
     _PSEUDO_VERSION = re.compile(
@@ -851,8 +856,16 @@ class GoResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        repository_resolvers: dict[str, object] | None = None,
     ) -> None:
         self._tag_resolver = tag_resolver
+        self._repository_resolvers = {
+            "github.com": tag_resolver,
+            "gitlab.com": GitLabResolver(),
+            "bitbucket.org": BitbucketResolver(),
+        }
+        if repository_resolvers is not None:
+            self._repository_resolvers.update(repository_resolvers)
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._retry = _http.make_retry(
@@ -870,13 +883,8 @@ class GoResolver:
             raise ResolutionError("GoResolver only handles go packages")
 
         module = ref.name
-        if not module.startswith("github.com/"):
-            raise ResolutionError(
-                f"only github.com Go modules are supported, got {module!r}"
-            )
-
-        parts = module.split("/")
-        slug = f"{parts[1]}/{parts[2]}"
+        host, candidates = self._repository_candidates(module)
+        resolver = self._repository_resolvers[host]
 
         escaped = self._escape_module(module)
         version = ref.version
@@ -899,13 +907,44 @@ class GoResolver:
 
         tag = version
         pseudo = self._PSEUDO_VERSION.fullmatch(version)
-        if pseudo is None:
-            commit_sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
+        slug = ""
+        subpath = None
+        last_error: ResolutionError | None = None
+        for candidate_slug, candidate_subpath in candidates:
+            try:
+                if pseudo is None:
+                    tags = (
+                        (f"{candidate_subpath}/{version}", version)
+                        if candidate_subpath is not None
+                        else (version,)
+                    )
+                    for candidate_tag in tags:
+                        try:
+                            commit_sha = resolver.resolve_tag_to_sha(
+                                candidate_slug, candidate_tag
+                            )
+                            tag = candidate_tag
+                            break
+                        except ResolutionError as exc:
+                            last_error = exc
+                    else:
+                        continue
+                else:
+                    expand = getattr(resolver, "resolve_commit_to_sha", None)
+                    if expand is None:
+                        raise ResolutionError(
+                            f"Go pseudo-version resolution for {host} requires commit expansion"
+                        )
+                    commit_sha = expand(candidate_slug, pseudo.group(1))
+                slug = candidate_slug
+                subpath = candidate_subpath
+                break
+            except ResolutionError as exc:
+                last_error = exc
         else:
-            expand = getattr(self._tag_resolver, "resolve_commit_to_sha", None)
-            if expand is None:
-                raise ResolutionError("Go pseudo-version resolution requires commit expansion")
-            commit_sha = expand(slug, pseudo.group(1))
+            raise last_error or ResolutionError(
+                f"repository for Go module {module!r} could not be resolved"
+            )
         scope = RepoScope(slug=slug, commit_sha=commit_sha)
         from leitir.docpointers import extract_docs_urls
 
@@ -914,10 +953,40 @@ class GoResolver:
             scope=scope,
             tag=tag,
             registry_url=f"https://pkg.go.dev/{module}@{version}",
+            subpath=subpath,
             docs_urls=tuple(
                 extract_docs_urls(ref.ecosystem, name=module, version=version)
             ),
+            host=host,
         )
+
+    @staticmethod
+    def _repository_candidates(module: str) -> tuple[str, tuple[tuple[str, str | None], ...]]:
+        parts = module.split("/")
+        if any(
+            part in {"", ".", ".."}
+            or re.fullmatch(r"[A-Za-z0-9_.~+-]+", part) is None
+            for part in parts
+        ):
+            raise ResolutionError(f"invalid Go module path {module!r}")
+        module_host = parts[0].lower()
+        if module_host == "golang.org":
+            if len(parts) < 3 or parts[1] != "x":
+                raise ResolutionError(f"unsupported Go module host {parts[0]!r}")
+            subpath = "/".join(parts[3:]) or None
+            return "github.com", ((f"golang/{parts[2]}", subpath),)
+        if module_host not in {"github.com", "gitlab.com", "bitbucket.org"}:
+            raise ResolutionError(f"unsupported Go module host {parts[0]!r}")
+        if len(parts) < 3:
+            raise ResolutionError(f"invalid Go module path {module!r}")
+        if module_host == "gitlab.com":
+            return module_host, tuple(
+                ("/".join(parts[1:end]), "/".join(parts[end:]) or None)
+                for end in range(len(parts), 2, -1)
+            )
+        slug = f"{parts[1]}/{parts[2]}"
+        subpath = "/".join(parts[3:]) or None
+        return module_host, ((slug, subpath),)
 
     def latest_version(self, name: str) -> str:
         """Return the Go proxy's current version for ``name``."""
@@ -1162,6 +1231,7 @@ class MultiResolver:
             "gitlab.com": gitlab or GitLabResolver(),
             "bitbucket.org": bitbucket or BitbucketResolver(),
         }
+        go._repository_resolvers.update(self._repository_resolvers)
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
         resolver = self._resolvers.get(ref.ecosystem)

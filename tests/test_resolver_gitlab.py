@@ -39,6 +39,16 @@ def test_commit_sha_input_is_verified_through_api():
     assert server.state.served_count == 1
 
 
+def test_pseudo_version_commit_prefix_is_expanded_through_api():
+    with hs.scripted_server([(200, {}, hs.json_body({"id": SHA}))]) as server:
+        assert _resolver(server.base_url).resolve_commit_to_sha(
+            "owner/repo", "abcdef123456"
+        ) == SHA
+    assert server.state.request_paths == [
+        "/projects/owner%2Frepo/repository/commits/abcdef123456"
+    ]
+
+
 def test_404_is_wrapped_without_retry():
     sleeps = []
     with hs.scripted_server([(404, {}, b"")]) as server:

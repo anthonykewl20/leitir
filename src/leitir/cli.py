@@ -633,6 +633,11 @@ def _run_corpus_command(
                     f"leitir: {parsed.name}: version {resolved.ref.version} from {detection_source}",
                     file=err,
                 )
+            materialize_host = (
+                parsed.host or "github.com"
+                if parsed.ecosystem is None
+                else getattr(resolved, "host", "github.com")
+            )
             path = materialize_source(
                 raw,
                 resolved,
@@ -640,12 +645,10 @@ def _run_corpus_command(
                 name=parsed.name,
                 tag=tag,
                 version_source=version_source,
-                host=(parsed.host or "github.com")
-                if parsed.ecosystem is None
-                else "github.com",
+                host=materialize_host,
                 repository_resolver=(
-                    getattr(resolver, "_repository_resolvers", {}).get(parsed.host)
-                    if parsed.ecosystem is None and parsed.host not in (None, "github.com")
+                    getattr(resolver, "_repository_resolvers", {}).get(materialize_host)
+                    if materialize_host != "github.com"
                     else None
                 ),
                 on_fetch=lambda raw=raw: print(

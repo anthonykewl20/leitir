@@ -332,6 +332,13 @@ def materialize_source(
     }
     if isinstance(resolved, ResolvedPackage):
         scope = resolved.scope
+        host = resolved.host
+        if repository_resolver is None and host != "github.com":
+            from leitir.resolver import BitbucketResolver, GitLabResolver
+
+            repository_resolver = (
+                GitLabResolver() if host == "gitlab.com" else BitbucketResolver()
+            )
         source_name = name or resolved.ref.name
         source_tag = tag if tag is not None else resolved.tag
         manifest_fields.update(

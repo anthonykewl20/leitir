@@ -203,8 +203,8 @@ class TestSadPaths:
         with pytest.raises(ResolutionError):
             resolver.resolve_tag_to_sha("psf/requests", "v99.99.99")
 
-    def test_go_non_github_module_raises(self):
+    def test_go_unsupported_vanity_module_raises(self):
         resolver = GoResolver(tag_resolver=FakeTagResolver())
-        ref = PackageRef(Ecosystem.GO, "golang.org/x/tools", "v0.1.0")
-        with pytest.raises(ResolutionError, match="github.com"):
+        ref = PackageRef(Ecosystem.GO, "gonum.org/v1/gonum", "v0.1.0")
+        with pytest.raises(ResolutionError, match="unsupported Go module host"):
             resolver.resolve(ref)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 
 import pytest
 
@@ -22,6 +23,43 @@ from leitir.resolver import (
 from leitir.search import RepoScope
 
 SHA = "a" * 40
+
+
+class RecordingRepoResolver:
+    def __init__(self, *, missing: set[tuple[str, str]] | None = None):
+        self.calls = []
+        self.missing = missing or set()
+
+    def resolve_tag_to_sha(self, slug, tag):
+        self.calls.append(("tag", slug, tag))
+        if (slug, tag) in self.missing:
+            raise ResolutionError("not found")
+        return SHA
+
+    def resolve_commit_to_sha(self, slug, ref):
+        self.calls.append(("commit", slug, ref))
+        if (slug, ref) in self.missing:
+            raise ResolutionError("not found")
+        return SHA
+
+
+def _go_resolver(monkeypatch, module, host_resolvers):
+    requested = []
+
+    def fake_urlopen(request, timeout):
+        requested.append(request.full_url)
+        return io.BytesIO(json.dumps({"Version": "v1.2.3"}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    github = host_resolvers.get("github.com", RecordingRepoResolver())
+    resolver = GoResolver(
+        github,
+        base_url="https://proxy.test",
+        repository_resolvers=host_resolvers,
+    )
+    result = resolver.resolve(PackageRef(Ecosystem.GO, module, "v1.2.3"))
+    assert requested == [f"https://proxy.test/{module}/@v/v1.2.3.info"]
+    return result
 
 
 class TestPackageRef:
@@ -82,6 +120,91 @@ class TestResolvedPackage:
             ResolvedPackage(
                 ref=ref, scope=scope, tag="v1", registry_url="http://x.com"
             )
+
+
+class TestGoMultiHostResolution:
+    @pytest.mark.parametrize(
+        ("module", "host", "slug", "subpath"),
+        [
+            ("github.com/owner/repo", "github.com", "owner/repo", None),
+            ("gitlab.com/group/subgroup/repo", "gitlab.com", "group/subgroup/repo", None),
+            ("bitbucket.org/owner/repo", "bitbucket.org", "owner/repo", None),
+            ("golang.org/x/sync", "github.com", "golang/sync", None),
+        ],
+    )
+    def test_dispatches_module_to_repository_host(
+        self, monkeypatch, module, host, slug, subpath
+    ):
+        selected = RecordingRepoResolver()
+        result = _go_resolver(monkeypatch, module, {host: selected})
+        assert result.host == host
+        assert result.scope == RepoScope(slug, SHA)
+        assert result.subpath == subpath
+        assert result.ref.name == module
+        assert selected.calls == [("tag", slug, "v1.2.3")]
+
+    def test_gitlab_submodule_falls_back_without_confusing_subgroups(self, monkeypatch):
+        selected = RecordingRepoResolver(
+            missing={("group/subgroup/repo/tools", "v1.2.3")}
+        )
+        result = _go_resolver(
+            monkeypatch,
+            "gitlab.com/group/subgroup/repo/tools",
+            {"gitlab.com": selected},
+        )
+        assert result.scope.slug == "group/subgroup/repo"
+        assert result.subpath == "tools"
+        assert result.tag == "tools/v1.2.3"
+
+    @pytest.mark.parametrize(
+        ("module", "host", "slug"),
+        [
+            ("github.com/owner/repo", "github.com", "owner/repo"),
+            ("gitlab.com/group/subgroup/repo", "gitlab.com", "group/subgroup/repo"),
+            ("bitbucket.org/owner/repo", "bitbucket.org", "owner/repo"),
+        ],
+    )
+    def test_pseudo_version_expands_commit_on_selected_host(
+        self, monkeypatch, module, host, slug
+    ):
+        selected = RecordingRepoResolver()
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(b"{}")
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        version = "v0.0.0-20240102030405-abcdef123456"
+        resolver = GoResolver(
+            selected,
+            base_url="https://proxy.test",
+            repository_resolvers={host: selected},
+        )
+        result = resolver.resolve(PackageRef(Ecosystem.GO, module, version))
+        assert result.scope == RepoScope(slug, SHA)
+        assert selected.calls == [("commit", slug, "abcdef123456")]
+
+    @pytest.mark.parametrize("module", ["gopkg.in/yaml.v3", "gonum.org/v1/gonum"])
+    def test_unsupported_vanity_host_fails_before_network(self, monkeypatch, module):
+        def unexpected(*args, **kwargs):
+            raise AssertionError("network must not be used")
+
+        monkeypatch.setattr("urllib.request.urlopen", unexpected)
+        resolver = GoResolver(RecordingRepoResolver())
+        with pytest.raises(ResolutionError, match="unsupported Go module host"):
+            resolver.resolve(PackageRef(Ecosystem.GO, module, "v1.2.3"))
+
+
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
+)
+def test_live_go_golang_x_module_resolves_to_pinned_github_commit():
+    resolver = GoResolver(GitHubTagResolver())
+    result = resolver.resolve(PackageRef(Ecosystem.GO, "golang.org/x/sync", "v0.7.0"))
+    assert result.host == "github.com"
+    assert result.scope == RepoScope(
+        "golang/sync", "14be23e5b48bec28285f8a694875175ecacfddb3"
+    )
 
 
 class TestResolverProtocol:

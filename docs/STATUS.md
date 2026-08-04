@@ -41,7 +41,18 @@ deterministic license inference (C6); API surface extraction via
 version diffing via `leitir diff` (C9); and deterministic trust scoring
 via `leitir trust` surfaced in `leitir list` (C10).
 
-Offline suite: **1035 passed, 48 skipped**. The 48 skips are opt-in live tests
+Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
+"tests" fairness (`has_tests` from the git tree, neutral for artifact
+sources); Bitbucket live tolerance of anonymous rate-limiting; `leitir lock
+--best-effort`; `leitir info <spec>` one-shot agent context (provenance +
+api + examples + trust + parity) with a versioned `--json` contract across
+commands; unified credentials (private Bitbucket archive auth incl.
+app-password Basic, optional npm/PyPI/crates registry tokens); Go module
+multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
+Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
+materialization. Comprehensive real-world + sad-path testing passed.
+
+Offline suite: **1103 passed, 51 skipped**. The 51 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
@@ -93,9 +104,12 @@ the scoring engine's gate precedence.
   under anonymous rate-limiting (no `BITBUCKET_TOKEN`) instead of failing the
   gate; the offline fixture suite covers Bitbucket correctness. Fully running
   the Bitbucket live path still requires a token.
-- **Private Bitbucket archive auth** — `BITBUCKET_TOKEN` is attached only to
-  `api.bitbucket.org`, so private Bitbucket archive downloads (`bitbucket.org`)
-  are unauthenticated. Public repos (the anonymous default) are unaffected.
+- **Custom private registry URLs** — default-registry auth tokens
+  (`NPM_TOKEN`/`PYPI_TOKEN`/`CARGO_TOKEN`) are supported; private registry
+  endpoints with different URLs (npm Enterprise, Artifactory, private PyPI
+  index) are a future follow-up on top of the unified credentials layer.
+- **Sourcehut live** — covered offline + a live resolver test; full live
+  materialization needs an `SRHT_TOKEN`.
 - **Collect the 29 missing required results** so the assessment resolves to a
   real score instead of honest bounds. Collect evidence; never relax policy.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require

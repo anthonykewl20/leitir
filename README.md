@@ -30,11 +30,12 @@ flowchart TD
 
 ## What it gives you
 
-- Multi-host source support: GitHub, GitLab, and Bitbucket (including GitLab nested subgroup slugs), plus package ecosystems npm, PyPI, crates.io, and Go for lockfile-aware resolution.
+- Multi-host source support: GitHub, GitLab (including nested subgroup slugs), Bitbucket, Codeberg, and Sourcehut (`~user/repo`); plus package ecosystems npm, PyPI, crates.io, and Go — including non-GitHub Go modules (`gitlab.com/`, `bitbucket.org/`, `golang.org/x/`) — for lockfile-aware resolution.
 - Byte-exact artifact-first fetch for registry ecosystems using published checksums, with checksum mismatch treated as fail-closed.
 - Git-tree verification against host APIs for the git-commit path.
 - Explicit artifact parity as `exact`, `drift`, or `unknown` recorded in manifests.
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
+- `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
 - API surface indexes with stdlib `ast` extraction for Python and conservative JS/TS heuristics behind a plugin hook.
 - Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
@@ -42,6 +43,7 @@ flowchart TD
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.
 - Transitive dependency closure via `leitir lock` and closure metadata in manifests.
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
+- Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.
 - Standalone evidence-scoring engine from ADR-002 that drives gate decisions without model calls.
 
@@ -113,6 +115,7 @@ flowchart LR
 - `clean`: clear corpus metadata and cached materialization.
 
 ### Analysis
+- `info`: one-shot agent context for a source (provenance + API summary + top examples + trust + parity). Use this first.
 - `api`: extract and cache API-index JSON for a materialized source.
 - `examples`: extract and rank usage snippets for that source.
 - `trust`: compute cached trust score and factor breakdown.

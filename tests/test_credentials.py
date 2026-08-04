@@ -24,6 +24,8 @@ def test_anonymous_by_default():
         ({"PIP_TOKEN": "p"}, "https://pypi.org/pypi/demo/json", "Bearer p"),
         ({"CARGO_TOKEN": "c"}, "https://crates.io/api/v1/crates/demo", "Bearer c"),
         ({"CARGO_TOKEN": "c"}, "https://static.crates.io/crates/demo", "Bearer c"),
+        ({"CODEBERG_TOKEN": "c"}, "https://codeberg.org/api/v1/repos/x/y", "Bearer c"),
+        ({"SRHT_TOKEN": "s"}, "https://git.sr.ht/api/~x/repos/y", "Bearer s"),
     ],
 )
 def test_environment_mapping(environment, url, expected):

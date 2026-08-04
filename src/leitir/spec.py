@@ -30,11 +30,14 @@ _REPOSITORY_HOSTS = {
     "github": "github.com",
     "gitlab": "gitlab.com",
     "bitbucket": "bitbucket.org",
+    "codeberg": "codeberg.org",
+    "sourcehut": "git.sr.ht",
 }
 _SUPPORTED_FORMS = (
     "npm:name[@version], pypi:name[@version], crates:name[@version], "
     "go:module[@version], owner/repo[@ref|#ref], "
-    "github|bitbucket:owner/repo[@ref|#ref], "
+    "github|bitbucket|codeberg:owner/repo[@ref|#ref], "
+    "sourcehut:~user/repo[@ref|#ref], "
     "gitlab:group[/subgroup...]/project[@ref|#ref], or an HTTPS repository URL"
 )
 
@@ -78,8 +81,13 @@ def _repo_result(
         parts[-1] = parts[-1][:-4]
     if host != "gitlab.com" and len(parts) != 2:
         raise _fail(raw, "invalid repository owner or repository name")
+    valid_parts = parts
+    if host == "git.sr.ht":
+        if not parts[0].startswith("~") or len(parts[0]) == 1:
+            raise _fail(raw, "Sourcehut repository owners must start with '~'")
+        valid_parts = [parts[0][1:], *parts[1:]]
     if len(parts) < 2 or any(
-        part in {".", "..", "-"} or not _REPO.fullmatch(part) for part in parts
+        part in {".", "..", "-"} or not _REPO.fullmatch(part) for part in valid_parts
     ):
         raise _fail(raw, "invalid repository owner or repository name")
     if ref is not None and (not ref or any(ch.isspace() for ch in ref)):
@@ -164,9 +172,16 @@ def _parse_repository_url(raw: str) -> CorpusSpec:
             project_parts = parts[:2]
             ref = parts[3]
             kind = "branch"
+    elif host == "git.sr.ht" and len(parts) > 2:
+        if parts[2] != "refs":
+            raise _fail(raw, "unsupported repository URL path")
+        project_parts = parts[:2]
+        if len(parts) > 3:
+            ref = "/".join(parts[2:])
+            kind = "branch"
     elif len(parts) > 2:
         if len(parts) >= 4 and parts[2] in (
-            {"src"} if host == "bitbucket.org" else {"tree", "blob"}
+             {"src"} if host == "bitbucket.org" else {"tree", "blob"}
         ):
             project_parts = parts[:2]
             ref = parts[3]

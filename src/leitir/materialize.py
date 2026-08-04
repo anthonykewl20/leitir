@@ -31,6 +31,8 @@ _HOST_METADATA = {
     "github.com": ("codeload-tarball", "https://github.com"),
     "gitlab.com": ("gitlab-archive", "https://gitlab.com"),
     "bitbucket.org": ("bitbucket-archive", "https://bitbucket.org"),
+    "codeberg.org": ("codeberg-archive", "https://codeberg.org"),
+    "git.sr.ht": ("sourcehut-archive", "https://git.sr.ht"),
 }
 MANIFEST_NAME = "leitir-manifest.json"
 VERIFY_MAX_FILES = 1_000
@@ -114,8 +116,13 @@ def _normalize_identity(
     parts = tuple(f"{owner}/{repo}".split("/"))
     if host != "gitlab.com" and len(parts) != 2:
         raise ValueError("repository identity must contain exactly two segments")
+    valid_parts = parts
+    if host == "git.sr.ht":
+        if not parts[0].startswith("~") or len(parts[0]) == 1:
+            raise ValueError("Sourcehut repository owner must start with '~'")
+        valid_parts = (parts[0][1:], *parts[1:])
     if len(parts) < 2 or any(
-        part in {".", ".."} or not _NAME.fullmatch(part) for part in parts
+        part in {".", ".."} or not _NAME.fullmatch(part) for part in valid_parts
     ):
         raise ValueError("repository identity contains an invalid path segment")
     if not _SHA1.fullmatch(commit_sha):
@@ -806,17 +813,18 @@ def materialize_repo(
     **kwargs: object,
 ) -> Path:
     """Materialize a :class:`RepoScope` through its host-native resolver."""
-    owner, repo = scope.slug.split("/", 1)
+    slug = f"~{scope.slug}" if host == "git.sr.ht" and not scope.slug.startswith("~") else scope.slug
+    owner, repo = slug.split("/", 1)
     owner, repo, _parts = _normalize_identity(owner, repo, scope.commit_sha, host)
     if host == "github.com":
         return materialize_github_repo(
             root, spec, owner, repo, scope.commit_sha, **kwargs  # type: ignore[arg-type]
         )
-    if host not in ("gitlab.com", "bitbucket.org"):
+    if host not in ("gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"):
         raise ValueError(f"unsupported repository host {host!r}")
     if resolver is None:
         raise ValueError(f"a repository resolver is required for {host}")
-    archive_url = resolver.archive_url(scope.slug, scope.commit_sha)  # type: ignore[attr-defined]
+    archive_url = resolver.archive_url(slug, scope.commit_sha)  # type: ignore[attr-defined]
     hosted_options = {
         key: kwargs.pop(key)
         for key in tuple(kwargs)

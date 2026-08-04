@@ -48,6 +48,10 @@ def test_package_prefix_matrix(raw, ecosystem, name, version):
         ("https://gitlab.com/owner/repo/-/blob/v1/file.py", "owner/repo", "v1", "branch"),
         ("bitbucket:owner/repo@" + "a" * 40, "owner/repo", "a" * 40, "sha"),
         ("https://bitbucket.org/owner/repo/src/main/file.py", "owner/repo", "main", "branch"),
+        ("codeberg:owner/repo@v1", "owner/repo", "v1", "tag"),
+        ("https://codeberg.org/owner/repo/tree/main", "owner/repo", "main", "branch"),
+        ("sourcehut:~user/repo@v1", "~user/repo", "v1", "tag"),
+        ("https://git.sr.ht/~user/repo/refs/heads/main", "~user/repo", "refs/heads/main", "branch"),
     ],
 )
 def test_repository_forms_normalize(raw, name, ref, kind):
@@ -66,6 +70,8 @@ def test_repository_forms_normalize(raw, name, ref, kind):
         ("github:owner/repo", "github.com"),
         ("gitlab:owner/repo", "gitlab.com"),
         ("https://bitbucket.org/owner/repo", "bitbucket.org"),
+        ("codeberg:owner/repo", "codeberg.org"),
+        ("sourcehut:~user/repo", "git.sr.ht"),
     ],
 )
 def test_repository_host_is_preserved(raw, host):
@@ -79,12 +85,16 @@ def test_repository_host_is_preserved(raw, host):
         "https://example.com/github.com/owner/repo",
         "https://gitlab.com.attacker.example/owner/repo",
         "https://bitbucket.org.attacker.example/owner/repo",
+        "https://codeberg.org.attacker.example/owner/repo",
+        "https://git.sr.ht.attacker.example/~user/repo",
         "http://github.com/owner/repo",
         "git://github.com/owner/repo",
         "https://github.com/owner",
         "https://github.com/owner/repo/issues",
         "github:group/subgroup/project",
         "bitbucket:group/subgroup/project",
+        "sourcehut:user/repo",
+        "sourcehut:~/repo",
         "https://user@github.com/owner/repo",
         "gitlab:group//project",
         "https://gitlab.com/group//project",

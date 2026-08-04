@@ -87,7 +87,7 @@ class ResolvedPackage:
             for url in self.docs_urls
         ):
             raise ValueError("docs_urls must be a tuple of HTTP(S) URLs")
-        if self.host not in {"github.com", "gitlab.com", "bitbucket.org"}:
+        if self.host not in {"github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"}:
             raise ValueError(f"unsupported repository host {self.host!r}")
 
 
@@ -131,14 +131,15 @@ def resolve_corpus_spec(
             version_source,
             detection_source,
         )
+    scope_name = parsed.name[1:] if parsed.host == "git.sr.ht" else parsed.name
     if parsed.ref_kind == "sha":
-        return RepoScope(parsed.name, parsed.ref), None, None, None
+        return RepoScope(scope_name, parsed.ref), None, None, None
     if parsed.ref_kind == "tag":
         sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host) if parsed.host not in (None, "github.com") else resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
-        return RepoScope(parsed.name, sha), parsed.ref, None, None
+        return RepoScope(scope_name, sha), parsed.ref, None, None
     if parsed.host not in (None, "github.com"):
         sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref or "HEAD", host=parsed.host)
-        return RepoScope(parsed.name, sha), None, None, None
+        return RepoScope(scope_name, sha), None, None, None
     sha = heads.resolve_head_sha(parsed.name, parsed.ref) if parsed.ref_kind == "branch" else heads.resolve_head_sha(parsed.name)
     return RepoScope(parsed.name, sha), None, None, None
 
@@ -561,6 +562,299 @@ class BitbucketResolver(_HostedRepoResolver):
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         raise ResolutionError("Bitbucket blobs must be read by path at a pinned commit")
+
+
+class CodebergResolver(_HostedRepoResolver):
+    """Resolve and inspect immutable Codeberg repository commits."""
+
+    _HOST = "codeberg.org"
+    _CREDENTIAL_PROVIDER = "codeberg"
+    _API = "https://codeberg.org/api/v1"
+
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        super().__init__(
+            token, timeout, base_url=base_url, max_attempts=max_attempts,
+            base_delay=base_delay, max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay, sleeper=sleeper,
+        )
+
+    @staticmethod
+    def _slug(slug: str) -> str:
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug) is None:
+            raise ResolutionError(f"invalid Codeberg repository slug {slug!r}")
+        return slug
+
+    def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        from urllib.parse import urlencode
+
+        if not tag or any(char.isspace() for char in tag):
+            raise ResolutionError("Codeberg ref must be non-empty and contain no whitespace")
+        payload = self._get_json(
+            f"{self._base_url}/repos/{self._slug(slug)}/commits?"
+            f"{urlencode({'sha': tag, 'limit': 1})}"
+        )
+        if not isinstance(payload, list) or len(payload) != 1:
+            raise ResolutionError("codeberg.org returned malformed commit metadata")
+        return self._sha(payload[0], "sha", self._HOST)
+
+    resolve_ref_to_sha = resolve_tag_to_sha
+    resolve_commit_to_sha = resolve_tag_to_sha
+
+    def archive_url(self, slug: str, commit_sha: str) -> str:
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        return f"https://codeberg.org/{self._slug(slug)}/archive/{sha}.tar.gz"
+
+    def list_blobs(self, slug: str, commit_sha: str) -> tuple[object, ...]:
+        from urllib.parse import urlencode
+
+        from leitir.tree import BlobEntry
+
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        payload = self._get_json(
+            f"{self._base_url}/repos/{self._slug(slug)}/git/trees/{sha}?"
+            f"{urlencode({'recursive': 'true'})}"
+        )
+        tree = payload.get("tree") if isinstance(payload, dict) else None
+        if not isinstance(tree, list) or payload.get("truncated") is True:
+            raise ResolutionError("codeberg.org returned incomplete tree metadata")
+        entries: list[BlobEntry] = []
+        for item in tree:
+            if not isinstance(item, dict):
+                raise ResolutionError("codeberg.org returned malformed tree metadata")
+            if item.get("type") != "blob":
+                continue
+            path, size, mode = item.get("path"), item.get("size"), item.get("mode")
+            if not isinstance(path, str) or not isinstance(size, int) or isinstance(size, bool):
+                raise ResolutionError("codeberg.org returned malformed tree metadata")
+            entries.append(BlobEntry(path, self._sha(item, "sha", self._HOST), size, mode))
+        return tuple(sorted(entries, key=lambda entry: entry.path))
+
+    def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        import base64
+
+        sha = self._sha({"sha": blob_sha}, "sha", self._HOST)
+        payload = self._get_json(
+            f"{self._base_url}/repos/{self._slug(slug)}/git/blobs/{sha}"
+        )
+        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(content, str) or payload.get("encoding") not in (None, "base64"):
+            raise ResolutionError("codeberg.org returned malformed blob metadata")
+        try:
+            return base64.b64decode(content, validate=True)
+        except ValueError as exc:
+            raise ResolutionError("codeberg.org returned malformed blob metadata") from exc
+
+    def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
+        import base64
+        from urllib.parse import quote, urlencode
+
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        payload = self._get_json(
+            f"{self._base_url}/repos/{self._slug(slug)}/contents/{quote(path, safe='/')}?"
+            f"{urlencode({'ref': sha})}"
+        )
+        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(content, str) or payload.get("encoding") != "base64":
+            raise ResolutionError("codeberg.org returned malformed content metadata")
+        try:
+            return base64.b64decode(content, validate=True)
+        except ValueError as exc:
+            raise ResolutionError("codeberg.org returned malformed content metadata") from exc
+
+
+class SourcehutResolver(_HostedRepoResolver):
+    """Resolve and inspect immutable Sourcehut repository commits."""
+
+    _HOST = "git.sr.ht"
+    _CREDENTIAL_PROVIDER = "sourcehut"
+    _API = "https://git.sr.ht/query"
+
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        super().__init__(
+            token, timeout, base_url=base_url, max_attempts=max_attempts,
+            base_delay=base_delay, max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay, sleeper=sleeper,
+        )
+        self._blob_urls: dict[tuple[str, str], str] = {}
+        self._path_urls: dict[tuple[str, str, str], str] = {}
+
+    @staticmethod
+    def _slug(slug: str) -> str:
+        if re.fullmatch(r"~[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug) is None:
+            raise ResolutionError(f"invalid Sourcehut repository slug {slug!r}")
+        return slug
+
+    def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        if not tag or any(char.isspace() for char in tag):
+            raise ResolutionError("Sourcehut ref must be non-empty and contain no whitespace")
+        owner, repo = self._slug(slug).split("/", 1)
+        payload = self._graphql(
+            "query($user:String!,$repo:String!,$ref:String!){"
+            "user(username:$user){repository(name:$repo){"
+            "revparse_single(revspec:$ref){id}}}}",
+            {"user": owner[1:], "repo": repo, "ref": tag},
+        )
+        try:
+            commit = payload["user"]["repository"]["revparse_single"]
+        except (KeyError, TypeError) as exc:
+            raise ResolutionError("git.sr.ht returned malformed commit metadata") from exc
+        return self._sha(commit, "id", self._HOST)
+
+    resolve_ref_to_sha = resolve_tag_to_sha
+    resolve_commit_to_sha = resolve_tag_to_sha
+
+    def archive_url(self, slug: str, commit_sha: str) -> str:
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        return f"https://git.sr.ht/{self._slug(slug)}/archive/{sha}.tar.gz"
+
+    def list_blobs(self, slug: str, commit_sha: str) -> tuple[object, ...]:
+        from leitir.tree import BlobEntry
+
+        owner, repo = self._slug(slug).split("/", 1)
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        root = self._graphql(
+            "query($user:String!,$repo:String!,$ref:String!){"
+            "user(username:$user){repository(name:$repo){"
+            "revparse_single(revspec:$ref){tree{id}}}}}",
+            {"user": owner[1:], "repo": repo, "ref": sha},
+        )
+        try:
+            tree_id = root["user"]["repository"]["revparse_single"]["tree"]["id"]
+        except (KeyError, TypeError) as exc:
+            raise ResolutionError("git.sr.ht returned malformed tree metadata") from exc
+        if not isinstance(tree_id, str):
+            raise ResolutionError("git.sr.ht returned malformed tree metadata")
+        pending = [("", tree_id)]
+        entries: list[BlobEntry] = []
+        while pending:
+            prefix, current = pending.pop(0)
+            cursor: object = None
+            while True:
+                payload = self._graphql(
+                    "query($user:String!,$repo:String!,$id:String!,$cursor:Cursor){"
+                    "user(username:$user){repository(name:$repo){object(id:$id){"
+                    "... on Tree{entries(cursor:$cursor){results{id name mode object{"
+                    "type id ... on TextBlob{size content} ... on BinaryBlob{size content}"
+                    "}} cursor}}}}}}",
+                    {"user": owner[1:], "repo": repo, "id": current, "cursor": cursor},
+                )
+                try:
+                    page = payload["user"]["repository"]["object"]["entries"]
+                    results, cursor = page["results"], page["cursor"]
+                except (KeyError, TypeError) as exc:
+                    raise ResolutionError("git.sr.ht returned malformed tree metadata") from exc
+                if not isinstance(results, list):
+                    raise ResolutionError("git.sr.ht returned malformed tree metadata")
+                for item in results:
+                    try:
+                        name, mode, obj = item["name"], item["mode"], item["object"]
+                        object_type, object_id = obj["type"], obj["id"]
+                    except (KeyError, TypeError) as exc:
+                        raise ResolutionError("git.sr.ht returned malformed tree metadata") from exc
+                    if not isinstance(name, str) or "/" in name or name in {"", ".", ".."}:
+                        raise ResolutionError("git.sr.ht returned unsafe tree metadata")
+                    path = f"{prefix}/{name}" if prefix else name
+                    if object_type == "TREE" and isinstance(object_id, str):
+                        pending.append((path, object_id))
+                    elif object_type == "BLOB":
+                        size, content = obj.get("size"), obj.get("content")
+                        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                            raise ResolutionError("git.sr.ht returned malformed tree metadata")
+                        url = self._safe_content_url(content)
+                        blob_sha = self._sha({"id": object_id}, "id", self._HOST)
+                        git_mode = self._git_mode(mode)
+                        entries.append(BlobEntry(path, blob_sha, size, git_mode))
+                        self._blob_urls[(slug, blob_sha)] = url
+                        self._path_urls[(slug, sha, path)] = url
+                    else:
+                        raise ResolutionError("git.sr.ht returned unsupported tree object")
+                if cursor is None:
+                    break
+                if not isinstance(cursor, str):
+                    raise ResolutionError("git.sr.ht returned malformed tree cursor")
+            pending.sort()
+        return tuple(sorted(entries, key=lambda entry: entry.path))
+
+    def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        sha = self._sha({"sha": blob_sha}, "sha", self._HOST)
+        url = self._blob_urls.get((self._slug(slug), sha))
+        if url is None:
+            raise ResolutionError("Sourcehut blob URL is unavailable before tree enumeration")
+        return self._get_bytes(url)
+
+    def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
+        slug = self._slug(slug)
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        url = self._path_urls.get((slug, sha, path))
+        if url is None:
+            raise ResolutionError("Sourcehut path URL is unavailable before tree enumeration")
+        return self._get_bytes(url)
+
+    def _graphql(self, query: str, variables: dict[str, object]) -> dict:
+        from urllib.parse import urlencode
+        from urllib.request import Request, urlopen
+
+        url = f"{self._base_url}?{urlencode({'query': query, 'variables': json.dumps(variables, separators=(',', ':'))})}"
+
+        def _fetch() -> object:
+            with urlopen(Request(url, headers=self._headers(self._base_url)), timeout=self._timeout) as response:
+                return json.load(response)
+
+        try:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"git.sr.ht API call failed: {_http.describe_failure(exc)}"
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise ResolutionError("git.sr.ht returned malformed metadata") from exc
+        if not isinstance(payload, dict) or payload.get("errors") or not isinstance(payload.get("data"), dict):
+            raise ResolutionError("git.sr.ht returned malformed metadata")
+        return payload["data"]
+
+    @staticmethod
+    def _git_mode(mode: object) -> str:
+        if not isinstance(mode, int) or isinstance(mode, bool) or mode < 0:
+            raise ResolutionError("git.sr.ht returned malformed tree metadata")
+        octal = format(mode, "o")
+        return octal if len(octal) == 6 else "100" + octal.zfill(3)
+
+    @staticmethod
+    def _safe_content_url(value: object) -> str:
+        from urllib.parse import urlsplit
+
+        if not isinstance(value, str):
+            raise ResolutionError("git.sr.ht returned malformed blob metadata")
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as exc:
+            raise ResolutionError("git.sr.ht returned unsafe blob URL") from exc
+        if parsed.scheme != "https" or parsed.hostname != "git.sr.ht" or port not in (None, 443) or parsed.username is not None:
+            raise ResolutionError("git.sr.ht returned unsafe blob URL")
+        return value
 
 
 _GITHUB_URL_RE = re.compile(
@@ -1218,6 +1512,8 @@ class MultiResolver:
         npm: NpmResolver | None = None,
         gitlab: GitLabResolver | None = None,
         bitbucket: BitbucketResolver | None = None,
+        codeberg: CodebergResolver | None = None,
+        sourcehut: SourcehutResolver | None = None,
     ) -> None:
         self._tag_resolver = pypi._tag_resolver
         self._resolvers = {
@@ -1230,6 +1526,8 @@ class MultiResolver:
             "github.com": self._tag_resolver,
             "gitlab.com": gitlab or GitLabResolver(),
             "bitbucket.org": bitbucket or BitbucketResolver(),
+            "codeberg.org": codeberg or CodebergResolver(),
+            "git.sr.ht": sourcehut or SourcehutResolver(),
         }
         go._repository_resolvers.update(self._repository_resolvers)
 

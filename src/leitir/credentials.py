@@ -53,6 +53,8 @@ _PROVIDERS = {
         ("BITBUCKET_TOKEN",),
         username_env="BITBUCKET_USERNAME",
     ),
+    "codeberg": _Provider(("codeberg.org",), ("CODEBERG_TOKEN",)),
+    "sourcehut": _Provider(("git.sr.ht",), ("SRHT_TOKEN",)),
     "npm": _Provider(("registry.npmjs.org",), ("NPM_TOKEN",)),
     "pypi": _Provider(("pypi.org",), ("PYPI_TOKEN", "PIP_TOKEN")),
     "crates": _Provider(("crates.io", "static.crates.io"), ("CARGO_TOKEN",)),

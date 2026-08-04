@@ -137,9 +137,20 @@ Ordered by dependency (matching decision 12): C1-C10.
       commits API. Known limitation: lock is fail-closed per dep (one unresolvable
       dep aborts the run) — a best-effort hardening pass is deferred.
 
-- [ ] C5: Immutable snapshot export/import command set.
-      (`src/leitir/snapshot.py`, `src/leitir/cli.py`, `src/leitir/corpus.py`, `tests/test_snapshot.py`, `tests/test_snapshot_e2e.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C5: Immutable snapshot export/import command set.
+      (`src/leitir/snapshot.py`, `src/leitir/cli.py`, `src/leitir/corpus.py`,
+      `tests/test_snapshot.py`, `tests/test_snapshot_e2e.py`)
+      Gate: offline targeted 41 passed; full suite 977 passed, 45 skipped
+      (Python 3.11); live n/a (network-independent). `leitir export` writes a
+      deterministic `corpus.lock` (format/corpus version, per-source spec,
+      `version_source`, commit SHA, artifact kind/checksum, shelf path, and a
+      tree SHA = SHA-256 over sorted `mode path NUL git-blob-sha LF` records)
+      plus a normalized gzip tarball of trees/manifests/`POINTERS.md`.
+      `leitir import` extracts to staging, verifies every source's manifest
+      fields + recomputed tree SHA + `POINTERS.md` checksum **before** shelving
+      anything (fail-closed: any mismatch raises and shelves nothing), refuses a
+      non-empty destination, and installs via atomic moves with rollback. Safe
+      extraction reuses the `_extract_tarball` guards.
 
 - [ ] C6: SBOM generation over closure with SPDX/CycloneDX output.
       (`src/leitir/sbom.py`, `src/leitir/lockfiles.py`, `tests/test_sbom.py`, `tests/test_sbom_spdx.py`, `tests/test_sbom_cyclonedx.py`)
@@ -171,7 +182,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C2 | done | offline targeted 65, 1 skipped; full 952 passed, 44 skipped (3.11); live 3 (npm) |
 | C3 | done | offline targeted 71, 2 skipped; full 958 passed, 45 skipped (3.11); live 7 |
 | C4 | done | offline targeted 68; full 968 passed, 45 skipped (3.11); live not added (offline-covered) |
-| C5 | not started | not started |
+| C5 | done | offline targeted 41; full 977 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C6 | not started | not started |
 | C7 | not started | not started |
 | C8 | not started | not started |

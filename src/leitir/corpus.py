@@ -88,6 +88,68 @@ def write_sources(
         raise
 
 
+def enumerate_shelved_sources(
+    root: str | os.PathLike[str] | None = None,
+) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
+    """Return indexed sources with their validated manifests and paths."""
+    corpus_root = resolve_root(root)
+    result: list[tuple[dict[str, Any], dict[str, object], Path]] = []
+    for entry in load_sources(corpus_root):
+        relative = Path(entry["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"invalid shelved source path: {entry['path']!r}")
+        target = corpus_root / relative
+        manifest = read_valid_manifest(
+            target,
+            entry["owner"],
+            entry["repo"],
+            entry["commit_sha"],
+            host=entry["host"],
+        )
+        if manifest is None:
+            raise ValueError(f"source has no valid manifest: {entry['path']}")
+        result.append((dict(entry), manifest, target))
+    result.sort(key=lambda item: tuple(str(part) for part in _key(item[0])))
+    return result
+
+
+def shelve_imported_sources(
+    staging: Path,
+    root: str | os.PathLike[str] | None,
+    entries: list[dict[str, Any]],
+    *,
+    pointers_name: str,
+) -> None:
+    """Install a fully verified staged snapshot into an empty corpus."""
+    corpus_root = resolve_root(root)
+    if (corpus_root / INDEX_NAME).exists() or (corpus_root / "repos").exists():
+        raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
+    installed: list[Path] = []
+    corpus_root.mkdir(parents=True, exist_ok=True)
+    try:
+        for entry in entries:
+            relative = Path(entry["path"])
+            source = staging / relative
+            destination = corpus_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+            installed.append(destination)
+        source_pointers = staging / pointers_name
+        if not source_pointers.is_file():
+            raise ValueError(f"snapshot is missing {pointers_name}")
+        temporary_pointers = corpus_root / f".{pointers_name}.tmp"
+        shutil.copyfile(source_pointers, temporary_pointers)
+        os.replace(temporary_pointers, corpus_root / pointers_name)
+        write_sources(corpus_root, entries)
+    except Exception:
+        for destination in reversed(installed):
+            shutil.rmtree(destination, ignore_errors=True)
+        (corpus_root / INDEX_NAME).unlink(missing_ok=True)
+        (corpus_root / pointers_name).unlink(missing_ok=True)
+        (corpus_root / f".{pointers_name}.tmp").unlink(missing_ok=True)
+        raise
+
+
 def _key(entry: dict[str, Any]) -> tuple[object, object, object, object]:
     return (entry.get("host"), entry.get("owner"), entry.get("repo"), entry.get("commit_sha"))
 

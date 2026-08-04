@@ -27,13 +27,14 @@ the ADR) and extends it with commit-SHA pinning, integrity verification,
 multi-ecosystem lockfile version detection, and a normative agent
 workflow, an agent skill, and a pinned fetch-correctness benchmark.
 
-**ADR-005 is in progress.** Slices C1–C4 are landed: GitLab/Bitbucket
+**ADR-005 is in progress.** Slices C1–C5 are landed: GitLab/Bitbucket
 host-aware resolvers and materialization (C1); registry-artifact parity
-(C2); byte-exact artifact-first resolution (C3); and transitive
-dependency closure via `leitir lock` with per-manifest `graph`/`deps`
-(C4). Slices C5–C10 remain.
+(C2); byte-exact artifact-first resolution (C3); transitive dependency
+closure via `leitir lock` (C4); and immutable snapshot export/import via
+`leitir export`/`leitir import` with fail-closed, verify-all-before-shelve
+rehydration (C5). Slices C6–C10 remain.
 
-Offline suite: **968 passed, 45 skipped**. The 45 skips are opt-in live tests
+Offline suite: **977 passed, 45 skipped**. The 45 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir

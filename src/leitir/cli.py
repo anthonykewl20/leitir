@@ -127,6 +127,14 @@ def build_parser() -> argparse.ArgumentParser:
     lock_roots.add_argument("--root", default=None, help="corpus root directory")
     lock_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     lock.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
+    export = commands.add_parser("export", help="export an immutable corpus snapshot")
+    export.add_argument("-o", "--output", default="corpus.lock")
+    import_command = commands.add_parser("import", help="import an immutable corpus snapshot")
+    import_command.add_argument("lock")
+    for snapshot_command in (export, import_command):
+        snapshot_roots = snapshot_command.add_mutually_exclusive_group()
+        snapshot_roots.add_argument("--root", default=None, help="corpus root directory")
+        snapshot_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -440,6 +448,20 @@ def _run_corpus_command(
             (root / POINTERS_NAME).unlink(missing_ok=True)
             print(f"leitir: cleaned {root}", file=err)
             return int(ExitCode.SUCCESS)
+        if args.command == "export":
+            from .snapshot import export_corpus
+
+            lock_path, tarball_path = export_corpus(args.output, root=root)
+            print(json.dumps({"lock": str(lock_path), "tarball": str(tarball_path)}, sort_keys=True), file=out)
+            print(f"leitir: exported {lock_path}", file=err)
+            return int(ExitCode.SUCCESS)
+        if args.command == "import":
+            from .snapshot import import_corpus
+
+            entries = import_corpus(args.lock, root=root)
+            print(json.dumps({"root": str(root), "sources": len(entries)}, sort_keys=True), file=out)
+            print(f"leitir: imported {len(entries)} source(s) into {root}", file=err)
+            return int(ExitCode.SUCCESS)
 
         token = _github_token()
         resolver = resolver_factory(token)
@@ -619,7 +641,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean", "lock"}:
+    if args.command in {"get", "fetch", "list", "remove", "clean", "lock", "export", "import"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

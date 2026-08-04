@@ -77,9 +77,25 @@ Each C slice ships with offline tests and, where it touches the network, opt-in 
 
 Ordered by dependency (matching decision 12): C1-C10.
 
-- [ ] C1: GitLab/Bitbucket host-aware resolvers and auth.
-      (`src/leitir/resolver.py`, `src/leitir/spec.py`, `tests/test_resolver_gitlab.py`, `tests/test_resolver_bitbucket.py`)
-      Gate: offline targeted 0 passed; full suite not started; live not started (Python 3.11)
+- [x] C1: GitLab/Bitbucket host-aware resolvers and auth, plus host-aware
+      repository materialization so `leitir get gitlab:/bitbucket:` shelves
+      end-to-end. The ADR file list under-enumerated this slice: making the
+      GitHub-hardcoded shelf path (`materialize.py`) host-aware was required
+      for the resolvers to be usable, so `materialize.py`/`corpus.py`/`cli.py`
+      were generalized behind a `_HOST_METADATA` table and the resolver object
+      now drives archive fetch + native tree verification.
+      (`src/leitir/resolver.py`, `src/leitir/spec.py`, `src/leitir/materialize.py`,
+      `src/leitir/corpus.py`, `src/leitir/cli.py`, `tests/test_resolver_gitlab.py`,
+      `tests/test_resolver_bitbucket.py`, `tests/test_materialize_gitlab.py`,
+      `tests/test_materialize_bitbucket.py`, `tests/test_materialize_e2e_live.py`)
+      Gate: offline targeted 137 passed; full suite 942 passed, 43 skipped
+      (Python 3.11); live GitLab resolver+materialize passed; Bitbucket live
+      blocked by anonymous HTTP 429 on this host (no `BITBUCKET_TOKEN`) —
+      Bitbucket correctness is covered by the offline fixture suite; re-verify
+      live with a token. Known limitation: `BITBUCKET_TOKEN` is attached only
+      to `api.bitbucket.org`, so private Bitbucket archive downloads
+      (`bitbucket.org`) are unauthenticated; public repos (the anonymous
+      default) are unaffected.
 
 - [ ] C2: Registry-artifact parity module and manifest parity fields.
       (`src/leitir/parity.py`, `src/leitir/materialize.py`, `src/leitir/spec.py`, `tests/test_parity.py`, `tests/test_parity_e2e.py`)
@@ -123,7 +139,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 
 | Slice | Status | Gate result |
 |-------|--------|-------------|
-| C1 | not started | not started |
+| C1 | done | offline targeted 137; full 942 passed, 43 skipped (3.11); live GitLab passed, Bitbucket blocked by anonymous 429 (no token) |
 | C2 | not started | not started |
 | C3 | not started | not started |
 | C4 | not started | not started |

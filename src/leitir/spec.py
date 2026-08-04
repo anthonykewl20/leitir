@@ -27,10 +27,15 @@ _PREFIXES = {
     # removing it would break already accepted corpus specs.
     "go": "go",
 }
+_REPOSITORY_HOSTS = {
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+    "bitbucket": "bitbucket.org",
+}
 _SUPPORTED_FORMS = (
     "npm:name[@version], pypi:name[@version], crates:name[@version], "
-    "go:module[@version], owner/repo[@ref|#ref], github:owner/repo, or "
-    "https://github.com/owner/repo"
+    "go:module[@version], owner/repo[@ref|#ref], "
+    "github|gitlab|bitbucket:owner/repo[@ref|#ref], or an HTTPS repository URL"
 )
 
 
@@ -53,27 +58,37 @@ class CorpusSpec:
     version: str | None = None
     ref: str | None = None
     ref_kind: str | None = None
+    host: str | None = None
 
 
 def _fail(raw: object, reason: str) -> SpecParseError:
     return SpecParseError(raw, reason)
 
 
-def _repo_result(raw: str, owner: str, repo: str, ref: str | None, kind: str | None) -> CorpusSpec:
+def _repo_result(
+    raw: str,
+    owner: str,
+    repo: str,
+    ref: str | None,
+    kind: str | None,
+    host: str = "github.com",
+) -> CorpusSpec:
     if repo.endswith(".git"):
         repo = repo[:-4]
     if not _OWNER.fullmatch(owner) or not _REPO.fullmatch(repo):
-        raise _fail(raw, "invalid GitHub owner or repository name")
+        raise _fail(raw, "invalid repository owner or repository name")
     if ref is not None and (not ref or any(ch.isspace() for ch in ref)):
         raise _fail(raw, "repository ref must be non-empty and contain no whitespace")
     if ref is None:
         kind = "head"
     elif _SHA1.fullmatch(ref):
         ref, kind = ref.lower(), "sha"
-    return CorpusSpec(raw, None, f"{owner}/{repo}", ref=ref, ref_kind=kind)
+    return CorpusSpec(raw, None, f"{owner}/{repo}", ref=ref, ref_kind=kind, host=host)
 
 
-def _parse_repo_shorthand(raw: str, value: str) -> CorpusSpec | None:
+def _parse_repo_shorthand(
+    raw: str, value: str, host: str = "github.com"
+) -> CorpusSpec | None:
     value = value.rstrip("/")
     delimiter = None
     for candidate in ("#", "@"):
@@ -91,37 +106,48 @@ def _parse_repo_shorthand(raw: str, value: str) -> CorpusSpec | None:
     parts = slug.split("/")
     if len(parts) != 2:
         return None
-    return _repo_result(raw, parts[0], parts[1], ref, kind)
+    return _repo_result(raw, parts[0], parts[1], ref, kind, host)
 
 
-def _parse_github_url(raw: str) -> CorpusSpec:
+def _parse_repository_url(raw: str) -> CorpusSpec:
     try:
         parsed = urlsplit(raw)
     except ValueError as exc:
         raise _fail(raw, "malformed URL") from exc
     if parsed.scheme.lower() != "https":
-        raise _fail(raw, "GitHub repository URLs must use HTTPS")
-    if parsed.hostname is None or parsed.hostname.lower() != "github.com":
-        raise _fail(raw, "repository URL host must be exactly github.com")
+        raise _fail(raw, "repository URLs must use HTTPS")
+    host = parsed.hostname.lower() if parsed.hostname is not None else None
+    if host not in _REPOSITORY_HOSTS.values():
+        raise _fail(raw, "repository URL host is not supported")
     try:
         port = parsed.port
     except ValueError as exc:
         raise _fail(raw, "malformed URL port") from exc
     if parsed.username is not None or parsed.password is not None or port not in (None, 443):
-        raise _fail(raw, "GitHub repository URL contains unsupported authority data")
+        raise _fail(raw, "repository URL contains unsupported authority data")
     if parsed.query or parsed.fragment:
-        raise _fail(raw, "GitHub repository URL must not contain a query or fragment")
+        raise _fail(raw, "repository URL must not contain a query or fragment")
     parts = [unquote(part) for part in parsed.path.split("/") if part]
     if len(parts) < 2:
-        raise _fail(raw, "GitHub repository URL must include owner and repository")
+        raise _fail(raw, "repository URL must include owner and repository")
     ref = None
     kind = None
     if len(parts) > 2:
-        if len(parts) < 4 or parts[2] not in {"tree", "blob"}:
-            raise _fail(raw, "unsupported GitHub repository URL path")
-        ref = parts[3]
+        if (
+            host == "gitlab.com"
+            and len(parts) >= 5
+            and parts[2] == "-"
+            and parts[3] in {"tree", "blob"}
+        ):
+            ref = parts[4]
+        elif len(parts) >= 4 and parts[2] in (
+            {"src"} if host == "bitbucket.org" else {"tree", "blob"}
+        ):
+            ref = parts[3]
+        else:
+            raise _fail(raw, "unsupported repository URL path")
         kind = "branch"
-    return _repo_result(raw, parts[0], parts[1], ref, kind)
+    return _repo_result(raw, parts[0], parts[1], ref, kind, host)
 
 
 def _split_package(raw: str, ecosystem: str, value: str) -> CorpusSpec:
@@ -152,9 +178,9 @@ def parse_corpus_spec(raw: str) -> CorpusSpec:
 
     lower = raw.lower()
     if lower.startswith("http://"):
-        raise _fail(raw, "GitHub repository URLs must use HTTPS")
+        raise _fail(raw, "repository URLs must use HTTPS")
     if "://" in raw:
-        return _parse_github_url(raw)
+        return _parse_repository_url(raw)
 
     prefix, separator, remainder = raw.partition(":")
     if separator:
@@ -163,18 +189,21 @@ def parse_corpus_spec(raw: str) -> CorpusSpec:
             if not remainder:
                 raise _fail(raw, "package name is empty")
             return _split_package(raw, canonical, remainder)
-        if prefix.lower() == "github":
-            parsed = _parse_repo_shorthand(raw, remainder)
+        host = _REPOSITORY_HOSTS.get(prefix.lower())
+        if host is not None:
+            parsed = _parse_repo_shorthand(raw, remainder, host)
             if parsed is None:
-                raise _fail(raw, "github: requires owner/repo")
+                raise _fail(raw, f"{prefix.lower()}: requires owner/repo")
             return parsed
         raise _fail(raw, "unknown registry or repository prefix")
 
-    if lower.startswith("github.com/"):
-        parsed = _parse_repo_shorthand(raw, raw[len("github.com/"):])
-        if parsed is None:
-            raise _fail(raw, "github.com form requires owner/repo")
-        return parsed
+    for host in _REPOSITORY_HOSTS.values():
+        prefix = host + "/"
+        if lower.startswith(prefix):
+            parsed = _parse_repo_shorthand(raw, raw[len(prefix):], host)
+            if parsed is None:
+                raise _fail(raw, f"{host} form requires owner/repo")
+            return parsed
 
     # A valid owner/repo is a repository. Scoped npm names are deliberately
     # excluded by the owner grammar and therefore fall through to npm.

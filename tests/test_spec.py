@@ -39,6 +39,12 @@ def test_package_prefix_matrix(raw, ecosystem, name, version):
         ("https://github.com/owner/repo.git/", "owner/repo", None, "head"),
         ("https://github.com/owner/repo/tree/main/src", "owner/repo", "main", "branch"),
         ("https://github.com/owner/repo/blob/v1/file.py", "owner/repo", "v1", "branch"),
+        ("gitlab:owner/repo@v1", "owner/repo", "v1", "tag"),
+        ("gitlab:owner/repo#main", "owner/repo", "main", "branch"),
+        ("https://gitlab.com/owner/repo/tree/main/src", "owner/repo", "main", "branch"),
+        ("https://gitlab.com/owner/repo/-/blob/v1/file.py", "owner/repo", "v1", "branch"),
+        ("bitbucket:owner/repo@" + "a" * 40, "owner/repo", "a" * 40, "sha"),
+        ("https://bitbucket.org/owner/repo/src/main/file.py", "owner/repo", "main", "branch"),
     ],
 )
 def test_repository_forms_normalize(raw, name, ref, kind):
@@ -52,10 +58,24 @@ def test_repository_forms_normalize(raw, name, ref, kind):
 
 
 @pytest.mark.parametrize(
+    ("raw", "host"),
+    [
+        ("github:owner/repo", "github.com"),
+        ("gitlab:owner/repo", "gitlab.com"),
+        ("https://bitbucket.org/owner/repo", "bitbucket.org"),
+    ],
+)
+def test_repository_host_is_preserved(raw, host):
+    assert parse_corpus_spec(raw).host == host
+
+
+@pytest.mark.parametrize(
     "raw",
     [
         "https://github.com.attacker.example/owner/repo",
         "https://example.com/github.com/owner/repo",
+        "https://gitlab.com.attacker.example/owner/repo",
+        "https://bitbucket.org.attacker.example/owner/repo",
         "http://github.com/owner/repo",
         "git://github.com/owner/repo",
         "https://github.com/owner",

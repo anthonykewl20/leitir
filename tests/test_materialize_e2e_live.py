@@ -12,7 +12,10 @@ import os
 
 import pytest
 
-from leitir.materialize import materialize_github_repo
+import fixtures_resolver as fx
+from leitir.materialize import materialize_github_repo, materialize_repo
+from leitir.resolver import BitbucketResolver, GitLabResolver
+from leitir.search import RepoScope
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
@@ -34,3 +37,29 @@ def test_materializes_pinned_small_repository(tmp_path):
     assert manifest["fetch_method"] == "codeload-tarball"
     assert manifest["verified"] in (True, "sampled")
     assert manifest["verified_at"].endswith("Z")
+
+
+def test_materializes_pinned_gitlab_repository(tmp_path):
+    target = materialize_repo(
+        tmp_path,
+        f"gitlab:{fx.GITLAB_SLUG}@{fx.GITLAB_COMMIT_SHA}",
+        RepoScope(fx.GITLAB_SLUG, fx.GITLAB_COMMIT_SHA),
+        host="gitlab.com",
+        resolver=GitLabResolver(),
+    )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["host"] == "gitlab.com"
+    assert manifest["verified"] in (True, "sampled")
+
+
+def test_materializes_pinned_bitbucket_repository(tmp_path):
+    target = materialize_repo(
+        tmp_path,
+        f"bitbucket:{fx.BITBUCKET_SLUG}@{fx.BITBUCKET_COMMIT_SHA}",
+        RepoScope(fx.BITBUCKET_SLUG, fx.BITBUCKET_COMMIT_SHA),
+        host="bitbucket.org",
+        resolver=BitbucketResolver(),
+    )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["host"] == "bitbucket.org"
+    assert manifest["verified"] in (True, "sampled")

@@ -1,4 +1,4 @@
-"""Safely materialize and verify an immutable GitHub source tree.
+"""Safely materialize and verify an immutable hosted source tree.
 
 Verification hashes every extracted regular file when both the file count and
 aggregate byte size are within :data:`VERIFY_MAX_FILES` and
@@ -27,6 +27,11 @@ from leitir.search import RepoScope
 _NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _CODELOAD = "https://codeload.github.com"
+_HOST_METADATA = {
+    "github.com": ("codeload-tarball", "https://github.com"),
+    "gitlab.com": ("gitlab-archive", "https://gitlab.com"),
+    "bitbucket.org": ("bitbucket-archive", "https://bitbucket.org"),
+}
 MANIFEST_NAME = "leitir-manifest.json"
 VERIFY_MAX_FILES = 1_000
 VERIFY_MAX_BYTES = 64 * 1024 * 1024
@@ -46,6 +51,18 @@ class VerificationError(Exception):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _failure_detail(exc: BaseException) -> str:
+    current: BaseException | None = exc
+    while current is not None:
+        detail = _http.describe_failure(current)
+        if detail.startswith("HTTP "):
+            if current is exc:
+                return detail
+            return f"{type(exc).__name__}: {detail}"
+        current = current.__cause__
+    return _http.describe_failure(exc)
 
 
 def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
@@ -81,23 +98,41 @@ def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]
 
 def _validate_identity(owner: str, repo: str, commit_sha: str) -> None:
     if not _NAME.fullmatch(owner):
-        raise ValueError("owner must be a GitHub repository owner")
+        raise ValueError("owner must be a repository owner")
     if not _NAME.fullmatch(repo):
-        raise ValueError("repo must be a GitHub repository name")
+        raise ValueError("repo must be a repository name")
     if not _SHA1.fullmatch(commit_sha):
         raise ValueError("commit_sha must be a 40-char lowercase hex SHA")
 
 
-def target_path(root: str | os.PathLike[str], owner: str, repo: str, commit_sha: str) -> Path:
-    """Return the canonical target path for one pinned GitHub repository."""
+def target_path(
+    root: str | os.PathLike[str],
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str = "github.com",
+) -> Path:
+    """Return the canonical target path for one pinned hosted repository."""
     _validate_identity(owner, repo, commit_sha)
-    return Path(root) / "repos" / "github.com" / owner / repo / commit_sha
+    if host not in _HOST_METADATA:
+        raise ValueError(f"unsupported repository host {host!r}")
+    return Path(root) / "repos" / host / owner / repo / commit_sha
 
 
 def read_valid_manifest(
-    target: str | os.PathLike[str], owner: str, repo: str, commit_sha: str
+    target: str | os.PathLike[str],
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str = "github.com",
 ) -> dict[str, object] | None:
     """Read a manifest only when it identifies exactly the requested source."""
+    metadata = _HOST_METADATA.get(host)
+    if metadata is None:
+        return None
+    fetch_method, canonical_base = metadata
     try:
         payload = json.loads((Path(target) / MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -105,17 +140,17 @@ def read_valid_manifest(
     if not isinstance(payload, dict):
         return None
     expected = {
-        "host": "github.com",
+        "host": host,
         "owner": owner,
         "repo": repo,
         "commit_sha": commit_sha,
-        "fetch_method": "codeload-tarball",
+        "fetch_method": fetch_method,
     }
     if any(payload.get(key) != value for key, value in expected.items()):
         return None
     if not isinstance(payload.get("spec"), str) or not payload["spec"]:
         return None
-    if payload.get("repo_url") != f"https://github.com/{owner}/{repo}":
+    if payload.get("repo_url") != f"{canonical_base}/{owner}/{repo}":
         return None
     if not isinstance(payload.get("fetched_at"), str) or not payload["fetched_at"]:
         return None
@@ -181,12 +216,21 @@ def _hardlink_path(linkname: str, expected_root: str) -> PurePosixPath:
     return PurePosixPath(*path.parts[1:])
 
 
-def _extract_tarball(data: bytes, destination: Path, repo: str, commit_sha: str) -> None:
-    expected_root = f"{repo}-{commit_sha}"
+def _extract_tarball(
+    data: bytes,
+    destination: Path,
+    repo: str,
+    commit_sha: str,
+    *,
+    archive_root: str | None = None,
+) -> None:
+    expected_root = archive_root
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
         members = archive.getmembers()
         if not members:
             raise UnsafeArchiveError("archive is empty")
+        if expected_root is None:
+            expected_root = _archive_path(members[0].name).parts[0]
 
         planned: list[tuple[tarfile.TarInfo, PurePosixPath | None]] = []
         seen: set[PurePosixPath] = set()
@@ -383,20 +427,6 @@ def materialize_github_repo(
     from urllib.parse import urlsplit
     from urllib.request import Request, urlopen
 
-    _validate_identity(owner, repo, commit_sha)
-    if not isinstance(spec, str) or not spec.strip():
-        raise ValueError("spec must be non-empty")
-    target = target_path(root, owner, repo, commit_sha)
-    existing = read_valid_manifest(target, owner, repo, commit_sha) if target.is_dir() else None
-    if existing is not None:
-        if not verify:
-            if "verified" not in existing:
-                existing.update(verified=False, verified_at=None)
-                _write_manifest(target / MANIFEST_NAME, existing)
-            return target
-        if existing.get("verified") in (True, "sampled"):
-            return target
-
     retry = _http.make_retry(
         max_attempts=max_attempts,
         base_delay=base_delay,
@@ -419,27 +449,95 @@ def materialize_github_repo(
         with urlopen(Request(url, headers=headers), timeout=timeout) as response:
             return response.read()
 
+    if tree_source is None and verify:
+        from leitir.tree import GitHubTreeSource
+
+        tree_source = GitHubTreeSource(
+            token=github_token,
+            timeout=timeout,
+            base_url=tree_base_url,
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
+    return _materialize_hosted_repo(
+        root,
+        spec,
+        owner,
+        repo,
+        commit_sha,
+        host="github.com",
+        fetch_archive=lambda: retry(_fetch),
+        tree_source=tree_source,
+        tag=tag,
+        subpath=subpath,
+        manifest_fields=manifest_fields,
+        verify=verify,
+        verification_max_files=verification_max_files,
+        verification_max_bytes=verification_max_bytes,
+        on_fetch=on_fetch,
+        archive_root=f"{repo}-{commit_sha}",
+    )
+
+
+def _materialize_hosted_repo(
+    root: str | os.PathLike[str],
+    spec: str,
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str,
+    fetch_archive: Callable[[], bytes],
+    tree_source: object | None,
+    tag: str | None = None,
+    subpath: str | None = None,
+    manifest_fields: Mapping[str, object] | None = None,
+    verify: bool = True,
+    verification_max_files: int = VERIFY_MAX_FILES,
+    verification_max_bytes: int = VERIFY_MAX_BYTES,
+    on_fetch: Callable[[], None] | None = None,
+    archive_root: str | None = None,
+) -> Path:
+    _validate_identity(owner, repo, commit_sha)
+    if not isinstance(spec, str) or not spec.strip():
+        raise ValueError("spec must be non-empty")
+    metadata = _HOST_METADATA.get(host)
+    if metadata is None:
+        raise ValueError(f"unsupported repository host {host!r}")
+    fetch_method, canonical_base = metadata
+    target = target_path(root, owner, repo, commit_sha, host=host)
+    existing = (
+        read_valid_manifest(target, owner, repo, commit_sha, host=host)
+        if target.is_dir()
+        else None
+    )
+    if existing is not None:
+        if not verify:
+            if "verified" not in existing:
+                existing.update(verified=False, verified_at=None)
+                _write_manifest(target / MANIFEST_NAME, existing)
+            return target
+        if existing.get("verified") in (True, "sampled"):
+            return target
+    if verify and tree_source is None:
+        raise ValueError("tree_source is required when verification is enabled")
     if on_fetch is not None:
         on_fetch()
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-", dir=target.parent))
     try:
-        data = retry(_fetch)
-        _extract_tarball(data, staging, repo, commit_sha)
+        data = fetch_archive()
+        _extract_tarball(
+            data,
+            staging,
+            repo,
+            commit_sha,
+            archive_root=archive_root,
+        )
         if verify:
-            if tree_source is None:
-                from leitir.tree import GitHubTreeSource
-
-                tree_source = GitHubTreeSource(
-                    token=github_token,
-                    timeout=timeout,
-                    base_url=tree_base_url,
-                    max_attempts=max_attempts,
-                    base_delay=base_delay,
-                    max_delay=max_delay,
-                    max_rate_limit_delay=max_rate_limit_delay,
-                    sleeper=sleeper,
-                )
             verified, text_normalized = _verify_extracted_tree(
                 staging,
                 owner,
@@ -464,14 +562,14 @@ def materialize_github_repo(
         manifest.update(
             {
                 "spec": spec,
-                "host": "github.com",
+                "host": host,
                 "owner": owner,
                 "repo": repo,
                 "commit_sha": commit_sha,
                 "tag": tag,
-                "repo_url": f"https://github.com/{owner}/{repo}",
+                "repo_url": f"{canonical_base}/{owner}/{repo}",
                 "fetched_at": fetched_at,
-                "fetch_method": "codeload-tarball",
+                "fetch_method": fetch_method,
                 "subpath": subpath,
                 "verified": verified,
                 "verified_at": verified_at,
@@ -485,21 +583,76 @@ def materialize_github_repo(
         return target
     except Exception as exc:
         shutil.rmtree(staging, ignore_errors=True)
-        if target.exists() and read_valid_manifest(target, owner, repo, commit_sha) is None:
+        if target.exists() and read_valid_manifest(
+            target, owner, repo, commit_sha, host=host
+        ) is None:
             shutil.rmtree(target, ignore_errors=True)
         if isinstance(exc, MaterializationError):
             raise
         raise MaterializationError(
             f"materialization failed for {owner}/{repo}@{commit_sha}: "
-            f"{_http.describe_failure(exc)}"
+            f"{_failure_detail(exc)}"
         ) from exc
 
 
 def materialize_repo(
-    root: str | os.PathLike[str], spec: str, scope: RepoScope, **kwargs: object
+    root: str | os.PathLike[str],
+    spec: str,
+    scope: RepoScope,
+    *,
+    host: str = "github.com",
+    resolver: object | None = None,
+    **kwargs: object,
 ) -> Path:
-    """Materialize a :class:`RepoScope`; convenient for existing resolvers."""
+    """Materialize a :class:`RepoScope` through its host-native resolver."""
     owner, repo = scope.slug.split("/", 1)
-    return materialize_github_repo(
-        root, spec, owner, repo, scope.commit_sha, **kwargs  # type: ignore[arg-type]
+    if host == "github.com":
+        return materialize_github_repo(
+            root, spec, owner, repo, scope.commit_sha, **kwargs  # type: ignore[arg-type]
+        )
+    if host not in ("gitlab.com", "bitbucket.org"):
+        raise ValueError(f"unsupported repository host {host!r}")
+    if resolver is None:
+        raise ValueError(f"a repository resolver is required for {host}")
+    archive_url = resolver.archive_url(scope.slug, scope.commit_sha)  # type: ignore[attr-defined]
+    hosted_options = {
+        key: kwargs.pop(key)
+        for key in tuple(kwargs)
+        if key
+        in {
+            "tag",
+            "subpath",
+            "manifest_fields",
+            "verify",
+            "verification_max_files",
+            "verification_max_bytes",
+            "on_fetch",
+        }
+    }
+    for github_only in (
+        "token",
+        "timeout",
+        "base_url",
+        "max_attempts",
+        "base_delay",
+        "max_delay",
+        "max_rate_limit_delay",
+        "sleeper",
+        "tree_source",
+        "tree_base_url",
+    ):
+        kwargs.pop(github_only, None)
+    if kwargs:
+        unexpected = next(iter(kwargs))
+        raise TypeError(f"unexpected materialization option {unexpected!r}")
+    return _materialize_hosted_repo(
+        root,
+        spec,
+        owner,
+        repo,
+        scope.commit_sha,
+        host=host,
+        fetch_archive=lambda: resolver._get_bytes(archive_url),  # type: ignore[attr-defined]
+        tree_source=resolver,
+        **hosted_options,  # type: ignore[arg-type]
     )

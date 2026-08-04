@@ -203,7 +203,9 @@ def _build_default_tree_source(token: str | None) -> object:
 def _build_default_resolver(token: str | None) -> object:
     from .resolver import (
         CratesResolver,
+        BitbucketResolver,
         GitHubTagResolver,
+        GitLabResolver,
         GoResolver,
         MultiResolver,
         NpmResolver,
@@ -232,6 +234,8 @@ def _build_default_resolver(token: str | None) -> object:
         crates=CratesResolver(tag_resolver, **crates_options),
         go=GoResolver(tag_resolver, **go_options),
         npm=NpmResolver(tag_resolver, **npm_options),
+        gitlab=GitLabResolver(),
+        bitbucket=BitbucketResolver(),
     )
 
 
@@ -339,8 +343,16 @@ def _resolve_corpus_spec(
     if parsed.ref_kind == "sha":
         return RepoScope(parsed.name, parsed.ref), None, None, None
     if parsed.ref_kind == "tag":
-        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
+        if parsed.host in (None, "github.com"):
+            sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
+        else:
+            sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host)
         return RepoScope(parsed.name, sha), parsed.ref, None, None
+    if parsed.host not in (None, "github.com"):
+        sha = resolver.resolve_tag_to_sha(
+            parsed.name, parsed.ref or "HEAD", host=parsed.host
+        )
+        return RepoScope(parsed.name, sha), None, None, None
     if parsed.ref_kind == "branch":
         sha = heads.resolve_head_sha(parsed.name, parsed.ref)
     else:
@@ -411,7 +423,9 @@ def _run_corpus_command(
                 scope = resolved.scope if hasattr(resolved, "scope") else resolved
                 owner, repo = scope.slug.split("/", 1)
                 sha = scope.commit_sha
-            removed = remove_source(root, owner, repo, sha)
+            removed = remove_source(
+                root, owner, repo, sha, host=parsed.host or "github.com"
+            )
             print(f"leitir: {'removed' if removed else 'not found'} {args.spec}", file=err)
             return int(ExitCode.SUCCESS)
         if args.command == "clean":
@@ -450,6 +464,14 @@ def _run_corpus_command(
                 name=parsed.name,
                 tag=tag,
                 version_source=version_source,
+                host=(parsed.host or "github.com")
+                if parsed.ecosystem is None
+                else "github.com",
+                repository_resolver=(
+                    getattr(resolver, "_repository_resolvers", {}).get(parsed.host)
+                    if parsed.ecosystem is None and parsed.host not in (None, "github.com")
+                    else None
+                ),
                 on_fetch=lambda raw=raw: print(
                     f"leitir: materializing {raw}", file=err
                 ),

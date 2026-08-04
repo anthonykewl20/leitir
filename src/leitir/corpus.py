@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from leitir.materialize import (
-    materialize_github_repo,
+    materialize_repo,
     read_valid_manifest,
     target_path,
     update_manifest,
@@ -118,6 +118,8 @@ def materialize_source(
     name: str | None = None,
     tag: str | None = None,
     version_source: str | None = None,
+    host: str = "github.com",
+    repository_resolver: object | None = None,
     on_fetch: Callable[[], None] | None = None,
     **fetch_options: object,
 ) -> Path:
@@ -145,19 +147,21 @@ def materialize_source(
         raise TypeError("resolved must be a RepoScope or ResolvedPackage")
 
     owner, repo = scope.slug.split("/", 1)
-    target = materialize_github_repo(
+    target = materialize_repo(
         corpus_root,
         spec,
-        owner,
-        repo,
-        scope.commit_sha,
+        scope,
+        host=host,
+        resolver=repository_resolver,
         tag=source_tag,
         subpath=subpath,
         manifest_fields=manifest_fields,
         on_fetch=on_fetch,
         **fetch_options,  # type: ignore[arg-type]
     )
-    manifest = read_valid_manifest(target, owner, repo, scope.commit_sha)
+    manifest = read_valid_manifest(
+        target, owner, repo, scope.commit_sha, host=host
+    )
     if manifest is None:
         raise RuntimeError("materializer returned a source without a valid manifest")
     if "entry_points" not in manifest:
@@ -177,7 +181,7 @@ def materialize_source(
 
     entry = {
         "name": source_name,
-        "host": "github.com",
+        "host": host,
         "owner": owner,
         "repo": repo,
         "commit_sha": scope.commit_sha,
@@ -203,11 +207,15 @@ def remove_source(
     owner: str,
     repo: str,
     commit_sha: str | None = None,
+    *,
+    host: str = "github.com",
 ) -> bool:
     """Remove one commit or a repository, update the index, and prune parents."""
     corpus_root = resolve_root(root)
     probe_sha = commit_sha or ("0" * 40)
-    repo_path = target_path(corpus_root, owner, repo, probe_sha).parent
+    repo_path = target_path(
+        corpus_root, owner, repo, probe_sha, host=host
+    ).parent
     removal_path = repo_path / commit_sha if commit_sha else repo_path
     existed = removal_path.exists()
     if existed:
@@ -218,7 +226,7 @@ def remove_source(
         entry
         for entry in entries
         if not (
-            entry.get("host") == "github.com"
+            entry.get("host") == host
             and entry.get("owner") == owner
             and entry.get("repo") == repo
             and (commit_sha is None or entry.get("commit_sha") == commit_sha)

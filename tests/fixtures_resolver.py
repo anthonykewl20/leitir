@@ -24,6 +24,14 @@ GO_SLUG = "stretchr/testify"
 GO_TAG = "v1.8.1"
 GO_COMMIT_SHA = "b747d7c5f853d017ddbc5e623d026d7fc2770a58"
 
+GITLAB_SLUG = "gitlab-org/gitlab-test"
+GITLAB_REF = "master"
+GITLAB_COMMIT_SHA = "ddd0f15ae83993f5cb66a927a28673882e99100b"
+
+BITBUCKET_SLUG = "atlassian_tutorial/helloworld"
+BITBUCKET_REF = "master"
+BITBUCKET_COMMIT_SHA = "65d938f39f364da3f90767e008022ffe45c562af"
+
 RUST_KNOWN_SYMBOLS = ("Serialize", "Deserialize")
 RUST_PATH = "serde/src/lib.rs"
 

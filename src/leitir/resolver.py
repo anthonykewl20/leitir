@@ -187,6 +187,322 @@ class GitHubTagResolver:
         return obj["sha"]
 
 
+class _HostedRepoResolver:
+    _HOST = ""
+    _TOKEN_ENV = ""
+    _AUTH_HEADER = ""
+
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        import os
+
+        self._token = token if token is not None else os.environ.get(self._TOKEN_ENV)
+        self._timeout = timeout
+        self._base_url = base_url.rstrip("/")
+        self._retry = _http.make_retry(
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
+
+    def _headers(self, url: str, accept: str = "application/json") -> dict[str, str]:
+        from urllib.parse import urlsplit
+
+        headers = {"Accept": accept, "User-Agent": "leitir"}
+        endpoint = urlsplit(url)
+        if self._token and endpoint.scheme == "https" and endpoint.hostname == self._HOST:
+            headers[self._AUTH_HEADER] = (
+                f"Bearer {self._token}"
+                if self._AUTH_HEADER == "Authorization"
+                else self._token
+            )
+        return headers
+
+    def _get_json(self, url: str) -> object:
+        from urllib.request import Request, urlopen
+
+        def _fetch() -> object:
+            with urlopen(
+                Request(url, headers=self._headers(url)), timeout=self._timeout
+            ) as response:
+                return json.load(response)
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"{self._HOST} API call failed: {_http.describe_failure(exc)}"
+            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise ResolutionError(f"{self._HOST} returned malformed metadata") from exc
+
+    def _get_bytes(self, url: str) -> bytes:
+        from urllib.request import Request, urlopen
+
+        def _fetch() -> bytes:
+            with urlopen(
+                Request(url, headers=self._headers(url, "application/octet-stream")),
+                timeout=self._timeout,
+            ) as response:
+                return response.read()
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"{self._HOST} content call failed: {_http.describe_failure(exc)}"
+            ) from exc
+
+    @staticmethod
+    def _sha(payload: object, field: str, host: str) -> str:
+        value = payload.get(field) if isinstance(payload, dict) else None
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None:
+            raise ResolutionError(f"{host} returned malformed commit metadata")
+        return value.lower()
+
+
+class GitLabResolver(_HostedRepoResolver):
+    """Resolve and inspect immutable GitLab repository commits."""
+
+    _HOST = "gitlab.com"
+    _TOKEN_ENV = "GITLAB_TOKEN"
+    _AUTH_HEADER = "PRIVATE-TOKEN"
+    _API = "https://gitlab.com/api/v4"
+
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        super().__init__(
+            token,
+            timeout,
+            base_url=base_url,
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
+
+    @staticmethod
+    def _project(slug: str) -> str:
+        from urllib.parse import quote
+
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug) is None:
+            raise ResolutionError(f"invalid GitLab repository slug {slug!r}")
+        return quote(slug, safe="")
+
+    def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        from urllib.parse import quote
+
+        if not tag or any(char.isspace() for char in tag):
+            raise ResolutionError("GitLab ref must be non-empty and contain no whitespace")
+        url = f"{self._base_url}/projects/{self._project(slug)}/repository/commits/{quote(tag, safe='')}"
+        return self._sha(self._get_json(url), "id", self._HOST)
+
+    resolve_ref_to_sha = resolve_tag_to_sha
+
+    def archive_url(self, slug: str, commit_sha: str) -> str:
+        from urllib.parse import urlencode
+
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        return (
+            f"{self._base_url}/projects/{self._project(slug)}/repository/archive.tar.gz?"
+            f"{urlencode({'sha': sha})}"
+        )
+
+    def list_blobs(self, slug: str, commit_sha: str) -> tuple[object, ...]:
+        from urllib.parse import urlencode
+
+        from leitir.tree import BlobEntry
+
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        entries: list[BlobEntry] = []
+        page = 1
+        while True:
+            query = urlencode(
+                {"ref": sha, "recursive": "true", "per_page": 100, "page": page}
+            )
+            payload = self._get_json(
+                f"{self._base_url}/projects/{self._project(slug)}/repository/tree?{query}"
+            )
+            if not isinstance(payload, list):
+                raise ResolutionError("gitlab.com returned malformed tree metadata")
+            for item in payload:
+                if not isinstance(item, dict):
+                    raise ResolutionError("gitlab.com returned malformed tree metadata")
+                if item.get("type") != "blob":
+                    continue
+                try:
+                    metadata = self._get_json(
+                        f"{self._base_url}/projects/{self._project(slug)}/repository/blobs/"
+                        f"{self._sha(item, 'id', self._HOST)}"
+                    )
+                    size = metadata.get("size") if isinstance(metadata, dict) else None
+                    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                        raise ValueError
+                    entries.append(
+                        BlobEntry(
+                            path=item["path"],
+                            blob_sha=item["id"],
+                            size=size,
+                            mode=item.get("mode"),
+                        )
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ResolutionError("gitlab.com returned malformed tree metadata") from exc
+            if len(payload) < 100:
+                break
+            page += 1
+        return tuple(sorted(entries, key=lambda entry: entry.path))
+
+    def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        sha = self._sha({"sha": blob_sha}, "sha", self._HOST)
+        return self._get_bytes(
+            f"{self._base_url}/projects/{self._project(slug)}/repository/blobs/{sha}/raw"
+        )
+
+    def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
+        from urllib.parse import quote, urlencode
+
+        sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        return self._get_bytes(
+            f"{self._base_url}/projects/{self._project(slug)}/repository/files/"
+            f"{quote(path, safe='')}/raw?{urlencode({'ref': sha})}"
+        )
+
+
+class BitbucketResolver(_HostedRepoResolver):
+    """Resolve and inspect immutable Bitbucket repository commits."""
+
+    _HOST = "api.bitbucket.org"
+    _TOKEN_ENV = "BITBUCKET_TOKEN"
+    _AUTH_HEADER = "Authorization"
+    _API = "https://api.bitbucket.org/2.0"
+
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: int = 30,
+        *,
+        base_url: str = _API,
+        max_attempts: int = 4,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_rate_limit_delay: float = 300.0,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        super().__init__(
+            token,
+            timeout,
+            base_url=base_url,
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            max_rate_limit_delay=max_rate_limit_delay,
+            sleeper=sleeper,
+        )
+
+    @staticmethod
+    def _slug(slug: str) -> str:
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug) is None:
+            raise ResolutionError(f"invalid Bitbucket repository slug {slug!r}")
+        return slug
+
+    def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        from urllib.parse import quote
+
+        if not tag or any(char.isspace() for char in tag):
+            raise ResolutionError("Bitbucket ref must be non-empty and contain no whitespace")
+        url = f"{self._base_url}/repositories/{self._slug(slug)}/commit/{quote(tag, safe='')}"
+        return self._sha(self._get_json(url), "hash", "bitbucket.org")
+
+    resolve_ref_to_sha = resolve_tag_to_sha
+
+    def archive_url(self, slug: str, commit_sha: str) -> str:
+        sha = self._sha({"sha": commit_sha}, "sha", "bitbucket.org")
+        return f"https://bitbucket.org/{self._slug(slug)}/get/{sha}.tar.gz"
+
+    def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
+        from urllib.parse import quote
+
+        sha = self._sha({"sha": commit_sha}, "sha", "bitbucket.org")
+        return self._get_bytes(
+            f"{self._base_url}/repositories/{self._slug(slug)}/src/{sha}/"
+            f"{quote(path, safe='/')}"
+        )
+
+    def list_blobs(self, slug: str, commit_sha: str) -> tuple[object, ...]:
+        from urllib.parse import quote
+
+        from leitir.tree import BlobEntry, GitHubTreeSource
+
+        sha = self._sha({"sha": commit_sha}, "sha", "bitbucket.org")
+        pending = [""]
+        entries: list[BlobEntry] = []
+        while pending:
+            directory = pending.pop(0)
+            suffix = f"/{quote(directory, safe='/')}" if directory else ""
+            url = (
+                f"{self._base_url}/repositories/{self._slug(slug)}/src/{sha}"
+                f"{suffix}/?pagelen=100"
+            )
+            while url:
+                payload = self._get_json(url)
+                values = payload.get("values") if isinstance(payload, dict) else None
+                if not isinstance(values, list):
+                    raise ResolutionError("bitbucket.org returned malformed tree metadata")
+                for item in values:
+                    if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                        raise ResolutionError("bitbucket.org returned malformed tree metadata")
+                    if item.get("type") == "commit_directory":
+                        pending.append(item["path"])
+                    elif item.get("type") == "commit_file":
+                        content = self.read_blob_at_commit(slug, sha, item["path"])
+                        attributes = item.get("attributes", [])
+                        mode = "120000" if isinstance(attributes, list) and "link" in attributes else "100644"
+                        entries.append(
+                            BlobEntry(
+                                path=item["path"],
+                                blob_sha=GitHubTreeSource.git_blob_sha(content),
+                                size=len(content),
+                                mode=mode,
+                            )
+                        )
+                next_url = payload.get("next")
+                if next_url is None:
+                    url = ""
+                elif isinstance(next_url, str) and next_url.startswith(self._base_url + "/"):
+                    url = next_url
+                else:
+                    raise ResolutionError("bitbucket.org returned an unsafe tree page URL")
+            pending.sort()
+        return tuple(sorted(entries, key=lambda entry: entry.path))
+
+    def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        raise ResolutionError("Bitbucket blobs must be read by path at a pinned commit")
+
+
 _GITHUB_URL_RE = re.compile(
     r"https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
 )
@@ -726,6 +1042,8 @@ class MultiResolver:
         crates: CratesResolver,
         go: GoResolver,
         npm: NpmResolver | None = None,
+        gitlab: GitLabResolver | None = None,
+        bitbucket: BitbucketResolver | None = None,
     ) -> None:
         self._tag_resolver = pypi._tag_resolver
         self._resolvers = {
@@ -733,6 +1051,11 @@ class MultiResolver:
             Ecosystem.CRATES: crates,
             Ecosystem.GO: go,
             Ecosystem.NPM: npm or NpmResolver(self._tag_resolver),
+        }
+        self._repository_resolvers = {
+            "github.com": self._tag_resolver,
+            "gitlab.com": gitlab or GitLabResolver(),
+            "bitbucket.org": bitbucket or BitbucketResolver(),
         }
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
@@ -748,6 +1071,11 @@ class MultiResolver:
             raise ResolutionError(f"no resolver for {ecosystem}")
         return resolver.latest_version(name)
 
-    def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
-        """Resolve a repository tag using the shared GitHub resolver."""
-        return self._tag_resolver.resolve_tag_to_sha(slug, tag)
+    def resolve_tag_to_sha(
+        self, slug: str, tag: str, host: str = "github.com"
+    ) -> str:
+        """Resolve a repository ref using the resolver registered for its host."""
+        resolver = self._repository_resolvers.get(host)
+        if resolver is None:
+            raise ResolutionError(f"no repository resolver for {host}")
+        return resolver.resolve_tag_to_sha(slug, tag)

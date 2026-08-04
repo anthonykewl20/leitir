@@ -27,9 +27,14 @@ the ADR) and extends it with commit-SHA pinning, integrity verification,
 multi-ecosystem lockfile version detection, and a normative agent
 workflow, an agent skill, and a pinned fetch-correctness benchmark.
 
-Offline suite: **899 passed, 39 skipped**. The 39 skips are opt-in live tests
-behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`. The opt-in
-live gate is **40 passed, 1 skipped, 897 deselected**.
+**ADR-005 is in progress.** Slice C1 (GitLab/Bitbucket host-aware
+resolvers and auth, plus host-aware repository materialization) is landed:
+`leitir get gitlab:` / `leitir get bitbucket:` now shelve end-to-end with
+host-native archive fetch and tree verification alongside GitHub. Slices
+C2–C10 remain.
+
+Offline suite: **942 passed, 43 skipped**. The 43 skips are opt-in live tests
+behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
 
@@ -76,6 +81,15 @@ the scoring engine's gate precedence.
 
 ## Open work
 
+- **ADR-005 C2–C10** — registry-artifact parity, byte-exact resolution,
+  transitive closure, snapshots, SBOM, API surface, examples, diff, trust.
+- **Bitbucket live re-verification** — the C1 live gate is green for GitLab;
+  Bitbucket live is blocked by an anonymous HTTP 429 on this host (no
+  `BITBUCKET_TOKEN`). The offline fixture suite covers Bitbucket correctness;
+  re-run the live gate with a token to fully close C1.
+- **Private Bitbucket archive auth** — `BITBUCKET_TOKEN` is attached only to
+  `api.bitbucket.org`, so private Bitbucket archive downloads (`bitbucket.org`)
+  are unauthenticated. Public repos (the anonymous default) are unaffected.
 - **Collect the 29 missing required results** so the assessment resolves to a
   real score instead of honest bounds. Collect evidence; never relax policy.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require

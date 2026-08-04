@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from leitir.resolver import Ecosystem, NpmResolver, PackageRef, ResolutionError
@@ -126,3 +128,16 @@ def test_npm_tag_candidates_are_tried_in_order_and_stop_at_first_success(
     resolved = _resolve(_payload(), name=name, tags=tags)
     assert resolved.tag == hit
     assert tags.calls == [("acme/demo", tag) for tag in expected_calls]
+
+
+def test_npm_token_authenticates_default_registry_metadata(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured.update(request.header_items())
+        return io.BytesIO(json_body(_payload()))
+
+    monkeypatch.setenv("NPM_TOKEN", "npm-secret")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert NpmResolver(Tags()).latest_version("demo") == "1.2.0"
+    assert captured["Authorization"] == "Bearer npm-secret"

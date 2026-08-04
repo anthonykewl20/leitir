@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from leitir import _http
+from leitir.credentials import Credentials
 from leitir.materialize import MANIFEST_NAME, UnsafeArchiveError, _extract_tarball
 
 
@@ -207,7 +208,7 @@ def compare_trees(git_tree: Path, artifact_tree: Path) -> ParityResult:
 
 
 class RegistryArtifactFetcher:
-    """Retrying anonymous HTTPS transport for registry metadata and artifacts."""
+    """Retrying HTTPS transport for registry metadata and artifacts."""
 
     def __init__(
         self,
@@ -224,6 +225,7 @@ class RegistryArtifactFetcher:
         self._timeout = timeout
         self._get_json_override = get_json
         self._get_bytes_override = get_bytes
+        self._credentials = Credentials()
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -237,7 +239,10 @@ class RegistryArtifactFetcher:
             return self._get_json_override(url)
         from urllib.request import Request, urlopen
 
-        with urlopen(Request(url, headers={"Accept": "application/json", "User-Agent": "leitir"}), timeout=self._timeout) as response:
+        headers = self._credentials.headers(
+            url, {"Accept": "application/json", "User-Agent": "leitir"}
+        )
+        with urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
             if not response.geturl().startswith("https://"):
                 raise ValueError("registry redirect must use HTTPS")
             return json.load(response)
@@ -247,7 +252,10 @@ class RegistryArtifactFetcher:
             return self._get_bytes_override(url)
         from urllib.request import Request, urlopen
 
-        with urlopen(Request(url, headers={"Accept": "application/octet-stream", "User-Agent": "leitir"}), timeout=self._timeout) as response:
+        headers = self._credentials.headers(
+            url, {"Accept": "application/octet-stream", "User-Agent": "leitir"}
+        )
+        with urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
             if not response.geturl().startswith("https://"):
                 raise ValueError("artifact redirect must use HTTPS")
             return response.read()

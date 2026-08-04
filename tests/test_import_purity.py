@@ -57,7 +57,7 @@ def test_import_leitir_does_not_load_external_effect_modules(tmp_path):
         import json, sys
         sys.path.insert(0, %r)
         import leitir
-        import leitir.adapters, leitir.cli, leitir.discovery_search
+        import leitir.adapters, leitir.cli, leitir.credentials, leitir.discovery_search
         import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree, leitir.lockfiles, leitir.corpus, leitir.materialize, leitir.snapshot, leitir.sbom, leitir.apisurface, leitir.examples, leitir.diff, leitir.trust, leitir.info
         present = [m for m in %r if m in sys.modules]
@@ -81,7 +81,7 @@ def test_import_writes_no_filesystem_artifact(tmp_path):
         import sys
         sys.path.insert(0, %r)
         import leitir
-        import leitir.adapters, leitir.cli, leitir.discovery_search
+        import leitir.adapters, leitir.cli, leitir.credentials, leitir.discovery_search
         import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree, leitir.lockfiles, leitir.corpus, leitir.materialize, leitir.snapshot, leitir.sbom, leitir.apisurface, leitir.examples, leitir.diff, leitir.trust, leitir.info
         """

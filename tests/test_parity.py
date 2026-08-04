@@ -164,3 +164,46 @@ def test_tar_path_traversal_is_rejected(tmp_path):
             artifact=artifact,
             fetcher=RegistryArtifactFetcher(get_bytes=lambda _url: payload),
         )
+
+
+@pytest.mark.parametrize(
+    ("environment", "url", "token"),
+    [
+        ({"NPM_TOKEN": "npm-secret"}, "https://registry.npmjs.org/demo.tgz", "npm-secret"),
+        ({"PYPI_TOKEN": "pypi-secret"}, "https://pypi.org/packages/demo.tar.gz", "pypi-secret"),
+        ({"CARGO_TOKEN": "cargo-secret"}, "https://static.crates.io/crates/demo.crate", "cargo-secret"),
+    ],
+)
+def test_registry_artifact_authentication(monkeypatch, environment, url, token):
+    captured = {}
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return url
+
+    def fake_urlopen(request, timeout):
+        captured.update(request.header_items())
+        return Response(b"artifact")
+
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert RegistryArtifactFetcher()._request_bytes(url) == b"artifact"
+    assert captured["Authorization"] == f"Bearer {token}"
+
+
+def test_registry_artifact_is_anonymous_without_token(monkeypatch):
+    captured = {}
+
+    class Response(io.BytesIO):
+        def geturl(self):
+            return "https://registry.npmjs.org/demo.tgz"
+
+    def fake_urlopen(request, timeout):
+        captured.update(request.header_items())
+        return Response(b"artifact")
+
+    monkeypatch.delenv("NPM_TOKEN", raising=False)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    RegistryArtifactFetcher()._request_bytes("https://registry.npmjs.org/demo.tgz")
+    assert "Authorization" not in captured

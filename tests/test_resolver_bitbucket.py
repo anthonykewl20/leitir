@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import base64
 
 import pytest
 
@@ -97,6 +98,22 @@ def test_environment_token_uses_bearer_only_for_https_api_host(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     assert BitbucketResolver().resolve_tag_to_sha("owner/repo", "main") == SHA
     assert captured["Authorization"] == "Bearer secret-value"
+
+
+def test_bearer_token_authenticates_api_and_archive(monkeypatch):
+    monkeypatch.setenv("BITBUCKET_TOKEN", "secret-value")
+    resolver = BitbucketResolver()
+    assert resolver._headers("https://api.bitbucket.org/2.0/repositories/x/y")["Authorization"] == "Bearer secret-value"
+    assert resolver._headers(resolver.archive_url("owner/repo", SHA))["Authorization"] == "Bearer secret-value"
+
+
+def test_username_selects_basic_auth_for_api_and_archive(monkeypatch):
+    monkeypatch.setenv("BITBUCKET_TOKEN", "app-password")
+    monkeypatch.setenv("BITBUCKET_USERNAME", "bitbucket-user")
+    resolver = BitbucketResolver()
+    expected = "Basic " + base64.b64encode(b"bitbucket-user:app-password").decode()
+    assert resolver._headers("https://api.bitbucket.org/2.0/repositories/x/y")["Authorization"] == expected
+    assert resolver._headers(resolver.archive_url("owner/repo", SHA))["Authorization"] == expected
 
 
 def test_token_is_never_rendered_on_failure(monkeypatch, capsys):

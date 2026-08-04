@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from leitir import _http
+from leitir.credentials import Credentials
 from leitir.search import RepoScope
 
 if TYPE_CHECKING:
@@ -157,6 +158,7 @@ class GitHubTagResolver:
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._token = token
+        self._credentials = Credentials()
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._retry = _http.make_retry(
@@ -168,20 +170,13 @@ class GitHubTagResolver:
         )
 
     def _headers(self) -> dict[str, str]:
-        from urllib.parse import urlsplit
-
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "leitir",
         }
-        endpoint = urlsplit(self._base_url)
-        if (
-            self._token
-            and endpoint.scheme == "https"
-            and endpoint.hostname == "api.github.com"
-        ):
-            headers["Authorization"] = f"Bearer {self._token}"
-        return headers
+        return self._credentials.headers(
+            self._base_url, headers, provider="github", token=self._token
+        )
 
     def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
         from urllib.parse import quote
@@ -258,8 +253,7 @@ class GitHubTagResolver:
 
 class _HostedRepoResolver:
     _HOST = ""
-    _TOKEN_ENV = ""
-    _AUTH_HEADER = ""
+    _CREDENTIAL_PROVIDER = ""
 
     def __init__(
         self,
@@ -273,9 +267,8 @@ class _HostedRepoResolver:
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
-        import os
-
-        self._token = token if token is not None else os.environ.get(self._TOKEN_ENV)
+        self._token = token
+        self._credentials = Credentials()
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._retry = _http.make_retry(
@@ -287,17 +280,10 @@ class _HostedRepoResolver:
         )
 
     def _headers(self, url: str, accept: str = "application/json") -> dict[str, str]:
-        from urllib.parse import urlsplit
-
         headers = {"Accept": accept, "User-Agent": "leitir"}
-        endpoint = urlsplit(url)
-        if self._token and endpoint.scheme == "https" and endpoint.hostname == self._HOST:
-            headers[self._AUTH_HEADER] = (
-                f"Bearer {self._token}"
-                if self._AUTH_HEADER == "Authorization"
-                else self._token
-            )
-        return headers
+        return self._credentials.headers(
+            url, headers, provider=self._CREDENTIAL_PROVIDER, token=self._token
+        )
 
     def _get_json(self, url: str) -> object:
         from urllib.request import Request, urlopen
@@ -346,8 +332,7 @@ class GitLabResolver(_HostedRepoResolver):
     """Resolve and inspect immutable GitLab repository commits."""
 
     _HOST = "gitlab.com"
-    _TOKEN_ENV = "GITLAB_TOKEN"
-    _AUTH_HEADER = "PRIVATE-TOKEN"
+    _CREDENTIAL_PROVIDER = "gitlab"
     _API = "https://gitlab.com/api/v4"
 
     def __init__(
@@ -467,8 +452,7 @@ class BitbucketResolver(_HostedRepoResolver):
     """Resolve and inspect immutable Bitbucket repository commits."""
 
     _HOST = "api.bitbucket.org"
-    _TOKEN_ENV = "BITBUCKET_TOKEN"
-    _AUTH_HEADER = "Authorization"
+    _CREDENTIAL_PROVIDER = "bitbucket"
     _API = "https://api.bitbucket.org/2.0"
 
     def __init__(
@@ -599,6 +583,7 @@ class PyPIResolver:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
+        self._credentials = Credentials()
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -617,7 +602,11 @@ class PyPIResolver:
 
         def _fetch() -> dict:
             with urlopen(
-                Request(url, headers={"User-Agent": "leitir", "Accept": "application/json"}),
+                Request(url, headers=self._credentials.headers(
+                    url,
+                    {"User-Agent": "leitir", "Accept": "application/json"},
+                    provider="pypi",
+                )),
                 timeout=self._timeout,
             ) as resp:
                 return json.load(resp)
@@ -657,7 +646,11 @@ class PyPIResolver:
 
         def _fetch() -> dict:
             with urlopen(
-                Request(url, headers={"User-Agent": "leitir", "Accept": "application/json"}),
+                Request(url, headers=self._credentials.headers(
+                    url,
+                    {"User-Agent": "leitir", "Accept": "application/json"},
+                    provider="pypi",
+                )),
                 timeout=self._timeout,
             ) as resp:
                 return json.load(resp)
@@ -734,6 +727,7 @@ class CratesResolver:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
+        self._credentials = Credentials()
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -752,7 +746,9 @@ class CratesResolver:
 
         def _fetch() -> dict:
             with urlopen(
-                Request(url, headers={"User-Agent": "leitir (package resolver)"}),
+                Request(url, headers=self._credentials.headers(
+                    url, {"User-Agent": "leitir (package resolver)"}, provider="crates"
+                )),
                 timeout=self._timeout,
             ) as resp:
                 return json.load(resp)
@@ -797,7 +793,9 @@ class CratesResolver:
 
         def _fetch() -> dict:
             with urlopen(
-                Request(url, headers={"User-Agent": "leitir (package resolver)"}),
+                Request(url, headers=self._credentials.headers(
+                    url, {"User-Agent": "leitir (package resolver)"}, provider="crates"
+                )),
                 timeout=self._timeout,
             ) as resp:
                 return json.load(resp)
@@ -972,6 +970,7 @@ class NpmResolver:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
+        self._credentials = Credentials()
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -989,7 +988,11 @@ class NpmResolver:
 
         def _fetch() -> dict:
             with urlopen(
-                Request(url, headers={"Accept": "application/json", "User-Agent": "leitir"}),
+                Request(url, headers=self._credentials.headers(
+                    url,
+                    {"Accept": "application/json", "User-Agent": "leitir"},
+                    provider="npm",
+                )),
                 timeout=self._timeout,
             ) as response:
                 return json.load(response)

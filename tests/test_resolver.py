@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import json
+
 import pytest
 
 from leitir.resolver import (
@@ -112,3 +115,42 @@ class TestEcosystemEnum:
 
     def test_from_string(self):
         assert Ecosystem("pypi") is Ecosystem.PYPI
+
+
+@pytest.mark.parametrize(
+    ("resolver_factory", "environment", "payload", "expected"),
+    [
+        (
+            lambda tags: PyPIResolver(tags),
+            {"PYPI_TOKEN": "pypi-secret"},
+            {"info": {"version": "1.0"}},
+            "Bearer pypi-secret",
+        ),
+        (
+            lambda tags: PyPIResolver(tags),
+            {"PIP_TOKEN": "pip-secret"},
+            {"info": {"version": "1.0"}},
+            "Bearer pip-secret",
+        ),
+        (
+            lambda tags: CratesResolver(tags),
+            {"CARGO_TOKEN": "cargo-secret"},
+            {"crate": {"max_version": "1.0"}},
+            "Bearer cargo-secret",
+        ),
+    ],
+)
+def test_registry_metadata_uses_optional_credentials(
+    monkeypatch, resolver_factory, environment, payload, expected
+):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured.update(request.header_items())
+        return io.BytesIO(json.dumps(payload).encode())
+
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert resolver_factory(GitHubTagResolver()).latest_version("demo") == "1.0"
+    assert captured["Authorization"] == expected

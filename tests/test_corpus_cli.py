@@ -245,6 +245,52 @@ def test_sbom_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     assert seen == {"root": corpus, "directory": project, "format": "cyclonedx"}
 
 
+def test_get_json_emits_materialization_metadata(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    corpus = tmp_path / "corpus"
+    spec = f"acme/demo@{SHA}"
+    other_sha = "b" * 40
+    other_spec = f"acme/demo@{other_sha}"
+
+    def fake_materialize(raw, resolved, **options):
+        source = corpus / f"repos/github.com/acme/demo/{resolved.commit_sha}"
+        source.mkdir(parents=True)
+        (source / "leitir-manifest.json").write_text(
+            json.dumps({
+                "commit_sha": resolved.commit_sha,
+                "source": "git-commit",
+                "verified": "sampled",
+            }),
+            encoding="utf-8",
+        )
+        return source
+
+    monkeypatch.setattr(leitir.corpus, "materialize_source", fake_materialize)
+    code, out, err = _invoke([
+        "get", spec, other_spec, "--root", str(corpus), "--json"
+    ])
+
+    assert code == ExitCode.SUCCESS
+    assert json.loads(out) == {
+        "schema_version": 1,
+        "results": [{
+            "spec": spec,
+            "path": str(corpus / f"repos/github.com/acme/demo/{SHA}"),
+            "commit_sha": SHA,
+            "source": "git-commit",
+            "verified": "sampled",
+        }, {
+            "spec": other_spec,
+            "path": str(corpus / f"repos/github.com/acme/demo/{other_sha}"),
+            "commit_sha": other_sha,
+            "source": "git-commit",
+            "verified": "sampled",
+        }],
+    }
+    assert "resolving" in err
+
+
 def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
     import leitir.corpus
 
@@ -252,7 +298,7 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
 
     def fake_materialize(spec, resolved, **options):
         source = corpus / f"repos/github.com/acme/demo/{SHA}"
-        source.mkdir(parents=True)
+        source.mkdir(parents=True, exist_ok=True)
         (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
         (source / "leitir-manifest.json").write_text(
             json.dumps({"version": "1.0.0"}), encoding="utf-8"
@@ -279,6 +325,17 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
     assert payload["methods"] == ["ast"]
     assert payload["symbols"][0]["qualified_name"] == "demo.public"
 
+    code, out, _ = _invoke(["api", f"acme/demo@{SHA}", "--root", str(corpus), "--json"])
+    summary = json.loads(out)
+    assert code == ExitCode.SUCCESS
+    assert summary == {
+        "schema_version": 1,
+        "index_path": str(expected),
+        "symbols": 1,
+        "by_kind": {"function": 1, "class": 0, "method": 0, "constant": 0},
+        "method": "ast",
+    }
+
 
 def test_examples_materializes_ensures_api_and_prints_cache_path(tmp_path, monkeypatch):
     import leitir.corpus
@@ -287,7 +344,7 @@ def test_examples_materializes_ensures_api_and_prints_cache_path(tmp_path, monke
 
     def fake_materialize(spec, resolved, **options):
         source = corpus / f"repos/github.com/acme/demo/{SHA}"
-        (source / "examples").mkdir(parents=True)
+        (source / "examples").mkdir(parents=True, exist_ok=True)
         (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
         (source / "examples" / "use.py").write_text("public(1)\n", encoding="utf-8")
         (source / "leitir-manifest.json").write_text(
@@ -317,3 +374,13 @@ def test_examples_materializes_ensures_api_and_prints_cache_path(tmp_path, monke
     pointers = (corpus / "POINTERS.md").read_text(encoding="utf-8")
     assert "api/github.com/acme/demo/1.0.0/index.json" in pointers
     assert "examples/github.com/acme/demo/1.0.0/index.json" in pointers
+
+    code, out, _ = _invoke([
+        "examples", f"acme/demo@{SHA}", "--root", str(corpus), "--json"
+    ])
+    summary = json.loads(out)
+    assert code == ExitCode.SUCCESS
+    assert summary["schema_version"] == 1
+    assert summary["index_path"] == str(expected)
+    assert summary["count"] == 1
+    assert summary["snippets"][0]["path"] == "examples/use.py"

@@ -1,0 +1,242 @@
+"""Unified, deterministic context for one materialized dependency."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from .apisurface import extract_api_surface
+from .corpus import (
+    api_index_path,
+    enumerate_shelved_sources,
+    examples_index_path,
+    read_api_index,
+    read_examples_index,
+    resolve_root,
+    write_api_index,
+    write_examples_index,
+)
+from .examples import extract_examples
+from .materialize import update_manifest
+from .sbom import infer_license
+from .spec import parse_corpus_spec
+from .trust import compute_trust
+
+
+def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, object], Path]:
+    sources = enumerate_shelved_sources(corpus_root)
+    exact = [item for item in sources if item[1].get("spec") == spec]
+    name = parse_corpus_spec(spec).name
+    matches = exact or [item for item in sources if item[0].get("name") == name]
+    if not matches:
+        raise ValueError(f"source is not materialized: {spec}")
+    if len(matches) != 1:
+        raise ValueError(f"source spec is ambiguous: {spec}")
+    return matches[0]
+
+
+def _valid_api(index: object) -> bool:
+    return (
+        isinstance(index, dict)
+        and index.get("schema_version") == 1
+        and isinstance(index.get("methods"), list)
+        and isinstance(index.get("modules"), list)
+        and isinstance(index.get("symbols"), list)
+        and all(item in {"ast", "heuristic"} for item in index["methods"])
+        and all(
+            isinstance(item, dict)
+            and item.get("kind") in {"function", "class", "method", "constant"}
+            and isinstance(item.get("qualified_name"), str)
+            for item in index["symbols"]
+        )
+    )
+
+
+def _valid_examples(index: object) -> bool:
+    return (
+        isinstance(index, dict)
+        and index.get("schema_version") == 1
+        and index.get("symbols_source") == "api_index"
+        and isinstance(index.get("snippets"), list)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+            and isinstance(item.get("line"), int)
+            and not isinstance(item.get("line"), bool)
+            and isinstance(item.get("language"), str)
+            and isinstance(item.get("code"), str)
+            and isinstance(item.get("symbols"), list)
+            and all(isinstance(symbol, str) for symbol in item["symbols"])
+            for item in index["snippets"]
+        )
+    )
+
+
+def _cached_trust(manifest: dict[str, object]) -> tuple[int, list[dict[str, object]]] | None:
+    score = manifest.get("trust_score")
+    breakdown = manifest.get("trust_breakdown")
+    if (
+        not isinstance(score, int)
+        or isinstance(score, bool)
+        or not 0 <= score <= 100
+        or not isinstance(breakdown, list)
+        or {item.get("factor") for item in breakdown if isinstance(item, dict)}
+        != {
+            "age", "artifact_checksum", "documentation", "license", "parity",
+            "tests", "verification",
+        }
+        or not all(
+            isinstance(item, dict)
+            and isinstance(item.get("factor"), str)
+            and isinstance(item.get("score"), int)
+            and not isinstance(item.get("score"), bool)
+            and 0 <= item["score"] <= 100
+            and isinstance(item.get("weight"), int)
+            and not isinstance(item.get("weight"), bool)
+            and isinstance(item.get("evidence"), dict)
+            for item in breakdown
+        )
+    ):
+        return None
+    rendered = [dict(item) for item in breakdown]
+    rendered.sort(key=lambda item: str(item["factor"]))
+    weighted = sum(int(item["score"]) * int(item["weight"]) for item in rendered)
+    if sum(int(item["weight"]) for item in rendered) != 100 or (weighted + 50) // 100 != score:
+        return None
+    return score, rendered
+
+
+def _api_summary(index: dict[str, object], path: Path) -> dict[str, object]:
+    symbols = [item for item in index["symbols"] if isinstance(item, dict)]
+    by_kind = {kind: 0 for kind in ("function", "class", "method", "constant")}
+    for symbol in symbols:
+        kind = symbol.get("kind")
+        if kind in by_kind:
+            by_kind[str(kind)] += 1
+    methods = sorted({str(item) for item in index["methods"] if item in {"ast", "heuristic"}})
+    method: str | None
+    if methods == ["ast"]:
+        method = "ast"
+    elif methods:
+        method = "heuristic"
+    else:
+        method = None
+    return {
+        "symbols": len(symbols),
+        "by_kind": by_kind,
+        "method": method,
+        "index_path": str(path.absolute()),
+    }
+
+
+def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
+    """Build context from one already-materialized source, filling missing caches."""
+
+    root = resolve_root(corpus_root)
+    entry, manifest, target = _source(spec, root)
+    subpath = manifest.get("subpath") if isinstance(manifest.get("subpath"), str) else None
+    scan_path = target / subpath if subpath else target
+
+    api_index = read_api_index(root, entry, manifest)
+    wrote_cache = False
+    if not _valid_api(api_index):
+        hint = manifest.get("ecosystem")
+        api_index = extract_api_surface(
+            scan_path, str(hint) if hint in {"pypi", "npm"} else None
+        )
+        api_path = write_api_index(root, entry, manifest, api_index)
+        wrote_cache = True
+    else:
+        api_path = api_index_path(root, entry, manifest).absolute()
+
+    examples_index = read_examples_index(root, entry, manifest)
+    if not _valid_examples(examples_index):
+        examples_index = extract_examples(target, api_index)
+        examples_path = write_examples_index(root, entry, manifest, examples_index)
+        wrote_cache = True
+    else:
+        examples_path = examples_index_path(root, entry, manifest).absolute()
+
+    if wrote_cache:
+        from .docpointers import regenerate_pointers
+
+        regenerate_pointers(root)
+
+    cached_trust = _cached_trust(manifest)
+    if cached_trust is None:
+        trust = compute_trust(manifest, target)
+        trust_score = trust.score
+        trust_breakdown = [dict(item) for item in trust.breakdown]
+        manifest = update_manifest(target, trust.as_dict())
+    else:
+        trust_score, trust_breakdown = cached_trust
+
+    license_result = infer_license(manifest, target)
+    snippets = [dict(item) for item in examples_index["snippets"] if isinstance(item, dict)]
+    snippets.sort(
+        key=lambda item: (
+            -len(item.get("symbols", [])) if isinstance(item.get("symbols"), list) else 0,
+            str(item.get("path", "")),
+            int(item.get("line", 0)) if isinstance(item.get("line"), int) else 0,
+        )
+    )
+    top = [
+        {
+            "path": item.get("path"),
+            "line": item.get("line"),
+            "language": item.get("language"),
+            "symbols": sorted(item.get("symbols", []))
+            if isinstance(item.get("symbols"), list)
+            else [],
+        }
+        for item in snippets
+    ]
+    api = _api_summary(api_index, api_path)
+    return {
+        "schema_version": 1,
+        "spec": spec,
+        "provenance": {
+            "host": entry.get("host"),
+            "owner": entry.get("owner"),
+            "repo": entry.get("repo"),
+            "commit_sha": entry.get("commit_sha"),
+            "version": manifest.get("version"),
+            "version_source": manifest.get("version_source"),
+            "source": manifest.get("source"),
+            "artifact_kind": manifest.get("artifact_kind"),
+            "artifact_checksum": manifest.get("artifact_checksum"),
+            "verified": manifest.get("verified"),
+            "verified_at": manifest.get("verified_at"),
+            "fetched_at": manifest.get("fetched_at", entry.get("fetched_at")),
+            "repo_url": manifest.get("repo_url"),
+            "subpath": subpath,
+        },
+        "parity": {
+            "parity": manifest.get("parity", "unknown")
+            if manifest.get("parity") in {"exact", "drift", "unknown"}
+            else "unknown",
+            "files_compared": manifest.get("files_compared", 0),
+            "only_in_git": manifest.get("only_in_git", 0),
+            "only_in_artifact": manifest.get("only_in_artifact", 0),
+        },
+        "license": {
+            "identifier": license_result.identifier,
+            "method": license_result.method,
+            "confidence": license_result.confidence,
+        },
+        "api": api,
+        "examples": {
+            "count": len(snippets),
+            "top": top,
+            "index_path": str(examples_path.absolute()),
+        },
+        "trust": {"score": trust_score, "breakdown": trust_breakdown},
+        "paths": {
+            "tree": str(target.absolute()),
+            "api_index": api["index_path"],
+            "examples_index": str(examples_path.absolute()),
+        },
+    }
+
+
+__all__ = ["build_info"]

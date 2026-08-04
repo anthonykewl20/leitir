@@ -58,7 +58,8 @@ def test_trust_writes_manifest_and_json_then_list_surfaces_score(tmp_path):
     assert err == ""
     payload = json.loads(out)
     assert payload["spec"] == spec
-    assert set(payload) == {"name", "path", "spec", "trust_breakdown", "trust_score"}
+    assert set(payload) == {"schema_version", "name", "path", "spec", "trust_breakdown", "trust_score"}
+    assert payload["schema_version"] == 1
     assert [item["factor"] for item in payload["trust_breakdown"]] == sorted(item["factor"] for item in payload["trust_breakdown"])
     manifest = json.loads((target / MANIFEST_NAME).read_text(encoding="utf-8"))
     assert manifest["trust_score"] == payload["trust_score"]

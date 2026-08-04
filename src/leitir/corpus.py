@@ -286,6 +286,54 @@ def materialize_source(
     return target
 
 
+def lock_project(
+    directory: str | os.PathLike[str],
+    resolver: object,
+    *,
+    root: str | os.PathLike[str] | None = None,
+    on_resolve: Callable[[str], None] | None = None,
+    on_fetch: Callable[[str], None] | None = None,
+    materializer: Callable[..., Path] = materialize_source,
+    **fetch_options: object,
+) -> list[dict[str, object]]:
+    """Resolve and materialize every dependency represented by project lockfiles."""
+    from leitir.lockfiles import dependency_closures
+    from leitir.resolver import Ecosystem, PackageRef
+
+    corpus_root = resolve_root(root)
+    results: list[dict[str, object]] = []
+    for closure in dependency_closures(directory):
+        deps = [edge.as_dict() for edge in closure.deps]
+        for edge in closure.deps:
+            if on_resolve is not None:
+                on_resolve(edge.spec)
+            resolved = resolver.resolve(
+                PackageRef(Ecosystem(closure.ecosystem), edge.name, edge.version)
+            )
+            target = materializer(
+                edge.spec,
+                resolved,
+                root=corpus_root,
+                name=edge.name,
+                version_source="lockfile",
+                on_fetch=(
+                    (lambda spec=edge.spec: on_fetch(spec))
+                    if on_fetch is not None
+                    else None
+                ),
+                **fetch_options,
+            )
+            update_manifest(target, {"graph": closure.graph, "deps": deps})
+            results.append(
+                {
+                    "spec": edge.spec,
+                    "path": str(target.absolute()),
+                    "graph": closure.graph,
+                }
+            )
+    return results
+
+
 def _prune_empty(path: Path, stop: Path) -> None:
     while path != stop and path.is_dir():
         try:

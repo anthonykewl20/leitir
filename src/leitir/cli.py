@@ -121,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("spec")
     clean = commands.add_parser("clean", help="empty the source corpus")
     clean.add_argument("--repos", action="store_true")
+    lock = commands.add_parser("lock", help="materialize the project's dependency closure")
+    lock.add_argument("--cwd", default=None, help="project directory containing lockfiles")
+    lock_roots = lock.add_mutually_exclusive_group()
+    lock_roots.add_argument("--root", default=None, help="corpus root directory")
+    lock_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    lock.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -437,6 +443,25 @@ def _run_corpus_command(
 
         token = _github_token()
         resolver = resolver_factory(token)
+        if args.command == "lock":
+            from .corpus import lock_project
+
+            cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+            fetch_options = {"verify": not args.no_verify}
+            if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
+                fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
+            if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
+                fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+            summary = lock_project(
+                cwd,
+                resolver,
+                root=root,
+                on_resolve=lambda spec: print(f"leitir: resolving {spec}", file=err),
+                on_fetch=lambda spec: print(f"leitir: materializing {spec}", file=err),
+                **fetch_options,
+            )
+            print(json.dumps({"cwd": str(cwd), "dependencies": summary}, sort_keys=True), file=out)
+            return int(ExitCode.SUCCESS)
         heads = code_search_factory(token)
         cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
         paths: list[tuple[Path, str | None]] = []
@@ -594,7 +619,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "remove", "clean"}:
+    if args.command in {"get", "fetch", "list", "remove", "clean", "lock"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

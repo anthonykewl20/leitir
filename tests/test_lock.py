@@ -12,7 +12,13 @@ from __future__ import annotations
 
 import re
 import tomllib
+import json
 from pathlib import Path
+
+from leitir.corpus import lock_project
+from leitir.materialize import MANIFEST_NAME
+from leitir.resolver import ResolvedPackage
+from leitir.search import RepoScope
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = REPO_ROOT / "requirements.txt"
@@ -112,3 +118,37 @@ class TestDependencySubstitution:
         for name, version in pins.items():
             assert version, f"{name} has empty version"
             assert "*" not in version, f"{name} has wildcard version {version!r}"
+
+
+def test_lock_project_materializes_every_transitive_and_records_closure(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "package-lock.json").write_text(json.dumps({
+        "lockfileVersion": 3,
+        "packages": {
+            "node_modules/a": {"version": "1.0.0"},
+            "node_modules/a/node_modules/b": {"version": "2.0.0"},
+        },
+    }))
+    corpus = tmp_path / "corpus"
+    calls = []
+
+    class Resolver:
+        def resolve(self, ref):
+            calls.append(ref)
+            digit = "a" if ref.name == "a" else "b"
+            return ResolvedPackage(ref, RepoScope(f"acme/{ref.name}", digit * 40), ref.version, "https://example.invalid")
+
+    def materializer(spec, resolved, **options):
+        target = corpus / resolved.ref.name
+        target.mkdir(parents=True)
+        (target / MANIFEST_NAME).write_text(json.dumps({"spec": spec}))
+        return target
+
+    result = lock_project(project, Resolver(), root=corpus, materializer=materializer)
+    assert [ref.name for ref in calls] == ["a", "b"]
+    assert [item["spec"] for item in result] == ["npm:a@1.0.0", "npm:b@2.0.0"]
+    for name in ("a", "b"):
+        manifest = json.loads((corpus / name / MANIFEST_NAME).read_text())
+        assert manifest["graph"] == "complete"
+        assert [edge["name"] for edge in manifest["deps"]] == ["a", "b"]

@@ -135,3 +135,37 @@ def test_remove_and_clean_fabricated_corpus(tmp_path, monkeypatch):
     assert not (tmp_path / "repos").exists()
     assert not (tmp_path / "sources.json").exists()
     assert not (tmp_path / "POINTERS.md").exists()
+
+
+def test_lock_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
+    import leitir.corpus
+
+    project = tmp_path / "project"
+    project.mkdir()
+    corpus = tmp_path / "corpus"
+    seen = {}
+
+    def fake_lock(directory, resolver, **options):
+        seen.update(directory=directory, resolver=resolver, options=options)
+        options["on_resolve"]("npm:a@1.0.0")
+        options["on_fetch"]("npm:a@1.0.0")
+        return [{"spec": "npm:a@1.0.0", "path": "/cache/a", "graph": "complete"}]
+
+    resolver = object()
+    monkeypatch.setattr(leitir.corpus, "lock_project", fake_lock)
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["lock", "--cwd", str(project), "--root", str(corpus)],
+        resolver_factory=lambda _token: resolver,
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.SUCCESS
+    assert json.loads(out.getvalue()) == {
+        "cwd": str(project),
+        "dependencies": [{"spec": "npm:a@1.0.0", "path": "/cache/a", "graph": "complete"}],
+    }
+    assert "resolving npm:a@1.0.0" in err.getvalue()
+    assert "materializing npm:a@1.0.0" in err.getvalue()
+    assert seen["directory"] == project
+    assert seen["resolver"] is resolver

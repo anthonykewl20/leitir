@@ -195,6 +195,27 @@ def read_valid_manifest(
         return None
     if "parity" in payload and payload.get("parity") not in {"exact", "drift", "unknown"}:
         return None
+    if "graph" in payload and payload.get("graph") not in {"complete", "direct-only"}:
+        return None
+    if "deps" in payload:
+        deps = payload.get("deps")
+        if not isinstance(deps, list):
+            return None
+        for dependency in deps:
+            if not isinstance(dependency, dict) or set(dependency) != {
+                "name", "version", "resolved_sha", "spec"
+            }:
+                return None
+            if not all(
+                isinstance(dependency.get(field), str) and bool(dependency[field])
+                for field in ("name", "version", "spec")
+            ):
+                return None
+            resolved_sha = dependency.get("resolved_sha")
+            if resolved_sha is not None and (
+                not isinstance(resolved_sha, str) or not resolved_sha
+            ):
+                return None
     for field in ("files_compared", "only_in_git", "only_in_artifact"):
         if field in payload and (
             not isinstance(payload[field], int)

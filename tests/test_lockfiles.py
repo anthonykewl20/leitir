@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from leitir.lockfiles import detect_installed_version, detect_installed_version_with_source
+from leitir.lockfiles import (
+    dependency_closures,
+    detect_installed_version,
+    detect_installed_version_with_source,
+)
 
 
 def _write(root, name, content):
@@ -147,3 +151,19 @@ def test_malformed_higher_priority_file_falls_through(tmp_path):
     _write(tmp_path, "package-lock.json", "not json")
     _write(tmp_path, "package.json", '{"dependencies":{"zod":"3.22.0"}}')
     assert detect_installed_version("npm", "zod", tmp_path) == "3.22.0"
+
+
+def test_closure_parsing_preserves_single_version_detection(tmp_path):
+    _write(
+        tmp_path,
+        "package-lock.json",
+        json.dumps({
+            "lockfileVersion": 3,
+            "packages": {
+                "node_modules/zod": {"version": "3.23.0"},
+                "node_modules/zod/node_modules/helper": {"version": "1.0.0"},
+            },
+        }),
+    )
+    assert [edge.name for edge in dependency_closures(tmp_path)[0].deps] == ["helper", "zod"]
+    assert detect_installed_version("npm", "zod", tmp_path) == "3.23.0"

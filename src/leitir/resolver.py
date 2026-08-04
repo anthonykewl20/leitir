@@ -166,6 +166,29 @@ class GitHubTagResolver:
             return self._dereference_annotated_tag(slug, obj["sha"])
         raise ResolutionError(f"unexpected object type {obj['type']!r}")
 
+    def resolve_commit_to_sha(self, slug: str, ref: str) -> str:
+        """Expand a Git commit reference, including Go pseudo-version revisions."""
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
+
+        url = f"{self._base_url}/repos/{slug}/commits/{quote(ref, safe='')}"
+        headers = self._headers()
+
+        def _fetch() -> dict:
+            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
+        try:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"commit {ref!r} not found in {slug}: {_http.describe_failure(exc)}"
+            ) from exc
+        sha = payload.get("sha") if isinstance(payload, dict) else None
+        if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+            raise ResolutionError(f"GitHub returned malformed commit metadata for {slug}")
+        return sha.lower()
+
     def _dereference_annotated_tag(self, slug: str, tag_sha: str) -> str:
         from urllib.request import Request, urlopen
 
@@ -771,6 +794,9 @@ class GoResolver:
     """Resolves a Go module + version to a GitHub RepoScope."""
 
     _PROXY = "https://proxy.golang.org"
+    _PSEUDO_VERSION = re.compile(
+        r"^v\d+\.\d+\.\d+.*(?:-|\.)\d{14}-([0-9a-f]{12})(?:\+incompatible)?$"
+    )
 
     def __init__(
         self,
@@ -830,7 +856,14 @@ class GoResolver:
             ) from exc
 
         tag = version
-        commit_sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
+        pseudo = self._PSEUDO_VERSION.fullmatch(version)
+        if pseudo is None:
+            commit_sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
+        else:
+            expand = getattr(self._tag_resolver, "resolve_commit_to_sha", None)
+            if expand is None:
+                raise ResolutionError("Go pseudo-version resolution requires commit expansion")
+            commit_sha = expand(slug, pseudo.group(1))
         scope = RepoScope(slug=slug, commit_sha=commit_sha)
         from leitir.docpointers import extract_docs_urls
 

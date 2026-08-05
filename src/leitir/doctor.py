@@ -22,6 +22,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TextIO
 
+from ._update_check import _GITHUB_RELEASES_URL
 from .corpus import resolve_root
 from .materialize import MANIFEST_NAME, read_valid_manifest
 from .treehash import (
@@ -61,7 +62,7 @@ _CREDENTIALS = (
 )
 _ENDPOINTS = (
     ("npm", "https://registry.npmjs.org/"),
-    ("pypi", "https://pypi.org/pypi/leitir/json"),
+    ("pypi", "https://pypi.org/"),
     ("crates", "https://crates.io/"),
     ("github", "https://api.github.com/"),
     ("gitlab", "https://gitlab.com/"),
@@ -349,24 +350,30 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 def check_update_availability(installed_version: str | None) -> Check:
     if installed_version is None:
         return Check("update.available", "skip", "installed version is unavailable")
-    url = "https://pypi.org/pypi/leitir/json"
-    request = urllib.request.Request(url, headers={"User-Agent": _user_agent(installed_version)})
+    request = urllib.request.Request(
+        _GITHUB_RELEASES_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": _user_agent(installed_version),
+        },
+    )
     try:
         with urllib.request.urlopen(request, timeout=1.0) as response:
             payload = json.load(response)
-        latest = payload["info"]["version"]
-        if not isinstance(latest, str):
-            raise TypeError("PyPI info.version is not a string")
+        tag = payload["tag_name"]
+        if not isinstance(tag, str):
+            raise TypeError("GitHub release tag_name is not a string")
+        latest = tag.removeprefix("v")
         newer = _version_tuple(latest) > _version_tuple(installed_version)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return Check("update.available", "skip", "package is not published on PyPI (pre-publication or fork)")
-        return Check("update.available", "skip", "could not check PyPI for updates", str(exc))
+            return Check("update.available", "skip", "no GitHub Releases have been published yet")
+        return Check("update.available", "warn", "could not check GitHub Releases for updates", str(exc))
     except (TimeoutError, OSError, urllib.error.URLError, KeyError,
             TypeError, ValueError, json.JSONDecodeError) as exc:
-        return Check("update.available", "skip", "could not check PyPI for updates", str(exc))
+        return Check("update.available", "warn", "could not check GitHub Releases for updates", str(exc))
     except Exception as exc:  # noqa: BLE001 - update diagnosis must never be an error
-        return Check("update.available", "skip", "could not check PyPI for updates", str(exc))
+        return Check("update.available", "warn", "could not check GitHub Releases for updates", str(exc))
     if newer:
         return Check("update.available", "warn", f"update available: {installed_version} -> {latest}",
                      json_data={"installed": installed_version, "latest": latest})

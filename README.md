@@ -75,11 +75,20 @@ flowchart LR
 ## Installation
 
 ```bash
-pip install leitir
+# Install the latest from GitHub
+pip install git+https://github.com/anthonykewl20/leitir.git
+
+# Or pin to a specific release tag
+pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.0
+
+# Then use the `leitir` command
 leitir info npm:zod@3.22.0
 ```
 
-Leitir is not yet published to PyPI, so `pip install leitir` will only work once a release exists. Until then, install from source — the runtime is stdlib-only (`dependencies = []`), so no third-party dependencies are pulled in:
+Leitir is distributed via GitHub. The runtime is stdlib-only (`dependencies = []`),
+so no third-party runtime dependencies are pulled in.
+
+From a source checkout:
 
 ```bash
 pip install .
@@ -236,10 +245,11 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 ## Update notifications
 
 When run interactively (TTY stdout + stderr, not in CI, not in `--json` mode), leitir
-makes at most one anonymous GET request per 24 hours to PyPI's public project metadata
-endpoint (`https://pypi.org/pypi/leitir/json`) to check for a newer release. The request
-contains only the leitir version in its `User-Agent` — no username, repository path,
-project data, command arguments, or telemetry. Set `LEITIR_NO_UPDATE_CHECK=1` to disable.
+makes at most one anonymous GET request per 24 hours to GitHub's Releases API
+(`https://api.github.com/repos/anthonykewl20/leitir/releases/latest`) to check for a
+newer release. The `User-Agent` is `leitir/<version> update-check`; the request contains
+no username, repository path, project data, command arguments, or telemetry. Set
+`LEITIR_NO_UPDATE_CHECK=1` to disable.
 
 ## Scoring
 

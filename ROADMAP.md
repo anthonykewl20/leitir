@@ -6,6 +6,24 @@
 - **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x series when the Critical/High audit findings are resolved, the self-scorecard passes, and real load testing confirms behavior at scale. The README's "Not production-ready" line changes when the quality bar is met, not when a specific version is cut.
 - **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a feature or quality milestone. v1.0 happens when the community demonstrates the project has earned the stability commitment that SemVer 1.0 implies. Until then, we ship 0.x.
 
+## Distribution
+
+**Current (pre-public-release): GitHub-only.**
+
+- Install: `pip install git+https://github.com/anthonykewl20/leitir.git`
+- Pinned install: `pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.0`
+- Release artifacts: GitHub Releases (auto-built wheel + sdist via `.github/workflows/release.yml` on `v*` tag push)
+- Update notifications: poll GitHub Releases API on a 24h cache; works as soon as the first `v*` tag is pushed
+
+**Future (when ready for public release): PyPI.**
+
+- Install becomes `pip install leitir` (the standard users expect)
+- Setup is one-time (~10 minutes): create a PyPI account, enable 2FA, register a pending publisher for trusted publishing via GitHub Actions OIDC (no API token needed)
+- The existing wheel build works on PyPI unchanged — zero code changes
+- A `.github/workflows/publish-pypi.yml` workflow will be added alongside the existing GitHub Releases workflow; both run on tag push
+- The update-check URL in `src/leitir/_update_check.py` can optionally switch from GitHub Releases API to PyPI JSON (`https://pypi.org/pypi/leitir/json`) — the rest of the module (cache, gates, threading, notice format) stays identical
+- This is deferred until the maintainer decides the project is ready for broad public visibility; no deadline
+
 ## Current status
 
 v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** See milestone [v0.2.0](https://github.com/anthonykewl20/leitir/milestone/1) for the next incremental step.

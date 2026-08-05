@@ -8,7 +8,10 @@ once it reaches 1.0.0. Before 1.0.0, minor versions may include breaking changes
 
 ## [Unreleased]
 
-- Background update-notification check (PyPI JSON API, 24h cache, stderr-only, fully gated). Disabled pre-PyPI-publication.
+### Changed
+- Distribution model is GitHub-only (not PyPI). Install with
+  `pip install git+https://github.com/anthonykewl20/leitir.git`.
+- Update notifications now poll the GitHub Releases API instead of PyPI.
 
 ## [0.1.0] - 2026-08-05
 

@@ -1,9 +1,20 @@
 """Conservative, anonymous update notifications for interactive CLI use.
 
+The optional check sends only the installed leitir version in its User-Agent
+to the GitHub Releases API; it sends no identifying information or telemetry.
+
 Version comparison intentionally supports only final numeric releases (for
 example, ``0.2.0``).  Epochs, pre/dev/post releases, local versions, leading
 ``v`` markers, whitespace, and every other non-numeric form are silently
 ignored rather than partially interpreted.
+
+Distribution note: leitir is currently GitHub-only (``pip install
+git+https://github.com/anthonykewl20/leitir.git``).  PyPI publication is
+deferred until the maintainer declares a public release; the wheel built by
+``.github/workflows/release.yml`` will work on PyPI unchanged.  When PyPI
+becomes the canonical source, the URL below can optionally switch to
+``https://pypi.org/pypi/leitir/json`` with ``info.version`` parsing —
+everything else (cache, gates, threading, notice format) stays the same.
 """
 
 from __future__ import annotations
@@ -22,16 +33,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 _DISTRIBUTION_NAME = "leitir"
-_PYPI_URL = f"https://pypi.org/pypi/{_DISTRIBUTION_NAME}/json"
+_GITHUB_RELEASES_URL = "https://api.github.com/repos/anthonykewl20/leitir/releases/latest"
+_GITHUB_RELEASES_PAGE = "https://github.com/anthonykewl20/leitir/releases"
 _CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 _NETWORK_TIMEOUT_SECONDS = 1.0
-_CACHE_SCHEMA = 1
+_CACHE_SCHEMA = 2
 _MAX_RESPONSE_BYTES = 64 * 1024
 _NUMERIC_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 _TRUE_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
 _TRUE_CI_VALUES = frozenset({"1", "true", "yes"})
 
-_result: tuple[str, str] | None = None
+_result: tuple[str, str, str] | None = None
 _result_lock = threading.Lock()
 _check_started: bool | None = None
 
@@ -160,11 +172,11 @@ def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
         return False
 
 
-def _fetch_latest_version(installed_version: str) -> str | None:
+def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:
     request = urllib.request.Request(
-        _PYPI_URL,
+        _GITHUB_RELEASES_URL,
         headers={
-            "Accept": "application/json",
+            "Accept": "application/vnd.github+json",
             "User-Agent": f"leitir/{installed_version} update-check",
         },
     )
@@ -176,8 +188,14 @@ def _fetch_latest_version(installed_version: str) -> str | None:
         if len(raw) > _MAX_RESPONSE_BYTES:
             return None
         payload = json.loads(raw)
-        latest = payload["info"]["version"]
-        return latest if isinstance(latest, str) else None
+        tag = payload["tag_name"]
+        if not isinstance(tag, str):
+            return None
+        latest = tag.removeprefix("v")
+        release_url = payload.get("html_url", _GITHUB_RELEASES_PAGE)
+        if not isinstance(release_url, str):
+            release_url = _GITHUB_RELEASES_PAGE
+        return latest, release_url
     except (
         urllib.error.HTTPError,
         urllib.error.URLError,
@@ -195,12 +213,19 @@ def _fetch_latest_version(installed_version: str) -> str | None:
         return None
 
 
-def _set_result(installed: str, latest: object) -> None:
-    if not isinstance(latest, str):
+def _fetch_latest_version(installed_version: str) -> str | None:
+    """Return the normalized latest version (retained for internal probes/tests)."""
+
+    release = _fetch_latest_release(installed_version)
+    return release[0] if release is not None else None
+
+
+def _set_result(installed: str, latest: object, release_url: object) -> None:
+    if not isinstance(latest, str) or not isinstance(release_url, str):
         return
     with _result_lock:
         global _result
-        _result = (installed, latest)
+        _result = (installed, latest, release_url)
 
 
 def _initial_cache(now: datetime, installed: str) -> dict[str, object]:
@@ -211,6 +236,7 @@ def _initial_cache(now: datetime, installed: str) -> dict[str, object]:
         "last_checked_at": None,
         "installed_version": installed,
         "latest_version": None,
+        "release_url": None,
     }
 
 
@@ -231,10 +257,11 @@ def _run_update_check(installed: str) -> None:
             _write_cache(path, _initial_cache(now, installed))
             return
         if (now - reference).total_seconds() < _CHECK_INTERVAL_SECONDS:
-            _set_result(installed, cache.get("latest_version"))
+            _set_result(installed, cache.get("latest_version"), cache.get("release_url"))
             return
 
-        latest = _fetch_latest_version(installed)
+        release = _fetch_latest_release(installed)
+        latest, release_url = release if release is not None else (None, None)
         updated = dict(cache)
         updated.update(
             {
@@ -243,10 +270,11 @@ def _run_update_check(installed: str) -> None:
                 "last_checked_at": _format_time(now),
                 "installed_version": installed,
                 "latest_version": latest,
+                "release_url": release_url,
             }
         )
         _write_cache(path, updated)
-        _set_result(installed, latest)
+        _set_result(installed, latest, release_url)
     except Exception:  # noqa: BLE001 -- daemon must never affect the command
         # This feature must never affect command execution, including for
         # unusual platform, clock, mocked-I/O, or interpreter edge cases.
@@ -303,18 +331,20 @@ def maybe_emit_update_notice() -> None:
             return
         if installed is not None and cache is not None:
             candidate = cache.get("latest_version")
-            if isinstance(candidate, str):
-                result = (installed, candidate)
+            release_url = cache.get("release_url")
+            if isinstance(candidate, str) and isinstance(release_url, str):
+                result = (installed, candidate, release_url)
     if result is None:
         return
-    installed, latest = result
+    installed, latest, release_url = result
     if _compare_versions(latest, installed) != 1:
         return
     try:
         print(
             f"\nA new release of leitir is available: {installed} → {latest}\n"
-            "Upgrade with: python -m pip install --upgrade leitir\n"
-            "https://pypi.org/project/leitir/\n",
+            "Upgrade with: pip install --upgrade "
+            f"git+https://github.com/anthonykewl20/leitir.git@v{latest}\n"
+            f"{release_url}\n",
             file=sys.stderr,
         )
     except (OSError, UnicodeError):

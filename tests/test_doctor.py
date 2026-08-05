@@ -139,7 +139,7 @@ def test_doctor_network_check_handles_timeout(monkeypatch: pytest.MonkeyPatch) -
     assert "timed out" in result.summary
 
 
-def test_doctor_network_check_handles_404_for_pypi(
+def test_doctor_update_check_handles_404_for_github_releases(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Response(BytesIO):
@@ -148,7 +148,7 @@ def test_doctor_network_check_handles_404_for_pypi(
 
     def open_url(request: object, timeout: float) -> object:
         url = request.full_url  # type: ignore[attr-defined]
-        if url == "https://pypi.org/pypi/leitir/json":
+        if url == doctor._GITHUB_RELEASES_URL:
             raise urllib.error.HTTPError(url, 404, "not found", {}, None)
         return nullcontext(Response(b"{}"))
 
@@ -156,8 +156,27 @@ def test_doctor_network_check_handles_404_for_pypi(
     checks, _version = doctor.collect_checks(root=tmp_path)
     update = next(check for check in checks if check.name == "update.available")
     assert update.status == "skip"
-    assert all(check.status == "pass" for check in checks
-               if check.name.startswith("network.") and check.name != "network.pypi")
+    assert all(check.status == "pass" for check in checks if check.name.startswith("network."))
+
+
+def test_doctor_update_check_strips_release_tag_v(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = BytesIO(b'{"tag_name":"v0.2.0"}')
+    monkeypatch.setattr(
+        doctor.urllib.request, "urlopen", lambda *args, **kwargs: nullcontext(response)
+    )
+    result = doctor.check_update_availability("0.1.0")
+    assert result.status == "warn"
+    assert result.json_data == {"installed": "0.1.0", "latest": "0.2.0"}
+
+
+def test_doctor_update_check_network_error_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*args: object, **kwargs: object) -> object:
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(doctor.urllib.request, "urlopen", unavailable)
+    result = doctor.check_update_availability("0.1.0")
+    assert result.status == "warn"
+    assert "GitHub Releases" in result.summary
 
 
 def test_doctor_no_network_flag_skips_all_network_checks(

@@ -18,6 +18,7 @@ from leitir.resolver import (
     PackageRef,
     PyPIResolver,
     ResolutionError,
+    TagAbsentError,
 )
 
 import _http_server as hs
@@ -63,10 +64,19 @@ class TestGitHubTagResolverReal:
         sleeps = []
         with hs.scripted_server([(404, {}, b"")]) as h:
             r = _tag_resolver(h.base_url, sleeps.append)
-            with pytest.raises(ResolutionError, match="HTTP 404"):
+            with pytest.raises(TagAbsentError, match="HTTP 404"):
                 r.resolve_tag_to_sha(SLUG, "v9.9.9")
         assert sleeps == []
         assert h.state.served_count == 1
+
+    def test_exhausted_503_is_not_tag_absence(self):
+        sleeps = []
+        with hs.scripted_server([(503, {}, b"")] * 4) as h:
+            r = _tag_resolver(h.base_url, sleeps.append)
+            with pytest.raises(ResolutionError, match="HTTP 503") as error:
+                r.resolve_tag_to_sha(SLUG, "v3.11.0")
+        assert not isinstance(error.value, TagAbsentError)
+        assert h.state.served_count == 4
 
     @pytest.mark.parametrize("iteration", range(ITERATIONS))
     def test_annotated_tag_dereferences_via_second_call(self, iteration):
@@ -106,8 +116,9 @@ class TestGitHubTagResolverReal:
             (404, {}, b""),  # dereference fails fatally
         ]) as h:
             r = _tag_resolver(h.base_url, sleeps.append)
-            with pytest.raises(ResolutionError, match="dereference"):
+            with pytest.raises(ResolutionError, match="dereference") as error:
                 r.resolve_tag_to_sha(SLUG, "v3.11.0")
+        assert not isinstance(error.value, TagAbsentError)
         assert sleeps == []
         assert h.state.served_count == 2
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,6 +14,8 @@ from leitir import _http
 from leitir.apisurface import ApiDiff, diff_api_indexes, extract_api_surface
 from leitir.materialize import MANIFEST_NAME
 from leitir.spec import CorpusSpec, parse_corpus_spec
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +141,12 @@ class GitHubReleaseNotes:
 
     def fetch(self, repository: str, tag: str, version: str | None) -> ReleaseNote | None:
         from urllib.parse import quote, urlsplit
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
+
+        if self._token is not None:
+            from leitir.credentials import validate_secret
+
+            validate_secret(self._token, kind="token")
 
         endpoint = urlsplit(self._base_url)
         if endpoint.scheme != "https":
@@ -149,7 +157,7 @@ class GitHubReleaseNotes:
             headers["Authorization"] = f"Bearer {self._token}"
 
         def request() -> object:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
                 return json.load(response)
 
         try:
@@ -270,6 +278,7 @@ def diff_packages(
     on_materialize: Callable[[str], None] | None = None,
 ) -> DiffReport:
     """Resolve, materialize, and compare two source specifications."""
+    logger.debug("diff packages before=%s after=%s", spec_a, spec_b)
     if materializer is None:
         from leitir.corpus import materialize_source
 

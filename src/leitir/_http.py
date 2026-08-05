@@ -27,11 +27,14 @@ retryable-vs-fatal classification), adapted to GitHub's synchronous REST API.
 
 from __future__ import annotations
 
+import logging
+import math
 import time
 from enum import Enum
 from typing import Callable, TypeVar
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 def __getattr__(name: str):
@@ -64,6 +67,57 @@ class HttpErrorKind(Enum):
     FATAL = "fatal"
 
 
+def _safe_redirect_handler():
+    from urllib.parse import urlsplit
+    from urllib.request import HTTPRedirectHandler
+
+    credential_headers = frozenset(
+        {"authorization", "private-token", "proxy-authorization"}
+    )
+
+    def origin(url: str) -> tuple[str, str, int | None] | None:
+        try:
+            parts = urlsplit(url)
+            scheme = parts.scheme.lower()
+            port = parts.port
+        except ValueError:
+            return None
+        if port is None:
+            port = {"http": 80, "https": 443}.get(scheme)
+        return scheme, (parts.hostname or "").lower(), port
+
+    class SafeRedirectHandler(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+            if redirected is None:
+                return None
+            old_origin = origin(req.full_url)
+            new_origin = origin(newurl)
+            if old_origin is None or new_origin is None or old_origin != new_origin:
+                for collection in (redirected.headers, redirected.unredirected_hdrs):
+                    for name in tuple(collection):
+                        if name.lower() in credential_headers:
+                            del collection[name]
+            return redirected
+
+    return SafeRedirectHandler()
+
+
+def safe_urlopen(request, *, timeout):
+    """Open a request without forwarding credentials across origins."""
+    from urllib.request import build_opener
+
+    method = request.get_method() if hasattr(request, "get_method") else "GET"
+    url = getattr(request, "full_url", str(request))
+    logger.debug("http %s %s", method, url)
+    response = build_opener(_safe_redirect_handler()).open(request, timeout=timeout)
+    status = getattr(response, "status", None)
+    if status is None:
+        status = getattr(response, "code", None)
+    logger.debug("http response status=%s", status if status is not None else "unknown")
+    return response
+
+
 def retry_after_seconds(exc: BaseException, *, now: float | None = None) -> float | None:
     """Return the server-advised wait in seconds for a rate-limit response.
 
@@ -81,25 +135,31 @@ def retry_after_seconds(exc: BaseException, *, now: float | None = None) -> floa
     retry_after = headers.get("Retry-After")
     if retry_after:
         try:
-            return max(0.0, float(retry_after))
+            delay = float(retry_after)
+            if math.isfinite(delay) and delay >= 0:
+                return delay
         except ValueError:
-            try:
-                from datetime import timezone
+            pass
+        try:
+            from datetime import timezone
 
-                dt = _parsedate_to_datetime(retry_after)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return max(0.0, dt.timestamp() - clock)
-            except (TypeError, ValueError, OverflowError):
-                pass
+            dt = _parsedate_to_datetime(retry_after)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, dt.timestamp() - clock)
+        except (TypeError, ValueError, OverflowError):
+            pass
 
     if headers.get("X-RateLimit-Remaining") == "0":
         reset = headers.get("X-RateLimit-Reset")
         if reset:
             try:
-                return max(0.0, float(reset) - clock)
+                reset_at = float(reset)
+                delay = reset_at - clock
+                if math.isfinite(reset_at) and reset_at >= 0 and math.isfinite(delay):
+                    return max(0.0, delay)
             except ValueError:
-                return None
+                pass
     return None
 
 
@@ -213,8 +273,9 @@ def retry_http(
     - Rate-limited failures wait for the server-advised duration, capped at
       ``max_rate_limit_delay`` (default 300s — GitHub primary limits can be up
       to 3600s out); if the server gave no hint, exponential backoff is used.
-    - Transient failures use deterministic exponential backoff
-      ``base_delay * 2**(attempt-1)``, capped at ``max_delay``.
+    - Transient failures honor a valid server wait hint, capped at ``max_delay``;
+      otherwise they use deterministic exponential backoff
+      ``base_delay * 2**(attempt-1)``.
     - Fatal failures raise immediately with no retry.
 
     On exhaustion the last exception is re-raised unchanged so callers can wrap
@@ -227,23 +288,30 @@ def retry_http(
         raise ValueError("delay parameters must be non-negative")
 
     for attempt in range(1, max_attempts + 1):
+        logger.debug("http attempt %d/%d", attempt, max_attempts)
         try:
-            return fn()
+            result = fn()
+            if attempt > 1:
+                logger.debug("http recovered after %d attempts", attempt)
+            return result
         except Exception as exc:
             kind = classify(exc)
+            logger.debug("http classified %s: %s", kind.name, describe_failure(exc))
             if kind is HttpErrorKind.FATAL:
                 raise
             if attempt >= max_attempts:
                 raise
 
+            hint = retry_after_seconds(exc, now=clock())
             if kind is HttpErrorKind.RATE_LIMITED:
-                hint = retry_after_seconds(exc, now=clock())
                 cap = max_rate_limit_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
             else:
                 cap = max_delay
-                delay = base_delay * (2 ** (attempt - 1))
-            sleeper(min(delay, cap))
+                delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
+            wait = min(delay, cap)
+            logger.debug("http retry wait %.2fs (kind=%s)", wait, kind.name)
+            sleeper(wait)
 
     # Unreachable: the loop always returns or raises on its final iteration.
     raise RuntimeError("retry_http: loop exhausted without resolution")

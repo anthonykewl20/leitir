@@ -22,6 +22,7 @@ from leitir.resolver import (
     PackageRef,
     PyPIResolver,
     ResolutionError,
+    TagAbsentError,
     ResolvedPackage,
 )
 from leitir.search import RepoScope
@@ -74,7 +75,7 @@ class _FakeTagResolver:
         key = (slug, tag)
         if key in self._TABLE:
             return self._TABLE[key]
-        raise ResolutionError(f"tag {tag!r} not found in {slug}")
+        raise TagAbsentError(f"tag {tag!r} not found in {slug}")
 
 
 class _FakePyPIResolver(PyPIResolver):

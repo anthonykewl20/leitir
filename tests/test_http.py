@@ -9,6 +9,7 @@ import pytest
 
 from leitir._http import (
     HttpErrorKind,
+    _safe_redirect_handler,
     classify,
     retry_after_seconds,
     retry_http,
@@ -101,6 +102,15 @@ class TestRetryAfterSeconds:
         exc = _http_error(429, {"Retry-After": "120"})
         assert retry_after_seconds(exc, now=1000.0) == 120.0
 
+    @pytest.mark.parametrize("value", ["NaN", "-5", "Infinity"])
+    def test_invalid_numeric_seconds_returns_none(self, value):
+        exc = _http_error(429, {"Retry-After": value})
+        assert retry_after_seconds(exc, now=1000.0) is None
+
+    def test_decimal_seconds(self):
+        exc = _http_error(429, {"Retry-After": "3"})
+        assert retry_after_seconds(exc, now=1000.0) == 3.0
+
     def test_http_date_future_delta(self):
         # A future HTTP-date must yield a positive, exact delta (not clamped 0).
         # "Wed, 21 Oct 2015 07:28:00 GMT" == epoch 1445412480.0.
@@ -136,6 +146,14 @@ class TestRetryAfterSeconds:
     def test_rate_limit_reset(self):
         exc = _http_error(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2000"})
         assert retry_after_seconds(exc, now=1000.0) == 1000.0
+
+    @pytest.mark.parametrize("value", ["NaN", "-5", "Infinity"])
+    def test_invalid_rate_limit_reset_returns_none(self, value):
+        exc = _http_error(403, {
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": value,
+        })
+        assert retry_after_seconds(exc, now=1000.0) is None
 
     def test_reset_ignored_when_remaining_nonzero(self):
         exc = _http_error(403, {"X-RateLimit-Remaining": "5", "X-RateLimit-Reset": "2000"})
@@ -223,6 +241,19 @@ class TestRetryHttp:
         retry_http(fn, max_rate_limit_delay=120.0, sleeper=sleeps.append)
         assert sleeps == [120.0]
 
+    def test_transient_honors_retry_after_capped_at_max_delay(self):
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def fn():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _http_error(503, {"Retry-After": "45"})
+            return "ok"
+
+        assert retry_http(fn, max_delay=20.0, sleeper=sleeps.append) == "ok"
+        assert sleeps == [20.0]
+
     def test_rate_limited_without_hint_uses_backoff(self):
         calls = {"n": 0}
         sleeps: list[float] = []
@@ -297,3 +328,55 @@ class TestRetryHttp:
         with pytest.raises(ValueError, match="boom"):
             retry_http(fn, sleeper=lambda _: None)
         assert calls["n"] == 1
+
+
+class TestSafeRedirectHandler:
+    @pytest.mark.parametrize(
+        "header", ["Authorization", "PRIVATE-TOKEN", "Proxy-Authorization"]
+    )
+    def test_cross_origin_redirect_strips_credentials(self, header):
+        from urllib.request import Request
+
+        request = Request("https://approved.example/path", headers={header: "secret"})
+        redirected = _safe_redirect_handler().redirect_request(
+            request, None, 302, "Found", {}, "https://attacker.example/next"
+        )
+
+        assert redirected is not None
+        assert all(name.lower() != header.lower() for name in redirected.headers)
+
+    def test_same_origin_redirect_preserves_credentials_and_default_port(self):
+        from urllib.request import Request
+
+        request = Request(
+            "https://approved.example/path",
+            headers={"Authorization": "Bearer secret", "PRIVATE-TOKEN": "secret"},
+        )
+        redirected = _safe_redirect_handler().redirect_request(
+            request, None, 302, "Found", {}, "https://approved.example:443/next"
+        )
+
+        assert redirected is not None
+        assert redirected.get_header("Authorization") == "Bearer secret"
+        assert redirected.get_header("Private-token") == "secret"
+
+    @pytest.mark.parametrize(
+        "destination",
+        [
+            "https://api.github.com:8443/next",
+            "http://api.github.com/next",
+        ],
+    )
+    def test_port_change_or_scheme_downgrade_strips_credentials(self, destination):
+        from urllib.request import Request
+
+        request = Request(
+            "https://api.github.com:443/path",
+            headers={"Authorization": "Bearer secret"},
+        )
+        redirected = _safe_redirect_handler().redirect_request(
+            request, None, 302, "Found", {}, destination
+        )
+
+        assert redirected is not None
+        assert redirected.get_header("Authorization") is None

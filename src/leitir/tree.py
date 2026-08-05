@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from typing import Callable, Protocol, runtime_checkable
 
 from leitir import _http
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,19 +83,23 @@ class GitHubTreeSource:
         )
 
     def _headers(self) -> dict[str, str]:
+        from leitir.credentials import validate_secret
+
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "leitir",
         }
+        if self._token is not None:
+            validate_secret(self._token, kind="token")
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 
     def _get_json(self, url: str, headers: dict[str, str]) -> dict:
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         def _fetch() -> dict:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
@@ -102,6 +109,7 @@ class GitHubTreeSource:
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
         url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
+        logger.debug("tree API url=%s", url)
         payload = self._get_json(url, self._headers())
         if payload.get("truncated"):
             raise TreeTruncatedError(slug, commit_sha)
@@ -117,17 +125,18 @@ class GitHubTreeSource:
                     mode=item.get("mode"),
                 )
             )
+        logger.debug("tree fetched blobs=%d slug=%s sha=%s", len(entries), slug, commit_sha[:12])
         return tuple(entries)
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         import base64
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}/repos/{slug}/git/blobs/{blob_sha}"
         headers = self._headers()
 
         def _fetch() -> bytes:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 payload = json.load(resp)
             return base64.b64decode(payload["content"])
 
@@ -141,7 +150,7 @@ class GitHubTreeSource:
     def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
         """Read a path's exact bytes through the contents API at a commit."""
         from urllib.parse import quote, urlencode
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         encoded_path = quote(path, safe="/")
         url = (
@@ -152,7 +161,7 @@ class GitHubTreeSource:
         headers["Accept"] = "application/vnd.github.raw+json"
 
         def _fetch() -> bytes:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return resp.read()
 
         try:
@@ -166,12 +175,15 @@ class GitHubTreeSource:
     def read_blob_by_path(
         self, slug: str, commit_sha: str, path: str
     ) -> bytes:
-        from urllib.request import Request, urlopen
+        from urllib.parse import quote
+        from urllib.request import Request
 
-        url = f"{self._raw_base_url}/{slug}/{commit_sha}/{path}"
+        safe_slug = quote(slug, safe="/")
+        safe_path = quote(path, safe="/")
+        url = f"{self._raw_base_url}/{safe_slug}/{commit_sha}/{safe_path}"
 
         def _fetch() -> bytes:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers={"User-Agent": "leitir"}), timeout=self._timeout
             ) as resp:
                 return resp.read()

@@ -9,6 +9,7 @@ RepoScope, and the result is verifiable against the registry and GitHub.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -21,6 +22,8 @@ from leitir.search import RepoScope
 
 if TYPE_CHECKING:
     from leitir.parity import ArtifactInfo
+
+logger = logging.getLogger(__name__)
 
 
 class Ecosystem(str, Enum):
@@ -102,6 +105,18 @@ class ResolutionError(Exception):
     """The package could not be resolved deterministically."""
 
 
+class TagAbsentError(ResolutionError):
+    """A requested repository tag definitively does not exist."""
+
+
+class ArchiveOnlyVerification(Exception):
+    """The host can authenticate an archive but cannot enumerate its Git tree."""
+
+
+class _InfoRefsPermissionError(ResolutionError):
+    """Sourcehut denied access to a repository's smart-HTTP advertisement."""
+
+
 def resolve_corpus_spec(
     parsed: object, resolver: object, heads: object, cwd: Path
 ) -> tuple[object, str | None, str | None, str | None]:
@@ -111,6 +126,7 @@ def resolve_corpus_spec(
 
     if not isinstance(parsed, CorpusSpec):
         raise TypeError("parsed must be a CorpusSpec")
+    logger.debug("resolving corpus spec name=%s ecosystem=%s ref=%s", parsed.name, parsed.ecosystem, parsed.ref)
     if parsed.ecosystem is not None:
         ecosystem = Ecosystem(parsed.ecosystem)
         version = parsed.version
@@ -132,8 +148,8 @@ def resolve_corpus_spec(
             detection_source,
         )
     scope_name = parsed.name[1:] if parsed.host == "git.sr.ht" else parsed.name
-    if parsed.ref_kind == "sha":
-        return RepoScope(scope_name, parsed.ref), None, None, None
+    if parsed.ref is not None and re.fullmatch(r"[0-9a-fA-F]{40}", parsed.ref):
+        return RepoScope(scope_name, parsed.ref.lower()), None, None, None
     if parsed.ref_kind == "tag":
         sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host) if parsed.host not in (None, "github.com") else resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
         return RepoScope(scope_name, sha), parsed.ref, None, None
@@ -183,18 +199,29 @@ class GitHubTagResolver:
         )
 
     def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
+        from urllib.error import HTTPError
         from urllib.parse import quote
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}/repos/{slug}/git/ref/tags/{quote(tag, safe='')}"
+        logger.debug("resolve tag slug=%s tag=%s url=%s", slug, tag, url)
         headers = self._headers()
 
         def _fetch() -> dict:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
             payload = self._retry(_fetch)
+        except HTTPError as exc:
+            if exc.code == 404:
+                raise TagAbsentError(
+                    f"tag {tag!r} not found in {slug}: "
+                    f"{_http.describe_failure(exc)}"
+                ) from exc
+            raise ResolutionError(
+                f"tag {tag!r} not found in {slug}: {_http.describe_failure(exc)}"
+            ) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
                 f"tag {tag!r} not found in {slug}: {_http.describe_failure(exc)}"
@@ -202,6 +229,7 @@ class GitHubTagResolver:
 
         obj = payload["object"]
         if obj["type"] == "commit":
+            logger.debug("resolved tag slug=%s tag=%s sha=%s", slug, tag, obj["sha"][:12])
             return obj["sha"]
         if obj["type"] == "tag":
             return self._dereference_annotated_tag(slug, obj["sha"])
@@ -210,13 +238,13 @@ class GitHubTagResolver:
     def resolve_commit_to_sha(self, slug: str, ref: str) -> str:
         """Expand a Git commit reference, including Go pseudo-version revisions."""
         from urllib.parse import quote
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}/repos/{slug}/commits/{quote(ref, safe='')}"
         headers = self._headers()
 
         def _fetch() -> dict:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
@@ -231,17 +259,23 @@ class GitHubTagResolver:
         return sha.lower()
 
     def _dereference_annotated_tag(self, slug: str, tag_sha: str) -> str:
-        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError
+        from urllib.request import Request
 
         url = f"{self._base_url}/repos/{slug}/git/tags/{tag_sha}"
         headers = self._headers()
 
         def _fetch() -> dict:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
             payload = self._retry(_fetch)
+        except HTTPError as exc:
+            raise ResolutionError(
+                f"cannot dereference annotated tag {tag_sha} in {slug}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
                 f"cannot dereference annotated tag {tag_sha} in {slug}: "
@@ -289,17 +323,25 @@ class _HostedRepoResolver:
             url, headers, provider=self._CREDENTIAL_PROVIDER, token=self._token
         )
 
-    def _get_json(self, url: str) -> object:
-        from urllib.request import Request, urlopen
+    def _get_json(self, url: str, *, absent_message: str | None = None) -> object:
+        from urllib.error import HTTPError
+        from urllib.request import Request
+
+        logger.debug("resolver querying host=%s url=%s", self._HOST, url)
 
         def _fetch() -> object:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._headers(url)), timeout=self._timeout
             ) as response:
                 return json.load(response)
 
         try:
             return self._retry(_fetch)
+        except HTTPError as exc:
+            detail = f"{self._HOST} API call failed: {_http.describe_failure(exc)}"
+            if exc.code == 404 and absent_message is not None:
+                raise TagAbsentError(f"{absent_message}: {_http.describe_failure(exc)}") from exc
+            raise ResolutionError(detail) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
                 f"{self._HOST} API call failed: {_http.describe_failure(exc)}"
@@ -307,15 +349,20 @@ class _HostedRepoResolver:
         except (ValueError, TypeError) as exc:
             raise ResolutionError(f"{self._HOST} returned malformed metadata") from exc
 
-    def _get_bytes(self, url: str) -> bytes:
-        from urllib.request import Request, urlopen
+    def _get_bytes_limited(self, url: str, max_bytes: int | None) -> bytes:
+        from urllib.request import Request
 
         def _fetch() -> bytes:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._headers(url, "application/octet-stream")),
                 timeout=self._timeout,
             ) as response:
-                return response.read()
+                if max_bytes is None:
+                    return response.read()
+                data = response.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    raise ResolutionError("archive download exceeds compressed size limit")
+                return data
 
         try:
             return self._retry(_fetch)
@@ -323,6 +370,12 @@ class _HostedRepoResolver:
             raise ResolutionError(
                 f"{self._HOST} content call failed: {_http.describe_failure(exc)}"
             ) from exc
+
+    def _get_bytes(self, url: str) -> bytes:
+        return self._get_bytes_limited(url, None)
+
+    def _get_archive_bytes(self, url: str, max_bytes: int) -> bytes:
+        return self._get_bytes_limited(url, max_bytes)
 
     @staticmethod
     def _sha(payload: object, field: str, host: str) -> str:
@@ -378,7 +431,11 @@ class GitLabResolver(_HostedRepoResolver):
         if not tag or any(char.isspace() for char in tag):
             raise ResolutionError("GitLab ref must be non-empty and contain no whitespace")
         url = f"{self._base_url}/projects/{self._project(slug)}/repository/commits/{quote(tag, safe='')}"
-        return self._sha(self._get_json(url), "id", self._HOST)
+        return self._sha(
+            self._get_json(url, absent_message=f"tag {tag!r} not found in {slug}"),
+            "id",
+            self._HOST,
+        )
 
     resolve_ref_to_sha = resolve_tag_to_sha
     resolve_commit_to_sha = resolve_tag_to_sha
@@ -495,7 +552,11 @@ class BitbucketResolver(_HostedRepoResolver):
         if not tag or any(char.isspace() for char in tag):
             raise ResolutionError("Bitbucket ref must be non-empty and contain no whitespace")
         url = f"{self._base_url}/repositories/{self._slug(slug)}/commit/{quote(tag, safe='')}"
-        return self._sha(self._get_json(url), "hash", "bitbucket.org")
+        return self._sha(
+            self._get_json(url, absent_message=f"tag {tag!r} not found in {slug}"),
+            "hash",
+            "bitbucket.org",
+        )
 
     resolve_ref_to_sha = resolve_tag_to_sha
     resolve_commit_to_sha = resolve_tag_to_sha
@@ -602,7 +663,8 @@ class CodebergResolver(_HostedRepoResolver):
             raise ResolutionError("Codeberg ref must be non-empty and contain no whitespace")
         payload = self._get_json(
             f"{self._base_url}/repos/{self._slug(slug)}/commits?"
-            f"{urlencode({'sha': tag, 'limit': 1})}"
+            f"{urlencode({'sha': tag, 'limit': 1})}",
+            absent_message=f"tag {tag!r} not found in {slug}",
         )
         if not isinstance(payload, list) or len(payload) != 1:
             raise ResolutionError("codeberg.org returned malformed commit metadata")
@@ -709,17 +771,37 @@ class SourcehutResolver(_HostedRepoResolver):
     def resolve_tag_to_sha(self, slug: str, tag: str) -> str:
         if not tag or any(char.isspace() for char in tag):
             raise ResolutionError("Sourcehut ref must be non-empty and contain no whitespace")
+        try:
+            refs = self._info_refs(slug)
+        except _InfoRefsPermissionError:
+            if self._has_token():
+                return self._resolve_ref_graphql(slug, tag)
+            raise
+        candidates = (tag, f"refs/tags/{tag}", f"refs/heads/{tag}")
+        for candidate in candidates:
+            sha = refs.get(f"{candidate}^{{}}", refs.get(candidate))
+            if sha is not None:
+                return sha
+        raise TagAbsentError(f"tag {tag!r} not found in {slug}")
+
+    def _resolve_ref_graphql(self, slug: str, tag: str) -> str:
+        """Resolve a ref through authenticated GraphQL for private repositories."""
         owner, repo = self._slug(slug).split("/", 1)
         payload = self._graphql(
             "query($user:String!,$repo:String!,$ref:String!){"
             "user(username:$user){repository(name:$repo){"
             "revparse_single(revspec:$ref){id}}}}",
             {"user": owner[1:], "repo": repo, "ref": tag},
+            absent_message=f"tag {tag!r} not found in {slug}",
         )
         try:
-            commit = payload["user"]["repository"]["revparse_single"]
+            repository = payload["user"]["repository"]
+            commit = repository["revparse_single"]
         except (KeyError, TypeError) as exc:
             raise ResolutionError("git.sr.ht returned malformed commit metadata") from exc
+        if commit is None:
+            cause = ResolutionError("git.sr.ht returned a null ref result")
+            raise TagAbsentError(f"tag {tag!r} not found in {slug}") from cause
         return self._sha(commit, "id", self._HOST)
 
     resolve_ref_to_sha = resolve_tag_to_sha
@@ -734,6 +816,10 @@ class SourcehutResolver(_HostedRepoResolver):
 
         owner, repo = self._slug(slug).split("/", 1)
         sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
+        if not self._has_token():
+            raise ArchiveOnlyVerification(
+                "anonymous Sourcehut archives cannot be cross-checked against the GraphQL tree API"
+            )
         root = self._graphql(
             "query($user:String!,$repo:String!,$ref:String!){"
             "user(username:$user){repository(name:$repo){"
@@ -797,6 +883,92 @@ class SourcehutResolver(_HostedRepoResolver):
             pending.sort()
         return tuple(sorted(entries, key=lambda entry: entry.path))
 
+    def _has_token(self) -> bool:
+        return self._credentials.auth_for_url(
+            "https://git.sr.ht", provider=self._CREDENTIAL_PROVIDER, token=self._token
+        ) is not None
+
+    def full_tree_verification_available(self) -> bool:
+        """Return whether Sourcehut's authenticated tree API can be used."""
+        return self._has_token()
+
+    def _info_refs(self, slug: str) -> dict[str, str]:
+        """Return refs advertised by Sourcehut's anonymous git smart-HTTP endpoint."""
+        from urllib.error import HTTPError
+        from urllib.parse import urlsplit, urlunsplit
+        from urllib.request import Request
+
+        slug = self._slug(slug)
+        endpoint = urlsplit(self._base_url)
+        path = endpoint.path
+        if path == "/query" or path.endswith("/query"):
+            path = path[:-len("/query")]
+        repository_base = urlunsplit(
+            (endpoint.scheme, endpoint.netloc, path.rstrip("/"), "", "")
+        )
+        url = f"{repository_base}/{slug}/info/refs?service=git-upload-pack"
+
+        def _fetch() -> bytes:
+            with _http.safe_urlopen(
+                Request(url, headers=self._headers(url, "application/x-git-upload-pack-advertisement")),
+                timeout=self._timeout,
+            ) as response:
+                data = response.read(16 * 1024 * 1024 + 1)
+                if len(data) > 16 * 1024 * 1024:
+                    raise ResolutionError("git.sr.ht info/refs response exceeds size limit")
+                return data
+
+        try:
+            data = self._retry(_fetch)
+        except HTTPError as exc:
+            message = (
+                f"cannot access Sourcehut refs for {slug}: "
+                f"{_http.describe_failure(exc)}"
+            )
+            if exc.code in (401, 403):
+                raise _InfoRefsPermissionError(message) from exc
+            raise ResolutionError(message) from exc
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"cannot access Sourcehut refs for {slug}: {_http.describe_failure(exc)}"
+            ) from exc
+
+        refs: dict[str, str] = {}
+        offset = 0
+        try:
+            while offset < len(data):
+                if len(data) - offset < 4:
+                    raise ValueError("truncated pkt-line length")
+                prefix = data[offset:offset + 4]
+                length = int(prefix, 16)
+                offset += 4
+                if length in (0, 1, 2):
+                    continue
+                if length < 4 or offset + length - 4 > len(data):
+                    raise ValueError("invalid pkt-line length")
+                payload = data[offset:offset + length - 4]
+                offset += length - 4
+                payload = payload.split(b"\0", 1)[0].rstrip(b"\r\n")
+                if payload.startswith(b"# service=") or not payload:
+                    continue
+                sha_bytes, separator, ref_bytes = payload.partition(b" ")
+                sha = sha_bytes.decode("ascii")
+                ref = ref_bytes.decode("utf-8")
+                if (
+                    not separator
+                    or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None
+                    or not ref
+                    or any(char.isspace() for char in ref)
+                    or (ref != "HEAD" and not ref.startswith("refs/"))
+                ):
+                    raise ValueError("malformed advertised ref")
+                refs[ref] = sha.lower()
+        except (UnicodeError, ValueError) as exc:
+            raise ResolutionError("git.sr.ht returned malformed info/refs data") from exc
+        if not refs:
+            raise ResolutionError("git.sr.ht returned no advertised refs")
+        return refs
+
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         sha = self._sha({"sha": blob_sha}, "sha", self._HOST)
         url = self._blob_urls.get((self._slug(slug), sha))
@@ -812,27 +984,66 @@ class SourcehutResolver(_HostedRepoResolver):
             raise ResolutionError("Sourcehut path URL is unavailable before tree enumeration")
         return self._get_bytes(url)
 
-    def _graphql(self, query: str, variables: dict[str, object]) -> dict:
+    def _graphql(
+        self,
+        query: str,
+        variables: dict[str, object],
+        *,
+        absent_message: str | None = None,
+    ) -> dict:
+        from urllib.error import HTTPError
         from urllib.parse import urlencode
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}?{urlencode({'query': query, 'variables': json.dumps(variables, separators=(',', ':'))})}"
 
         def _fetch() -> object:
-            with urlopen(Request(url, headers=self._headers(self._base_url)), timeout=self._timeout) as response:
+            with _http.safe_urlopen(Request(url, headers=self._headers(self._base_url)), timeout=self._timeout) as response:
                 return json.load(response)
 
         try:
             payload = self._retry(_fetch)
+        except HTTPError as exc:
+            if exc.code == 404 and absent_message is not None:
+                raise TagAbsentError(f"{absent_message}: {_http.describe_failure(exc)}") from exc
+            raise ResolutionError(
+                f"git.sr.ht API call failed: {_http.describe_failure(exc)}"
+            ) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise ResolutionError(
                 f"git.sr.ht API call failed: {_http.describe_failure(exc)}"
             ) from exc
         except (ValueError, TypeError) as exc:
             raise ResolutionError("git.sr.ht returned malformed metadata") from exc
-        if not isinstance(payload, dict) or payload.get("errors") or not isinstance(payload.get("data"), dict):
+        if not isinstance(payload, dict):
+            raise ResolutionError("git.sr.ht returned malformed metadata")
+        errors = payload.get("errors")
+        if errors:
+            if absent_message is not None and self._ref_absent_errors(errors):
+                cause = ResolutionError("git.sr.ht reported an absent ref")
+                raise TagAbsentError(absent_message) from cause
+            raise ResolutionError("git.sr.ht returned malformed metadata")
+        if not isinstance(payload.get("data"), dict):
             raise ResolutionError("git.sr.ht returned malformed metadata")
         return payload["data"]
+
+    @staticmethod
+    def _ref_absent_errors(errors: object) -> bool:
+        if not isinstance(errors, list) or not errors:
+            return False
+        absent = re.compile(
+            r"(?:\b(?:ref(?:erence)?|revision|revspec|commit)\b.*"
+            r"\b(?:not found|does not exist|unknown|missing|cannot be resolved)\b|"
+            r"\b(?:not found|does not exist|unknown|missing|no such|"
+            r"could not resolve|cannot resolve|unable to resolve)\b.*"
+            r"\b(?:ref(?:erence)?|revision|revspec|commit)\b)",
+            re.IGNORECASE,
+        )
+        messages = [
+            item.get("message") if isinstance(item, dict) else None
+            for item in errors
+        ]
+        return all(isinstance(message, str) and absent.search(message) for message in messages)
 
     @staticmethod
     def _git_mode(mode: object) -> str:
@@ -892,7 +1103,7 @@ class PyPIResolver:
         )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         if ref.ecosystem is not Ecosystem.PYPI:
             raise ResolutionError("PyPIResolver only handles pypi packages")
@@ -900,7 +1111,7 @@ class PyPIResolver:
         url = f"{self._base_url}/{ref.name}/{ref.version}/json"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._credentials.headers(
                     url,
                     {"User-Agent": "leitir", "Accept": "application/json"},
@@ -939,12 +1150,12 @@ class PyPIResolver:
 
     def latest_version(self, name: str) -> str:
         """Return the registry's current version for ``name``."""
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}/{name}/json"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._credentials.headers(
                     url,
                     {"User-Agent": "leitir", "Accept": "application/json"},
@@ -1001,7 +1212,7 @@ class PyPIResolver:
             try:
                 sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
                 return tag, sha
-            except ResolutionError as exc:
+            except TagAbsentError as exc:
                 last_err = exc
         raise last_err or ResolutionError(f"no tag found for {version}")
 
@@ -1036,7 +1247,7 @@ class CratesResolver:
         )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         if ref.ecosystem is not Ecosystem.CRATES:
             raise ResolutionError("CratesResolver only handles crates packages")
@@ -1044,7 +1255,7 @@ class CratesResolver:
         url = f"{self._base_url}/{ref.name}/{ref.version}"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._credentials.headers(
                     url, {"User-Agent": "leitir (package resolver)"}, provider="crates"
                 )),
@@ -1086,12 +1297,12 @@ class CratesResolver:
 
     def latest_version(self, name: str) -> str:
         """Return the registry's current version for ``name``."""
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         url = f"{self._base_url}/{name}"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._credentials.headers(
                     url, {"User-Agent": "leitir (package resolver)"}, provider="crates"
                 )),
@@ -1126,7 +1337,7 @@ class CratesResolver:
             try:
                 sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
                 return tag, sha
-            except ResolutionError as exc:
+            except TagAbsentError as exc:
                 last_err = exc
         raise last_err or ResolutionError(f"no tag found for {name} {version}")
 
@@ -1171,7 +1382,7 @@ class GoResolver:
         )
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         if ref.ecosystem is not Ecosystem.GO:
             raise ResolutionError("GoResolver only handles go packages")
@@ -1185,7 +1396,7 @@ class GoResolver:
         info_url = f"{self._base_url}/{escaped}/@v/{version}.info"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(info_url, headers={"User-Agent": "leitir"}),
                 timeout=self._timeout,
             ) as resp:
@@ -1219,7 +1430,7 @@ class GoResolver:
                             )
                             tag = candidate_tag
                             break
-                        except ResolutionError as exc:
+                        except TagAbsentError as exc:
                             last_error = exc
                     else:
                         continue
@@ -1233,7 +1444,7 @@ class GoResolver:
                 slug = candidate_slug
                 subpath = candidate_subpath
                 break
-            except ResolutionError as exc:
+            except TagAbsentError as exc:
                 last_error = exc
         else:
             raise last_error or ResolutionError(
@@ -1284,13 +1495,13 @@ class GoResolver:
 
     def latest_version(self, name: str) -> str:
         """Return the Go proxy's current version for ``name``."""
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         escaped = self._escape_module(name)
         url = f"{self._base_url}/{escaped}/@latest"
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers={"User-Agent": "leitir"}),
                 timeout=self._timeout,
             ) as resp:
@@ -1344,13 +1555,14 @@ class NpmResolver:
 
     def _metadata(self, name: str) -> tuple[dict, str]:
         from urllib.parse import quote
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         encoded = quote(name, safe="")
         url = f"{self._base_url}/{encoded}"
+        logger.debug("resolver querying ecosystem=npm package=%s url=%s", name, url)
 
         def _fetch() -> dict:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers=self._credentials.headers(
                     url,
                     {"Accept": "application/json", "User-Agent": "leitir"},
@@ -1440,6 +1652,7 @@ class NpmResolver:
     def resolve(self, ref: PackageRef) -> ResolvedPackage:
         if ref.ecosystem is not Ecosystem.NPM:
             raise ResolutionError("NpmResolver only handles npm packages")
+        logger.debug("resolving ecosystem=%s package=%s version=%s", ref.ecosystem.value, ref.name, ref.version)
         payload, encoded = self._metadata(ref.name)
         versions = payload.get("versions")
         if not isinstance(versions, dict):
@@ -1477,6 +1690,7 @@ class NpmResolver:
         for tag in candidates:
             try:
                 sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
+                logger.debug("resolved package=%s@%s slug=%s tag=%s sha=%s artifact=%s", ref.name, ref.version, slug, tag, sha[:12], "registry-artifact" if self._artifact(ref, payload) is not None else "git-commit")
                 return ResolvedPackage(
                     ref=ref,
                     scope=RepoScope(slug, sha),
@@ -1486,7 +1700,7 @@ class NpmResolver:
                     docs_urls=docs_urls,
                     artifact=self._artifact(ref, payload),
                 )
-            except ResolutionError:
+            except TagAbsentError:
                 pass
         tried = ", ".join(repr(tag) for tag in candidates)
         raise ResolutionError(
@@ -1535,7 +1749,9 @@ class MultiResolver:
         resolver = self._resolvers.get(ref.ecosystem)
         if resolver is None:
             raise ResolutionError(f"no resolver for {ref.ecosystem}")
-        return resolver.resolve(ref)
+        result = resolver.resolve(ref)
+        logger.debug("resolution result ecosystem=%s package=%s version=%s scope=%s@%s", ref.ecosystem.value, ref.name, ref.version, result.scope.slug, result.scope.commit_sha[:12])
+        return result
 
     def latest_version(self, ecosystem: Ecosystem, name: str) -> str:
         """Dispatch an unpinned package's latest-version lookup."""

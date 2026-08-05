@@ -85,13 +85,13 @@ rg "parse" "$path"
 cat "$path/package.json"
 
 # Run search and benchmark commands
-PYTHONPATH=src python -m leitir.cli search --package zod --version 3.22.0 --ecosystem npm --symbol-definition parse
+PYTHONPATH=src python -m leitir.cli search --package zod --version 3.22.0 --ecosystem npm --must symbol_definition:parse
 PYTHONPATH=src python -m leitir.cli bench
 ```
 
 ## The agent workflow (required)
 
-Before writing behavior against a library/framework, resolve and read source from the corpus first. Do not hand-roll behavior the source already defines. Fetch missing sources with `leitir get <spec>`, read `POINTERS.md` and full files (`rg`, `cat`, `find`), and cite used files as `<owner>/<repo>/<file>@<commit-SHA>` using the manifest commit SHA.
+Before writing behavior against a library/framework, run `leitir info <spec>` and synthesize from its extracted public signatures, docstrings, and top usage code with provenance. Do not hand-roll behavior the source already defines. Read full files only for behavior beyond that surface: fetch missing sources with `leitir get <spec>`, read `POINTERS.md` and files (`rg`, `cat`, `find`), and cite used files as `<owner>/<repo>/<file>@<commit-SHA>` using the manifest commit SHA.
 
 ```mermaid
 flowchart LR
@@ -115,8 +115,8 @@ flowchart LR
 - `clean`: clear corpus metadata and cached materialization.
 
 ### Analysis
-- `info`: one-shot agent context for a source (provenance + API summary + top examples + trust + parity). Use this first.
-- `api`: extract and cache API-index JSON for a materialized source.
+- `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
+- `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance.
 - `examples`: extract and rank usage snippets for that source.
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
@@ -195,8 +195,9 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 
 ## Honesty guarantees
 
-- Provenance-bound outputs: every visible item resolves to an immutable commit and checksum, and derives from the source-specific manifest.
+- Provenance-bound outputs: every visible item resolves to an immutable commit and checksum, derives from the source-specific manifest, and has its materialized tree digest verified again at load time.
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry.
+- Legacy verified caches require `leitir upgrade-cache` to add a materialized-tree digest and gain load-time verification; until upgraded they are rejected as cache misses.
 - `unknown` evidence never becomes zero or a pass; unresolved checks preserve indeterminate state.
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
@@ -228,7 +229,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 ## Documentation
 
-- ADRs: [001](docs/adr-001-remove-hy3-deterministic-search.md), [002](docs/adr-002-deterministic-evidence-scoring-engine.md), [003](docs/adr-003-categorized-http-retry.md), [004](docs/adr-004-local-source-materialization.md), [005](docs/adr-005-corpus-v2-capabilities.md)
+- ADRs: [001](docs/adr-001-remove-hy3-deterministic-search.md), [002](docs/adr-002-deterministic-evidence-scoring-engine.md), [003](docs/adr-003-categorized-http-retry.md), [004](docs/adr-004-local-source-materialization.md), [005](docs/adr-005-corpus-v2-capabilities.md), [006](docs/adr-006-load-time-tree-verification.md)
 - [docs/STATUS.md](docs/STATUS.md)
 - [docs/scoring.md](docs/scoring.md)
 - [skills/leitir/SKILL.md](skills/leitir/SKILL.md)

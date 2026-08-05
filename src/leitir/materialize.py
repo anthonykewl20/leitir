@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,14 @@ from typing import Callable, Mapping
 
 from leitir import _http
 from leitir.search import RepoScope
+from leitir.treehash import (
+    TreeHashError,
+    compute_materialized_tree_hash,
+    manifest_digest_fields,
+    verify_materialized_tree_hash,
+)
+
+logger = logging.getLogger(__name__)
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -37,10 +46,18 @@ _HOST_METADATA = {
 MANIFEST_NAME = "leitir-manifest.json"
 VERIFY_MAX_FILES = 1_000
 VERIFY_MAX_BYTES = 64 * 1024 * 1024
+ARCHIVE_MAX_MEMBERS = 500_000
+ARCHIVE_MAX_MEMBER_BYTES = 1024 * 1024 * 1024
+ARCHIVE_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+ARCHIVE_MAX_COMPRESSED_BYTES = 1024 * 1024 * 1024
 
 
 class MaterializationError(Exception):
     """A pinned source tree could not be downloaded or safely extracted."""
+
+
+class ManifestIntegrityError(MaterializationError):
+    """A manifest update was refused because its shelf failed verification."""
 
 
 class UnsafeArchiveError(Exception):
@@ -75,6 +92,7 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
     """Write a manifest atomically, including upgrades of cached manifests."""
     fd, name = tempfile.mkstemp(prefix=f".{MANIFEST_NAME}.tmp-", dir=path.parent)
     temporary = Path(name)
+    logger.debug("writing manifest path=%s", path)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, sort_keys=True)
@@ -92,11 +110,77 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
 
 
 def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]) -> dict[str, object]:
-    """Atomically merge derived fields into an existing valid manifest."""
+    """Verify a shelf, then atomically merge fields into its manifest.
+
+    Raises :class:`ManifestIntegrityError` without writing if the existing
+    manifest's materialized-tree integrity anchor cannot be verified.
+    """
     path = Path(target) / MANIFEST_NAME
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("source manifest must be an object")
+    expected_hash = payload.get("materialized_tree_hash")
+    if expected_hash is not None:
+        try:
+            verify_materialized_tree_hash(
+                Path(target),
+                expected_hash,
+                algorithm=payload.get("materialized_tree_hash_algorithm"),
+                scope=payload.get("materialized_tree_hash_scope", "full"),
+            )
+        except TreeHashError as exc:
+            logger.warning("materialized tree hash verification failed for %s", target)
+            raise ManifestIntegrityError(
+                f"materialized tree hash verification failed for {target}"
+            ) from exc
+    else:
+        owner = payload.get("owner")
+        repo = payload.get("repo")
+        commit_sha = payload.get("commit_sha")
+        host = payload.get("host", "github.com")
+        target_parts = Path(target).parts
+        try:
+            _owner, _repo, identity_parts = _normalize_identity(
+                owner if isinstance(owner, str) else "",
+                repo if isinstance(repo, str) else "",
+                commit_sha if isinstance(commit_sha, str) else "",
+                host if isinstance(host, str) else "",
+            )
+        except ValueError:
+            canonical_target = False
+        else:
+            suffix = ("repos", host, *identity_parts, commit_sha)
+            canonical_target = target_parts[-len(suffix):] == suffix
+        provenance_valid = (
+            canonical_target
+            and isinstance(owner, str)
+            and isinstance(repo, str)
+            and isinstance(commit_sha, str)
+            and isinstance(host, str)
+            and _read_valid_manifest(
+                target,
+                owner,
+                repo,
+                commit_sha,
+                host=host,
+                allow_missing_tree_hash=True,
+            )
+            is not None
+        )
+        if (
+            payload.get("verified") in (True, "sampled", "archive-only")
+            and provenance_valid
+        ):
+            try:
+                tree_digest, tree_scope = compute_materialized_tree_hash(Path(target))
+            except TreeHashError as exc:
+                logger.warning(
+                    "could not backfill materialized tree hash for %s: %s",
+                    target,
+                    exc,
+                )
+            else:
+                payload.update(manifest_digest_fields(tree_digest, scope=tree_scope))
     payload.update(fields)
     _write_manifest(path, payload)
     return payload
@@ -170,6 +254,26 @@ def read_valid_manifest(
     host: str = "github.com",
 ) -> dict[str, object] | None:
     """Read a manifest only when it identifies exactly the requested source."""
+    return _read_valid_manifest(
+        target,
+        owner,
+        repo,
+        commit_sha,
+        host=host,
+        allow_missing_tree_hash=False,
+    )
+
+
+def _read_valid_manifest(
+    target: str | os.PathLike[str],
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str,
+    allow_missing_tree_hash: bool,
+) -> dict[str, object] | None:
+    """Validate a manifest, optionally permitting a legacy missing digest."""
     metadata = _HOST_METADATA.get(host)
     if metadata is None:
         return None
@@ -207,10 +311,10 @@ def read_valid_manifest(
         return None
     verified = payload.get("verified")
     if "verified" in payload and not (
-        verified is True or verified is False or verified == "sampled"
+        verified is True or verified is False or verified in ("sampled", "archive-only")
     ):
         return None
-    if verified in (True, "sampled") and (
+    if verified in (True, "sampled", "archive-only") and (
         not isinstance(payload.get("verified_at"), str) or not payload["verified_at"]
     ):
         return None
@@ -286,6 +390,26 @@ def read_valid_manifest(
                     return None
             if not isinstance(factor["evidence"], dict):
                 return None
+    expected_hash = payload.get("materialized_tree_hash")
+    if expected_hash is not None:
+        try:
+            verify_materialized_tree_hash(
+                Path(target),
+                expected_hash,
+                algorithm=payload.get("materialized_tree_hash_algorithm"),
+                scope=payload.get("materialized_tree_hash_scope", "full"),
+            )
+        except TreeHashError:
+            logger.warning(
+                "materialized tree hash verification failed for %s", target
+            )
+            return None
+    elif verified in (True, "sampled", "archive-only"):
+        # Migration is complete: verified shelves must have a load-time
+        # integrity anchor. The private exception is used only while safely
+        # transferring trust in update_manifest's legacy backfill path.
+        if not allow_missing_tree_hash:
+            return None
     return payload
 
 
@@ -335,6 +459,45 @@ def _hardlink_path(linkname: str, expected_root: str) -> PurePosixPath:
     return PurePosixPath(*path.parts[1:])
 
 
+def _assert_confined(output_path: Path, root: Path) -> None:
+    if not Path(os.path.realpath(output_path)).is_relative_to(root):
+        raise UnsafeArchiveError("symbolic link escapes its target")
+
+
+def _read_bounded(response: object, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(limit + 1 - total)  # type: ignore[attr-defined]
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise MaterializationError("archive download exceeds compressed size limit")
+
+
+def _cache_matches_source(
+    manifest: Mapping[str, object],
+    *,
+    source: str,
+    fetch_method: str,
+    artifact_kind: str | None = None,
+    artifact_checksum: str | None = None,
+) -> bool:
+    cached_source = manifest.get("source")
+    if source == "git-commit" and cached_source is None:
+        cached_source = "git-commit"
+    if cached_source != source or manifest.get("fetch_method") != fetch_method:
+        return False
+    if source == "registry-artifact":
+        return (
+            manifest.get("artifact_kind") == artifact_kind
+            and manifest.get("artifact_checksum") == artifact_checksum
+        )
+    return True
+
+
 def _extract_tarball(
     data: bytes,
     destination: Path,
@@ -345,15 +508,19 @@ def _extract_tarball(
 ) -> None:
     expected_root = archive_root
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        members = archive.getmembers()
-        if not members:
-            raise UnsafeArchiveError("archive is empty")
-        if expected_root is None:
-            expected_root = _archive_path(members[0].name).parts[0]
-
         planned: list[tuple[tarfile.TarInfo, PurePosixPath | None]] = []
         seen: set[PurePosixPath] = set()
-        for member in members:
+        total_size = 0
+        for member in archive:
+            if len(planned) >= ARCHIVE_MAX_MEMBERS:
+                raise UnsafeArchiveError("archive contains too many members")
+            if member.size < 0 or member.size > ARCHIVE_MAX_MEMBER_BYTES:
+                raise UnsafeArchiveError("archive member exceeds size limit")
+            total_size += member.size
+            if total_size > ARCHIVE_MAX_TOTAL_BYTES:
+                raise UnsafeArchiveError("archive exceeds total size limit")
+            if expected_root is None:
+                expected_root = _archive_path(member.name).parts[0]
             path = _stripped_member_path(member, expected_root)
             if path is None and not member.isdir():
                 raise UnsafeArchiveError("archive top-level member is not a directory")
@@ -371,20 +538,27 @@ def _extract_tarball(
                 _hardlink_path(member.linkname, expected_root)
             planned.append((member, path))
 
+        if not planned:
+            raise UnsafeArchiveError("archive is empty")
+
         destination.mkdir(parents=True, exist_ok=True)
+        root = destination.resolve()
         regular_paths: set[PurePosixPath] = set()
         for member, path in planned:
             if path is None or not (member.isdir() or member.isreg()):
                 continue
             output = destination.joinpath(*path.parts)
             if member.isdir():
+                _assert_confined(output, root)
                 output.mkdir(parents=True, exist_ok=True)
                 output.chmod(member.mode & 0o777)
                 continue
+            _assert_confined(output, root)
             output.parent.mkdir(parents=True, exist_ok=True)
             source = archive.extractfile(member)
             if source is None:
                 raise UnsafeArchiveError("regular archive member has no data")
+            _assert_confined(output, root)
             with source, output.open("xb") as handle:
                 shutil.copyfileobj(source, handle)
             output.chmod(member.mode & 0o777)
@@ -397,15 +571,28 @@ def _extract_tarball(
             if linked not in regular_paths:
                 raise UnsafeArchiveError("hard link does not target a regular archive member")
             output = destination.joinpath(*path.parts)
+            _assert_confined(output, root)
             output.parent.mkdir(parents=True, exist_ok=True)
+            _assert_confined(output, root)
             os.link(destination.joinpath(*linked.parts), output)
 
         for member, path in planned:
             if path is None or not member.issym():
                 continue
             output = destination.joinpath(*path.parts)
+            _assert_confined(output, root)
             output.parent.mkdir(parents=True, exist_ok=True)
+            _assert_confined(output, root)
             output.symlink_to(member.linkname)
+
+        for _member, path in planned:
+            if path is None:
+                continue
+            output = destination.joinpath(*path.parts)
+            if output.is_symlink():
+                resolved = Path(os.path.realpath(output))
+                if not resolved.is_relative_to(root):
+                    raise UnsafeArchiveError("symbolic link escapes its target")
 
 
 def _verify_extracted_tree(
@@ -428,17 +615,20 @@ def _verify_extracted_tree(
     if max_bytes < 1:
         raise ValueError("verification_max_bytes must be >= 1")
 
-    extracted_paths = [
-        path
-        for path in staging.rglob("*")
-        if not path.is_symlink() and path.is_file()
-    ]
+    extracted_paths = list(staging.rglob("*"))
     extracted = {
         path.relative_to(staging).as_posix(): path
         for path in extracted_paths
+        if not path.is_symlink() and path.is_file()
+    }
+    extracted_symlinks = {
+        path.relative_to(staging).as_posix(): path
+        for path in extracted_paths
+        if path.is_symlink()
     }
 
     entries = tree_source.list_blobs(f"{owner}/{repo}", commit_sha)  # type: ignore[attr-defined]
+    logger.debug("verifying extracted tree repo=%s/%s blobs=%d", owner, repo, len(entries))
     expected: dict[str, object] = {}
     for entry in entries:
         if entry.path in expected:
@@ -455,13 +645,31 @@ def _verify_extracted_tree(
             for path, entry in expected.items()
             if getattr(entry, "mode", "").startswith("100")
         }
+        expected_symlinks = {
+            path: entry
+            for path, entry in expected.items()
+            if getattr(entry, "mode", "").startswith("120000")
+        }
+        unsupported = set(expected) - set(candidates) - set(expected_symlinks)
+        if unsupported:
+            raise VerificationError(
+                f"unsupported Git blob mode: {sorted(unsupported)[0]}"
+            )
+        symlink_universe_partial = set(extracted_symlinks) != set(expected_symlinks)
         sizes = {path: entry.size for path, entry in candidates.items()}  # type: ignore[attr-defined]
     else:
         candidates = {path: expected.get(path) for path in extracted}
+        expected_symlinks = {}
+        symlink_universe_partial = False
         sizes = {path: file.stat().st_size for path, file in extracted.items()}
 
     total_bytes = sum(sizes.values())
-    sampled = len(candidates) > max_files or total_bytes > max_bytes
+    sampled = (
+        not modes_available
+        or symlink_universe_partial
+        or len(candidates) > max_files
+        or total_bytes > max_bytes
+    )
     selected = sorted(candidates)
     if not sampled and modes_available and set(extracted) != set(candidates):
         missing = sorted(set(candidates) - set(extracted))
@@ -492,6 +700,25 @@ def _verify_extracted_tree(
         selected = bounded
 
     text_normalized = 0
+    for relative, entry in sorted(expected_symlinks.items()):
+        if relative not in extracted_symlinks:
+            continue
+        link_target = os.readlink(extracted_symlinks[relative])
+        extracted_bytes = os.fsencode(link_target)
+        actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
+        if actual != entry.blob_sha:  # type: ignore[attr-defined]
+            if not isinstance(tree_source, GitHubTreeSource):
+                sampled = True
+                continue
+            read_at_commit = getattr(tree_source, "read_blob_at_commit", None)
+            if read_at_commit is not None:
+                blob_bytes = read_at_commit(f"{owner}/{repo}", commit_sha, relative)
+            else:
+                blob_bytes = tree_source.read_blob(  # type: ignore[attr-defined]
+                    f"{owner}/{repo}", entry.blob_sha  # type: ignore[attr-defined]
+                )
+            if extracted_bytes != blob_bytes:
+                raise VerificationError(f"Git symbolic-link blob digest mismatch: {relative}")
     for relative in selected:
         path = extracted.get(relative)
         entry = expected.get(relative)
@@ -514,7 +741,9 @@ def _verify_extracted_tree(
             if extracted_bytes not in (blob_bytes, blob_bytes.replace(b"\n", b"\r\n")):
                 raise VerificationError(f"Git blob digest mismatch: {relative}")
             text_normalized += 1
-    return ("sampled" if sampled else True), text_normalized
+    outcome: bool | str = "sampled" if sampled else True
+    logger.debug("tree verification outcome=%s normalized_files=%d", outcome, text_normalized)
+    return outcome, text_normalized
 
 
 def materialize_github_repo(
@@ -544,7 +773,7 @@ def materialize_github_repo(
 ) -> Path:
     """Download and safely extract an exact GitHub commit into the corpus."""
     from urllib.parse import urlsplit
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
 
     retry = _http.make_retry(
         max_attempts=max_attempts,
@@ -554,8 +783,18 @@ def materialize_github_repo(
         sleeper=sleeper,
     )
     url = f"{base_url.rstrip('/')}/{owner}/{repo}/tar.gz/{commit_sha}"
+    logger.debug("materialize fetch method=codeload-tarball url=%s", url)
     headers = {"Accept": "application/gzip", "User-Agent": "leitir"}
-    github_token = token if token is not None else os.environ.get("GITHUB_TOKEN")
+    if token is None:
+        from leitir.credentials import github_token_from_env
+
+        github_token = github_token_from_env()
+    else:
+        github_token = token
+    if github_token is not None:
+        from leitir.credentials import validate_secret
+
+        validate_secret(github_token, kind="token")
     endpoint = urlsplit(url)
     if (
         github_token
@@ -565,8 +804,8 @@ def materialize_github_repo(
         headers["Authorization"] = f"Bearer {github_token}"
 
     def _fetch() -> bytes:
-        with urlopen(Request(url, headers=headers), timeout=timeout) as response:
-            return response.read()
+        with _http.safe_urlopen(Request(url, headers=headers), timeout=timeout) as response:
+            return _read_bounded(response, ARCHIVE_MAX_COMPRESSED_BYTES)
 
     if tree_source is None and verify:
         from leitir.tree import GitHubTreeSource
@@ -633,7 +872,9 @@ def _materialize_hosted_repo(
         if target.is_dir()
         else None
     )
-    if existing is not None:
+    if existing is not None and _cache_matches_source(
+        existing, source="git-commit", fetch_method=fetch_method
+    ):
         if existing.get("source") is None:
             existing["source"] = "git-commit"
             _write_manifest(target / MANIFEST_NAME, existing)
@@ -644,6 +885,11 @@ def _materialize_hosted_repo(
             return target
         if existing.get("verified") in (True, "sampled"):
             return target
+        if (
+            existing.get("verified") == "archive-only"
+            and not getattr(tree_source, "full_tree_verification_available", lambda: True)()
+        ):
+            return target
     if verify and tree_source is None:
         raise ValueError("tree_source is required when verification is enabled")
     if on_fetch is not None:
@@ -652,6 +898,9 @@ def _materialize_hosted_repo(
     staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-", dir=target.parent))
     try:
         data = fetch_archive()
+        logger.debug("materialize downloaded bytes=%d method=%s", len(data), fetch_method)
+        if len(data) > ARCHIVE_MAX_COMPRESSED_BYTES:
+            raise MaterializationError("archive download exceeds compressed size limit")
         _extract_tarball(
             data,
             staging,
@@ -660,15 +909,20 @@ def _materialize_hosted_repo(
             archive_root=archive_root,
         )
         if verify:
-            verified, text_normalized = _verify_extracted_tree(
-                staging,
-                owner,
-                repo,
-                commit_sha,
-                tree_source,
-                max_files=verification_max_files,
-                max_bytes=verification_max_bytes,
-            )
+            from leitir.resolver import ArchiveOnlyVerification
+
+            try:
+                verified, text_normalized = _verify_extracted_tree(
+                    staging,
+                    owner,
+                    repo,
+                    commit_sha,
+                    tree_source,
+                    max_files=verification_max_files,
+                    max_bytes=verification_max_bytes,
+                )
+            except ArchiveOnlyVerification:
+                verified, text_normalized = "archive-only", 0
             verified_at: str | None = _utc_now()
         else:
             verified = False
@@ -700,6 +954,8 @@ def _materialize_hosted_repo(
                 "has_tests": has_top_level_tests(staging, subpath),
             }
         )
+        tree_digest, tree_scope = compute_materialized_tree_hash(staging)
+        manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
         if target.exists():
             shutil.rmtree(target)
@@ -744,6 +1000,7 @@ def materialize_artifact(
 
     if not isinstance(artifact, ArtifactInfo):
         raise TypeError("artifact must be an ArtifactInfo")
+    logger.debug("materialize fetch method=registry-artifact kind=%s url=%s", artifact.artifact_kind, artifact.url)
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("spec must be non-empty")
     owner, repo = scope.slug.split("/", 1)
@@ -754,15 +1011,16 @@ def materialize_artifact(
         if target.is_dir()
         else None
     )
-    if (
-        existing is not None
-        and existing.get("source") == "registry-artifact"
-        and existing.get("artifact_kind") == artifact.artifact_kind
-        and existing.get("artifact_checksum") == artifact.checksum
+    if existing is not None and _cache_matches_source(
+        existing,
+        source="registry-artifact",
+        fetch_method="registry-artifact",
+        artifact_kind=artifact.artifact_kind,
+        artifact_checksum=artifact.checksum,
     ):
         return target
 
-    client = fetcher or RegistryArtifactFetcher()
+    client = fetcher or RegistryArtifactFetcher(max_bytes=ARCHIVE_MAX_COMPRESSED_BYTES)
     if on_fetch is not None:
         on_fetch()
     try:
@@ -771,7 +1029,10 @@ def materialize_artifact(
         raise ArtifactRetrievalError(
             f"artifact retrieval failed for {spec}: {_failure_detail(exc)}"
         ) from exc
+    if len(data) > ARCHIVE_MAX_COMPRESSED_BYTES:
+        raise ArtifactRetrievalError("artifact download exceeds compressed size limit")
     actual = hashlib.new(artifact.algorithm, data).hexdigest()
+    logger.debug("artifact checksum expected=%s actual=%s", artifact.digest, actual)
     if actual.lower() != artifact.digest.lower():
         raise ChecksumMismatchError(
             f"{artifact.artifact_kind} checksum mismatch: expected {artifact.checksum}"
@@ -804,6 +1065,8 @@ def materialize_artifact(
                 "artifact_checksum": artifact.checksum,
             }
         )
+        tree_digest, tree_scope = compute_materialized_tree_hash(staging)
+        manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
         if target.exists():
             shutil.rmtree(target)
@@ -867,6 +1130,13 @@ def materialize_repo(
     if kwargs:
         unexpected = next(iter(kwargs))
         raise TypeError(f"unexpected materialization option {unexpected!r}")
+    archive_fetcher = getattr(resolver, "_get_archive_bytes", None)
+    if archive_fetcher is None:
+        fetch_archive = lambda: resolver._get_bytes(archive_url)  # type: ignore[attr-defined]
+    else:
+        fetch_archive = lambda: archive_fetcher(
+            archive_url, ARCHIVE_MAX_COMPRESSED_BYTES
+        )
     return _materialize_hosted_repo(
         root,
         spec,
@@ -874,7 +1144,7 @@ def materialize_repo(
         repo,
         scope.commit_sha,
         host=host,
-        fetch_archive=lambda: resolver._get_bytes(archive_url),  # type: ignore[attr-defined]
+        fetch_archive=fetch_archive,
         tree_source=resolver,
         **hosted_options,  # type: ignore[arg-type]
     )

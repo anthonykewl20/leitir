@@ -12,6 +12,7 @@ import pytest
 from tools.score_engine import (
     CheckStatus,
     OpenSSFCollectionState,
+    PINNED_OPENSSF_SCORECARD_VERSION,
     collect_openssf_scorecard,
     evaluate_process_supply_chain_collection,
     load_policy,
@@ -27,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 POLICY = REPO_ROOT / "scorecard" / "policy-v1.json"
 
 
-def test_fresh_public_payload_collects_successfully_but_v53_is_rejected():
+def test_fresh_public_payload_collects_and_matches_pinned_version():
     collection = collect_openssf_scorecard("ossf/scorecard")
 
     assert collection.state is OpenSSFCollectionState.AVAILABLE
@@ -39,10 +40,9 @@ def test_fresh_public_payload_collects_successfully_but_v53_is_rejected():
     evaluation = evaluate_process_supply_chain_collection(
         policy=load_policy(POLICY), collection=collection
     )
-    assert evaluation.provenance.tool_version == "v5.3.0"
-    assert all(item.status is CheckStatus.ERROR for item in evaluation.checks)
-    assert {item.reason_code for item in evaluation.checks} == {
-        "OPENSSF_VERSION_MISMATCH"
+    assert evaluation.provenance.tool_version == PINNED_OPENSSF_SCORECARD_VERSION
+    assert "OPENSSF_VERSION_MISMATCH" not in {
+        item.reason_code for item in evaluation.checks
     }
 
 

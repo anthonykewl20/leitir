@@ -106,10 +106,61 @@ def enumerate_shelved_sources(
             host=entry["host"],
         )
         if manifest is None:
-            raise ValueError(f"source has no valid manifest: {entry['path']}")
+            raise ValueError(
+                "source has no valid manifest (run 'leitir upgrade-cache' to "
+                f"migrate legacy shelves): {entry['path']}"
+            )
         result.append((dict(entry), manifest, target))
     result.sort(key=lambda item: tuple(str(part) for part in _key(item[0])))
     return result
+
+
+def find_materialized_sources(
+    spec: str, root: str | os.PathLike[str] | None = None
+) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
+    """Return all shelved sources matching a parsed, resolved identity."""
+    from leitir.spec import parse_corpus_spec
+
+    parsed = parse_corpus_spec(spec)
+    is_bare_name = (
+        parsed.ecosystem == "npm"
+        and parsed.version is None
+        and parsed.host is None
+        and parsed.name == spec
+    )
+
+    def matches_identity(item: tuple[dict[str, Any], dict[str, object], Path]) -> bool:
+        entry, manifest, _target = item
+        if is_bare_name:
+            return entry.get("name") == parsed.name
+        if parsed.ecosystem is not None:
+            ecosystem = manifest.get("ecosystem") or (
+                entry.get("host")
+                if entry.get("host") in {"npm", "pypi", "crates", "go"}
+                else None
+            )
+            if ecosystem != parsed.ecosystem or entry.get("name") != parsed.name:
+                return False
+            return parsed.version is None or parsed.version in {
+                manifest.get("version"),
+                manifest.get("tag"),
+                manifest.get("commit_sha"),
+            }
+
+        slug = f"{entry.get('owner')}/{entry.get('repo')}"
+        if entry.get("host") != parsed.host or slug != parsed.name:
+            return False
+        if parsed.ref is None:
+            return True
+        if parsed.ref_kind == "sha":
+            return entry.get("commit_sha") == parsed.ref
+        return parsed.ref in {
+            manifest.get("tag"),
+            manifest.get("branch"),
+            manifest.get("commit_sha"),
+        }
+
+    return [item for item in enumerate_shelved_sources(root) if matches_identity(item)]
 
 
 def record_trust(
@@ -118,9 +169,7 @@ def record_trust(
     """Compute and persist trust for one uniquely matching shelved source."""
     from leitir.trust import compute_trust
 
-    sources = enumerate_shelved_sources(root)
-    exact = [item for item in sources if item[1].get("spec") == spec]
-    matches = exact or [item for item in sources if item[0].get("name") == spec]
+    matches = find_materialized_sources(spec, root)
     if not matches:
         raise ValueError(f"source is not materialized: {spec}")
     if len(matches) != 1:
@@ -402,8 +451,9 @@ def materialize_source(
             on_fetch=on_fetch,
             **fetch_options,  # type: ignore[arg-type]
         )
+    manifest_owner = f"~{owner}" if host == "git.sr.ht" and not owner.startswith("~") else owner
     manifest = read_valid_manifest(
-        target, owner, repo, scope.commit_sha, host=host
+        target, manifest_owner, repo, scope.commit_sha, host=host
     )
     if manifest is None:
         raise RuntimeError("materializer returned a source without a valid manifest")

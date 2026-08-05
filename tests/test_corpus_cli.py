@@ -8,7 +8,8 @@ import json
 import pytest
 
 from leitir.cli import ExitCode, _ensure_local_gitignore, main, parse_corpus_spec
-from leitir.corpus import write_sources
+from leitir.corpus import record_trust, write_sources
+from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
 SHA = "a" * 40
 
@@ -63,7 +64,24 @@ def _fabricate(root):
     relative = f"repos/github.com/acme/demo/{SHA}"
     source = root / relative
     source.mkdir(parents=True)
-    (source / "leitir-manifest.json").write_text(json.dumps({"version": "1.2.3"}))
+    (source / "leitir-manifest.json").write_text(
+        json.dumps(
+            {
+                "version": "1.2.3",
+                "host": "github.com",
+                "owner": "acme",
+                "repo": "demo",
+                "commit_sha": SHA,
+                "fetch_method": "codeload-tarball",
+                "spec": f"acme/demo@{SHA}",
+                "repo_url": "https://github.com/acme/demo",
+                "fetched_at": "2026-08-03T00:00:00Z",
+                "verified": False,
+                "verified_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
     entry = {
         "name": "demo",
         "host": "github.com",
@@ -75,6 +93,142 @@ def _fabricate(root):
     }
     write_sources(root, [entry])
     return source, entry
+
+
+def _fabricate_package(root, *, sha=SHA, ecosystem="pypi", name="six", version="1.17.0"):
+    relative = f"repos/github.com/acme/{name}/{sha}"
+    source = root / relative
+    source.mkdir(parents=True)
+    (source / "leitir-manifest.json").write_text(
+        json.dumps({
+            "spec": f"{ecosystem}:{name}",
+            "ecosystem": ecosystem,
+            "version": version,
+            "host": "github.com",
+            "owner": "acme",
+            "repo": name,
+            "commit_sha": sha,
+            "fetch_method": "codeload-tarball",
+            "repo_url": f"https://github.com/acme/{name}",
+            "fetched_at": "2026-08-03T00:00:00Z",
+        }),
+        encoding="utf-8",
+    )
+    entry = {
+        "name": name,
+        "host": "github.com",
+        "owner": "acme",
+        "repo": name,
+        "commit_sha": sha,
+        "path": relative,
+        "fetched_at": "2026-08-03T00:00:00Z",
+    }
+    return source, entry
+
+
+def _fabricate_repo(root, *, sha=SHA, tag=None):
+    relative = f"repos/github.com/owner/repo/{sha}"
+    source = root / relative
+    source.mkdir(parents=True)
+    manifest = {
+        "spec": "owner/repo",
+        "host": "github.com",
+        "owner": "owner",
+        "repo": "repo",
+        "commit_sha": sha,
+        "fetch_method": "codeload-tarball",
+        "repo_url": "https://github.com/owner/repo",
+        "fetched_at": "2026-08-03T00:00:00Z",
+    }
+    if tag is not None:
+        manifest["tag"] = tag
+    (source / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    entry = {
+        "name": "repo",
+        "host": "github.com",
+        "owner": "owner",
+        "repo": "repo",
+        "commit_sha": sha,
+        "path": relative,
+        "fetched_at": "2026-08-03T00:00:00Z",
+    }
+    return source, entry
+
+
+class _TrustResult:
+    def as_dict(self):
+        return {"trust_score": 100}
+
+
+@pytest.fixture
+def fake_trust(monkeypatch):
+    monkeypatch.setattr("leitir.trust.compute_trust", lambda _manifest, _target: _TrustResult())
+
+
+def test_record_trust_matches_package_version_by_resolved_identity(tmp_path, fake_trust):
+    source, entry = _fabricate_package(tmp_path)
+    write_sources(tmp_path, [entry])
+
+    matched, _result, target = record_trust("pypi:six@1.17.0", tmp_path)
+
+    assert matched == entry
+    assert target == source
+
+
+def test_record_trust_bare_name_still_matches(tmp_path, fake_trust):
+    source, entry = _fabricate_package(tmp_path)
+    write_sources(tmp_path, [entry])
+
+    matched, _result, target = record_trust("six", tmp_path)
+
+    assert matched == entry
+    assert target == source
+
+
+def test_record_trust_missing_identity_raises(tmp_path, fake_trust):
+    _source, entry = _fabricate_package(tmp_path)
+    write_sources(tmp_path, [entry])
+
+    with pytest.raises(ValueError, match="source is not materialized"):
+        record_trust("pypi:missing@1.0.0", tmp_path)
+
+
+def test_record_trust_ambiguous_identity_raises(tmp_path, fake_trust):
+    _source, first = _fabricate_package(tmp_path)
+    _source, second = _fabricate_package(tmp_path, sha="b" * 40, version="2.0.0")
+    write_sources(tmp_path, [first, second])
+
+    with pytest.raises(ValueError, match="source spec is ambiguous"):
+        record_trust("pypi:six", tmp_path)
+
+
+@pytest.mark.parametrize("spec", [f"owner/repo@{SHA}", f"github:owner/repo@{SHA}"])
+def test_record_trust_matches_repo_commit_sha(tmp_path, fake_trust, spec):
+    source, entry = _fabricate_repo(tmp_path)
+    write_sources(tmp_path, [entry])
+
+    matched, _result, target = record_trust(spec, tmp_path)
+
+    assert matched == entry
+    assert target == source
+
+
+def test_record_trust_matches_repo_tag(tmp_path, fake_trust):
+    source, entry = _fabricate_repo(tmp_path, tag="v1.0")
+    write_sources(tmp_path, [entry])
+
+    matched, _result, target = record_trust("owner/repo@v1.0", tmp_path)
+
+    assert matched == entry
+    assert target == source
+
+
+def test_record_trust_missing_repo_raises(tmp_path, fake_trust):
+    _source, entry = _fabricate_repo(tmp_path)
+    write_sources(tmp_path, [entry])
+
+    with pytest.raises(ValueError, match="source is not materialized"):
+        record_trust(f"other/repo@{SHA}", tmp_path)
 
 
 def _invoke(argv):
@@ -106,9 +260,16 @@ def test_list_human_and_json(tmp_path, monkeypatch):
 def test_list_renders_each_verification_state(tmp_path, monkeypatch, verified, label):
     monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
     source, entry = _fabricate(tmp_path)
-    (source / "leitir-manifest.json").write_text(
-        json.dumps({"version": "1.2.3", "verified": verified}), encoding="utf-8"
+    manifest_path = source / "leitir-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        verified=verified,
+        verified_at="2026-08-03T00:00:00Z" if verified in (True, "sampled") else None,
     )
+    if verified in (True, "sampled"):
+        digest, scope = compute_materialized_tree_hash(source)
+        manifest.update(manifest_digest_fields(digest, scope=scope))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     code, out, _ = _invoke(["list"])
     assert code == ExitCode.SUCCESS
@@ -116,6 +277,91 @@ def test_list_renders_each_verification_state(tmp_path, monkeypatch, verified, l
     code, out, _ = _invoke(["list", "--json"])
     assert code == ExitCode.SUCCESS
     assert json.loads(out) == [dict(entry, verification=label)]
+
+
+def _legacy_upgrade_shelf(root, name, *, verified=True, digest=False):
+    target = root / "repos" / "github.com" / "acme" / name / SHA
+    target.mkdir(parents=True)
+    (target / "payload.txt").write_text(name, encoding="utf-8")
+    manifest = {"verified": verified}
+    if digest:
+        value, scope = compute_materialized_tree_hash(target)
+        manifest.update(manifest_digest_fields(value, scope=scope))
+    path = target / "leitir-manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return target, path
+
+
+def test_upgrade_cache_backfills_verified_shelves_and_is_idempotent(tmp_path):
+    legacy, legacy_manifest = _legacy_upgrade_shelf(tmp_path, "legacy")
+    _existing, existing_manifest = _legacy_upgrade_shelf(
+        tmp_path, "existing", digest=True
+    )
+    _unverified, unverified_manifest = _legacy_upgrade_shelf(
+        tmp_path, "unverified", verified=False
+    )
+
+    code, out, err = _invoke(["upgrade-cache", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS
+    assert out == "Upgraded 1 shelves, skipped 1 (already had digest), failed 0 (see warnings)\n"
+    assert err == ""
+    upgraded = json.loads(legacy_manifest.read_text(encoding="utf-8"))
+    digest, scope = compute_materialized_tree_hash(legacy)
+    assert upgraded == {
+        "verified": True,
+        **manifest_digest_fields(digest, scope=scope),
+    }
+    assert "materialized_tree_hash" not in json.loads(
+        unverified_manifest.read_text(encoding="utf-8")
+    )
+
+    code, out, _err = _invoke(["upgrade-cache", "--root", str(tmp_path)])
+    assert code == ExitCode.SUCCESS
+    assert out == "Upgraded 0 shelves, skipped 2 (already had digest), failed 0 (see warnings)\n"
+    assert existing_manifest.exists()
+
+
+def test_upgrade_cache_laundered_bytes_documented_semantics(tmp_path):
+    target, manifest_path = _legacy_upgrade_shelf(tmp_path, "legacy")
+    (target / "payload.txt").write_text("tampered", encoding="utf-8")
+
+    code, _out, _err = _invoke(["upgrade-cache", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS
+    upgraded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    digest, scope = compute_materialized_tree_hash(target)
+    assert upgraded["materialized_tree_hash"] == digest
+    assert upgraded["materialized_tree_hash_scope"] == scope
+
+
+def test_upgrade_cache_dry_run_does_not_write(tmp_path):
+    _target, manifest_path = _legacy_upgrade_shelf(tmp_path, "legacy")
+    original = manifest_path.read_bytes()
+
+    code, out, err = _invoke(
+        ["upgrade-cache", "--root", str(tmp_path), "--dry-run"]
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert out == "Upgraded 1 shelves, skipped 0 (already had digest), failed 0 (see warnings)\n"
+    assert err == ""
+    assert manifest_path.read_bytes() == original
+
+
+def test_upgrade_cache_hash_failure_is_reported_without_writing(tmp_path, monkeypatch):
+    target, manifest_path = _legacy_upgrade_shelf(tmp_path, "legacy")
+    (target / "unsupported\nname").write_bytes(b"data")
+    original = manifest_path.read_bytes()
+    warnings: list[tuple[object, ...]] = []
+    monkeypatch.setattr("leitir.cli.logger.warning", lambda *args: warnings.append(args))
+
+    code, out, _err = _invoke(["upgrade-cache", "--root", str(tmp_path)])
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert out == "Upgraded 0 shelves, skipped 0 (already had digest), failed 1 (see warnings)\n"
+    assert manifest_path.read_bytes() == original
+    assert warnings and warnings[0][1] == target
 
 
 def test_remove_and_clean_fabricated_corpus(tmp_path, monkeypatch):
@@ -319,7 +565,10 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
 
     expected = corpus / f"api/github.com/acme/demo/1.0.0/index.json"
     assert code == ExitCode.SUCCESS
-    assert out.strip() == str(expected)
+    assert out.strip().splitlines() == [
+        str(expected),
+        "function demo.public(value: int)",
+    ]
     assert "resolving" in err and "extracting API surface" in err
     payload = json.loads(expected.read_text(encoding="utf-8"))
     assert payload["methods"] == ["ast"]
@@ -334,6 +583,15 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
         "symbols": 1,
         "by_kind": {"function": 1, "class": 0, "method": 0, "constant": 0},
         "method": "ast",
+        "top_symbols": [{
+            "kind": "function",
+            "name": "public",
+            "qualified_name": "demo.public",
+            "path": "demo.py",
+            "line": 1,
+            "signature": "(value: int)",
+            "docstring": None,
+        }],
     }
 
 

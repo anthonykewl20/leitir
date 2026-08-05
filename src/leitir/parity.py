@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import io
 import json
+import logging
 import shutil
 import tempfile
 import zipfile
@@ -16,7 +17,14 @@ from typing import Callable
 
 from leitir import _http
 from leitir.credentials import Credentials
-from leitir.materialize import MANIFEST_NAME, UnsafeArchiveError, _extract_tarball
+from leitir.materialize import (
+    ARCHIVE_MAX_COMPRESSED_BYTES,
+    MANIFEST_NAME,
+    UnsafeArchiveError,
+    _extract_tarball,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ChecksumMismatchError(Exception):
@@ -199,11 +207,18 @@ def compare_trees(git_tree: Path, artifact_tree: Path) -> ParityResult:
 
     git_files = files(git_tree)
     artifact_files = files(artifact_tree)
+    logger.debug("parity comparing git=%s artifact=%s git_files=%d artifact_files=%d", git_tree, artifact_tree, len(git_files), len(artifact_files))
     common = sorted(set(git_files) & set(artifact_files))
     differs = any(git_files[path].read_bytes() != artifact_files[path].read_bytes() for path in common)
     only_git = len(set(git_files) - set(artifact_files))
     only_artifact = len(set(artifact_files) - set(git_files))
     verdict = "exact" if not differs and only_git == 0 and only_artifact == 0 else "drift"
+    if logger.isEnabledFor(logging.DEBUG):
+        mismatches = [
+            path for path in common
+            if git_files[path].read_bytes() != artifact_files[path].read_bytes()
+        ]
+        logger.debug("parity outcome=%s mismatched=%d sample=%s only_git=%d only_artifact=%d", verdict, len(mismatches), mismatches[:5], only_git, only_artifact)
     return ParityResult(verdict, len(common), only_git, only_artifact)
 
 
@@ -221,10 +236,12 @@ class RegistryArtifactFetcher:
         sleeper: Callable[[float], None] | None = None,
         get_json: Callable[[str], object] | None = None,
         get_bytes: Callable[[str], bytes] | None = None,
+        max_bytes: int | None = None,
     ) -> None:
         self._timeout = timeout
         self._get_json_override = get_json
         self._get_bytes_override = get_bytes
+        self._max_bytes = max_bytes
         self._credentials = Credentials()
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
@@ -235,30 +252,40 @@ class RegistryArtifactFetcher:
         )
 
     def _request_json(self, url: str) -> object:
+        logger.debug("artifact metadata request url=%s", url)
         if self._get_json_override is not None:
             return self._get_json_override(url)
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         headers = self._credentials.headers(
             url, {"Accept": "application/json", "User-Agent": "leitir"}
         )
-        with urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
+        with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
             if not response.geturl().startswith("https://"):
                 raise ValueError("registry redirect must use HTTPS")
             return json.load(response)
 
     def _request_bytes(self, url: str) -> bytes:
+        logger.debug("artifact download request url=%s", url)
         if self._get_bytes_override is not None:
-            return self._get_bytes_override(url)
-        from urllib.request import Request, urlopen
+            data = self._get_bytes_override(url)
+            if self._max_bytes is not None and len(data) > self._max_bytes:
+                raise ValueError("artifact download exceeds compressed size limit")
+            return data
+        from urllib.request import Request
 
         headers = self._credentials.headers(
             url, {"Accept": "application/octet-stream", "User-Agent": "leitir"}
         )
-        with urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
+        with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as response:
             if not response.geturl().startswith("https://"):
                 raise ValueError("artifact redirect must use HTTPS")
-            return response.read()
+            if self._max_bytes is None:
+                return response.read()
+            data = response.read(self._max_bytes + 1)
+            if len(data) > self._max_bytes:
+                raise ValueError("artifact download exceeds compressed size limit")
+            return data
 
     def metadata(self, ecosystem: str, name: str, version: str) -> object:
         from urllib.parse import quote
@@ -286,8 +313,10 @@ def package_parity(
 ) -> ParityResult:
     """Fetch, authenticate, extract, and compare one package source artifact."""
     if ecosystem not in {"npm", "pypi", "crates"}:
+        logger.debug("parity outcome=unknown ecosystem=%s", ecosystem)
         return UNKNOWN_PARITY
-    client = fetcher or RegistryArtifactFetcher()
+    logger.debug("parity package ecosystem=%s name=%s version=%s", ecosystem, name, version)
+    client = fetcher or RegistryArtifactFetcher(max_bytes=ARCHIVE_MAX_COMPRESSED_BYTES)
     try:
         if artifact is None:
             if metadata is None:
@@ -308,6 +337,7 @@ def package_parity(
             artifact.checksum,
         )
     actual = hashlib.new(artifact.algorithm, data).hexdigest()
+    logger.debug("parity checksum expected=%s actual=%s", artifact.digest, actual)
     if actual.lower() != artifact.digest.lower():
         raise ChecksumMismatchError(
             f"{artifact.artifact_kind} checksum mismatch: expected {artifact.checksum}"

@@ -8,7 +8,14 @@ import pytest
 
 import _http_server as hs
 import fixtures_resolver as fx
-from leitir.resolver import BitbucketResolver, ResolutionError
+from leitir.resolver import (
+    BitbucketResolver,
+    Ecosystem,
+    GoResolver,
+    PackageRef,
+    ResolutionError,
+    TagAbsentError,
+)
 
 
 SHA = "a" * 40
@@ -56,9 +63,46 @@ def test_404_is_wrapped_without_retry():
     sleeps = []
     with hs.scripted_server([(404, {}, b"")]) as server:
         resolver = BitbucketResolver(base_url=server.base_url, sleeper=sleeps.append)
-        with pytest.raises(ResolutionError, match="HTTP 404"):
+        with pytest.raises(TagAbsentError, match="HTTP 404"):
             resolver.resolve_tag_to_sha("owner/repo", "missing")
     assert sleeps == []
+
+
+def test_non_404_stays_resolution_error():
+    with hs.scripted_server([(403, {}, b"")]) as server:
+        with pytest.raises(ResolutionError, match="HTTP 403") as caught:
+            _resolver(server.base_url, max_attempts=1).resolve_tag_to_sha(
+                "owner/repo", "main"
+            )
+    assert not isinstance(caught.value, TagAbsentError)
+
+
+def test_go_subpath_tag_advances_after_absent_candidate():
+    responses = [
+        (404, {}, b""),
+        (200, {}, hs.json_body({"hash": SHA})),
+    ]
+    with hs.scripted_server(responses) as repository, hs.scripted_server(
+        [(200, {}, hs.json_body({}))]
+    ) as proxy:
+        hosted = _resolver(repository.base_url)
+        resolver = GoResolver(
+            hosted,
+            base_url=proxy.base_url,
+            repository_resolvers={"bitbucket.org": hosted},
+        )
+        result = resolver.resolve(
+            PackageRef(
+                Ecosystem.GO,
+                "bitbucket.org/owner/repo/submodule",
+                "v1.0.0",
+            )
+        )
+
+    assert result.scope.slug == "owner/repo"
+    assert result.subpath == "submodule"
+    assert result.tag == "v1.0.0"
+    assert repository.state.served_count == 2
 
 
 def test_rate_limit_retries():
@@ -105,7 +149,7 @@ def test_environment_token_uses_bearer_only_for_https_api_host(monkeypatch):
         return io.BytesIO(hs.json_body({"hash": SHA}))
 
     monkeypatch.setenv("BITBUCKET_TOKEN", "secret-value")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert BitbucketResolver().resolve_tag_to_sha("owner/repo", "main") == SHA
     assert captured["Authorization"] == "Bearer secret-value"
 

@@ -9,12 +9,14 @@ a ``SearchReport`` whose coverage is always ``INDETERMINATE_GLOBAL``.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Callable, Protocol, runtime_checkable
 
 from leitir import _http
 from leitir.adapters import LanguageAdapter
+from leitir.credentials import validate_secret
 from leitir.engine import score_content
 from leitir.search import (
     Coverage,
@@ -31,6 +33,7 @@ from leitir.tree import TreeSource
 _API = "https://api.github.com"
 _RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +107,8 @@ class GitHubCodeSearchTransport:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         endpoint = urlsplit(self._base_url)
+        if self._token is not None:
+            validate_secret(self._token, kind="token")
         if (
             self._token
             and endpoint.scheme == "https"
@@ -114,14 +119,15 @@ class GitHubCodeSearchTransport:
 
     def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
         from urllib.parse import urlencode
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
 
         params = urlencode({"q": query, "per_page": min(per_page, 100), "page": page})
         url = f"{self._base_url}/search/code?{params}"
+        logger.debug("code search query=%s per_page=%d page=%d", query, min(per_page, 100), page)
         headers = self._headers()
 
         def _fetch() -> dict:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
@@ -143,6 +149,7 @@ class GitHubCodeSearchTransport:
                 continue
             hits.append(CodeSearchHit(slug=slug, path=path, blob_sha=sha, html_url=html_url))
 
+        logger.debug("code search total_count=%s hits=%d", payload.get("total_count", 0), len(hits))
         return CodeSearchPage(
             hits=tuple(hits),
             total_count=payload.get("total_count", 0),
@@ -151,17 +158,18 @@ class GitHubCodeSearchTransport:
 
     def resolve_head_sha(self, slug: str, branch: str | None = None) -> str:
         """Resolve a repository's default HEAD, or an explicitly named branch."""
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
         from urllib.parse import urlencode
 
         query = {"per_page": 1}
         if branch is not None:
             query = {"sha": branch, "per_page": 1}
         url = f"{self._base_url}/repos/{slug}/commits?{urlencode(query)}"
+        logger.debug("resolve head sha slug=%s branch=%s", slug, branch or "HEAD")
         headers = self._headers()
 
         def _fetch() -> list:
-            with urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 return json.load(resp)
 
         try:
@@ -178,12 +186,15 @@ class GitHubCodeSearchTransport:
         return sha
 
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
-        from urllib.request import Request, urlopen
+        from urllib.parse import quote
+        from urllib.request import Request
 
-        url = f"{self._raw_base_url}/{slug}/{commit_sha}/{path}"
+        safe_slug = quote(slug, safe="/")
+        safe_path = quote(path, safe="/")
+        url = f"{self._raw_base_url}/{safe_slug}/{commit_sha}/{safe_path}"
 
         def _fetch() -> bytes:
-            with urlopen(
+            with _http.safe_urlopen(
                 Request(url, headers={"User-Agent": "leitir"}), timeout=self._timeout
             ) as resp:
                 return resp.read()

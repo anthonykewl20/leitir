@@ -5,6 +5,7 @@ import re
 
 from leitir.corpus import write_sources
 from leitir.sbom import generate_sbom
+from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
 
 def _fixture(tmp_path):
@@ -28,6 +29,8 @@ def _fixture(tmp_path):
         "verified_at": "2026-08-03T00:00:00Z", "version": "1.2.3", "ecosystem": "npm",
         "license": "MIT", "parity": "exact",
     }
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest.update(manifest_digest_fields(digest, scope=scope))
     (target / "leitir-manifest.json").write_text(json.dumps(manifest))
     write_sources(corpus, [{
         "name": "demo", "host": "github.com", "owner": "acme", "repo": "demo",

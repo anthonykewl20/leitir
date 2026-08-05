@@ -7,7 +7,8 @@ allowed-tools: Bash(leitir:*)
 ## 1. Required workflow
 
 - **Consult before writing.** Read proven source before behavior-sensitive output; avoid memory-based inference.
-- Start with `leitir info <spec>` first. It returns provenance, symbols, usage examples, trust score, and parity in one call.
+- Start with `leitir info <spec>` first. It returns the extracted public contract (signatures and docstrings), top usage code, provenance, trust score, and parity in one call.
+- Synthesize from the surfaced contract; read full files only when behavior beyond the extracted surface matters.
 - If `info` shows low trust, mismatched version, missing examples, or unclear parity, fetch deeper immediately.
 - Run `leitir get <spec>` (or `leitir fetch` for prefetch) before any deep analysis.
 - Read `POINTERS.md` in the materialized source root first.
@@ -31,8 +32,8 @@ allowed-tools: Bash(leitir:*)
 ## 2. Commands
 
 - **Materialize**: `leitir get <spec>...` (prints absolute paths), `fetch` (no paths) with flags `--local`, `--root`, `--cwd`, `--no-verify` (avoid `--no-verify`).
-- **One-shot context**: `leitir info <spec>` (use first). Add `--json` for machine output.
-- **Analyze**: `leitir api <spec>`, `leitir examples <spec>`, `leitir trust <spec>`, `leitir diff <a> <b>`.
+- **One-shot context**: `leitir info <spec>` (use first) returns public signatures, docstrings, top usage code, and provenance. Add `--json` for machine output.
+- **Analyze**: `leitir api <spec>` returns the bounded public-symbol contract with provenance; `leitir examples <spec>` returns usage code; also available: `leitir trust <spec>`, `leitir diff <a> <b>`. Synthesize from these outputs before reading full files for deeper behavior.
 - **Manage**: `leitir list [--json]`, `leitir remove <spec>`, `leitir clean [--repos]`.
 - **Reproducibility**: `leitir lock [--cwd] [--best-effort]` (materialize transitive closure), `leitir export [-o corpus.lock]`, `leitir import <corpus.lock>`.
 - **SBOM**: `leitir sbom [--format spdx|cyclonedx]`.

@@ -5,14 +5,21 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
 import pytest
 
 from leitir.cli import ExitCode, main
-from leitir.materialize import MaterializationError, materialize_github_repo, read_valid_manifest
-from leitir.tree import GitHubTreeSource
+from leitir.materialize import (
+    MaterializationError,
+    VerificationError,
+    _verify_extracted_tree,
+    materialize_github_repo,
+    read_valid_manifest,
+)
+from leitir.tree import BlobEntry, GitHubTreeSource
 
 from _http_server import json_body, routed_server
 
@@ -147,6 +154,134 @@ def test_missing_extracted_regular_file_is_a_mismatch(tmp_path):
         with pytest.raises(MaterializationError, match="VerificationError"):
             _materialize(tmp_path, server.base_url)
     assert not (tmp_path / "repos/github.com/acme/demo" / SHA).exists()
+
+
+class _FakeTreeSource:
+    def __init__(self, entries: tuple[BlobEntry, ...], blobs: dict[str, bytes]) -> None:
+        self.entries = entries
+        self.blobs = blobs
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+    def read_blob(self, _slug: str, blob_sha: str) -> bytes:
+        return self.blobs[blob_sha]
+
+
+class _FakeGitHubTreeSource(GitHubTreeSource):
+    def __init__(self, entries: tuple[BlobEntry, ...], blobs: dict[str, bytes]) -> None:
+        self.entries = entries
+        self.blobs = blobs
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+    def read_blob(self, _slug: str, blob_sha: str) -> bytes:
+        return self.blobs[blob_sha]
+
+    def read_blob_at_commit(self, _slug: str, _commit_sha: str, path: str) -> bytes:
+        entry = next(entry for entry in self.entries if entry.path == path)
+        return self.blobs[entry.blob_sha]
+
+
+def _verify_direct(staging: Path, source: object) -> bool | str:
+    status, _normalized = _verify_extracted_tree(
+        staging,
+        "acme",
+        "demo",
+        SHA,
+        source,
+        max_files=100,
+        max_bytes=1024,
+    )
+    return status
+
+
+def test_matching_symbolic_link_is_verified(tmp_path):
+    target = "realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to(target)
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", GitHubTreeSource.git_blob_sha(target.encode()), len(target), "120000"),
+    )
+
+    assert _verify_direct(tmp_path, _FakeGitHubTreeSource(entries, {})) is True
+
+
+def test_tampered_symbolic_link_is_rejected(tmp_path):
+    expected_target = "realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("other")
+    link_sha = GitHubTreeSource.git_blob_sha(expected_target.encode())
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", link_sha, len(expected_target), "120000"),
+    )
+    source = _FakeGitHubTreeSource(entries, {link_sha: expected_target.encode()})
+
+    with pytest.raises(VerificationError):
+        _verify_direct(tmp_path, source)
+
+
+def test_non_github_symbolic_link_digest_mismatch_is_sampled(tmp_path):
+    expected_target = b"realfile"
+    (tmp_path / "link").symlink_to("other")
+    link_sha = GitHubTreeSource.git_blob_sha(expected_target)
+    entries = (BlobEntry("link", link_sha, len(expected_target), "120000"),)
+
+    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {link_sha: b"followed"})) == "sampled"
+
+
+@pytest.mark.parametrize("variant", ["missing", "extra"])
+def test_symbolic_link_universe_mismatch_is_sampled(tmp_path, variant):
+    target = "realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    if variant == "extra":
+        (tmp_path / "extra").symlink_to(target)
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", GitHubTreeSource.git_blob_sha(target.encode()), len(target), "120000"),
+    )
+
+    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {})) == "sampled"
+
+
+def test_symbolic_link_eol_difference_is_rejected(tmp_path):
+    extracted_target = "realfile\r"
+    expected_target = b"realfile\n"
+    (tmp_path / "link").symlink_to(extracted_target)
+    link_sha = GitHubTreeSource.git_blob_sha(expected_target)
+    entries = (BlobEntry("link", link_sha, len(expected_target), "120000"),)
+
+    with pytest.raises(VerificationError, match="symbolic-link blob digest mismatch"):
+        _verify_direct(tmp_path, _FakeGitHubTreeSource(entries, {link_sha: expected_target}))
+
+
+def test_non_utf8_symbolic_link_target_verifies(tmp_path):
+    raw_target = b"target-\xff"
+    os.symlink(raw_target, os.fsencode(tmp_path / "link"))
+    entries = (
+        BlobEntry(
+            "link",
+            GitHubTreeSource.git_blob_sha(raw_target),
+            len(raw_target),
+            "120000",
+        ),
+    )
+
+    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {})) is True
+
+
+def test_mode_less_tree_verification_is_never_fully_claimed(tmp_path):
+    content = b"proof"
+    (tmp_path / "proof.txt").write_bytes(content)
+    entries = (
+        BlobEntry("proof.txt", GitHubTreeSource.git_blob_sha(content), len(content)),
+        BlobEntry("missing.txt", GitHubTreeSource.git_blob_sha(b"missing"), 7),
+    )
+
+    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {})) == "sampled"
 
 
 def test_unenumerable_tree_is_hard_failure(tmp_path):

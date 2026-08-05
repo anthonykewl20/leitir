@@ -45,6 +45,7 @@ _OPENROUTER_KEY = re.compile(r"\bsk-or-v1-[A-Za-z0-9._~+/=-]+\b", re.IGNORECASE)
 
 
 def _redact_text(value: str) -> str:
+    value = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1[REDACTED]@", value)
     value = _OPENROUTER_KEY.sub(REDACTED, value)
     value = _AUTH_HEADER.sub(lambda match: match.group(1) + REDACTED, value)
     value = _BEARER.sub(lambda match: match.group(1) + REDACTED, value)
@@ -148,6 +149,16 @@ def configure_logging(
     logger.setLevel(level)
     logger.propagate = False
     if handler is not None and handler not in logger.handlers:
-        logger.addHandler(handler)
+        duplicate = any(
+            isinstance(handler, logging.StreamHandler)
+            and isinstance(current, logging.StreamHandler)
+            and getattr(current, "stream", None) is getattr(handler, "stream", None)
+            and current.level == handler.level
+            and getattr(current.formatter, "_fmt", None)
+            == getattr(handler.formatter, "_fmt", None)
+            for current in logger.handlers
+        )
+        if not duplicate:
+            logger.addHandler(handler)
     install_redaction(logger)
     return logger

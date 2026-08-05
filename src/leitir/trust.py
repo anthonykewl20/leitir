@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from typing import Mapping
 
@@ -24,6 +25,7 @@ _DATE_FIELDS = (
     "commit_date",
     "committed_at",
 )
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,8 @@ def _verification(manifest: Mapping[str, object]) -> dict[str, object]:
         score = 100
     elif state == "sampled":
         score = 70
+    elif state == "archive-only":
+        score = 40
     elif state is False:
         score = 0
     else:
@@ -184,6 +188,7 @@ def compute_trust(manifest: Mapping[str, object], target_path: str | Path) -> Tr
     factors.sort(key=lambda item: str(item["factor"]))
     weighted = sum(int(item["score"]) * int(item["weight"]) for item in factors)
     score = max(0, min(100, (weighted + 50) // 100))
+    logger.debug("trust score=%d factors=%s", score, factors)
     return TrustScore(score, tuple(factors))
 
 

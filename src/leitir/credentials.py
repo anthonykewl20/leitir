@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Mapping
+
+
+def github_token_from_env() -> str | None:
+    """Return the GitHub token using the gh CLI environment precedence."""
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or None
+
+
+def validate_secret(value: str, *, kind: str) -> None:
+    """Reject HTTP-header control characters without disclosing the value."""
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError(f"configured {kind} contains invalid control characters")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -106,8 +118,10 @@ class Credentials:
             )
         if not secret:
             return None
+        validate_secret(secret, kind="token")
         username = self._environ.get(selected.username_env) if selected.username_env else None
         if username:
+            validate_secret(username, kind="username")
             return AuthSpec("basic", selected.header, f"{username}:{secret}", True)
         return AuthSpec("bearer", selected.header, secret)
 
@@ -126,4 +140,4 @@ class Credentials:
         return result
 
 
-__all__ = ["AuthSpec", "Credentials"]
+__all__ = ["AuthSpec", "Credentials", "github_token_from_env", "validate_secret"]

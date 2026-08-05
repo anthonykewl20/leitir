@@ -3,9 +3,17 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from leitir.apisurface import diff_api_indexes, extract_api_surface
 from leitir.cli import ExitCode, main
-from leitir.diff import DiffReport, FileDiff, VersionIdentity, diff_file_trees
+from leitir.diff import (
+    DiffReport,
+    FileDiff,
+    GitHubReleaseNotes,
+    VersionIdentity,
+    diff_file_trees,
+)
 
 
 def test_file_diff_added_removed_modified_and_manifest_excluded(tmp_path):
@@ -115,3 +123,10 @@ def test_report_json_is_deterministic_and_omits_unavailable_notes():
     )
     assert report.to_json() == report.to_json()
     assert "release_notes" not in report.as_dict()
+
+
+@pytest.mark.parametrize("token", ["bad\x00token", "bad\x7ftoken"])
+def test_release_notes_token_control_character_is_rejected_without_disclosure(token):
+    with pytest.raises(ValueError) as error:
+        GitHubReleaseNotes(token=token).fetch("acme/demo", "v1", "1")
+    assert token not in str(error.value)

@@ -1,0 +1,73 @@
+# ADR-006: Load-time materialized-tree verification
+
+- Status: Implemented
+- Date: 2026-08-05
+- Related: issues #17, #18, #19, #20; ADR-004
+
+## Context
+
+The corpus materializer authenticated downloaded archives or checked files
+against a pinned Git tree before shelving them, but later cache hits trusted the
+manifest's `verified` value without checking the bytes still on disk. Issue #17
+added a materialized-tree digest and load-time verification, initially leaving
+the field optional for a migration window. That compatibility path allowed a
+verified legacy shelf to bypass the new check.
+
+## Decision
+
+Leitir stores a deterministic `materialized_tree_hash` in every newly written
+shelf and recomputes it whenever a verified shelf is loaded. A missing,
+malformed, unsupported, or mismatched digest makes the shelf a cache miss.
+Unverified shelves may omit the digest.
+
+The digest uses Go's directory `Hash1` (`h1:`) construction: each regular file
+contributes a SHA-256 content digest, two spaces, its strict-UTF-8 POSIX path,
+and a newline; sorted records are hashed with SHA-256 and standard-base64
+encoded. The root `leitir-manifest.json` is excluded to avoid self-reference.
+
+Symbolic links are records rather than followed files. Their extension is:
+
+```
+hex(sha256(linkname_bytes)) + " -> " + linkname + "  " + path + "\n"
+```
+
+Paths and link targets must be strict UTF-8 and contain no newline. Unsupported
+filesystem entries fail closed.
+
+Full hashing is bounded by `MAX_FILES` (1,000 entries) and `MAX_BYTES` (64 MiB).
+Larger trees use deterministic content-and-path ordering, greedily selecting
+within both limits and always selecting at least one entry. The manifest marks
+the scope as `full` or `sampled`; sampled verification is never represented as
+complete.
+
+## Migration
+
+The migration progressed from optional digests in issue #17 to mandatory
+digests for verified shelves in issue #18. Operators run `leitir upgrade-cache`
+to atomically backfill verified legacy shelves. The command is idempotent and
+supports `--dry-run`. Normal manifest updates also opportunistically attach a
+digest when the existing legacy provenance passes its non-tree-hash checks.
+Hashing failures leave the legacy manifest unchanged and emit a warning.
+
+### Migration trust transfer
+
+`upgrade-cache` is a trust-on-first-use transfer from the legacy
+(provenance-only) model to the new (load-time-verified) model. The command does
+not re-verify shelf bytes against upstream registries: it computes the digest
+from, and therefore locks, whatever bytes are currently on disk. Run it only on
+a corpus whose existing contents you already trust, such as immediately after
+materialization and before an external process could modify the cache. For
+maximum safety, re-materialize suspicious shelves with `leitir get --force`
+instead.
+
+## Consequences and threat boundary
+
+Load-time verification detects post-materialization corruption, accidental
+edits, sync damage, and cache mutation. It is an integrity/corruption check, not
+an authenticity system: an attacker able to replace both tree and manifest can
+replace the digest. TUF metadata or signatures are separate authenticity work.
+
+Every load currently incurs an I/O scan (bounded hashing work for large trees,
+but directory enumeration and content-digest ordering still have costs).
+Reducing that overhead without weakening fail-closed behavior is tracked in
+issue #20.

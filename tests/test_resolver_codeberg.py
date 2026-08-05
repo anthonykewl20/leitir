@@ -48,7 +48,7 @@ def test_environment_token_is_bearer_and_redacted(monkeypatch, capsys):
         return io.BytesIO(hs.json_body([{"sha": SHA}]))
 
     monkeypatch.setenv("CODEBERG_TOKEN", "never-print-this")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert CodebergResolver().resolve_tag_to_sha("owner/repo", "main") == SHA
     assert captured["Authorization"] == "Bearer never-print-this"
     assert "never-print-this" not in capsys.readouterr().err

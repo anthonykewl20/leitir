@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import re
 from typing import TypeAlias
 
 ExamplesIndex: TypeAlias = dict[str, object]
+logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 10
 _SOURCE_DIRS = {"docs", "examples", "tests"}
@@ -154,6 +156,7 @@ def extract_examples(
 ) -> ExamplesIndex:
     """Extract and rank a bounded examples index without network access."""
     symbols = public_symbol_names(api_index)
+    logger.debug("extracting examples path=%s public_symbols=%d limit=%d", target_path, len(symbols), limit)
     ranked: list[dict[str, object]] = []
     for snippet in extract_snippets(target_path):
         matched = match_symbols(str(snippet["code"]), symbols)
@@ -167,6 +170,7 @@ def extract_examples(
             -len(str(item["code"])),
         )
     )
+    logger.debug("examples matched=%d returned=%d", len(ranked), min(len(ranked), max(0, limit)))
     return {
         "schema_version": 1,
         "symbols_source": "api_index",

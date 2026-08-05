@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from .apisurface import extract_api_surface
 from .corpus import (
     api_index_path,
-    enumerate_shelved_sources,
     examples_index_path,
+    find_materialized_sources,
     read_api_index,
     read_examples_index,
     resolve_root,
@@ -19,15 +20,16 @@ from .corpus import (
 from .examples import extract_examples
 from .materialize import update_manifest
 from .sbom import infer_license
-from .spec import parse_corpus_spec
 from .trust import compute_trust
 
 
+TOP_SYMBOLS_LIMIT = 50
+_KIND_PRIORITY = {"class": 0, "function": 1, "method": 2, "constant": 3}
+logger = logging.getLogger(__name__)
+
+
 def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, object], Path]:
-    sources = enumerate_shelved_sources(corpus_root)
-    exact = [item for item in sources if item[1].get("spec") == spec]
-    name = parse_corpus_spec(spec).name
-    matches = exact or [item for item in sources if item[0].get("name") == name]
+    matches = find_materialized_sources(spec, corpus_root)
     if not matches:
         raise ValueError(f"source is not materialized: {spec}")
     if len(matches) != 1:
@@ -42,9 +44,13 @@ def _valid_api(index: object) -> bool:
         and isinstance(index.get("methods"), list)
         and isinstance(index.get("modules"), list)
         and isinstance(index.get("symbols"), list)
-        and all(item in {"ast", "heuristic"} for item in index["methods"])
+        and all(
+            isinstance(item, str) and item in {"ast", "heuristic"}
+            for item in index["methods"]
+        )
         and all(
             isinstance(item, dict)
+            and isinstance(item.get("kind"), str)
             and item.get("kind") in {"function", "class", "method", "constant"}
             and isinstance(item.get("qualified_name"), str)
             for item in index["symbols"]
@@ -56,6 +62,7 @@ def _valid_examples(index: object) -> bool:
     return (
         isinstance(index, dict)
         and index.get("schema_version") == 1
+        and isinstance(index.get("symbols_source"), str)
         and index.get("symbols_source") == "api_index"
         and isinstance(index.get("snippets"), list)
         and all(
@@ -106,14 +113,54 @@ def _cached_trust(manifest: dict[str, object]) -> tuple[int, list[dict[str, obje
     return score, rendered
 
 
+def _line_sort_key(value: object) -> tuple[int, int, str]:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return (0, value, "")
+    return (1, 0, str(value))
+
+
+def _top_symbols(index: dict[str, object]) -> list[dict[str, object]]:
+    symbols = [item for item in index["symbols"] if isinstance(item, dict)]
+    symbols.sort(
+        key=lambda item: (
+            _KIND_PRIORITY.get(str(item.get("kind")), len(_KIND_PRIORITY)),
+            str(item.get("kind", "")),
+            str(item.get("qualified_name", "")),
+            _line_sort_key(item.get("line")),
+            str(item.get("path", "")),
+            str(item.get("name", "")),
+            str(item.get("signature", "")),
+            str(item.get("docstring", "")),
+        )
+    )
+    return [
+        {
+            "kind": item.get("kind"),
+            "name": item.get("name"),
+            "qualified_name": item.get("qualified_name"),
+            "path": item.get("path"),
+            "line": item.get("line"),
+            "signature": item.get("signature"),
+            "docstring": item.get("docstring"),
+        }
+        for item in symbols[:TOP_SYMBOLS_LIMIT]
+    ]
+
+
 def _api_summary(index: dict[str, object], path: Path) -> dict[str, object]:
     symbols = [item for item in index["symbols"] if isinstance(item, dict)]
     by_kind = {kind: 0 for kind in ("function", "class", "method", "constant")}
     for symbol in symbols:
         kind = symbol.get("kind")
-        if kind in by_kind:
-            by_kind[str(kind)] += 1
-    methods = sorted({str(item) for item in index["methods"] if item in {"ast", "heuristic"}})
+        if isinstance(kind, str) and kind in by_kind:
+            by_kind[kind] += 1
+    methods = sorted(
+        {
+            item
+            for item in index["methods"]
+            if isinstance(item, str) and item in {"ast", "heuristic"}
+        }
+    )
     method: str | None
     if methods == ["ast"]:
         method = "ast"
@@ -126,12 +173,14 @@ def _api_summary(index: dict[str, object], path: Path) -> dict[str, object]:
         "by_kind": by_kind,
         "method": method,
         "index_path": str(path.absolute()),
+        "top_symbols": _top_symbols(index),
     }
 
 
 def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
     """Build context from one already-materialized source, filling missing caches."""
 
+    logger.debug("building info spec=%s corpus_root=%s", spec, corpus_root)
     root = resolve_root(corpus_root)
     entry, manifest, target = _source(spec, root)
     subpath = manifest.get("subpath") if isinstance(manifest.get("subpath"), str) else None
@@ -185,6 +234,7 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
             "path": item.get("path"),
             "line": item.get("line"),
             "language": item.get("language"),
+            "code": item.get("code"),
             "symbols": sorted(item.get("symbols", []))
             if isinstance(item.get("symbols"), list)
             else [],

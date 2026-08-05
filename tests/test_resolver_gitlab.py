@@ -7,7 +7,14 @@ import pytest
 
 import _http_server as hs
 import fixtures_resolver as fx
-from leitir.resolver import GitLabResolver, ResolutionError
+from leitir.resolver import (
+    Ecosystem,
+    GitLabResolver,
+    GoResolver,
+    PackageRef,
+    ResolutionError,
+    TagAbsentError,
+)
 
 
 SHA = "a" * 40
@@ -53,9 +60,45 @@ def test_404_is_wrapped_without_retry():
     sleeps = []
     with hs.scripted_server([(404, {}, b"")]) as server:
         resolver = GitLabResolver(base_url=server.base_url, sleeper=sleeps.append)
-        with pytest.raises(ResolutionError, match="HTTP 404"):
+        with pytest.raises(TagAbsentError, match="HTTP 404"):
             resolver.resolve_tag_to_sha("owner/repo", "missing")
     assert sleeps == []
+
+
+def test_non_404_stays_resolution_error():
+    with hs.scripted_server([(500, {}, b"")]) as server:
+        with pytest.raises(ResolutionError, match="HTTP 500") as caught:
+            _resolver(server.base_url, max_attempts=1).resolve_tag_to_sha(
+                "owner/repo", "main"
+            )
+    assert not isinstance(caught.value, TagAbsentError)
+
+
+def test_go_nested_module_advances_after_absent_repository_candidate():
+    responses = [
+        (404, {}, b""),
+        (200, {}, hs.json_body({"id": SHA})),
+    ]
+    with hs.scripted_server(responses) as repository, hs.scripted_server(
+        [(200, {}, hs.json_body({}))]
+    ) as proxy:
+        hosted = _resolver(repository.base_url)
+        resolver = GoResolver(
+            hosted,
+            base_url=proxy.base_url,
+            repository_resolvers={"gitlab.com": hosted},
+        )
+        result = resolver.resolve(
+            PackageRef(
+                Ecosystem.GO,
+                "gitlab.com/group/project/submodule",
+                "v1.0.0",
+            )
+        )
+
+    assert result.scope.slug == "group/project"
+    assert result.subpath == "submodule"
+    assert repository.state.served_count == 2
 
 
 def test_rate_limit_retries():
@@ -103,7 +146,7 @@ def test_environment_token_uses_private_token_only_for_https_host(monkeypatch):
         return io.BytesIO(hs.json_body({"id": SHA}))
 
     monkeypatch.setenv("GITLAB_TOKEN", "secret-value")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert GitLabResolver().resolve_tag_to_sha("owner/repo", "main") == SHA
     assert captured["Private-token"] == "secret-value"
 

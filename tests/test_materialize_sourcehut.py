@@ -26,8 +26,8 @@ def _tarball(content=CONTENT):
     return output.getvalue()
 
 
-def _resolver(server):
-    resolver = SourcehutResolver(base_url=server.base_url, max_attempts=1)
+def _resolver(server, *, token="test-token"):
+    resolver = SourcehutResolver(token=token, base_url=server.base_url, max_attempts=1)
     resolver.archive_url = lambda *_: f"{server.base_url}/archive"  # type: ignore[method-assign]
     return resolver
 
@@ -45,6 +45,23 @@ def test_materializes_fully_verified_sourcehut_tree(tmp_path):
     assert target == tmp_path / "repos/git.sr.ht/~user/repo" / SHA
     assert manifest["repo_url"] == "https://git.sr.ht/~user/repo"
     assert (manifest["fetch_method"], manifest["verified"]) == ("sourcehut-archive", True)
+
+
+def test_anonymous_materialization_records_archive_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("SRHT_TOKEN", raising=False)
+    with hs.scripted_server([(200, {}, _tarball())]) as server:
+        target = materialize_repo(
+            tmp_path,
+            f"sourcehut:~user/repo@{SHA}",
+            RepoScope("user/repo", SHA),
+            host="git.sr.ht",
+            resolver=_resolver(server, token=None),
+        )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["verified"] == "archive-only"
+    assert manifest["verified"] is not True
+    assert manifest["verified_at"]
+    assert server.state.served_count == 1
 
 
 def test_sourcehut_mismatch_fails_closed(tmp_path):

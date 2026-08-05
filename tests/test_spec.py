@@ -79,6 +79,20 @@ def test_repository_host_is_preserved(raw, host):
 
 
 @pytest.mark.parametrize(
+    "prefix",
+    ["github", "gitlab", "bitbucket", "codeberg", "sourcehut"],
+)
+def test_all_repository_hosts_treat_full_sha_as_immutable(prefix):
+    owner = "~owner" if prefix == "sourcehut" else "owner"
+    sha = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+
+    parsed = parse_corpus_spec(f"{prefix}:{owner}/repo@{sha}")
+
+    assert parsed.ref_kind == "sha"
+    assert parsed.ref == sha.lower()
+
+
+@pytest.mark.parametrize(
     "raw",
     [
         "https://github.com.attacker.example/owner/repo",

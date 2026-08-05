@@ -17,6 +17,7 @@ from leitir.snapshot import (
     import_corpus,
     tree_sha,
 )
+from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
 SHA_A = "1" * 40
 SHA_B = "2" * 40
@@ -58,8 +59,11 @@ def make_corpus(root: Path) -> list[dict[str, object]]:
         target.mkdir(parents=True)
         (target / "src").mkdir()
         (target / "src" / "data.bin").write_bytes(content)
+        manifest = _manifest(owner, repo, sha, spec, artifact=artifact)
+        digest, scope = compute_materialized_tree_hash(target)
+        manifest.update(manifest_digest_fields(digest, scope=scope))
         (target / MANIFEST_NAME).write_text(
-            json.dumps(_manifest(owner, repo, sha, spec, artifact=artifact), indent=2, sort_keys=True) + "\n",
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         entries.append(

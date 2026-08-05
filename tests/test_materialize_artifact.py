@@ -10,7 +10,7 @@ import tarfile
 import pytest
 
 from leitir.corpus import materialize_source
-from leitir.materialize import MANIFEST_NAME, materialize_artifact
+from leitir.materialize import MANIFEST_NAME, materialize_artifact, materialize_github_repo
 from leitir.parity import ArtifactInfo, ChecksumMismatchError, RegistryArtifactFetcher
 from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
@@ -75,6 +75,36 @@ def test_materialize_verified_artifact_manifest(tmp_path):
     assert manifest["verified"] is True
     assert manifest["verified_at"]
     assert manifest["has_tests"] is None
+
+
+def test_git_materialization_does_not_reuse_artifact_cache(tmp_path):
+    artifact_data = _tar("package", {"index.js": b"artifact\n"})
+    artifact = _artifact(artifact_data)
+    materialize_artifact(
+        tmp_path,
+        "npm:demo@1.0.0",
+        RepoScope("example/demo", SHA),
+        artifact,
+        fetcher=RegistryArtifactFetcher(get_bytes=lambda _url: artifact_data),
+    )
+    git_data = _tar(f"demo-{SHA}", {"index.js": b"git\n"})
+
+    with scripted_server([(200, {}, git_data)]) as server:
+        target = materialize_github_repo(
+            tmp_path,
+            "example/demo",
+            "example",
+            "demo",
+            SHA,
+            base_url=server.base_url,
+            max_attempts=1,
+            verify=False,
+        )
+
+    manifest = json.loads((target / MANIFEST_NAME).read_text())
+    assert server.state.served_count == 1
+    assert (target / "index.js").read_bytes() == b"git\n"
+    assert manifest["source"] == "git-commit"
 
 
 def test_checksum_mismatch_leaves_nothing_shelved(tmp_path):

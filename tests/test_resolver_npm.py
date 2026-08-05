@@ -6,7 +6,13 @@ import io
 
 import pytest
 
-from leitir.resolver import Ecosystem, NpmResolver, PackageRef, ResolutionError
+from leitir.resolver import (
+    Ecosystem,
+    NpmResolver,
+    PackageRef,
+    ResolutionError,
+    TagAbsentError,
+)
 
 from _http_server import json_body, routed_server
 
@@ -21,7 +27,7 @@ class Tags:
     def resolve_tag_to_sha(self, slug, tag):
         self.calls.append((slug, tag))
         if tag not in self.hits:
-            raise ResolutionError(f"missing {tag}")
+            raise TagAbsentError(f"missing {tag}")
         return SHA
 
 
@@ -130,6 +136,31 @@ def test_npm_tag_candidates_are_tried_in_order_and_stop_at_first_success(
     assert tags.calls == [("acme/demo", tag) for tag in expected_calls]
 
 
+def test_npm_non_absence_failure_does_not_try_fallback():
+    failure = ResolutionError("HTTP 503 after retries")
+
+    class FailingTags(Tags):
+        def resolve_tag_to_sha(self, slug, tag):
+            self.calls.append((slug, tag))
+            raise failure
+
+    tags = FailingTags(hits=("v1.2.0",))
+    with pytest.raises(ResolutionError) as error:
+        _resolve(_payload(), tags=tags)
+    assert error.value is failure
+    assert tags.calls == [("acme/demo", "demo@1.2.0")]
+
+
+def test_npm_absent_preferred_tag_uses_fallback():
+    tags = Tags(hits=("v1.2.0",))
+    resolved = _resolve(_payload(), tags=tags)
+    assert resolved.tag == "v1.2.0"
+    assert tags.calls == [
+        ("acme/demo", "demo@1.2.0"),
+        ("acme/demo", "v1.2.0"),
+    ]
+
+
 def test_npm_token_authenticates_default_registry_metadata(monkeypatch):
     captured = {}
 
@@ -138,6 +169,6 @@ def test_npm_token_authenticates_default_registry_metadata(monkeypatch):
         return io.BytesIO(json_body(_payload()))
 
     monkeypatch.setenv("NPM_TOKEN", "npm-secret")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert NpmResolver(Tags()).latest_version("demo") == "1.2.0"
     assert captured["Authorization"] == "Bearer npm-secret"

@@ -1671,9 +1671,18 @@ def collect_adr001_pytest_junit(root: str | Path) -> EvidenceArtifact:
             process_exit=-1,
             reason_code="COLLECTOR_FILESYSTEM_ERROR",
         )
+    if not sys.executable:
+        return _pytest_collector_artifact(
+            content=b"",
+            process_exit=-1,
+            reason_code="COLLECTOR_EXECUTION_ERROR",
+        )
     try:
+        # Execute with the engine's own interpreter so the gate does not depend
+        # on whichever bare ``python`` happens to lead ``PATH``; the recorded
+        # provenance argv stays the portable ADR-001 constant.
         completed = subprocess.run(
-            ADR001_OFFLINE_GATE_ARGV,
+            (sys.executable, *ADR001_OFFLINE_GATE_ARGV[1:]),
             cwd=str(repository_root),
             shell=False,
             check=False,

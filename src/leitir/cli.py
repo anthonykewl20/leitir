@@ -13,12 +13,14 @@ import argparse
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import sys
 from typing import Protocol, TextIO
 
+from .credentials import github_token_from_env
 from .logging import redact
 from .spec import CorpusSpec, parse_corpus_spec
 from .search import (
@@ -28,6 +30,17 @@ from .search import (
     SearchMode,
     SearchReport,
     SearchSpec,
+)
+
+logger = logging.getLogger(__name__)
+
+_UPGRADE_CACHE_DESCRIPTION = (
+    "Compute and persist load-time tree digests for legacy verified shelves. "
+    "NOTE: the digest is computed from the bytes currently on disk. Run this "
+    "only on a corpus whose existing contents you already trust (e.g., "
+    "immediately after materialization, before any external process could "
+    "modify the cache). For maximum safety, re-materialize suspicious shelves "
+    "with `leitir get --force` instead."
 )
 
 
@@ -53,7 +66,7 @@ class SearcherFactory(Protocol):
 
 
 def _github_token() -> str | None:
-    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    return github_token_from_env()
 
 
 def _parse_predicate(raw: str) -> Predicate:
@@ -78,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="leitir",
         description="Leitir deterministic code-search kernel",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="emit detailed redacted diagnostics to stderr",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     search = commands.add_parser("search", help="search a pinned code corpus")
@@ -122,6 +140,15 @@ def build_parser() -> argparse.ArgumentParser:
     list_roots = list_command.add_mutually_exclusive_group()
     list_roots.add_argument("--root", default=None, help="corpus root directory")
     list_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    upgrade = commands.add_parser(
+        "upgrade-cache",
+        help=_UPGRADE_CACHE_DESCRIPTION,
+        description=_UPGRADE_CACHE_DESCRIPTION,
+    )
+    upgrade.add_argument("--dry-run", action="store_true")
+    upgrade_roots = upgrade.add_mutually_exclusive_group()
+    upgrade_roots.add_argument("--root", default=None, help="corpus root directory")
+    upgrade_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     trust = commands.add_parser("trust", help="compute cached trust evidence for a source")
     trust.add_argument("spec")
     trust.add_argument("--json", action="store_true", dest="as_json")
@@ -242,6 +269,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _configure_logging_from_env(
+    args: argparse.Namespace, stderr: TextIO = sys.stderr
+) -> None:
+    """Route warnings to CLI stderr and enable diagnostics when requested."""
+    debug_env = os.environ.get("LEITIR_DEBUG", "").casefold() in {
+        "1", "true", "yes", "on",
+    }
+    level_value = os.environ.get("LEITIR_LOG_LEVEL", "")
+    level_name = level_value.upper()
+    if args.debug or debug_env:
+        level_name = "DEBUG"
+    import logging
+
+    level = (
+        logging.WARNING
+        if not level_name
+        else logging.getLevelNamesMapping().get(level_name)
+    )
+    if level is None:
+        print(
+            f"leitir: warning: ignoring unknown LEITIR_LOG_LEVEL={level_value!r}",
+            file=stderr,
+        )
+        return
+    from .logging import configure_logging
+
+    namespace_logger = logging.getLogger("leitir")
+    for existing in tuple(namespace_logger.handlers):
+        if getattr(existing, "_leitir_cli_handler", False):
+            namespace_logger.removeHandler(existing)
+    handler = logging.StreamHandler(stderr)
+    handler._leitir_cli_handler = True  # type: ignore[attr-defined]
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter("leitir %(levelname)s %(name)s: %(message)s")
+    )
+    configure_logging(level, handler=handler)
 
 
 def _validate_scope_args(args: argparse.Namespace) -> str | None:
@@ -415,29 +481,41 @@ def _write_diff_human(report: object, out: TextIO) -> None:
 
 def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
     from .corpus import load_sources
-    from .materialize import MANIFEST_NAME
+    from .materialize import read_valid_manifest
 
     entries = load_sources(root)
     rendered = []
+    filtered = 0
     for entry in entries:
-        version = None
+        manifest = read_valid_manifest(
+            root / entry["path"],
+            entry["owner"],
+            entry["repo"],
+            entry["commit_sha"],
+            host=entry["host"],
+        )
+        if manifest is None:
+            filtered += 1
+            continue
+        version = manifest.get("version")
         verification = "unverified"
-        manifest: object = {}
-        try:
-            manifest = json.loads((root / entry["path"] / MANIFEST_NAME).read_text(encoding="utf-8"))
-            if not isinstance(manifest, dict):
-                raise TypeError("manifest must be an object")
-            version = manifest.get("version")
-            if manifest.get("verified") is True:
-                verification = "verified"
-            elif manifest.get("verified") == "sampled":
-                verification = "sampled"
-        except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
-            pass
-        trust_score = manifest.get("trust_score") if isinstance(manifest, dict) else None
+        if manifest.get("verified") is True:
+            verification = "verified"
+        elif manifest.get("verified") == "sampled":
+            verification = "sampled"
+        elif manifest.get("verified") == "archive-only":
+            verification = "archive-only"
+        trust_score = manifest.get("trust_score")
         if not isinstance(trust_score, int) or isinstance(trust_score, bool) or not 0 <= trust_score <= 100:
             trust_score = None
         rendered.append((entry, version, verification, trust_score))
+    if filtered:
+        logger.warning(
+            "%d corpus entries were excluded because they failed manifest validation. "
+            "Run `leitir upgrade-cache` to migrate legacy verified shelves, or "
+            "inspect with `--json` for per-entry diagnostics.",
+            filtered,
+        )
     if as_json:
         payload = []
         for entry, _, verification, trust_score in rendered:
@@ -458,6 +536,49 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
         )
 
 
+def _upgrade_cache(root: Path, *, dry_run: bool, out: TextIO) -> int:
+    """Backfill integrity anchors on verified legacy shelves under ``root``."""
+    from .materialize import MANIFEST_NAME, _write_manifest
+    from .treehash import (
+        TreeHashError,
+        compute_materialized_tree_hash,
+        manifest_digest_fields,
+    )
+
+    upgraded = skipped = failed = 0
+    for manifest_path in sorted(root.rglob(MANIFEST_NAME)):
+        target = manifest_path.parent
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("manifest must be an object")
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("could not load cache manifest %s: %s", manifest_path, exc)
+            failed += 1
+            continue
+        if payload.get("materialized_tree_hash") is not None:
+            skipped += 1
+            continue
+        if payload.get("verified") not in (True, "sampled", "archive-only"):
+            continue
+        try:
+            digest, scope = compute_materialized_tree_hash(target)
+        except TreeHashError as exc:
+            logger.warning("could not upgrade cache shelf %s: %s", target, exc)
+            failed += 1
+            continue
+        upgraded += 1
+        if not dry_run:
+            payload.update(manifest_digest_fields(digest, scope=scope))
+            _write_manifest(manifest_path, payload)
+    print(
+        f"Upgraded {upgraded} shelves, skipped {skipped} (already had digest), "
+        f"failed {failed} (see warnings)",
+        file=out,
+    )
+    return int(ExitCode.SUCCESS if failed == 0 else ExitCode.CORPUS_FAILURE)
+
+
 def _run_corpus_command(
     args: argparse.Namespace,
     *,
@@ -475,6 +596,8 @@ def _run_corpus_command(
         if args.command == "list":
             _corpus_list(root, as_json=args.as_json, out=out)
             return int(ExitCode.SUCCESS)
+        if args.command == "upgrade-cache":
+            return _upgrade_cache(root, dry_run=args.dry_run, out=out)
         if args.command == "trust":
             from .corpus import record_trust
 
@@ -693,9 +816,18 @@ def _run_corpus_command(
                         f"{api['index_path']}",
                         file=out,
                     )
+                    for symbol in api["top_symbols"][:5]:
+                        print(
+                            f"  {symbol['kind']} {symbol['qualified_name']}"
+                            f"{symbol['signature'] or ''}",
+                            file=out,
+                        )
                     print(
                         f"examples: {examples['count']} {examples['index_path']}", file=out
                     )
+                    if examples["top"]:
+                        example = examples["top"][0]
+                        print(f"  example: {example['path']}:{example['line']}", file=out)
                     print(f"trust: {trust['score']}/100", file=out)
                 continue
             if args.command in {"api", "examples"}:
@@ -723,6 +855,8 @@ def _run_corpus_command(
 
                     api_path = api_index_path(root, entry, manifest).absolute()
                 if args.command == "api":
+                    from .info import _top_symbols
+
                     index_paths.append(api_path)
                     symbols = index.get("symbols")
                     records = symbols if isinstance(symbols, list) else []
@@ -753,6 +887,7 @@ def _run_corpus_command(
                                 if known_methods
                                 else None
                             ),
+                            "top_symbols": _top_symbols(index),
                         }
                     )
                 else:
@@ -788,8 +923,15 @@ def _run_corpus_command(
                 for payload in index_payloads:
                     print(json.dumps(payload, indent=2, sort_keys=True), file=out)
             else:
-                for index_path in index_paths:
+                for index_path, payload in zip(index_paths, index_payloads):
                     print(index_path, file=out)
+                    if args.command == "api":
+                        for symbol in payload["top_symbols"][:5]:
+                            print(
+                                f"{symbol['kind']} {symbol['qualified_name']}"
+                                f"{symbol['signature'] or ''}",
+                                file=out,
+                            )
         elif args.command == "get":
             results = []
             for path, subpath, manifest, raw, commit_sha in paths:
@@ -895,6 +1037,8 @@ def main(
     except SystemExit as exc:
         return int(exc.code)
 
+    _configure_logging_from_env(args, err)
+
     if args.command == "bench":
         token = _github_token()
         try:
@@ -924,7 +1068,7 @@ def main(
         )
         return int(ExitCode.SUCCESS)
 
-    if args.command in {"get", "fetch", "list", "trust", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "info", "diff"}:
+    if args.command in {"get", "fetch", "list", "upgrade-cache", "trust", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "info", "diff"}:
         return _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

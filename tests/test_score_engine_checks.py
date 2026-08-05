@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -495,6 +496,26 @@ def test_pytest_collector_unwritable_path_returns_error_without_running(
     result = evaluate_pytest_junit(artifact)
     assert result.status is CheckStatus.ERROR
     assert result.reason_code == "COLLECTOR_FILESYSTEM_ERROR"
+
+
+@pytest.mark.parametrize("executable", ["", None])
+def test_pytest_collector_missing_interpreter_returns_execution_error(
+    tmp_path, monkeypatch, executable
+):
+    (tmp_path / "src").mkdir()
+    monkeypatch.setattr(sys, "executable", executable)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("collector must not execute pytest"),
+    )
+
+    artifact = collect_adr001_pytest_junit(tmp_path)
+
+    assert artifact.content == b""
+    assert artifact.command is not None
+    assert artifact.command.process_exit == -1
+    assert artifact.command.collector_reason_code == "COLLECTOR_EXECUTION_ERROR"
 
 
 def test_shipped_policy_declares_every_s3_check_as_required_and_equal_weight():

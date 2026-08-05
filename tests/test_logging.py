@@ -9,6 +9,7 @@ import pytest
 from leitir.logging import (
     REDACTED,
     RedactingFilter,
+    configure_logging,
     install_redaction,
     redact,
     safe_record_message,
@@ -91,6 +92,15 @@ class TestRedactionShapes:
         assert REDACTED in out
         assert "Bearer" in out
         assert "Authorization" in out
+
+    def test_url_userinfo_redacted(self):
+        assert redact("https://user:pass@host.example/path") == (
+            "https://[REDACTED]@host.example/path"
+        )
+
+    def test_url_without_userinfo_unchanged(self):
+        url = "https://host.example/path"
+        assert redact(url) == url
 
     def test_bearer_redaction_in_nested_structures(self):
         data = {"headers": {"Authorization": "Bearer abc123xyz"}}
@@ -178,3 +188,21 @@ class TestLogFilterIntegration:
         rendered = record.getMessage()
         assert SENTINEL not in rendered
         assert "tencent/hy3" in rendered
+
+    def test_configure_logging_deduplicates_equivalent_stderr_handlers(self):
+        logger = stdlib_logging.getLogger("leitir")
+        original_handlers = logger.handlers[:]
+        logger.handlers = []
+        try:
+            formatter = stdlib_logging.Formatter("leitir %(levelname)s: %(message)s")
+            first = stdlib_logging.StreamHandler()
+            first.setLevel(stdlib_logging.DEBUG)
+            first.setFormatter(formatter)
+            second = stdlib_logging.StreamHandler()
+            second.setLevel(stdlib_logging.DEBUG)
+            second.setFormatter(formatter)
+            configure_logging(stdlib_logging.DEBUG, handler=first)
+            configure_logging(stdlib_logging.DEBUG, handler=second)
+            assert logger.handlers == [first]
+        finally:
+            logger.handlers = original_handlers

@@ -45,6 +45,48 @@ class Service(Base, metaclass=Meta):
     assert all(symbol["method"] == "ast" for symbol in first["symbols"])
 
 
+def test_python_ast_surface_skips_only_nodes_that_exceed_unparse_recursion_limit(tmp_path):
+    deep_annotation = "root" + ".part" * 600
+    (tmp_path / "pathological.py").write_text(
+        f"def too_deep(value: {deep_annotation}):\n    pass\n\ndef retained():\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "normal.py").write_text("def sibling():\n    pass\n", encoding="utf-8")
+
+    index = extract_api_surface(tmp_path, "python")
+
+    assert [module["path"] for module in index["modules"]] == ["normal.py", "pathological.py"]
+    assert [symbol["qualified_name"] for symbol in index["symbols"]] == [
+        "normal.sibling",
+        "pathological.retained",
+    ]
+
+
+def test_python_ast_surface_honors_pep_263_encoding_cookie(tmp_path):
+    source = "# -*- coding: latin-1 -*-\n# café\ndef encoded():\n    pass\n"
+    (tmp_path / "encoded.py").write_bytes(source.encode("latin-1"))
+
+    index = extract_api_surface(tmp_path, "python")
+
+    assert [symbol["qualified_name"] for symbol in index["symbols"]] == ["encoded.encoded"]
+
+
+def test_python_ast_surface_honors_utf8_bom(tmp_path):
+    (tmp_path / "bom.py").write_bytes("def bom_function():\n    pass\n".encode("utf-8-sig"))
+
+    index = extract_api_surface(tmp_path, "python")
+
+    assert [symbol["qualified_name"] for symbol in index["symbols"]] == ["bom.bom_function"]
+
+
+def test_python_ast_surface_still_reads_plain_utf8(tmp_path):
+    (tmp_path / "plain.py").write_text("# café\ndef plain():\n    pass\n", encoding="utf-8")
+
+    index = extract_api_surface(tmp_path, "python")
+
+    assert [symbol["qualified_name"] for symbol in index["symbols"]] == ["plain.plain"]
+
+
 def test_api_cache_path_and_round_trip(tmp_path):
     entry = {"name": "demo", "host": "github.com", "commit_sha": "a" * 40}
     manifest = {"ecosystem": "pypi", "version": "1.2.3"}

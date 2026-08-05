@@ -11,12 +11,15 @@ from __future__ import annotations
 import ast
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import re
+import tokenize
 from typing import TypeAlias
 
 ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +154,8 @@ def _python_extractor(target_path: Path, language: str) -> ApiIndex:
     for path in files:
         relative = path.relative_to(target_path).as_posix()
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            with tokenize.open(path) as source_file:
+                tree = ast.parse(source_file.read(), filename=relative)
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
             continue
         module = _module_name(Path(relative))
@@ -164,52 +168,56 @@ def _python_extractor(target_path: Path, language: str) -> ApiIndex:
             }
         )
         for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
-                symbols.append(
-                    _symbol(
-                        kind="function",
-                        name=node.name,
-                        qualified_name=f"{module}.{node.name}",
-                        module=module,
-                        path=relative,
-                        line=node.lineno,
-                        signature=_python_signature(node),
-                        docstring=ast.get_docstring(node),
-                        method="ast",
-                    )
-                )
-            elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
-                bases = [ast.unparse(base) for base in node.bases]
-                bases.extend(f"{keyword.arg}={ast.unparse(keyword.value)}" for keyword in node.keywords if keyword.arg)
-                class_name = f"{module}.{node.name}"
-                symbols.append(
-                    _symbol(
-                        kind="class",
-                        name=node.name,
-                        qualified_name=class_name,
-                        module=module,
-                        path=relative,
-                        line=node.lineno,
-                        signature=f"({', '.join(bases)})",
-                        docstring=ast.get_docstring(node),
-                        method="ast",
-                    )
-                )
-                for child in node.body:
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and not child.name.startswith("_"):
-                        symbols.append(
-                            _symbol(
-                                kind="method",
-                                name=child.name,
-                                qualified_name=f"{class_name}.{child.name}",
-                                module=module,
-                                path=relative,
-                                line=child.lineno,
-                                signature=_python_signature(child),
-                                docstring=ast.get_docstring(child),
-                                method="ast",
-                            )
+            first_symbol = len(symbols)
+            try:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+                    symbols.append(
+                        _symbol(
+                            kind="function",
+                            name=node.name,
+                            qualified_name=f"{module}.{node.name}",
+                            module=module,
+                            path=relative,
+                            line=node.lineno,
+                            signature=_python_signature(node),
+                            docstring=ast.get_docstring(node),
+                            method="ast",
                         )
+                    )
+                elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+                    bases = [ast.unparse(base) for base in node.bases]
+                    bases.extend(f"{keyword.arg}={ast.unparse(keyword.value)}" for keyword in node.keywords if keyword.arg)
+                    class_name = f"{module}.{node.name}"
+                    symbols.append(
+                        _symbol(
+                            kind="class",
+                            name=node.name,
+                            qualified_name=class_name,
+                            module=module,
+                            path=relative,
+                            line=node.lineno,
+                            signature=f"({', '.join(bases)})",
+                            docstring=ast.get_docstring(node),
+                            method="ast",
+                        )
+                    )
+                    for child in node.body:
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and not child.name.startswith("_"):
+                            symbols.append(
+                                _symbol(
+                                    kind="method",
+                                    name=child.name,
+                                    qualified_name=f"{class_name}.{child.name}",
+                                    module=module,
+                                    path=relative,
+                                    line=child.lineno,
+                                    signature=_python_signature(child),
+                                    docstring=ast.get_docstring(child),
+                                    method="ast",
+                                )
+                            )
+            except RecursionError:
+                del symbols[first_symbol:]
     return _finish(modules, symbols)
 
 
@@ -320,6 +328,7 @@ def register_extractor(language: str, extractor: Extractor) -> Extractor | None:
 def extract_api_surface(target_path: str | Path, language_hint: str | None = None) -> ApiIndex:
     """Extract a stable API index from one source tree without network access."""
     target = Path(target_path)
+    logger.debug("extracting API surface path=%s language_hint=%s", target, language_hint)
     if not target.is_dir():
         return _empty_index()
     if language_hint is not None:
@@ -334,7 +343,9 @@ def extract_api_surface(target_path: str | Path, language_hint: str | None = Non
             indexes.append(extractor(target, language))
     modules = [module for index in indexes for module in _records(index, "modules")]
     symbols = [symbol for index in indexes for symbol in _records(index, "symbols")]
-    return _finish(modules, symbols)
+    result = _finish(modules, symbols)
+    logger.debug("API surface modules=%d symbols=%d", len(modules), len(symbols))
+    return result
 
 
 def _records(index: ApiIndex, field: str) -> list[dict[str, object]]:

@@ -8,6 +8,7 @@ import zipfile
 
 import pytest
 
+import leitir.parity as parity_module
 from leitir.materialize import UnsafeArchiveError
 from leitir.parity import (
     ChecksumMismatchError,
@@ -187,7 +188,7 @@ def test_registry_artifact_authentication(monkeypatch, environment, url, token):
 
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert RegistryArtifactFetcher()._request_bytes(url) == b"artifact"
     assert captured["Authorization"] == f"Bearer {token}"
 
@@ -204,6 +205,48 @@ def test_registry_artifact_is_anonymous_without_token(monkeypatch):
         return Response(b"artifact")
 
     monkeypatch.delenv("NPM_TOKEN", raising=False)
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     RegistryArtifactFetcher()._request_bytes("https://registry.npmjs.org/demo.tgz")
     assert "Authorization" not in captured
+
+
+def test_package_parity_default_fetcher_has_download_cap(tmp_path, monkeypatch):
+    captured = {}
+
+    class Fetcher:
+        def __init__(self, *, max_bytes):
+            captured["max_bytes"] = max_bytes
+
+        def fetch(self, _artifact):
+            raise ValueError("artifact download exceeds compressed size limit")
+
+    artifact = artifact_from_metadata(
+        "crates",
+        "demo",
+        "1.0",
+        {"version": {"checksum": "0" * 64, "download_url": "https://example.test/demo"}},
+    )
+    assert artifact is not None
+    monkeypatch.setattr(parity_module, "RegistryArtifactFetcher", Fetcher)
+
+    result = package_parity("crates", "demo", "1.0", tmp_path, artifact=artifact)
+
+    assert captured["max_bytes"] == parity_module.ARCHIVE_MAX_COMPRESSED_BYTES
+    assert captured["max_bytes"] is not None
+    assert result.parity == "unknown"
+
+
+def test_registry_artifact_fetch_rejects_oversized_response(monkeypatch):
+    class Response(io.BytesIO):
+        def geturl(self):
+            return "https://registry.example/demo.tgz"
+
+    monkeypatch.setattr(
+        "leitir._http.safe_urlopen",
+        lambda _request, timeout: Response(b"12345"),
+    )
+
+    with pytest.raises(ValueError, match="compressed size limit"):
+        RegistryArtifactFetcher(max_bytes=4)._request_bytes(
+            "https://registry.example/demo.tgz"
+        )

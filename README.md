@@ -229,7 +229,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 ## Documentation
 
-- ADRs: [001](docs/adr-001-remove-hy3-deterministic-search.md), [002](docs/adr-002-deterministic-evidence-scoring-engine.md), [003](docs/adr-003-categorized-http-retry.md), [004](docs/adr-004-local-source-materialization.md), [005](docs/adr-005-corpus-v2-capabilities.md), [006](docs/adr-006-load-time-tree-verification.md)
+- ADRs: [0001](docs/adr/0001-remove-hy3-deterministic-search.md), [0002](docs/adr/0002-deterministic-evidence-scoring-engine.md), [0003](docs/adr/0003-categorized-http-retry.md), [0004](docs/adr/0004-local-source-materialization.md), [0005](docs/adr/0005-corpus-v2-capabilities.md), [0006](docs/adr/0006-load-time-tree-verification.md)
 - [docs/STATUS.md](docs/STATUS.md)
 - [docs/scoring.md](docs/scoring.md)
 - [skills/leitir/SKILL.md](skills/leitir/SKILL.md)

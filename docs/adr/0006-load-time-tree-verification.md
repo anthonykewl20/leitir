@@ -1,8 +1,9 @@
-# ADR-006: Load-time materialized-tree verification
+# ADR-0006: Load-time materialized-tree verification
 
-- Status: Implemented
+- Status: accepted
 - Date: 2026-08-05
-- Related: issues #17, #18, #19, #20; ADR-004
+- Implementation: complete
+- Related: issues #17, #18, #19, #20; [ADR-0004](0004-local-source-materialization.md)
 
 ## Context
 

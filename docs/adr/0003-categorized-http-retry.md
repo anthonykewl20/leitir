@@ -1,8 +1,9 @@
-# ADR-003: Categorized HTTP retry for the transport and resolver layer
+# ADR-0003: Categorized HTTP retry for the transport and resolver layer
 
-- Status: Accepted — implemented in full
+- Status: accepted
 - Date: 2026-08-03
-- Related: ADR-001 deterministic code-search kernel (P4, P5), ADR-002 §7 total order
+- Implementation: complete
+- Related: [ADR-0001](0001-remove-hy3-deterministic-search.md) deterministic code-search kernel (P4, P5), [ADR-0002](0002-deterministic-evidence-scoring-engine.md) §7 total order
 - Layer: `src/leitir/_http.py`, `src/leitir/discovery_search.py`, `src/leitir/resolver.py`
 
 ## Context

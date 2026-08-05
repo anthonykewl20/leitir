@@ -5,7 +5,7 @@
 > SearXNG dependency, or OpenRouter credential any more, and the `leitir run` /
 > `leitir eval` commands it documents were removed in P4. The kernel exposes
 > `leitir search` and runs on the standard library alone. See
-> [ADR-001](adr-001-remove-hy3-deterministic-search.md).
+> [ADR-0001](adr/0001-remove-hy3-deterministic-search.md).
 
 This guide describes the shipped prototype, not the broader target design.
 Leitir v1 is design-stage software and should not be treated as a production

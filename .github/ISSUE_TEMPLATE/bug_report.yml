@@ -1,0 +1,91 @@
+name: Bug report
+description: Report reproducible incorrect behavior in leitir
+title: ""
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Provide a minimal reproducible example.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: leitir version or commit
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Ubuntu
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: filesystem
+    attributes:
+      label: Filesystem if relevant
+      description: For example, ext4, APFS, NTFS, or a network filesystem.
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and full output/traceback
+    validations:
+      required: true
+  - type: dropdown
+    id: clean-destination
+    attributes:
+      label: Reproduces from a clean destination?
+      options:
+        - "yes"
+        - "no"
+        - not tested
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Integrity/materialization stage
+      options:
+        - resolver
+        - fetch
+        - extract
+        - verify
+        - load
+        - list
+        - info
+        - lock
+        - snapshot
+        - other
+  - type: checkboxes
+    id: sensitive-data
+    attributes:
+      label: Sensitive data
+      options:
+        - label: I confirm that credentials, private URLs, proprietary source, and other sensitive data have been removed.
+          required: true

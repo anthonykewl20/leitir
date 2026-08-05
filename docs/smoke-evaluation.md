@@ -4,7 +4,7 @@
 > P0r deleted `benchmarks/smoke-v1/` along with the orchestrator, Docker sandbox
 > and OpenRouter calls this guide depends on. Its replacement is the pinned
 > retrieval benchmark in ADR-001 P6 (`leitir bench`), scored by
-> [ADR-002](adr-002-deterministic-evidence-scoring-engine.md) S4.
+> [ADR-0002](adr/0002-deterministic-evidence-scoring-engine.md) S4.
 
 The shipped v1 benchmark is a **four-task Python smoke sample**. The loader
 accepts 3–5 tasks; this is not the planned 50-task benchmark and cannot

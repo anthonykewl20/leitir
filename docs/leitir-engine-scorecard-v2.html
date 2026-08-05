@@ -77,8 +77,8 @@
   HISTORICAL MANUAL RESEARCH SNAPSHOT — dated 2026-08-02. This document is not
   executable evidence and must never be consumed by the scorer. See the
   <a href="../scorecard/leitir-assessment.html">current generated assessment</a>,
-  <a href="adr-001-remove-hy3-deterministic-search.md">ADR-001</a>, and
-  <a href="adr-002-deterministic-evidence-scoring-engine.md">ADR-002</a>.
+  <a href="adr/0001-remove-hy3-deterministic-search.md" data-historical-name="adr-001-remove-hy3-deterministic-search.md">ADR-0001</a>, and
+  <a href="adr/0002-deterministic-evidence-scoring-engine.md" data-historical-name="adr-002-deterministic-evidence-scoring-engine.md">ADR-0002</a>.
 </aside>
 <div class="wrap">
   <h1>Leitir v2 — Editorial Engine Health Snapshot</h1>
@@ -281,7 +281,7 @@
     offline gate → <code>PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest tests/test_search.py tests/test_search_e2e.py tests/test_engine.py tests/test_engine_e2e.py tests/test_adapters_multi.py tests/test_resolver.py tests/test_resolver_e2e.py tests/test_cli.py tests/test_cli_e2e.py tests/test_global.py tests/test_global_e2e.py</code> (192 passed) ·
     full suite → add <code>--ignore=tests/test_verification_docker.py</code> over all tests (486 passed, 25 skipped) ·
     live gate → prefix <code>GH_TOKEN=$(gh auth token) LEITIR_ENABLE_LIVE_E2E=1</code> (9/10; 1 rate-limit flake).
-    Sources: ISO/IEC 25010:2023 (SQuaRE) quality model · <code>docs/leitir-engine-scorecard.html</code> (v1 instrument) · <code>docs/adr-001-remove-hy3-deterministic-search.md</code> (gate policy) · <code>docs/adr-002-deterministic-evidence-scoring-engine.md</code> (executable replacement design). Editorial and non-gating; self-contained file, honors dark mode.
+    Sources: ISO/IEC 25010:2023 (SQuaRE) quality model · <code>docs/leitir-engine-scorecard.html</code> (v1 instrument) · <code>docs/adr/0001-remove-hy3-deterministic-search.md</code> (gate policy) · <code>docs/adr/0002-deterministic-evidence-scoring-engine.md</code> (executable replacement design). Editorial and non-gating; self-contained file, honors dark mode.
   </p>
 </div>
 </body>

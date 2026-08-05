@@ -1,13 +1,14 @@
-# ADR-004: Local source materialization layer (corpus)
+# ADR-0004: Local source materialization layer (corpus)
 
-> **Status:** Implementation-stage ADR. Superseded/extended by ADR-005
-> (corpus-v2 capabilities) and ADR-006 (load-time tree verification). Retained
-> for historical context.
-
-- Status: Implemented
+- Status: accepted
 - Date: 2026-08-03
-- Related: ADR-001 deterministic code-search kernel, ADR-003 categorized HTTP retry
+- Implementation: complete
+- Related: [ADR-0001](0001-remove-hy3-deterministic-search.md) deterministic code-search kernel, [ADR-0003](0003-categorized-http-retry.md) categorized HTTP retry
 - Layer: new `src/leitir/materialize.py`, `src/leitir/corpus.py` (index), CLI extension, `src/leitir/resolver.py` (npm)
+
+> **Historical note:** Extended by [ADR-0005](0005-corpus-v2-capabilities.md)
+> (corpus-v2 capabilities) and [ADR-0006](0006-load-time-tree-verification.md)
+> (load-time tree verification). Retained for historical context.
 
 ## Goal
 

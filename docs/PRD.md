@@ -4,8 +4,8 @@
 > this PRD specifies was deleted in ADR-001 slice P0r. Leitir is now a
 > deterministic code-search kernel with no model calls, no synthesis, and no
 > runtime dependencies. Current design lives in
-> [ADR-001](adr-001-remove-hy3-deterministic-search.md) and
-> [ADR-002](adr-002-deterministic-evidence-scoring-engine.md). Kept for the
+> [ADR-0001](adr/0001-remove-hy3-deterministic-search.md) and
+> [ADR-0002](adr/0002-deterministic-evidence-scoring-engine.md). Kept for the
 > requirement history — the Tier 1–3 evidence model and the >100-star Tier 3
 > gate are the reasoning behind decisions the kernel still inherits.
 

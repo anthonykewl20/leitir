@@ -1,10 +1,12 @@
-# ADR-002: Build a deterministic, evidence-bound scoring engine
+# ADR-0002: Build a deterministic, evidence-bound scoring engine
 
-- Status: Accepted — implemented in full
+- Status: accepted
 - Date: 2026-08-02
-- Completed: 2026-08-03 (S1–S9 landed)
-- Related: ADR-001 deterministic code-search kernel, especially P6
+- Implementation: complete
+- Related: [ADR-0001](0001-remove-hy3-deterministic-search.md) deterministic code-search kernel, especially P6
 - User-facing shape: standalone script, not a `leitir` CLI subcommand
+
+Implementation note: completed 2026-08-03 when S1–S9 landed.
 
 ## Context
 

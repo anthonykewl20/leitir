@@ -1,9 +1,11 @@
-# ADR-001: Remove Hy3 and make Leitir a deterministic code-search kernel
+# ADR-0001: Remove Hy3 and make Leitir a deterministic code-search kernel
 
-- Status: Accepted — implemented in full
+- Status: accepted
 - Date: 2026-08-02
-- Revised: 2026-08-02 (slice reordering + CLI integration layer)
-- Completed: 2026-08-03 (P0r retirement + P1–P6 landed)
+- Implementation: complete
+
+Implementation notes: revised 2026-08-02 for slice reordering and the CLI
+integration layer; completed 2026-08-03 when P0r retirement and P1–P6 landed.
 
 ## Context
 
@@ -135,7 +137,7 @@ enrichment behind the existing CLI (P5–P6).
       (`src/leitir/ranking.py`, `src/leitir/bench.py`,
       `src/leitir/benchmarks/search-v1/`, `tests/test_ranking.py`,
       `tests/test_bench.py`, `tests/test_bench_e2e_live.py`)
-      Ranking applies ADR-002 §7's mandated total order
+      Ranking applies [ADR-0002](0002-deterministic-evidence-scoring-engine.md) §7's mandated total order
       `(-normalized_score, slug, commit_sha, path, blob_sha, start_line,
       end_line)` and assigns unique descending `rank_score` values, so the S4
       adapter can hand pytrec unique scores and trec_eval's equal-score

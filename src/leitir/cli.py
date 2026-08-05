@@ -10,19 +10,19 @@ services.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Sequence
-from enum import IntEnum
+import importlib.metadata
 import json
 import logging
 import os
-from pathlib import Path
 import shutil
 import sys
+from collections.abc import Callable, Sequence
+from enum import IntEnum
+from pathlib import Path
 from typing import Protocol, TextIO
 
 from .credentials import github_token_from_env
 from .logging import redact
-from .spec import CorpusSpec, parse_corpus_spec
 from .search import (
     Predicate,
     PredicateKind,
@@ -31,6 +31,7 @@ from .search import (
     SearchReport,
     SearchSpec,
 )
+from .spec import CorpusSpec, parse_corpus_spec
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ class ExitCode(IntEnum):
     CORPUS_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
+
+
+def _installed_version() -> str:
+    try:
+        return importlib.metadata.version("leitir")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 class TreeSourceFactory(Protocol):
@@ -97,7 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="emit detailed redacted diagnostics to stderr",
     )
+    parser.add_argument(
+        "--version", action="version", version=f"leitir {_installed_version()}"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+    doctor = commands.add_parser(
+        "doctor", help="diagnose the leitir environment and cache integrity"
+    )
+    doctor.add_argument("--json", action="store_true", dest="as_json")
+    doctor.add_argument("--quiet", action="store_true")
+    doctor.add_argument("--no-network", action="store_true")
     search = commands.add_parser("search", help="search a pinned code corpus")
     bench = commands.add_parser(
         "bench",
@@ -1039,6 +1056,30 @@ def main(
 
     _configure_logging_from_env(args, err)
 
+    from ._update_check import maybe_emit_update_notice, maybe_start_update_check
+
+    maybe_start_update_check(
+        json_mode=bool(getattr(args, "as_json", False)),
+        quiet=bool(getattr(args, "quiet", False)),
+    )
+
+    def successful() -> int:
+        maybe_emit_update_notice()
+        return int(ExitCode.SUCCESS)
+
+    if args.command == "doctor":
+        from .doctor import run_doctor
+
+        result = run_doctor(
+            as_json=args.as_json,
+            quiet=args.quiet,
+            no_network=args.no_network,
+            stdout=out,
+        )
+        if result == int(ExitCode.SUCCESS):
+            return successful()
+        return result
+
     if args.command == "bench":
         token = _github_token()
         try:
@@ -1066,16 +1107,19 @@ def main(
             f"artifact_sha256={run.digest()}",
             file=err,
         )
-        return int(ExitCode.SUCCESS)
+        return successful()
 
     if args.command in {"get", "fetch", "list", "upgrade-cache", "trust", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "info", "diff"}:
-        return _run_corpus_command(
+        result = _run_corpus_command(
             args,
             resolver_factory=resolver_factory,
             code_search_factory=code_search_factory,
             out=out,
             err=err,
         )
+        if result == int(ExitCode.SUCCESS):
+            return successful()
+        return result
 
     scope_error = _validate_scope_args(args)
     if scope_error:
@@ -1126,7 +1170,7 @@ def main(
 
     print(report.to_json(), file=out)
     _write_summary(report, file=err)
-    return int(ExitCode.SUCCESS)
+    return successful()
 
 
 if __name__ == "__main__":

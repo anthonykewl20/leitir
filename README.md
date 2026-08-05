@@ -72,21 +72,45 @@ flowchart LR
     IMP -. writes .-> TREE
 ```
 
+## Installation
+
+```bash
+pip install leitir
+leitir info npm:zod@3.22.0
+```
+
+Leitir is not yet published to PyPI, so `pip install leitir` will only work once a release exists. Until then, install from source — the runtime is stdlib-only (`dependencies = []`), so no third-party dependencies are pulled in:
+
+```bash
+pip install .
+# or for an editable checkout:
+pip install -e .
+```
+
+### For contributors
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development setup. For quick feedback:
+
+```bash
+pip install -e '.[dev]'
+PYTHONPATH=src python -m pytest -q
+```
+
+`./requirements.txt` is a pinned development/CI dependency closure, not a runtime requirement.
+
+From a checkout where installation is unavailable, invoke commands as `PYTHONPATH=src python -m leitir.cli ...` instead.
+
 ## Quick start
 
 ```bash
-# Optional: install the `leitir` console script (the screenshots below use it).
-# Without installing, invoke every command as `python -m leitir.cli ...`.
-python -m pip install -e .
-
 # Materialize a real package and read it from the returned path
-path="$(PYTHONPATH=src python -m leitir.cli get npm:zod@3.22.0)"
+path="$(leitir get npm:zod@3.22.0)"
 rg "parse" "$path"
 cat "$path/package.json"
 
 # Run search and benchmark commands
-PYTHONPATH=src python -m leitir.cli search --package zod --version 3.22.0 --ecosystem npm --must symbol_definition:parse
-PYTHONPATH=src python -m leitir.cli bench
+leitir search --package zod --version 3.22.0 --ecosystem npm --must symbol_definition:parse
+leitir bench
 ```
 
 ## The agent workflow (required)
@@ -106,6 +130,12 @@ flowchart LR
 ### Search and benchmark
 - `search`: resolve spec+predicate scope and return provenance-bound results.
 - `bench`: run the pinned `search-v1` benchmark with fixed tasks and strict output shape.
+
+### Diagnostics
+- `doctor [--json] [--quiet] [--no-network]`: check the Python/install environment,
+  internal imports, corpus filesystem capabilities, cache manifests and integrity,
+  credential formatting, service reachability, and release availability. It returns
+  0 when healthy, 1 for warnings, and 2 for errors; credential values are never shown.
 
 ### Corpus
 - `get`: materialize sources and print absolute local path(s).
@@ -203,6 +233,14 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
 
+## Update notifications
+
+When run interactively (TTY stdout + stderr, not in CI, not in `--json` mode), leitir
+makes at most one anonymous GET request per 24 hours to PyPI's public project metadata
+endpoint (`https://pypi.org/pypi/leitir/json`) to check for a newer release. The request
+contains only the leitir version in its `User-Agent` — no username, repository path,
+project data, command arguments, or telemetry. Set `LEITIR_NO_UPDATE_CHECK=1` to disable.
+
 ## Scoring
 
 `tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement or independently verify the runtime `leitir trust` seven-factor trust model. The two systems share only the abstract principle that “unknown is neither zero nor pass.” At current HEAD the scorer reports `decision=fail`, `observed_score_bps=9980`, and bounds `475..9999`: 29 required results are missing and one fixed-gate test in `engine.offline_contracts` is skipped and therefore a known failed check. Details are tracked in [docs/scoring.md](docs/scoring.md).
@@ -225,7 +263,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - `skills/leitir/SKILL.md` — normative corpus workflow for AI coding agents.
 - `docs/` — ADRs, status, scoring docs, and historical notes.
 - `tests/` — offline suite with opt-in live gates and fixtures.
-- `requirements.txt` — runtime/test dependency lock.
+- `requirements.txt` — pinned development/CI dependency closure, not a runtime requirement.
 
 ## Documentation
 

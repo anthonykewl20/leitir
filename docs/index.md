@@ -22,7 +22,7 @@ plus a deterministic code-search kernel for AI coding agents.
 ## Architecture
 
 - [Current status](STATUS.md) — what is implemented and what is open
-- [Roadmap](../ROADMAP.md) — Production-ready v1.0 milestone priorities
+- [Roadmap](../ROADMAP.md) — v0.2.0 milestone priorities; v1.0 reserved for adoption milestone
 - [Architecture Decision Records](adr/) — durable design decisions
 
 ## Development

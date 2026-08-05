@@ -1,125 +1,63 @@
 ---
 name: leitir
-description: Fetch and verify proven dependency/host source for AI agents, then consult it before writing behavior code; use for read-the-source tasks, library internals, edge cases, reference implementations, and version-specific behavior across npm, PyPI, crates.io, Go, GitHub, GitLab, Bitbucket, Codeberg, and Sourcehut.
+description: Use leitir when AI agents need to fetch and verify real source code for a library, framework, or dependency.
 allowed-tools: Bash(leitir:*)
 ---
 
-## 1. Required workflow
+## When to use
 
-- **Consult before writing.** Read proven source before behavior-sensitive output; avoid memory-based inference.
-- Start with `leitir info <spec>` first. It returns the extracted public contract (signatures and docstrings), top usage code, provenance, trust score, and parity in one call.
-- Synthesize from the surfaced contract; read full files only when behavior beyond the extracted surface matters.
-- If `info` shows low trust, mismatched version, missing examples, or unclear parity, fetch deeper immediately.
-- Run `leitir get <spec>` (or `leitir fetch` for prefetch) before any deep analysis.
-- Read `POINTERS.md` in the materialized source root first.
-- Cite behavior only from files you inspected, not from memory.
-- Read complete files using quoted paths from `leitir get` output:
-  - `rg "parse" "$(leitir get <spec>)"`
-  - `cat "$(leitir get <spec>)/module/file.py"`
-  - `find "$(leitir get <spec>)" -name '*test*'`
-- Cite relied-on files in the form `<owner>/<repo>/<file>@<commit-SHA>` using manifest SHA from `leitir-manifest.json`.
-- If source is missing, unverified, or wrong revision, state that and either fetch or pin the exact version.
-- Never present invented code as reference behavior.
+Use leitir when you need real, verified source for internals, control flow, edge cases, tests, or version-specific behavior. Do not use it for questions that official docs or general knowledge answer completely.
 
-## 1.1 Hard constraints
+## Core workflow (do this first)
 
-- Do not hand-roll framework internals, parsing behavior, retry policy, or API edge cases when source exists.
-- Do not rely on unverified docs if source examples or tests disagree.
-- Prefer official docs only for API surface shape; use source for behavior and invariants.
-- Never write version-specific conclusions without explicit `@version`, lockfile pinning, or fetched commit.
-- Keep statements scoped: package version, commit/sha, and host source.
+```bash
+# Step 1: get one-shot context: provenance, tree path, API, examples, and trust
+leitir info npm:zod@3.22.0
+# output starts like: npm:zod@3.22.0 owner/repo@<40-char-sha>
+# and includes: tree:, version:, api:, examples:, trust:
 
-## 2. Commands
+# For machine consumption:
+leitir info npm:zod@3.22.0 --json
 
-- **Materialize**: `leitir get <spec>...` (prints absolute paths), `fetch` (no paths) with flags `--local`, `--root`, `--cwd`, `--no-verify` (avoid `--no-verify`).
-- **One-shot context**: `leitir info <spec>` (use first) returns public signatures, docstrings, top usage code, and provenance. Add `--json` for machine output.
-- **Analyze**: `leitir api <spec>` returns the bounded public-symbol contract with provenance; `leitir examples <spec>` returns usage code; also available: `leitir trust <spec>`, `leitir diff <a> <b>`. Synthesize from these outputs before reading full files for deeper behavior.
-- **Manage**: `leitir list [--json]`, `leitir remove <spec>`, `leitir clean [--repos]`.
-- **Reproducibility**: `leitir lock [--cwd] [--best-effort]` (materialize transitive closure), `leitir export [-o corpus.lock]`, `leitir import <corpus.lock>`.
-- **SBOM**: `leitir sbom [--format spdx|cyclonedx]`.
-- `--json` is supported on `get`, `info`, `trust`, `api`, `examples`, `list`, and `diff`; `info --json` is the recommended agent entry point.
-- CLI progress logs go to `stderr`; machine-readable output uses `stdout`.
+# Step 2 (only if you need deeper source): materialize and read
+path="$(leitir get npm:zod@3.22.0)"
+rg "parse" "$path"
+cat "$path/package.json"
 
-### 2.A Command notes
+# Step 3: cite the inspected file as <owner>/<repo>/<file>@<commit-SHA>
+# Per jonschlinkert/is-number/index.js@98e8ff1da1a89f93d1397a24d7413ed15421c139:
+```
 
-- Materialize paths first: `get` prints absolute paths; `fetch` does not print paths and is useful in scripts.
-- Use `--local` when you want sources under `.leitir-refs/` and keep results gitignored.
-- Use `--root` for a fixed global corpus root when running in tooling automation.
-- Use `--no-verify` only for last-resort debugging; avoid it in normal evidence collection.
-- Use `--cwd` for lockfile-aware version selection in monorepos and nested project roots.
+## Spec forms (quick reference)
 
-### 2.B Load-time verification and cache migration
+- `npm:zod@3.22.0` — npm package at exact version
+- `pypi:requests@2.31.0` — PyPI package
+- `crates:serde@1.0.152` — crates.io package
+- `github:owner/repo@<40-char-sha>` — GitHub repository at a pinned commit
+- `gitlab:owner/repo@ref` — GitLab repository (nested subgroups supported)
 
-- Materialized trees carry `materialized_tree_hash`, computed with the Go
-  directory-hash H1 algorithm. Verified corpus shelves are re-hashed on every
-  load; unverified shelves may omit the digest.
-- Hashing is symlink-aware, deterministically bounded-sampled for large trees,
-  and fail-closed on missing, malformed, unsupported, or mismatched integrity
-  data.
-- Legacy verified shelves without the digest are rejected until migrated with
-  `leitir upgrade-cache`.
-- Run `leitir upgrade-cache [--dry-run] [--root ROOT | --local]` to migrate
-  legacy shelves. This is trust-on-first-use: run it only on corpora whose
-  existing contents are already trusted.
-- To re-materialize a suspicious shelf, run `leitir remove <spec>` and then
-  `leitir get <spec>`; no force option is available.
-- `leitir info --json <spec>` is supported and is the recommended machine entry
-  point for agents.
+If a spec fails, leitir tells you why. Run `leitir doctor` if the environment seems broken.
 
-## 3. Specs
+## When to fetch deeper
 
-| Source | Accepted forms |
-| --- | --- |
-| npm | `zod`, `npm:zod`, `npm:zod@3.22.0`, `@scope/name@version` |
-| PyPI | `pypi:requests@2.31.0` (aliases `pip:`, `python:`) |
-| crates.io | `crates:serde@1.0.152` (aliases `cargo:`, `rust:`) |
-| Go | `go:github.com/owner/module@v`, `go:gitlab.com/...`, `go:bitbucket.org/...`, `go:golang.org/x/<pkg>@v` |
-| GitHub | `owner/repo`, `owner/repo@tag`, `owner/repo#branch`, `owner/repo@<40-sha>`, `github:owner/repo`, full URL |
-| GitLab | `gitlab:owner/repo@ref`, nested subgroups `gitlab:group/subgroup/repo`, URL (`/-/tree/<ref>` supported) |
-| Bitbucket | `bitbucket:owner/repo@ref`, URL |
-| Codeberg | `codeberg:owner/repo@ref`, URL |
-| Sourcehut | `sourcehut:~user/repo@ref` (leading `~` required), URL |
+If `info` does not cover internals, control flow, edge cases, tests, or version-specific behavior, run `leitir get`. For a simple public-API question answered by official docs, skip the fetch.
 
-- Version resolution: explicit `@version` first, then lockfile-detected under `--cwd`, then registry latest.
-- `@ref` = tag, `#ref` = branch, 40-char `@ref` = immutable SHA.
+## Fail-closed rule
 
-- Git repository shorthands support nested slugs where allowed by ecosystem parser.
-- GitLab accepts subgroup trees (example: `gitlab:group/subgroup/repo`).
-- Sourcehut owners require leading `~` in shorthand and repository URLs.
-- URL inputs must be HTTPS and must not include fragment/query authentication data.
-- For go modules, explicit host module paths are required and preserve full import path.
+If leitir cannot verify, fetch, or materialize source, DO NOT fabricate or infer the code. Say "I don't have verified source for X," then fetch it or decline the source-specific part.
 
-## 4. Auth
+## Troubleshooting
 
-- Optional tokens are HTTPS-only and never logged: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN` (+`BITBUCKET_USERNAME` for app-password Basic), `CODEBERG_TOKEN`, `SRHT_TOKEN`, `NPM_TOKEN`, `PYPI_TOKEN`/`PIP_TOKEN`, `CARGO_TOKEN`.
+- `leitir doctor` — run the full environment and integrity diagnostic.
+- `leitir list` — show materialized sources; add `--json` for machine output.
+- If loading fails with "materialized tree hash verification failed", the shelf changed: run `leitir remove <spec> && leitir get <spec>`.
+- If a verified shelf fails with "missing materialized_tree_hash", run `leitir upgrade-cache` only if you trust its current bytes; this migrates legacy shelves.
+- Tokens (`GITHUB_TOKEN`, etc.) are HTTPS-only and never logged; see `SECURITY.md` for the threat boundary.
+- See `leitir --help` for the full command list.
 
-- Use tokens only when needed; defaults remain anonymous for public endpoints.
-- Prefer minimal scopes on tokens to reduce exposure during repeated materialization.
+## What leitir does NOT do
 
-## 5. Roots & cache
-
-- Global corpus root is `~/.leitir/` (`LEITIR_HOME`).
-- Project-local root is `--local` → `./.leitir-refs/`.
-- `list/remove/clean` act on the global root by default; list can be overridden only by explicit root/local flags in implementation.
-- Materialized trees are stored in `repos/<host>/<owner>/<repo>/<sha>`.
-- Extracted `api/` and `examples/` caches mirror `repos/` scope and are reused across commands.
-
-- `repos/` cache is immutable per `<sha>` once materialized.
-- `api/` index stores symbol-level summaries for `leitir api` and `trust` acceleration.
-- `examples/` cache stores ranked usage snippets for `leitir examples`.
-- `clean` currently clears `repos/`, `api/`, `examples/`, and metadata index; keep `--repos` as a compatibility flag.
-
-## 6. When to fetch
-
-- Fetch when implementation internals, control-flow, edge cases, tests, examples, or strict version behavior matter.
-- Start with `leitir info` and `POINTERS.md`; a simple public-API question from official docs may skip `get`.
-- Do not fetch for topics already fully answered by typed docs, usage notes, or verified examples.
-- If cited claims require behavior, but source is absent/unverifiable, fetch and lock the correct revision before concluding.
-
-## 6.1 Fetch decision guardrails
-
-- Fetch before answering questions about: internal state machines, parsing/serialization, pagination, retries, pagination cursors, concurrency, side effects.
-- Fetch when tests/examples conflict with official docs or quick API references.
-- Use `lock`/`export` first when you need full transitive evidence for a repository's dependency graph.
-- Use `diff <a> <b>` when behavior questions span semver changes and you need file/API deltas.
-- Use `import` snapshots for offline replay when network evidence must be reproducible.
+- It does not run code, execute tests, or install packages.
+- It does not replace official docs; use it when docs are insufficient.
+- It detects byte corruption relative to a manifest, not adversarial tampering of both bytes and manifest; that requires signatures.
+- It does not use v1.0 as a production-readiness label: quality milestones ship in v0.x, while v1.0 is reserved for the 10,000-users adoption milestone.

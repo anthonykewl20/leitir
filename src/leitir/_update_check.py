@@ -1,0 +1,324 @@
+"""Conservative, anonymous update notifications for interactive CLI use.
+
+Version comparison intentionally supports only final numeric releases (for
+example, ``0.2.0``).  Epochs, pre/dev/post releases, local versions, leading
+``v`` markers, whitespace, and every other non-numeric form are silently
+ignored rather than partially interpreted.
+"""
+
+from __future__ import annotations
+
+import importlib.metadata
+import json
+import os
+import re
+import sys
+import tempfile
+import threading
+import urllib.error
+import urllib.request
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
+
+_DISTRIBUTION_NAME = "leitir"
+_PYPI_URL = f"https://pypi.org/pypi/{_DISTRIBUTION_NAME}/json"
+_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+_NETWORK_TIMEOUT_SECONDS = 1.0
+_CACHE_SCHEMA = 1
+_MAX_RESPONSE_BYTES = 64 * 1024
+_NUMERIC_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+_TRUE_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
+_TRUE_CI_VALUES = frozenset({"1", "true", "yes"})
+
+_result: tuple[str, str] | None = None
+_result_lock = threading.Lock()
+_check_started: bool | None = None
+
+
+def _installed_version() -> str | None:
+    try:
+        return importlib.metadata.version(_DISTRIBUTION_NAME)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def should_check(*, json_mode: bool, quiet: bool) -> bool:
+    """Return whether this invocation is eligible for an update check."""
+
+    if json_mode or quiet:
+        return False
+    if os.environ.get("LEITIR_NO_UPDATE_CHECK", "").lower() in _TRUE_DISABLE_VALUES:
+        return False
+    if os.environ.get("CI", "").lower() in _TRUE_CI_VALUES:
+        return False
+    if not sys.stdout.isatty() or not sys.stderr.isatty():
+        return False
+    return _installed_version() is not None
+
+
+def _parse_numeric_version(version: str) -> tuple[int, ...] | None:
+    if _NUMERIC_VERSION.fullmatch(version) is None:
+        return None
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        # Python limits decimal-to-int conversion length; an absurdly large
+        # numeric component is unsupported just like any other unusable form.
+        return None
+
+
+def _compare_versions(left: str, right: str) -> int | None:
+    """Compare numeric releases, returning -1, 0, 1, or None if unsupported."""
+
+    left_parts = _parse_numeric_version(left)
+    right_parts = _parse_numeric_version(right)
+    if left_parts is None or right_parts is None:
+        return None
+    width = max(len(left_parts), len(right_parts))
+    padded_left = left_parts + (0,) * (width - len(left_parts))
+    padded_right = right_parts + (0,) * (width - len(right_parts))
+    return (padded_left > padded_right) - (padded_left < padded_right)
+
+
+def _cache_path() -> Path | None:
+    try:
+        if sys.platform == "win32":
+            root = os.environ.get("LOCALAPPDATA")
+            if not root:
+                return None
+            return Path(root) / _DISTRIBUTION_NAME / "Cache" / "update-check.json"
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Caches" / _DISTRIBUTION_NAME / "update-check.json"
+        root = os.environ.get("XDG_CACHE_HOME")
+        cache_root = Path(root) if root else Path.home() / ".cache"
+        return cache_root / _DISTRIBUTION_NAME / "update-check.json"
+    except (OSError, RuntimeError):
+        return None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _format_time(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _read_cache(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema") != _CACHE_SCHEMA or payload.get("project") != _DISTRIBUTION_NAME:
+        return None
+    return payload
+
+
+def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
+    """Atomically write the cache, returning False for every filesystem failure."""
+
+    fd = -1
+    temporary: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix=".update-check.json.tmp-", dir=path.parent)
+        temporary = Path(name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        return True
+    except (OSError, TypeError, ValueError):
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
+
+
+def _fetch_latest_version(installed_version: str) -> str | None:
+    request = urllib.request.Request(
+        _PYPI_URL,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": f"leitir/{installed_version} update-check",
+        },
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=_NETWORK_TIMEOUT_SECONDS
+        ) as response:
+            raw = response.read(_MAX_RESPONSE_BYTES + 1)
+        if len(raw) > _MAX_RESPONSE_BYTES:
+            return None
+        payload = json.loads(raw)
+        latest = payload["info"]["version"]
+        return latest if isinstance(latest, str) else None
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+    ):
+        return None
+    except Exception:  # noqa: BLE001 -- optional network boundary is fail-silent
+        # Third-party response wrappers and platform URL handlers may raise
+        # additional exception types.  The optional probe remains fail-silent.
+        return None
+
+
+def _set_result(installed: str, latest: object) -> None:
+    if not isinstance(latest, str):
+        return
+    with _result_lock:
+        global _result
+        _result = (installed, latest)
+
+
+def _initial_cache(now: datetime, installed: str) -> dict[str, object]:
+    return {
+        "schema": _CACHE_SCHEMA,
+        "project": _DISTRIBUTION_NAME,
+        "created_at": _format_time(now),
+        "last_checked_at": None,
+        "installed_version": installed,
+        "latest_version": None,
+    }
+
+
+def _run_update_check(installed: str) -> None:
+    try:
+        path = _cache_path()
+        if path is None:
+            return
+        now = _utc_now()
+        cache = _read_cache(path)
+        if cache is None or cache.get("installed_version") != installed:
+            _write_cache(path, _initial_cache(now, installed))
+            return
+
+        last_checked = _parse_time(cache.get("last_checked_at"))
+        reference = last_checked or _parse_time(cache.get("created_at"))
+        if reference is None:
+            _write_cache(path, _initial_cache(now, installed))
+            return
+        if (now - reference).total_seconds() < _CHECK_INTERVAL_SECONDS:
+            _set_result(installed, cache.get("latest_version"))
+            return
+
+        latest = _fetch_latest_version(installed)
+        updated = dict(cache)
+        updated.update(
+            {
+                "schema": _CACHE_SCHEMA,
+                "project": _DISTRIBUTION_NAME,
+                "last_checked_at": _format_time(now),
+                "installed_version": installed,
+                "latest_version": latest,
+            }
+        )
+        _write_cache(path, updated)
+        _set_result(installed, latest)
+    except Exception:  # noqa: BLE001 -- daemon must never affect the command
+        # This feature must never affect command execution, including for
+        # unusual platform, clock, mocked-I/O, or interpreter edge cases.
+        return
+
+
+def maybe_start_update_check(*, json_mode: bool, quiet: bool) -> None:
+    """Start the background update check if eligible. Call before the main command."""
+
+    global _check_started
+    _check_started = False
+    with _result_lock:
+        global _result
+        _result = None
+    try:
+        eligible = should_check(json_mode=json_mode, quiet=quiet)
+    except Exception:  # noqa: BLE001 -- eligibility failures disable the feature
+        return
+    if not eligible:
+        return
+    try:
+        installed = _installed_version()
+    except Exception:  # noqa: BLE001 -- metadata failures disable the feature
+        return
+    if installed is None:
+        return
+    _check_started = True
+    try:
+        threading.Thread(target=_run_update_check, args=(installed,), daemon=True).start()
+    except (OSError, RuntimeError):
+        _check_started = False
+
+
+def maybe_emit_update_notice() -> None:
+    """Print the update notice to stderr if a newer version is known."""
+
+    if _check_started is False:
+        return
+    with _result_lock:
+        result = _result
+    if result is None:
+        if _check_started is not None:
+            # An ineligible invocation or a still-running daemon must remain
+            # silent.  The cache fallback below is only for direct use of this
+            # post-command hook (and makes the documented probe deterministic).
+            return
+        # Also permits a previously cached result to be surfaced by callers
+        # that invoke this public post-command hook without starting a probe.
+        try:
+            installed = _installed_version()
+            path = _cache_path()
+            cache = _read_cache(path) if path is not None else None
+        except Exception:  # noqa: BLE001 -- post-command hook is fail-silent
+            return
+        if installed is not None and cache is not None:
+            candidate = cache.get("latest_version")
+            if isinstance(candidate, str):
+                result = (installed, candidate)
+    if result is None:
+        return
+    installed, latest = result
+    if _compare_versions(latest, installed) != 1:
+        return
+    try:
+        print(
+            f"\nA new release of leitir is available: {installed} → {latest}\n"
+            "Upgrade with: python -m pip install --upgrade leitir\n"
+            "https://pypi.org/project/leitir/\n",
+            file=sys.stderr,
+        )
+    except (OSError, UnicodeError):
+        return
+
+
+__all__ = ["maybe_emit_update_notice", "maybe_start_update_check", "should_check"]

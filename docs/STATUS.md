@@ -51,7 +51,7 @@ Hashing is deterministically bounded at `MAX_FILES=1000` and `MAX_BYTES=64 MiB`,
 with partial coverage explicitly recorded as sampled. Follow-ups #18 and #19
 are closed; #20 is closed with its performance optimization deferred. The
 originating #17 is also closed. Broader audit work is tracked by the
-[Production-ready v1.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1).
+[Production-ready path (v0.x series)](https://github.com/anthonykewl20/leitir/milestone/1).
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact

@@ -1,26 +1,32 @@
 # Leitir Roadmap
 
+## Versioning philosophy
+
+- **v0.x** — active incremental development. Each minor release (0.2.0, 0.3.0, ...) addresses audit findings, ships features, and progresses toward production-ready quality. Breaking changes are permitted within 0.x and must be called out in the changelog.
+- **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x series when the Critical/High audit findings are resolved, the self-scorecard passes, and real load testing confirms behavior at scale. The README's "Not production-ready" line changes when the quality bar is met, not when a specific version is cut.
+- **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a feature or quality milestone. v1.0 happens when the community demonstrates the project has earned the stability commitment that SemVer 1.0 implies. Until then, we ship 0.x.
+
 ## Current status
 
-Implementation-complete; design-stage software. Not production-ready (see milestone https://github.com/anthonykewl20/leitir/milestone/1 for the v1.0 release criteria).
+v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** See milestone [v0.2.0](https://github.com/anthonykewl20/leitir/milestone/1) for the next incremental step.
 
 ## Recently shipped
 
-- ADR-006: load-time tree verification (#17, #18, #19, #20 — all closed)
+- v0.1.0: ADR-006 load-time tree verification (#17, #18, #19, #20 — all closed)
 - ADR-005: corpus-v2 capabilities (C1-C10 complete)
 - ADR-004: local source materialization
 - ADR-003: categorized HTTP retry
 - ADR-002: deterministic evidence scoring engine (standalone repository scorer)
 - ADR-001: deterministic code-search kernel
 
-## Active work (Production-ready v1.0 milestone)
+## Active work — [v0.2.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1)
 
-[Production-ready v1.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1)
+Track at epic #42. Critical items must close before claiming "production-ready" quality; they do not gate the v0.2.0 version number itself (0.2.0 can ship with partial progress).
 
-### Critical (blocks release)
+### Critical (blocks the "production-ready" quality label)
 
 - #22 ADR-002 contract drift (scorer ≠ runtime trust)
-- #23 Missing-evidence-as-zero violates “unknown never zero”
+- #23 Missing-evidence-as-zero violates "unknown never zero"
 - #41 Self-scorecard must report `decision=pass`
 
 ### High
@@ -45,9 +51,9 @@ Implementation-complete; design-stage software. Not production-ready (see milest
 - #38 Add a CI coverage-regression gate.
 - #39 Close the load-time verification TOCTOU window with corpus-wide locking.
 
-## Deferred to v2.0+
+## Post-production-ready (still v0.x)
 
-- #40 Manifest authenticity (TUF/signatures)
+- #40 Manifest authenticity (TUF/signatures) — adversarial threat model, separate from corruption detection
 - Real load testing with 100+ package corpora
 - TOCTOU hardening via filesystem snapshots
 
@@ -63,4 +69,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: pick an issue from the milestone labeled `ready-for-agent` or `help wanted`.
+Humans: pick an issue from the [v0.2.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1) labeled `ready-for-agent` or `help wanted`.

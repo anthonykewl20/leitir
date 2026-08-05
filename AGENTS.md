@@ -2,9 +2,9 @@
 
 ## Where to find tracked work
 
-- **Production-ready v1.0 milestone**: https://github.com/anthonykewl20/leitir/milestone/1
-- Pull available work with: `gh issue list --milestone "Production-ready v1.0" --label ready-for-agent --state open`
-- The v1.0 release-criteria epic is #42; read it first.
+- **v0.2.0 milestone**: https://github.com/anthonykewl20/leitir/milestone/1
+- Pull available work with: `gh issue list --milestone "v0.2.0" --label ready-for-agent --state open`
+- The release-criteria epic is #42; read it first. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
 

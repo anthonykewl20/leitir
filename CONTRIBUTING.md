@@ -23,27 +23,32 @@ and use a private GitHub security advisory.
 
 ## Setup
 
-Clone the repository and create an environment:
+Clone the repository, create an environment, and install the project with its
+development tools:
 
 ```bash
 git clone https://github.com/anthonykewl20/leitir.git
 cd leitir
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+On Windows, activate the environment with `.venv\Scripts\activate`.
+
+The `dev` extra installs the test and development toolset (pytest, coverage,
+ruff, and mypy). For the reproducible CI-pinned dependency set instead, use
+`requirements.txt` through uv:
+
+```bash
 uv venv
 source .venv/bin/activate
 uv pip install -e .
 uv pip install -r requirements.txt
 ```
 
-On Windows, activate the environment with `.venv\Scripts\activate`.
-
-With pip instead of uv:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-python -m pip install -r requirements.txt
-```
+`requirements.txt` is a pinned development/CI dependency closure; it is not a
+runtime requirement.
 
 ## Running tests
 

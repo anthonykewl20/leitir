@@ -48,8 +48,8 @@ def test_get_prints_usable_path_and_cache_hit(tmp_path, monkeypatch):
         code, out, err = _invoke(argv)
         assert code == ExitCode.SUCCESS
         path = out.strip()
-        assert path.startswith("/")
-        assert open(f"{path}/proof.txt", encoding="utf-8").read() == "proof\n"
+        assert Path(path).is_absolute()
+        assert (Path(path) / "proof.txt").read_text(encoding="utf-8") == "proof\n"
         assert "materializing" in err
 
         manifest_path = Path(path) / "leitir-manifest.json"

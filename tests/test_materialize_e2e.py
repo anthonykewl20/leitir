@@ -41,6 +41,7 @@ def test_root_resolution_precedence(tmp_path, monkeypatch):
     env_root = tmp_path / "from-env"
     explicit = tmp_path / "explicit"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("LEITIR_HOME", str(env_root))
 
     assert resolve_root(explicit) == explicit

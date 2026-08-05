@@ -351,7 +351,10 @@ def test_upgrade_cache_dry_run_does_not_write(tmp_path):
 
 def test_upgrade_cache_hash_failure_is_reported_without_writing(tmp_path, monkeypatch):
     target, manifest_path = _legacy_upgrade_shelf(tmp_path, "legacy")
-    (target / "unsupported\nname").write_bytes(b"data")
+    try:
+        (target / "unsupported\nname").write_bytes(b"data")
+    except OSError:
+        pytest.skip("filesystem does not allow newline in filename")
     original = manifest_path.read_bytes()
     warnings: list[tuple[object, ...]] = []
     monkeypatch.setattr("leitir.cli.logger.warning", lambda *args: warnings.append(args))

@@ -464,6 +464,51 @@ def _assert_confined(output_path: Path, root: Path) -> None:
         raise UnsafeArchiveError("symbolic link escapes its target")
 
 
+def _resolve_planned_path(
+    path: PurePosixPath, links: Mapping[PurePosixPath, PurePosixPath]
+) -> PurePosixPath:
+    """Resolve an archive path through already-planned links, lexically."""
+    pending = list(path.parts)
+    resolved: list[str] = []
+    states: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    while pending:
+        state = (tuple(resolved), tuple(pending))
+        if state in states:
+            raise UnsafeArchiveError("symbolic link escapes its target")
+        states.add(state)
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not resolved:
+                raise UnsafeArchiveError("symbolic link escapes its target")
+            resolved.pop()
+            continue
+        resolved.append(part)
+        current = PurePosixPath(*resolved)
+        target = links.get(current)
+        if target is not None:
+            resolved.pop()
+            pending[0:0] = target.parts
+    return PurePosixPath(*resolved) if resolved else PurePosixPath(".")
+
+
+def _validate_planned_symlinks(
+    planned: list[tuple[tarfile.TarInfo, PurePosixPath | None]],
+) -> None:
+    """Reject chained escapes without relying on host symlink semantics."""
+    links: dict[PurePosixPath, PurePosixPath] = {}
+    for member, path in planned:
+        if path is None or not member.issym():
+            continue
+        parent = _resolve_planned_path(path.parent, links)
+        physical = parent / path.name
+        if physical in links:
+            raise UnsafeArchiveError("symbolic link escapes its target")
+        links[physical] = PurePosixPath(member.linkname)
+        _resolve_planned_path(physical, links)
+
+
 def _read_bounded(response: object, limit: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -540,6 +585,8 @@ def _extract_tarball(
 
         if not planned:
             raise UnsafeArchiveError("archive is empty")
+
+        _validate_planned_symlinks(planned)
 
         destination.mkdir(parents=True, exist_ok=True)
         root = destination.resolve()
@@ -703,8 +750,12 @@ def _verify_extracted_tree(
     for relative, entry in sorted(expected_symlinks.items()):
         if relative not in extracted_symlinks:
             continue
-        link_target = os.readlink(extracted_symlinks[relative])
-        extracted_bytes = os.fsencode(link_target)
+        try:
+            extracted_bytes = os.readlink(os.fsencode(extracted_symlinks[relative]))
+        except (OSError, UnicodeError) as exc:
+            raise VerificationError(
+                f"cannot read extracted symbolic link: {relative}"
+            ) from exc
         actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
             if not isinstance(tree_source, GitHubTreeSource):

@@ -157,7 +157,10 @@ def test_update_manifest_hash_failure_warns_and_preserves_legacy_path(
     tmp_path, monkeypatch
 ):
     target, _manifest = _shelf(tmp_path, digest=False)
-    (target / "unsupported\nname").write_bytes(b"data")
+    try:
+        (target / "unsupported\nname").write_bytes(b"data")
+    except OSError:
+        pytest.skip("filesystem does not allow newline in filename")
     warnings: list[tuple[object, ...]] = []
     monkeypatch.setattr(
         "leitir.materialize.logger.warning", lambda *args: warnings.append(args)

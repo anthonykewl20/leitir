@@ -196,7 +196,7 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 ## Honesty guarantees
 
 - Provenance-bound corpus outputs resolve to immutable provenance and source-specific manifests. Verified corpus shelves are re-hashed against `materialized_tree_hash` on every load; unverified shelves may omit the digest. Global search results are not necessarily materialized shelves.
-- Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry.
+- Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry. Archive symlink chains are resolved lexically before extraction, so confinement does not depend on host symlink behavior.
 - Legacy verified caches require `leitir upgrade-cache` to add a materialized-tree digest and gain load-time verification; until upgraded they are rejected as cache misses.
 - Runtime `leitir trust` turns unknown factors into neutral numeric scores (50/100), rather than `indeterminate`. Only the ADR-002 repository assessment gate preserves `indeterminate` as a decision.
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.

@@ -80,6 +80,7 @@ def _git(root: Path, *argv: str) -> subprocess.CompletedProcess:
 def _initialize_repository(root: Path, content: str = "committed\n") -> str:
     root.mkdir()
     _git(root, "init", "-q")
+    _git(root, "config", "core.autocrlf", "false")
     _git(root, "config", "user.name", "Provenance Test")
     _git(root, "config", "user.email", "provenance@example.invalid")
     (root / "tracked.txt").write_text(content, encoding="utf-8")
@@ -550,6 +551,7 @@ def test_patch_digest_is_stable_when_local_lfs_filter_would_transform_bytes(tmp_
     root = tmp_path / "filtered"
     root.mkdir()
     _git(root, "init", "-q")
+    _git(root, "config", "core.autocrlf", "false")
     _git(root, "config", "user.name", "Provenance Test")
     _git(root, "config", "user.email", "provenance@example.invalid")
     (root / ".gitattributes").write_text("*.txt filter=lfs\n", encoding="utf-8")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from leitir.corpus import write_sources
 from leitir.info import (
@@ -216,9 +217,11 @@ def test_build_info_fills_all_sections_and_is_deterministic(tmp_path):
         item["factor"] for item in first["trust"]["breakdown"]
     )
     assert first["paths"]["tree"] == str(target.absolute())
-    assert first["paths"]["api_index"].endswith("/api/github.com/acme/context/1.2.3/index.json")
-    assert first["paths"]["examples_index"].endswith(
-        "/examples/github.com/acme/context/1.2.3/index.json"
+    assert Path(first["paths"]["api_index"]).parts[-6:] == (
+        "api", "github.com", "acme", "context", "1.2.3", "index.json"
+    )
+    assert Path(first["paths"]["examples_index"]).parts[-6:] == (
+        "examples", "github.com", "acme", "context", "1.2.3", "index.json"
     )
 
 

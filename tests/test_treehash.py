@@ -237,7 +237,9 @@ def test_empty_symlink_target_is_supported_by_record_format(tmp_path, monkeypatc
     link.symlink_to("a.txt")
     real_readlink = os.readlink
     monkeypatch.setattr(
-        os, "readlink", lambda path: "" if Path(path) == link else real_readlink(path)
+        os,
+        "readlink",
+        lambda path: "" if Path(os.fsdecode(path)) == link else real_readlink(path),
     )
     assert treehash.compute_materialized_tree_hash(root) == (
         _manual_h1(root, {"a.txt": b"a"}, {"link.txt": ""}),
@@ -266,6 +268,8 @@ def test_symlink_target_with_non_utf8_bytes_is_wrapped(tmp_path):
 
 
 def test_fifo_or_special_file_is_rejected(tmp_path):
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("platform has no FIFO API")
     root = tmp_path / "src"
     root.mkdir()
     root.joinpath("a.txt").write_bytes(b"a")

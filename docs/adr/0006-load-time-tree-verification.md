@@ -33,7 +33,13 @@ hex(sha256(linkname_bytes)) + " -> " + linkname + "  " + path + "\n"
 ```
 
 Paths and link targets must be strict UTF-8 and contain no newline. Unsupported
-filesystem entries fail closed.
+filesystem entries fail closed. Link targets are read byte-exactly; Windows NT
+substitution-path prefixes are removed before hashing so the digest represents
+the requested target rather than a platform API artifact.
+
+Archive symlink chains are also resolved lexically before extraction. An escape
+is therefore rejected before filesystem mutation even on hosts whose
+`realpath` or symlink-creation behavior differs from POSIX.
 
 Full hashing is bounded by `MAX_FILES` (1,000 entries) and `MAX_BYTES` (64 MiB).
 Larger trees use deterministic content-and-path ordering, greedily selecting

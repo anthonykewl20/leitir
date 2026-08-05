@@ -146,9 +146,23 @@ def compute_materialized_tree_hash(
             linkname_bytes: bytes | None = None
             if is_symlink:
                 try:
-                    linkname = os.readlink(absolute)
-                    linkname_bytes = linkname.encode("utf-8", errors="strict")
-                except UnicodeEncodeError as exc:
+                    # A bytes path makes os.readlink return the exact on-disk
+                    # bytes instead of decoding first with platform rules.
+                    raw_linkname = os.readlink(os.fsencode(absolute))
+                    linkname_bytes = (
+                        raw_linkname.encode("utf-8", errors="strict")
+                        if isinstance(raw_linkname, str)
+                        else raw_linkname
+                    )
+                    if os.name == "nt":
+                        # Windows exposes the NT substitution path for absolute
+                        # links; hash the user-visible target used to create it.
+                        if linkname_bytes.startswith(b"\\\\?\\UNC\\"):
+                            linkname_bytes = b"\\\\" + linkname_bytes[8:]
+                        elif linkname_bytes.startswith(b"\\\\?\\"):
+                            linkname_bytes = linkname_bytes[4:]
+                    linkname = linkname_bytes.decode("utf-8", errors="strict")
+                except UnicodeError as exc:
                     raise TreeHashStructureError(
                         "path or linkname contains non-UTF-8 bytes "
                         f"(unsupported): {relative!r}"

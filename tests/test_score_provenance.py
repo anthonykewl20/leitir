@@ -554,7 +554,9 @@ def test_patch_digest_is_stable_when_local_lfs_filter_would_transform_bytes(tmp_
     _git(root, "config", "core.autocrlf", "false")
     _git(root, "config", "user.name", "Provenance Test")
     _git(root, "config", "user.email", "provenance@example.invalid")
-    (root / ".gitattributes").write_text("*.txt filter=lfs\n", encoding="utf-8")
+    (root / ".gitattributes").write_text(
+        "tracked.txt filter=lfs eol=lf\n", encoding="utf-8"
+    )
     (root / "tracked.txt").write_text("baseline\n", encoding="utf-8")
     _git(root, "add", ".gitattributes", "tracked.txt")
     _git(root, "commit", "-q", "-m", "fixture")

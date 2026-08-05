@@ -9,6 +9,7 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -257,6 +258,10 @@ def test_symlink_target_with_newline_is_rejected(tmp_path, monkeypatch):
 
 
 def test_symlink_target_with_non_utf8_bytes_is_wrapped(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip(
+            "non-UTF-8 filenames are not representable on Windows via the standard Python API"
+        )
     root = _make_tree(tmp_path, {"a.txt": b"a"})
     link = root / "link.txt"
     try:
@@ -313,6 +318,10 @@ def test_unreadable_file_error_is_wrapped(tmp_path, monkeypatch):
 
 
 def test_non_utf8_filename_is_wrapped(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip(
+            "non-UTF-8 filenames are not representable on Windows via the standard Python API"
+        )
     root = _make_tree(tmp_path, {"a.txt": b"a"})
     bad = os.fsencode(root) + b"/bad-\xff"
     try:

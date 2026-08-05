@@ -8,6 +8,7 @@ import json
 import os
 import tarfile
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -259,6 +260,10 @@ def test_symbolic_link_eol_difference_is_rejected(tmp_path):
 
 
 def test_non_utf8_symbolic_link_target_verifies(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip(
+            "non-UTF-8 filenames are not representable on Windows via the standard Python API"
+        )
     raw_target = b"target-\xff"
     os.symlink(raw_target, os.fsencode(tmp_path / "link"))
     entries = (

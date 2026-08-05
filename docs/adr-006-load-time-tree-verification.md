@@ -56,9 +56,9 @@ Hashing failures leave the legacy manifest unchanged and emit a warning.
 not re-verify shelf bytes against upstream registries: it computes the digest
 from, and therefore locks, whatever bytes are currently on disk. Run it only on
 a corpus whose existing contents you already trust, such as immediately after
-materialization and before an external process could modify the cache. For
-maximum safety, re-materialize suspicious shelves with `leitir get --force`
-instead.
+materialization and before an external process could modify the cache. To
+re-materialize a suspicious shelf instead, remove it first with `leitir
+remove <spec>` and then run `leitir get <spec>`.
 
 ## Consequences and threat boundary
 
@@ -68,6 +68,7 @@ an authenticity system: an attacker able to replace both tree and manifest can
 replace the digest. TUF metadata or signatures are separate authenticity work.
 
 Every load currently incurs an I/O scan (bounded hashing work for large trees,
-but directory enumeration and content-digest ordering still have costs).
-Reducing that overhead without weakening fail-closed behavior is tracked in
-issue #20.
+but directory enumeration and content-digest ordering still have costs). The
+residual O(total-tree-bytes) initial scan is documented in `treehash.py`'s
+module docstring; if benchmarks at production scale show this matters, a
+follow-up will be filed.

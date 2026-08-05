@@ -1,5 +1,9 @@
 # ADR-004: Local source materialization layer (corpus)
 
+> **Status:** Implementation-stage ADR. Superseded/extended by ADR-005
+> (corpus-v2 capabilities) and ADR-006 (load-time tree verification). Retained
+> for historical context.
+
 - Status: Implemented
 - Date: 2026-08-03
 - Related: ADR-001 deterministic code-search kernel, ADR-003 categorized HTTP retry

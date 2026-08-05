@@ -41,7 +41,7 @@ Extend ADR-004's `fetch, pin, verify, shelve` pipeline with a second source of t
 
 3. **GitLab + Bitbucket hosts.** Add host-aware resolvers for `gitlab:owner/repo@ref` and `bitbucket:owner/repo@ref` plus URL forms. Both use host APIs for SHA pinning (`gitlab` commit API, Bitbucket commits API), tarball endpoints, and host-native content/tree checks. The directory layout is already namespace-aware by host in ADR-004 D2, so no migration is needed. Token hooks are introduced as `GITLAB_TOKEN` and `BITBUCKET_TOKEN`, with HTTPS-only usage and no token logging (ADR-004 D10 behavior preserved).
 
-4. **Immutable snapshot corpora.** `leitir export [--cwd] [-o corpus.lock]` writes a corpus lock file and a gzip tarball of trees/manifests/POINTERS. `corpus.lock` includes format version, corpus version, per-source spec, `version_source`, resolved commit SHA, artifact checksum, tree SHA, and shelf path. `leitir import corpus.lock` verifies all tree SHAs/checksums before shelving; import is fail-closed with no partial success on any checksum mismatch. This enables byte-identical rehydration anywhere, independent of network availability.
+4. **Immutable snapshot corpora.** `leitir export [-o corpus.lock] [--root ROOT | --local]` writes a corpus lock file and a gzip tarball of trees/manifests/POINTERS. `corpus.lock` includes format version, corpus version, per-source spec, `version_source`, resolved commit SHA, artifact checksum, tree SHA, and shelf path. `leitir import corpus.lock` verifies all tree SHAs/checksums before shelving; import is fail-closed with no partial success on any checksum mismatch. This enables byte-identical rehydration anywhere, independent of network availability.
 
 5. **Transitive dependency closure.** `leitir lock [--cwd <dir>]` computes the transitive dependency graph from lockfiles. npm package-lock and Cargo are complete; go.mod is complete; requirements.txt/pyproject are direct-only. Each manifest records closure metadata per source: `graph: complete|direct-only` and `deps` edges (`name`, `version`, `resolved_sha`, `spec`). After lock, `leitir get` for transitive dependencies is guaranteed cache-hit. Locking behavior is extension work in `src/leitir/lockfiles.py`.
 
@@ -92,10 +92,10 @@ Ordered by dependency (matching decision 12): C1-C10.
       (Python 3.11); live GitLab resolver+materialize passed; Bitbucket live
       blocked by anonymous HTTP 429 on this host (no `BITBUCKET_TOKEN`) —
       Bitbucket correctness is covered by the offline fixture suite; re-verify
-      live with a token. Known limitation: `BITBUCKET_TOKEN` is attached only
-      to `api.bitbucket.org`, so private Bitbucket archive downloads
-      (`bitbucket.org`) are unauthenticated; public repos (the anonymous
-      default) are unaffected.
+      live with a token. Private archive authentication is implemented for both
+      `api.bitbucket.org` and `bitbucket.org`: `BITBUCKET_USERNAME` plus
+      `BITBUCKET_TOKEN` uses Basic auth, while a token without a username uses
+      Bearer auth.
 
 - [x] C2: Registry-artifact parity module and manifest parity fields.
       (`src/leitir/parity.py`, `src/leitir/materialize.py`, `src/leitir/resolver.py`,
@@ -134,8 +134,8 @@ Ordered by dependency (matching decision 12): C1-C10.
       the lockfile has only a version). `leitir lock [--cwd]` resolves+materializes
       every closure dep (cache-hit guarantee) and writes `graph`+`deps` into each
       manifest. Go pseudo-versions expand their 12-hex commit via the GitHub
-      commits API. Known limitation: lock is fail-closed per dep (one unresolvable
-      dep aborts the run) — a best-effort hardening pass is deferred.
+      commits API. `leitir lock --best-effort` is implemented and tested; it
+      continues past individual dependency failures while reporting them.
 
 - [x] C5: Immutable snapshot export/import command set.
       (`src/leitir/snapshot.py`, `src/leitir/cli.py`, `src/leitir/corpus.py`,

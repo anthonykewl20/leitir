@@ -163,13 +163,11 @@ The trial values are a dated research snapshot, not policy or a baseline.
 
 ### 1. Build one standalone composition root
 
-The user-facing command will be:
+The user-facing commands are:
 
 ```bash
 python tools/score_engine.py run --profile offline
 python tools/score_engine.py run --profile release
-python tools/score_engine.py evaluate --policy scorecard/policy-v1.json \
-  --evidence-dir .leitir-score/evidence
 python tools/score_engine.py render --assessment .leitir-score/assessment.json \
   --html docs/leitir-engine-scorecard-current.html
 ```
@@ -178,10 +176,13 @@ There will be no `leitir score` product command. The standalone script is the
 composition root and must not import the retired Hy3 pipeline or make any model
 request.
 
-The script has three operations:
+The script exposes only the `run` and `render` CLI subcommands. Internally,
+`run` composes three operations:
 
-1. `collect`: run a fixed, allowlisted set of collectors and store raw evidence.
-2. `evaluate`: pure function of policy bytes, subject bytes, and evidence bytes.
+1. `collect`: a Python function that runs a fixed, allowlisted set of collectors
+   and stores raw evidence.
+2. `evaluate`: a Python function that is pure over policy bytes, subject bytes,
+   and evidence bytes.
 3. `render`: pure JSON-to-HTML transformation.
 
 `run` composes all three for convenience. Policy files may define thresholds,
@@ -773,10 +774,12 @@ The cumulative suite must prove all of the following:
   closed.
 - The scoring environment has no LLM dependency or model credential path.
 
-## Verification commands for the future implementation
+## Implementation and verification
+
+ADR-002 is implemented in full. Its dedicated scorer suite passes **199 tests**.
 
 ```bash
-# Deterministic unit and fixture gate
+# Deterministic unit and fixture gate (199 passed)
 PYTHONPATH=src uv run --no-project --with-requirements requirements-score.txt \
   python -m pytest tests/test_score_*.py -m "not live"
 
@@ -789,6 +792,3 @@ python tools/score_engine.py run --profile offline \
 LEITIR_ENABLE_SCORE_LIVE=1 GH_TOKEN="$(gh auth token)" \
   python tools/score_engine.py run --profile release
 ```
-
-Until these artifacts and gates exist, any new overall 0-10 Leitir score remains
-an editorial assessment and must be labeled non-executable.

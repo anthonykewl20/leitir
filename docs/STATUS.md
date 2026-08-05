@@ -41,6 +41,18 @@ deterministic license inference (C6); API surface extraction via
 version diffing via `leitir diff` (C9); and deterministic trust scoring
 via `leitir trust` surfaced in `leitir list` (C10).
 
+**ADR-006 is implemented.** Load-time tree verification is provided by the new
+`src/leitir/treehash.py` module. Verified shelves must carry a
+`materialized_tree_hash` and are re-hashed whenever loaded; missing, malformed,
+unsupported, or mismatched mandatory fields fail closed. Legacy verified
+shelves migrate with `leitir upgrade-cache`, while `update_manifest`
+opportunistically backfills a digest after existing provenance checks pass.
+Hashing is deterministically bounded at `MAX_FILES=1000` and `MAX_BYTES=64 MiB`,
+with partial coverage explicitly recorded as sampled. Follow-ups #18 and #19
+are closed; #20 is closed with its performance optimization deferred. The
+originating #17 is also closed. Broader audit work is tracked by the
+[Production-ready v1.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1).
+
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact
 sources); Bitbucket live tolerance of anonymous rate-limiting; `leitir lock
@@ -52,7 +64,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **1103 passed, 51 skipped**. The 51 skips are opt-in live tests
+Offline suite: **1262 passed, 52 skipped**. The 52 skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
@@ -60,17 +72,16 @@ behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 Run against this repository, the engine **declines to pass itself**:
 
 ```
-profile=offline  decision=indeterminate  complete=false
-score_bps=unknown  observed_score_bps=10000
-lower_bound_bps=476  upper_bound_bps=10000
+profile=offline  decision=fail  complete=false
+score_bps=unknown  observed_score_bps=9980
+lower_bound_bps=475  upper_bound_bps=9999
 release_readiness=not_claimed          exit 3
 ```
 
-This is the correct output, not a defect. Everything measured passed — hence
-`observed=10000` — but 29 required results have never been collected on this
-repository, so the exact score is unknown and the bounds stay wide. A tool that
-reported a confident 10000 here would be reproducing the exact failure this
-project started from.
+The scorer finds 29 missing required results and one known failed check: a
+skipped fixed-gate test in `engine.offline_contracts`. The missing evidence
+keeps the exact score unknown and the bounds wide, while the known failure gives
+the run a `fail` decision rather than `indeterminate`.
 
 To improve that number, collect the missing evidence. Do **not** relax the
 policy: anti-gaming rule 2 makes policy, qrels, baselines and exclusions

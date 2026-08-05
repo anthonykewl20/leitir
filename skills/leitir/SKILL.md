@@ -37,7 +37,7 @@ allowed-tools: Bash(leitir:*)
 - **Manage**: `leitir list [--json]`, `leitir remove <spec>`, `leitir clean [--repos]`.
 - **Reproducibility**: `leitir lock [--cwd] [--best-effort]` (materialize transitive closure), `leitir export [-o corpus.lock]`, `leitir import <corpus.lock>`.
 - **SBOM**: `leitir sbom [--format spdx|cyclonedx]`.
-- `--json` is supported on `get`, `trust`, `api`, `examples`, `list`, and `diff`.
+- `--json` is supported on `get`, `info`, `trust`, `api`, `examples`, `list`, and `diff`; `info --json` is the recommended agent entry point.
 - CLI progress logs go to `stderr`; machine-readable output uses `stdout`.
 
 ### 2.A Command notes
@@ -47,6 +47,24 @@ allowed-tools: Bash(leitir:*)
 - Use `--root` for a fixed global corpus root when running in tooling automation.
 - Use `--no-verify` only for last-resort debugging; avoid it in normal evidence collection.
 - Use `--cwd` for lockfile-aware version selection in monorepos and nested project roots.
+
+### 2.B Load-time verification and cache migration
+
+- Materialized trees carry `materialized_tree_hash`, computed with the Go
+  directory-hash H1 algorithm. Verified corpus shelves are re-hashed on every
+  load; unverified shelves may omit the digest.
+- Hashing is symlink-aware, deterministically bounded-sampled for large trees,
+  and fail-closed on missing, malformed, unsupported, or mismatched integrity
+  data.
+- Legacy verified shelves without the digest are rejected until migrated with
+  `leitir upgrade-cache`.
+- Run `leitir upgrade-cache [--dry-run] [--root ROOT | --local]` to migrate
+  legacy shelves. This is trust-on-first-use: run it only on corpora whose
+  existing contents are already trusted.
+- To re-materialize a suspicious shelf, run `leitir remove <spec>` and then
+  `leitir get <spec>`; no force option is available.
+- `leitir info --json <spec>` is supported and is the recommended machine entry
+  point for agents.
 
 ## 3. Specs
 

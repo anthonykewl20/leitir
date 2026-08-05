@@ -1,8 +1,11 @@
 # Deterministic scoring operation
 
-`tools/score_engine.py` is the standalone ADR-002 scoring composition root. It
-uses no model, imports no `leitir` package code, and does not download or
-upgrade scoring tools.
+`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It
+evaluates Leitir itself across six weighted dimensions and is unrelated to the
+runtime `leitir trust` seven-factor trust model: it does not implement or
+independently verify that model. The systems share only the abstract principle
+that unknown is neither zero nor pass. The scorer uses no model, imports no
+`leitir` package code, and does not download or upgrade scoring tools.
 
 ## Commands
 

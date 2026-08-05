@@ -195,17 +195,17 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 
 ## Honesty guarantees
 
-- Provenance-bound outputs: every visible item resolves to an immutable commit and checksum, derives from the source-specific manifest, and has its materialized tree digest verified again at load time.
+- Provenance-bound corpus outputs resolve to immutable provenance and source-specific manifests. Verified corpus shelves are re-hashed against `materialized_tree_hash` on every load; unverified shelves may omit the digest. Global search results are not necessarily materialized shelves.
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry.
 - Legacy verified caches require `leitir upgrade-cache` to add a materialized-tree digest and gain load-time verification; until upgraded they are rejected as cache misses.
-- `unknown` evidence never becomes zero or a pass; unresolved checks preserve indeterminate state.
+- Runtime `leitir trust` turns unknown factors into neutral numeric scores (50/100), rather than `indeterminate`. Only the ADR-002 repository assessment gate preserves `indeterminate` as a decision.
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
 
 ## Scoring
 
-`tools/score_engine.py` is the ADR-002 standalone scoring engine. It is separate from runtime CLI paths, imports no `leitir` package code, makes no model calls, and applies the ADR-002 rule that unknown is neither zero nor pass. It still reports this repository as an honest no-pass/indeterminate outcome today because required evidence is incomplete, with the details and current result tracked in [docs/scoring.md](docs/scoring.md).
+`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement or independently verify the runtime `leitir trust` seven-factor trust model. The two systems share only the abstract principle that “unknown is neither zero nor pass.” At current HEAD the scorer reports `decision=fail`, `observed_score_bps=9980`, and bounds `475..9999`: 29 required results are missing and one fixed-gate test in `engine.offline_contracts` is skipped and therefore a known failed check. Details are tracked in [docs/scoring.md](docs/scoring.md).
 
 ## Tests
 
@@ -213,7 +213,7 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **1035 passed, 48 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **1262 passed, 52 skipped**.
 
 ## Repository layout
 

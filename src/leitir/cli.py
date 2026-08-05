@@ -39,8 +39,8 @@ _UPGRADE_CACHE_DESCRIPTION = (
     "NOTE: the digest is computed from the bytes currently on disk. Run this "
     "only on a corpus whose existing contents you already trust (e.g., "
     "immediately after materialization, before any external process could "
-    "modify the cache). For maximum safety, re-materialize suspicious shelves "
-    "with `leitir get --force` instead."
+    "modify the cache). To re-materialize a suspicious shelf instead, remove "
+    "it first with `leitir remove <spec>` and then run `leitir get <spec>`."
 )
 
 

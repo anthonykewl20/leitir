@@ -53,16 +53,17 @@ represented as complete.
 Verified shelves must carry this digest. Legacy shelves can be upgraded with
 ``leitir upgrade-cache`` before they are loaded by normal corpus operations.
 
-Residual I/O cost (tracked in issue #20)
----------------------------------------
+Residual I/O cost
+-----------------
 The content-derived ordering used for sampling requires reading each candidate
 file once to compute its per-file SHA-256. The selected *summary* is bounded
 by ``MAX_BYTES``, but the *initial scan* is O(total tree bytes). For a tree
 of 100k files at 1 GiB total, verify cost is ~1 GiB of reads even though only
 ~64 MiB enters the summary. This is accepted for prototype-scale corpora; the
 alternatives (path-derived ordering, signed sidecar index, trusted-mtime cache)
-each weaken the threat model or add complexity that is not yet justified.
-Issue #20 tracks the revisit if benchmarks show this matters in practice.
+each weaken the threat model or add complexity that is not yet justified. Issue
+#20 was closed with this cost deferred; a follow-up will be filed if benchmarks
+at production scale show it matters in practice.
 
 References
 ----------

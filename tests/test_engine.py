@@ -8,6 +8,7 @@ adapter protocol.
 from __future__ import annotations
 
 import hashlib
+from itertools import permutations
 
 import pytest
 
@@ -175,6 +176,54 @@ class TestHappyPath:
     def test_commit_sha_in_source_ref_matches_scope(self):
         report = _searcher().search(_spec())
         assert report.matches[0].source.commit_sha == SHA
+
+    def test_report_order_and_identity_are_input_order_independent(self, monkeypatch):
+        monkeypatch.setattr("leitir.engine._utc_now", lambda: "2026-08-06T12:00:00Z")
+        contents = {
+            "z.py": b"def urlencode(doseq=False):\n    pass\n",
+            "a.py": b"def urlencode():\n    return None\n",
+        }
+        entries = tuple(
+            (
+                BlobEntry(path, _blob_sha(content), len(content)),
+                content,
+            )
+            for path, content in contents.items()
+        )
+        reports = []
+        for permutation in permutations(entries):
+            source = FakeTreeSource(
+                blobs={entry.path: (entry, content) for entry, content in permutation}
+            )
+            reports.append(
+                _searcher(source).search(
+                    _spec(should=(Predicate(PredicateKind.IDENTIFIER, "doseq"),))
+                )
+            )
+
+        expected = reports[0]
+        assert [match.source.path for match in expected.matches] == ["z.py", "a.py"]
+        for report in reports[1:]:
+            assert report.matches == expected.matches
+            assert report.to_dict() == expected.to_dict()
+            assert report.to_json(indent=None).encode() == expected.to_json(
+                indent=None
+            ).encode()
+            assert report.identity_digest() == expected.identity_digest()
+
+    def test_duplicate_source_identity_is_rejected(self):
+        source = _fake_source()
+        entry = source.list_blobs("python/cpython", SHA)[0]
+
+        class DuplicateTreeSource(FakeTreeSource):
+            def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
+                return (entry, entry)
+
+        duplicate_source = DuplicateTreeSource(
+            blobs={"parse.py": (entry, SAMPLE_PY.encode())}
+        )
+        with pytest.raises(ValueError, match="duplicate SourceRef"):
+            _searcher(duplicate_source).search(_spec())
 
 
 class TestMustNot:

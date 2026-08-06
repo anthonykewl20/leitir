@@ -6,9 +6,13 @@ from itertools import permutations
 
 import pytest
 
-from leitir.ranking import RankedMatch, normalize_scores, rank_matches
+from leitir.ranking import (
+    RankedMatch,
+    normalize_scores,
+    order_source_matches,
+    rank_matches,
+)
 from leitir.search import PredicateKind, SourceMatch, SourceRef
-
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -108,6 +112,18 @@ def test_every_input_permutation_has_identical_ranked_output():
     expected = [item.to_dict() for item in rank_matches(matches)]
     for permutation in permutations(matches):
         assert [item.to_dict() for item in rank_matches(permutation)] == expected
+
+
+def test_order_source_matches_and_rank_matches_agree_on_order():
+    matches = (
+        _match(score=3.0, path="z.py"),
+        _match(score=3.0, path="a.py"),
+        _match(score=1.0, path="m.py"),
+    )
+    assert order_source_matches(matches) == tuple(
+        SourceMatch(item.source, item.score, item.matched_kinds)
+        for item in rank_matches(matches)
+    )
 
 
 def test_rank_scores_are_unique_positive_and_descending():

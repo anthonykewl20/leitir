@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import json
 import os
 
@@ -30,7 +31,7 @@ def _invoke(argv):
 
 class TestLiveGlobalDiscovery:
     def test_finds_python_symbol(self):
-        code, out, err = _invoke([
+        code, out, _err = _invoke([
             "search", "--global",
             "--must", "symbol_definition:urlencode:python",
             "--must", "path:urllib",
@@ -41,7 +42,7 @@ class TestLiveGlobalDiscovery:
         assert len(payload["matches"]) > 0
 
     def test_coverage_is_honest(self):
-        code, out, _ = _invoke([
+        _code, out, _ = _invoke([
             "search", "--global",
             "--must", "identifier:urlencode:python",
         ])
@@ -52,7 +53,7 @@ class TestLiveGlobalDiscovery:
         assert cov["files_eligible"] >= 0
 
     def test_provenance_has_commit_sha(self):
-        code, out, _ = _invoke([
+        _code, out, _ = _invoke([
             "search", "--global",
             "--must", "symbol_definition:urlencode:python",
             "--must", "path:urllib",
@@ -130,7 +131,7 @@ class TestLiveTransportDirect:
         transport = GitHubCodeSearchTransport(token=self._token())
         searcher = GlobalSearcher(
             code_search=transport,
-            tree_source=NullTree(),
+            tree_source=NullTree(),  # type: ignore[arg-type]  # unused by global search
             adapters=(PythonAdapter(),),
             blob_reader=transport.read_blob_by_path,
             max_results=5,
@@ -176,3 +177,108 @@ class TestLiveTransportDirect:
 
         if not any(head != indexed for head, indexed in observed_heads):
             assert all(head == indexed for head, indexed in observed_heads), "no lag observed"
+
+
+class TestLiveGlobalRealDataOrdering:
+    """Lock P6 ordering and identity guarantees against one real snapshot."""
+
+    def _token(self) -> str | None:
+        return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+    def test_real_snapshot_is_ordered_unique_and_offline_deterministic(self):
+        from leitir.adapters import PythonAdapter
+        from leitir.discovery_search import GitHubCodeSearchTransport, GlobalSearcher
+        from leitir.ranking import (
+            normalize_scores,
+            order_source_matches,
+            source_identity,
+        )
+        from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+
+        class NullTree:
+            pass
+
+        transport = GitHubCodeSearchTransport(token=self._token())
+        searcher = GlobalSearcher(
+            code_search=transport,
+            tree_source=NullTree(),  # type: ignore[arg-type]  # unused by global search
+            adapters=(PythonAdapter(),),
+            blob_reader=transport.read_blob_by_path,
+            max_results=5,
+        )
+        report = searcher.search(
+            SearchSpec(
+                mode=SearchMode.GLOBAL_DISCOVERY,
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                    Predicate(PredicateKind.PATH, "urllib"),
+                ),
+            )
+        )
+        assert report.matches, "live global query returned no real matches"
+        if len(report.matches) < 2:
+            pytest.skip("live global query returned fewer than two real matches")
+
+        normalized_scores = normalize_scores(report.matches)
+        order_keys = tuple(
+            (
+                -normalized_score,
+                match.source.slug,
+                match.source.commit_sha,
+                match.source.path,
+                match.source.blob_sha,
+                match.source.start_line,
+                match.source.end_line,
+            )
+            for match, normalized_score in zip(
+                report.matches, normalized_scores, strict=True
+            )
+        )
+        for index, (left, right) in enumerate(
+            itertools.pairwise(order_keys), start=1
+        ):
+            assert left <= right, (
+                f"P6 order decreased between match indexes {index - 1} and {index}: "
+                f"{left!r} > {right!r}"
+            )
+
+        identities = tuple(source_identity(match.source) for match in report.matches)
+        assert len(set(identities)) == len(report.matches), (
+            "live global report contains duplicate source identities"
+        )
+
+        identity_digest = report.identity_digest()
+        assert len(identity_digest) == 64
+        assert all(character in "0123456789abcdef" for character in identity_digest)
+        identity_payload = {
+            "spec_digest": report.spec_digest,
+            "coverage": report.coverage.to_dict(),
+            "matches": [match.to_dict() for match in report.matches],
+        }
+        independently_encoded = json.dumps(
+            identity_payload,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        assert hashlib.sha256(independently_encoded).hexdigest() == identity_digest
+
+        expected_matches = json.dumps(
+            [match.to_dict() for match in report.matches],
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        for permutation_index, permutation in enumerate(
+            itertools.islice(itertools.permutations(report.matches), 6)
+        ):
+            reordered = order_source_matches(permutation)
+            actual_matches = json.dumps(
+                [match.to_dict() for match in reordered],
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            assert actual_matches == expected_matches, (
+                f"offline permutation {permutation_index} changed ordered output"
+            )

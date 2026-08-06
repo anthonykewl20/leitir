@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.materialize import _utc_now
+from leitir.ranking import order_source_matches
 from leitir.search import (
     Coverage,
     CoverageStatus,
@@ -144,7 +145,7 @@ class ScopedSearcher:
         return SearchReport(
             spec_digest=spec.digest(),
             coverage=coverage,
-            matches=tuple(all_matches),
+            matches=order_source_matches(tuple(all_matches)),
             resolution=Resolution(
                 strategy=ResolutionStrategy.DECLARED_SCOPE,
                 as_of=_utc_now(),

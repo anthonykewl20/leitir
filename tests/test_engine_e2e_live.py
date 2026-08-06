@@ -8,11 +8,15 @@ with correct provenance. Includes a sad path with a corrupted commit.
 from __future__ import annotations
 
 import os
+from itertools import pairwise
+from typing import Any
 
+import fixtures_real as fx
 import pytest
 
 from leitir.adapters import PythonAdapter
 from leitir.engine import ScopedSearcher
+from leitir.ranking import normalize_scores, source_identity
 from leitir.search import (
     CoverageStatus,
     Predicate,
@@ -21,9 +25,7 @@ from leitir.search import (
     SearchMode,
     SearchSpec,
 )
-from leitir.tree import GitHubTreeSource, TreeTruncatedError
-
-import fixtures_real as fx
+from leitir.tree import GitHubTreeSource
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
@@ -42,16 +44,16 @@ def _searcher() -> ScopedSearcher:
     )
 
 
-def _spec(**overrides) -> SearchSpec:
-    base = dict(
-        mode=SearchMode.SCOPED_EXHAUSTIVE,
-        must=(
+def _spec(**overrides: Any) -> SearchSpec:
+    base: dict[str, Any] = {
+        "mode": SearchMode.SCOPED_EXHAUSTIVE,
+        "must": (
             Predicate(PredicateKind.PATH, "Lib/urllib/parse.py"),
             Predicate(PredicateKind.SYMBOL_DEFINITION, "urlencode", "python"),
         ),
-        should=(Predicate(PredicateKind.IDENTIFIER, "doseq", "python"),),
-        scopes=(RepoScope(fx.REPO_SLUG, fx.COMMIT_SHA),),
-    )
+        "should": (Predicate(PredicateKind.IDENTIFIER, "doseq", "python"),),
+        "scopes": (RepoScope(fx.REPO_SLUG, fx.COMMIT_SHA),),
+    }
     base.update(overrides)
     return SearchSpec(**base)
 
@@ -59,6 +61,33 @@ def _spec(**overrides) -> SearchSpec:
 def test_live_engine_finds_urlencode_definition():
     report = _searcher().search(_spec())
     assert len(report.matches) > 0
+
+    normalized_scores = normalize_scores(report.matches)
+    order_keys = tuple(
+        (
+            -normalized_score,
+            match.source.slug,
+            match.source.commit_sha,
+            match.source.path,
+            match.source.blob_sha,
+            match.source.start_line,
+            match.source.end_line,
+        )
+        for match, normalized_score in zip(
+            report.matches, normalized_scores, strict=True
+        )
+    )
+    for index, (left, right) in enumerate(pairwise(order_keys), start=1):
+        assert left <= right, (
+            f"P6 order decreased between match indexes {index - 1} and {index}: "
+            f"{left!r} > {right!r}"
+        )
+
+    identities = tuple(source_identity(match.source) for match in report.matches)
+    assert len(set(identities)) == len(report.matches), (
+        "live scoped report contains duplicate source identities"
+    )
+
     top = report.matches[0]
     assert top.source.slug == fx.REPO_SLUG
     assert top.source.commit_sha == fx.COMMIT_SHA
@@ -96,5 +125,5 @@ def test_live_known_symbols_present_in_blob():
 def test_live_corrupted_commit_yields_no_results():
     bad_sha = "0" * 40
     spec = _spec(scopes=(RepoScope(fx.REPO_SLUG, bad_sha),))
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - live transport failures vary
         _searcher().search(spec)

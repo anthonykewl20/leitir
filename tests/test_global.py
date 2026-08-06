@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import permutations
 
 import pytest
 
@@ -167,6 +168,53 @@ class TestGlobalSearcher:
         searcher, _ = _searcher(page=page)
         report = searcher.search(_spec())
         assert report.matches[0].source.blob_sha == BLOB
+
+    def test_report_order_and_identity_are_hit_order_independent(self):
+        low_content = b"def urlencode(query):\n    return query\n"
+        low_blob = hashlib.sha1(
+            b"blob "
+            + str(len(low_content)).encode("ascii")
+            + b"\x00"
+            + low_content
+        ).hexdigest()
+        hits = (_hit(path="z.py"), _hit(path="a.py", blob_sha=low_blob))
+        reports = []
+        for permutation in permutations(hits):
+            page = CodeSearchPage(
+                hits=permutation, total_count=2, incomplete_results=False
+            )
+            searcher = GlobalSearcher(
+                code_search=FakeCodeSearch(page=page),
+                tree_source=FakeTree(),
+                adapters=(PythonAdapter(),),
+                blob_reader=lambda slug, sha, path: (
+                    low_content if path == "a.py" else CONTENT_BYTES
+                ),
+                clock=lambda: "2026-08-06T12:00:00Z",
+            )
+            reports.append(
+                searcher.search(
+                    _spec(should=(Predicate(PredicateKind.IDENTIFIER, "doseq"),))
+                )
+            )
+
+        expected = reports[0]
+        assert [match.source.path for match in expected.matches] == ["z.py", "a.py"]
+        for report in reports[1:]:
+            assert report.matches == expected.matches
+            assert report.to_dict() == expected.to_dict()
+            assert report.to_json(indent=None).encode() == expected.to_json(
+                indent=None
+            ).encode()
+            assert report.identity_digest() == expected.identity_digest()
+
+    def test_duplicate_source_identity_is_rejected(self):
+        page = CodeSearchPage(
+            hits=(_hit(), _hit()), total_count=2, incomplete_results=False
+        )
+        searcher, _ = _searcher(page=page)
+        with pytest.raises(ValueError, match="duplicate SourceRef"):
+            searcher.search(_spec())
 
     def test_tampered_blob_is_rejected_and_counted(self):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)

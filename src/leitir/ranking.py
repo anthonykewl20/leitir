@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 
 from leitir.search import PredicateKind, SourceMatch, SourceRef
-
 
 _NORMALIZED_QUANTUM = Decimal("0.000000000001")
 
@@ -60,6 +59,26 @@ def normalize_scores(matches: tuple[SourceMatch, ...]) -> tuple[float, ...]:
             )
             normalized.append(float(value))
     return tuple(normalized)
+
+
+def order_source_matches(
+    matches: tuple[SourceMatch, ...],
+) -> tuple[SourceMatch, ...]:
+    """Return matches in ADR-002's exact total order."""
+    normalized = normalize_scores(matches)
+    decorated = list(zip(matches, normalized, strict=True))
+
+    identities = [source_identity(match.source) for match in matches]
+    if len(set(identities)) != len(identities):
+        raise ValueError("matches contain duplicate SourceRef identities")
+
+    decorated.sort(
+        key=lambda item: (
+            -item[1],
+            *source_identity(item[0].source),
+        )
+    )
+    return tuple(match for match, _normalized_score in decorated)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,20 +139,9 @@ def rank_matches(matches: tuple[SourceMatch, ...]) -> tuple[RankedMatch, ...]:
     ``rank_score`` is task-local, positive, unique, and decreasing with rank so
     a pytrec adapter can preserve this order without equal-score tie handling.
     """
-    normalized = normalize_scores(matches)
-    decorated = list(zip(matches, normalized, strict=True))
-
-    identities = [source_identity(match.source) for match in matches]
-    if len(set(identities)) != len(identities):
-        raise ValueError("matches contain duplicate SourceRef identities")
-
-    decorated.sort(
-        key=lambda item: (
-            -item[1],
-            *source_identity(item[0].source),
-        )
-    )
-    count = len(decorated)
+    ordered = order_source_matches(matches)
+    normalized = normalize_scores(ordered)
+    count = len(ordered)
     return tuple(
         RankedMatch(
             source=match.source,
@@ -143,13 +151,16 @@ def rank_matches(matches: tuple[SourceMatch, ...]) -> tuple[RankedMatch, ...]:
             rank_score=count - index + 1,
             matched_kinds=match.matched_kinds,
         )
-        for index, (match, normalized_score) in enumerate(decorated, start=1)
+        for index, (match, normalized_score) in enumerate(
+            zip(ordered, normalized, strict=True), start=1
+        )
     )
 
 
 __all__ = [
     "RankedMatch",
     "normalize_scores",
+    "order_source_matches",
     "rank_matches",
     "source_identity",
 ]

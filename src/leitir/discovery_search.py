@@ -21,6 +21,7 @@ from leitir.adapters import LanguageAdapter
 from leitir.credentials import validate_secret
 from leitir.engine import score_content
 from leitir.materialize import _utc_now
+from leitir.ranking import order_source_matches
 from leitir.search import (
     Coverage,
     CoverageStatus,
@@ -417,7 +418,7 @@ class GlobalSearcher:
         return SearchReport(
             spec_digest=spec.digest(),
             coverage=coverage,
-            matches=tuple(matches),
+            matches=order_source_matches(tuple(matches)),
             resolution=Resolution(
                 strategy=ResolutionStrategy.INDEXED_COMMIT,
                 as_of=self._clock(),

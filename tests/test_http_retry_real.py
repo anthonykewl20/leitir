@@ -43,7 +43,8 @@ SEARCH_OK = {
             "repository": {"full_name": "python/cpython"},
             "path": "Lib/urllib/parse.py",
             "sha": BLOB,
-            "html_url": "https://github.com/python/cpython/blob/main/Lib/urllib/parse.py",
+            "url": f"https://api.github.com/repositories/1/contents/Lib/urllib/parse.py?ref={SHA}",
+            "html_url": f"https://github.com/python/cpython/blob/{SHA}/Lib/urllib/parse.py",
         }
     ],
 }
@@ -209,12 +210,10 @@ class TestGlobalSearcherUserLevel:
         # Sequence served across all transport calls:
         # 1. code search -> 502 (transient)
         # 2. code search -> 200 with one hit
-        # 3. resolve HEAD -> 200 with SHA
-        # 4. read blob -> 200 with python source
+        # 3. read blob at the indexed commit -> 200 with python source
         with hs.scripted_server([
             (502, {}, b""),
             (200, {"Content-Type": "application/json"}, hs.json_body(SEARCH_OK)),
-            (200, {"Content-Type": "application/json"}, hs.json_body(COMMITS_OK)),
             (200, {"Content-Type": "text/plain"}, BLOB_CONTENT),
         ]) as h:
             transport = _transport(h.base_url, sleeper=sleeps.append)
@@ -222,7 +221,6 @@ class TestGlobalSearcherUserLevel:
                 code_search=transport,
                 tree_source=_NullTree(),
                 adapters=(PythonAdapter(),),
-                head_resolver=transport.resolve_head_sha,
                 blob_reader=transport.read_blob_by_path,
             )
             spec = SearchSpec(
@@ -240,14 +238,13 @@ class TestGlobalSearcherUserLevel:
         assert match.source.path == "Lib/urllib/parse.py"
         # the single 502 produced exactly one backoff sleep
         assert sleeps == [1.0]
-        assert h.state.served_count == 4
+        assert h.state.served_count == 3
 
     @pytest.mark.parametrize("iteration", range(6))
     def test_repeated_user_sessions_are_deterministic(self, iteration):
         """Loop a full session; every iteration must yield identical provenance."""
         with hs.scripted_server([
             (200, {"Content-Type": "application/json"}, hs.json_body(SEARCH_OK)),
-            (200, {"Content-Type": "application/json"}, hs.json_body(COMMITS_OK)),
             (200, {"Content-Type": "text/plain"}, BLOB_CONTENT),
         ]) as h:
             transport = _transport(h.base_url, sleeper=lambda _: None)
@@ -255,7 +252,6 @@ class TestGlobalSearcherUserLevel:
                 code_search=transport,
                 tree_source=_NullTree(),
                 adapters=(PythonAdapter(),),
-                head_resolver=transport.resolve_head_sha,
                 blob_reader=transport.read_blob_by_path,
             )
             spec = SearchSpec(

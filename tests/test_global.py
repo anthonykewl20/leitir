@@ -12,12 +12,16 @@ from leitir.discovery_search import (
     CodeSearchHit,
     CodeSearchPage,
     GlobalSearcher,
+    _cross_checked_commit_sha,
     build_query,
+    validate_report,
 )
 from leitir.search import (
     CoverageStatus,
     Predicate,
     PredicateKind,
+    RepoScope,
+    ResolutionStrategy,
     SearchMode,
     SearchSpec,
 )
@@ -81,8 +85,9 @@ def _hit(**overrides) -> CodeSearchHit:
         "slug": "python/cpython",
         "path": "Lib/urllib/parse.py",
         "blob_sha": BLOB,
+        "commit_sha": SHA,
         "html_url": (
-            "https://github.com/python/cpython/blob/main/Lib/urllib/parse.py"
+            f"https://github.com/python/cpython/blob/{SHA}/Lib/urllib/parse.py"
         ),
     }
     base.update(overrides)
@@ -105,8 +110,8 @@ def _searcher(page=None, content=None, error=None):
         code_search=cs,
         tree_source=tree,
         adapters=(PythonAdapter(),),
-        head_resolver=lambda slug: SHA,
         blob_reader=lambda slug, sha, path: content or CONTENT.encode(),
+        clock=lambda: "2026-08-06T12:00:00Z",
     )
     return searcher, cs
 
@@ -149,11 +154,13 @@ class TestGlobalSearcher:
         assert report.matches[0].source.slug == "python/cpython"
         assert report.matches[0].source.path == "Lib/urllib/parse.py"
 
-    def test_provenance_carries_resolved_head_sha(self):
+    def test_provenance_carries_indexed_commit_sha(self):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
         searcher, _ = _searcher(page=page)
         report = searcher.search(_spec())
         assert report.matches[0].source.commit_sha == SHA
+        assert report.resolution.strategy is ResolutionStrategy.INDEXED_COMMIT
+        assert report.resolution.as_of == "2026-08-06T12:00:00Z"
 
     def test_blob_sha_from_search_hit(self):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
@@ -182,7 +189,6 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=fail_fetch,
         )
 
@@ -200,7 +206,6 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=tree,
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=None,
         )
 
@@ -230,7 +235,6 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=lambda slug, sha, path: (_ for _ in ()).throw(
                 TypeError("programming bug")
             ),
@@ -292,7 +296,7 @@ class TestGlobalSearcher:
         assert len(report.matches) == 0
         assert report.coverage.exclusions == {"no_adapter": 1}
 
-    def test_no_adapter_precedes_head_and_blob_io(self):
+    def test_no_adapter_precedes_blob_io(self):
         page = CodeSearchPage(
             hits=(_hit(path="README.md"),), total_count=1, incomplete_results=False
         )
@@ -304,7 +308,6 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=unexpected_call,
             blob_reader=unexpected_call,
         )
 
@@ -312,38 +315,40 @@ class TestGlobalSearcher:
 
         assert report.coverage.exclusions == {"no_adapter": 1}
 
-    def test_head_resolution_failure_skips_hit(self):
+    @pytest.mark.parametrize("malformed", ["main", "", "a" * 39, None])
+    def test_malformed_index_pin_is_counted_as_unpinned(self, malformed):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
-        cs = FakeCodeSearch(page=page)
-        tree = FakeTree()
-
-        def bad_head(slug):
-            raise CodeSearchError("no head")
-
-        searcher = GlobalSearcher(
-            code_search=cs,
-            tree_source=tree,
-            adapters=(PythonAdapter(),),
-            head_resolver=bad_head,
-        )
-        report = searcher.search(_spec())
-        assert len(report.matches) == 0
-        assert report.coverage.exclusions == {"head_unresolved": 1}
-
-    @pytest.mark.parametrize("malformed", ["main", "", "a" * 39])
-    def test_malformed_head_is_counted_as_unresolved(self, malformed):
-        page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+        object.__setattr__(page.hits[0], "commit_sha", malformed)
         searcher = GlobalSearcher(
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: malformed,
             blob_reader=lambda slug, sha, path: CONTENT_BYTES,
         )
 
         report = searcher.search(_spec())
 
-        assert report.coverage.exclusions == {"head_unresolved": 1}
+        assert report.coverage.exclusions == {"unpinned_hit": 1}
+
+    def test_pin_disagreement_is_counted(self):
+        other = "b" * 40
+        page = CodeSearchPage(
+            hits=(_hit(html_url=f"https://github.com/python/cpython/blob/{other}/x.py"),),
+            total_count=1,
+            incomplete_results=False,
+        )
+        searcher, _ = _searcher(page=page)
+        report = searcher.search(_spec())
+        assert report.coverage.exclusions == {"pin_disagreement": 1}
+
+    def test_missing_html_pin_is_counted_as_unpinned(self):
+        page = CodeSearchPage(
+            hits=(_hit(html_url="https://github.com/python/cpython/blob/main/x.py"),),
+            total_count=1,
+            incomplete_results=False,
+        )
+        report = _searcher(page=page)[0].search(_spec())
+        assert report.coverage.exclusions == {"unpinned_hit": 1}
 
     def test_later_page_failure_returns_validated_partial_report(self):
         pages = {
@@ -360,7 +365,6 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=lambda slug, sha, path: CONTENT_BYTES,
             max_results=2,
         )
@@ -390,7 +394,6 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(CONTENT_BYTES),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=lambda slug, sha, path: CONTENT_BYTES,
             max_results=2,
         )
@@ -412,7 +415,6 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(CONTENT_BYTES),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=lambda slug, sha, path: CONTENT_BYTES,
             max_results=2,
             max_pages=1,
@@ -432,7 +434,6 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(CONTENT_BYTES),
             adapters=(PythonAdapter(),),
-            head_resolver=lambda slug: SHA,
             blob_reader=lambda slug, sha, path: CONTENT_BYTES,
             max_results=2,
         )
@@ -445,7 +446,7 @@ class TestGlobalSearcher:
 
     def test_mixed_outcomes_reconcile_coverage(self):
         hits = (
-            _hit(slug="bad/head", path="bad.py"),
+            _hit(path="unpinned.py"),
             _hit(path="fetch.py"),
             _hit(path="mismatch.py"),
             _hit(path="README.md"),
@@ -453,10 +454,7 @@ class TestGlobalSearcher:
         )
         page = CodeSearchPage(hits=hits, total_count=5, incomplete_results=False)
 
-        def resolve_head(slug):
-            if slug == "bad/head":
-                raise CodeSearchError("no head")
-            return SHA
+        object.__setattr__(hits[0], "commit_sha", "main")
 
         def read_blob(slug, commit_sha, path):
             if path == "fetch.py":
@@ -469,7 +467,6 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            head_resolver=resolve_head,
             blob_reader=read_blob,
             max_results=5,
         )
@@ -479,9 +476,9 @@ class TestGlobalSearcher:
         assert report.coverage.files_indexed == 1
         assert report.coverage.exclusions == {
             "fetch_failed": 1,
-            "head_unresolved": 1,
             "no_adapter": 1,
             "provenance_mismatch": 1,
+            "unpinned_hit": 1,
         }
         assert sum(report.coverage.exclusions.values()) == report.coverage.files_excluded
 
@@ -489,12 +486,93 @@ class TestGlobalSearcher:
 class TestCodeSearchHit:
     def test_invalid_blob_sha_rejected(self):
         with pytest.raises(ValueError):
-            CodeSearchHit(slug="o/r", path="f.py", blob_sha="short", html_url="")
+            CodeSearchHit(
+                slug="o/r", path="f.py", blob_sha="short", html_url="", commit_sha=SHA
+            )
 
     def test_invalid_slug_rejected(self):
         with pytest.raises(ValueError):
-            CodeSearchHit(slug="noslash", path="f.py", blob_sha=BLOB, html_url="")
+            CodeSearchHit(
+                slug="noslash", path="f.py", blob_sha=BLOB, html_url="", commit_sha=SHA
+            )
 
     def test_empty_path_rejected(self):
         with pytest.raises(ValueError):
-            CodeSearchHit(slug="o/r", path="", blob_sha=BLOB, html_url="")
+            CodeSearchHit(slug="o/r", path="", blob_sha=BLOB, html_url="", commit_sha=SHA)
+
+    def test_invalid_commit_sha_rejected(self):
+        with pytest.raises(ValueError, match="commit_sha"):
+            _hit(commit_sha="main")
+
+
+def test_head_resolver_keyword_is_removed():
+    with pytest.raises(TypeError, match="head_resolver"):
+        GlobalSearcher(
+            code_search=FakeCodeSearch(),
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            head_resolver=lambda slug: SHA,
+        )
+
+
+def test_blob_reads_use_only_indexed_commit_and_matches_are_repo_scopes():
+    other = "b" * 40
+    page = CodeSearchPage(
+        hits=(_hit(commit_sha=SHA), _hit(commit_sha=other, html_url=f"https://x/blob/{other}/x")),
+        total_count=2,
+        incomplete_results=False,
+    )
+    calls: list[str] = []
+
+    def read_blob(slug, commit_sha, path):
+        calls.append(commit_sha)
+        return CONTENT_BYTES
+
+    searcher = GlobalSearcher(
+        FakeCodeSearch(page=page), FakeTree(), (PythonAdapter(),), blob_reader=read_blob
+    )
+    report = searcher.search(_spec())
+    assert calls == [SHA, other]
+    assert {match.source.commit_sha for match in report.matches} == {SHA, other}
+    for match in report.matches:
+        assert RepoScope(match.source.slug, match.source.commit_sha)
+
+
+def test_identity_digest_excludes_advancing_clock():
+    times = iter(("2026-08-06T12:00:00Z", "2026-08-06T12:00:01Z"))
+    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    searcher = GlobalSearcher(
+        FakeCodeSearch(page=page),
+        FakeTree(),
+        (PythonAdapter(),),
+        blob_reader=lambda slug, sha, path: CONTENT_BYTES,
+        clock=lambda: next(times),
+    )
+    first = searcher.search(_spec())
+    second = searcher.search(_spec())
+    assert first.resolution.as_of != second.resolution.as_of
+    assert first.identity_digest() == second.identity_digest()
+
+
+def test_validate_report_rejects_commit_not_in_hits():
+    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(report, (_hit(commit_sha="b" * 40),))
+
+
+def test_validate_report_rejects_missing_global_resolution():
+    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    object.__setattr__(report, "resolution", None)
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(report, page.hits)
+
+
+def test_transport_cross_checks_both_index_commit_fields():
+    item_url = f"https://api.github.com/repositories/1/contents/x.py?ref={SHA}"
+    html_url = f"https://github.com/o/r/blob/{SHA}/x.py"
+    assert _cross_checked_commit_sha(item_url, html_url) == SHA
+    assert _cross_checked_commit_sha(item_url, html_url.replace(SHA, "b" * 40)) is None
+    assert _cross_checked_commit_sha("https://api.github.com/x", html_url) is None
+    assert _cross_checked_commit_sha(None, html_url) is None

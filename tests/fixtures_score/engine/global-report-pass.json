@@ -1,1 +1,1 @@
-{"spec_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","coverage":{"status":"indeterminate_global","files_eligible":42,"files_indexed":1,"files_excluded":0,"incomplete_results":false,"exclusions":{}},"matches":[]}
+{"spec_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","coverage":{"status":"indeterminate_global","files_eligible":42,"files_indexed":1,"files_excluded":0,"incomplete_results":false,"exclusions":{}},"matches":[],"resolution":{"strategy":"indexed_commit","as_of":"2026-08-06T12:00:00Z"}}

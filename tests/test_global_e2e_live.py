@@ -6,6 +6,7 @@ against the live GitHub Code Search API and verifies honest coverage reporting.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -113,3 +114,65 @@ class TestLiveTransportDirect:
         transport = GitHubCodeSearchTransport(token=self._token(), max_attempts=4)
         with pytest.raises(CodeSearchError, match="HTTP 40"):
             transport.resolve_head_sha("leitir/no-such-repo-xyz-999")
+
+    def test_indexed_commit_bytes_are_independently_repeatable(self):
+        from urllib.parse import quote, urlencode
+        from urllib.request import Request
+
+        from leitir import _http
+        from leitir.adapters import PythonAdapter
+        from leitir.discovery_search import GitHubCodeSearchTransport, GlobalSearcher
+        from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+
+        class NullTree:
+            pass
+
+        transport = GitHubCodeSearchTransport(token=self._token())
+        searcher = GlobalSearcher(
+            code_search=transport,
+            tree_source=NullTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=transport.read_blob_by_path,
+            max_results=5,
+        )
+        report = searcher.search(
+            SearchSpec(
+                mode=SearchMode.GLOBAL_DISCOVERY,
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                    Predicate(PredicateKind.PATH, "urllib"),
+                ),
+            )
+        )
+        assert report.matches
+
+        headers = {
+            "Accept": "application/vnd.github.raw+json",
+            "User-Agent": "leitir-live-test",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if self._token():
+            headers["Authorization"] = f"Bearer {self._token()}"
+
+        observed_heads: list[tuple[str, str]] = []
+        for match in report.matches:
+            source = match.source
+            url = (
+                f"https://api.github.com/repos/{source.slug}/contents/"
+                f"{quote(source.path, safe='/')}?{urlencode({'ref': source.commit_sha})}"
+            )
+            reads = []
+            for _ in range(2):
+                with _http.safe_urlopen(Request(url, headers=headers), timeout=30) as response:
+                    reads.append(response.read())
+            assert reads[0] == reads[1]
+            header = b"blob " + str(len(reads[0])).encode("ascii") + b"\x00"
+            assert hashlib.sha1(header + reads[0]).hexdigest() == source.blob_sha
+
+            head = transport.resolve_head_sha(source.slug)
+            observed_heads.append((head, source.commit_sha))
+            if head != source.commit_sha:
+                assert source.commit_sha in {item.source.commit_sha for item in report.matches}
+
+        if not any(head != indexed for head, indexed in observed_heads):
+            assert all(head == indexed for head, indexed in observed_heads), "no lag observed"

@@ -9,11 +9,14 @@ coverage accounting.
 from __future__ import annotations
 
 from leitir.adapters import LanguageAdapter, SpanMatch
+from leitir.materialize import _utc_now
 from leitir.search import (
     Coverage,
     CoverageStatus,
     Predicate,
     PredicateKind,
+    Resolution,
+    ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
@@ -142,6 +145,10 @@ class ScopedSearcher:
             spec_digest=spec.digest(),
             coverage=coverage,
             matches=tuple(all_matches),
+            resolution=Resolution(
+                strategy=ResolutionStrategy.DECLARED_SCOPE,
+                as_of=_utc_now(),
+            ),
         )
 
     def _search_scope(

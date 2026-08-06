@@ -2244,7 +2244,7 @@ def evaluate_global_no_exhaustiveness(artifact: EvidenceArtifact) -> CheckResult
     try:
         raw = _object_keys(
             _load_json_object(artifact, "global search report"),
-            {"spec_digest", "coverage", "matches"},
+            {"spec_digest", "coverage", "matches", "resolution"},
             "global search report",
         )
         if not isinstance(raw["spec_digest"], str) or not _SHA256.fullmatch(
@@ -2252,6 +2252,16 @@ def evaluate_global_no_exhaustiveness(artifact: EvidenceArtifact) -> CheckResult
         ):
             raise ValueError("global search spec digest is invalid")
         _list_value(raw["matches"], "global matches")
+        resolution = _object_keys(
+            raw["resolution"], {"strategy", "as_of"}, "global resolution"
+        )
+        strategy = resolution["strategy"]
+        if (
+            not isinstance(strategy, str)
+            or strategy not in {"indexed_commit", "declared_scope"}
+            or not isinstance(resolution["as_of"], str)
+        ):
+            raise ValueError("global search resolution is invalid")
         status, _eligible, _indexed, _excluded, _incomplete = _coverage(
             raw["coverage"]
         )

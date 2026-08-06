@@ -420,7 +420,6 @@ def _build_default_global_searcher(
         code_search=code_search,
         tree_source=tree_source,
         adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
-        head_resolver=code_search.resolve_head_sha,
         blob_reader=code_search.read_blob_by_path,
     )
 

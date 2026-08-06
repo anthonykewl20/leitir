@@ -107,9 +107,16 @@ enrichment behind the existing CLI (P5–P6).
 - [x] P5: Global discovery with honest coverage reporting.
       Add a `GlobalSearcher` that uses GitHub Code Search API for
       `GLOBAL_DISCOVERY` mode. Coverage is always `INDETERMINATE_GLOBAL`.
-      Fetched bytes are verified against search-index git blob SHAs, and
-      bounded pagination reports head-resolution, fetch, decode, provenance,
-      and adapter exclusions by reason.
+      Each result is pinned to the immutable search-index commit SHA recovered
+      consistently from both API URLs; fetched bytes at that commit are
+      verified against the search-index git blob SHA. Bounded pagination
+      reports pin, fetch, decode, provenance, and adapter exclusions by reason.
+      The report records the `indexed_commit` strategy and resolution time;
+      deterministic report identity excludes that observation timestamp.
+      Irreducible limit: a remote search index is not a pinned input. Separate
+      live queries can observe an advancing index, server-side ranking changes,
+      or different `incomplete_results`; reproducibility applies to a recorded,
+      pinned hit set, not to re-querying the live service.
       Wire into the CLI as `leitir search --global`.
       (`src/leitir/discovery_search.py`, `tests/test_global.py`,
       `tests/test_global_e2e.py`, `tests/test_global_e2e_live.py`)

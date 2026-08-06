@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -25,6 +26,8 @@ _EXCLUSION_REASONS = frozenset(
         "head_unresolved",
         "no_adapter",
         "provenance_mismatch",
+        "pin_disagreement",
+        "unpinned_hit",
     }
 )
 
@@ -42,6 +45,36 @@ class CoverageStatus(str, Enum):
     COMPLETE_FOR_DECLARED_UNIVERSE = "complete_for_declared_universe"
     PARTIAL = "partial"
     INDETERMINATE_GLOBAL = "indeterminate_global"
+
+
+class ResolutionStrategy(str, Enum):
+    """How immutable commit provenance was obtained for a search report."""
+
+    INDEXED_COMMIT = "indexed_commit"
+    DECLARED_SCOPE = "declared_scope"
+
+
+@dataclass(frozen=True, slots=True)
+class Resolution:
+    """Provenance resolution strategy and the UTC time it was recorded."""
+
+    strategy: ResolutionStrategy
+    as_of: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.strategy, ResolutionStrategy):
+            raise TypeError("strategy must be a ResolutionStrategy")
+        if not isinstance(self.as_of, str) or not self.as_of:
+            raise ValueError("as_of must be a non-empty RFC3339 UTC string")
+        try:
+            parsed = datetime.fromisoformat(self.as_of)
+        except ValueError as exc:
+            raise ValueError("as_of must be an RFC3339 UTC string") from exc
+        if not self.as_of.endswith("Z") or parsed.utcoffset() is None:
+            raise ValueError("as_of must be an RFC3339 UTC string")
+
+    def to_dict(self) -> dict[str, str]:
+        return {"strategy": self.strategy.value, "as_of": self.as_of}
 
 
 class PredicateKind(str, Enum):
@@ -316,6 +349,7 @@ class SearchReport:
     spec_digest: str
     coverage: Coverage
     matches: tuple[SourceMatch, ...]
+    resolution: Resolution
 
     def __post_init__(self) -> None:
         if not isinstance(self.spec_digest, str) or not _SHA256.fullmatch(
@@ -330,13 +364,31 @@ class SearchReport:
             raise TypeError("matches must be a tuple")
         if any(not isinstance(item, SourceMatch) for item in self.matches):
             raise TypeError("matches must contain only SourceMatch values")
+        if not isinstance(self.resolution, Resolution):
+            raise TypeError("resolution must be a Resolution")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "spec_digest": self.spec_digest,
             "coverage": self.coverage.to_dict(),
             "matches": [m.to_dict() for m in self.matches],
+            "resolution": self.resolution.to_dict(),
         }
+
+    def identity_digest(self) -> str:
+        """Canonical report identity, excluding observation time/strategy metadata."""
+        identity = {
+            "spec_digest": self.spec_digest,
+            "coverage": self.coverage.to_dict(),
+            "matches": [match.to_dict() for match in self.matches],
+        }
+        encoded = json.dumps(
+            identity,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, sort_keys=False)

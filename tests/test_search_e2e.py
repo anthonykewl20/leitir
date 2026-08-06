@@ -15,6 +15,8 @@ from leitir.search import (
     Predicate,
     PredicateKind,
     RepoScope,
+    Resolution,
+    ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
@@ -61,7 +63,12 @@ def test_real_end_to_end_report_is_complete_for_declared_universe():
         files_indexed=1,
         files_excluded=0,
     )
-    report = SearchReport(spec.digest(), coverage, (match,))
+    report = SearchReport(
+        spec.digest(),
+        coverage,
+        (match,),
+        Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"),
+    )
 
     assert report.spec_digest == spec.digest()
     assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
@@ -79,7 +86,12 @@ def test_real_report_cannot_claim_complete_when_a_file_is_unindexed():
         files_indexed=1,
         files_excluded=1,
     )
-    report = SearchReport(spec.digest(), coverage, (match,))
+    report = SearchReport(
+        spec.digest(),
+        coverage,
+        (match,),
+        Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"),
+    )
     assert report.coverage.status is CoverageStatus.PARTIAL
 
 
@@ -194,4 +206,9 @@ def test_report_with_bad_digest_is_rejected():
         files_excluded=0,
     )
     with pytest.raises(ValueError):
-        SearchReport("not-a-digest", coverage, ())
+        SearchReport(
+            "not-a-digest",
+            coverage,
+            (),
+            Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"),
+        )

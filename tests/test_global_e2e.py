@@ -89,7 +89,8 @@ def _hit(**overrides) -> CodeSearchHit:
         "slug": fx.REPO_SLUG,
         "path": fx.PATH,
         "blob_sha": REPRESENTATIVE_BLOB_SHA,
-        "html_url": f"https://github.com/{fx.REPO_SLUG}/blob/main/{fx.PATH}",
+        "html_url": f"https://github.com/{fx.REPO_SLUG}/blob/{fx.COMMIT_SHA}/{fx.PATH}",
+        "commit_sha": fx.COMMIT_SHA,
     }
     base.update(overrides)
     return CodeSearchHit(**base)
@@ -107,7 +108,6 @@ def _invoke(argv, page=None):
             code_search=code_search,
             tree_source=tree_source,
             adapters=(PythonAdapter(),),
-            head_resolver=code_search.resolve_head_sha,
             blob_reader=code_search.read_blob_by_path,
         ),
         stdout=out,

@@ -76,6 +76,10 @@ def _global_artifact(exclusions: object) -> EvidenceArtifact:
                 "exclusions": exclusions,
             },
             "matches": [],
+            "resolution": {
+                "strategy": "indexed_commit",
+                "as_of": "2026-08-06T12:00:00Z",
+            },
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -381,6 +385,22 @@ def test_global_coverage_accepts_exclusion_breakdown():
 def test_global_coverage_rejects_malformed_exclusion_breakdown(exclusions):
     result = evaluate_global_no_exhaustiveness(_global_artifact(exclusions))
 
+    assert result.status is CheckStatus.ERROR
+    assert result.reason_code == "GLOBAL_COVERAGE_MALFORMED"
+
+
+def test_global_coverage_rejects_malformed_resolution():
+    artifact = _global_artifact({})
+    raw = json.loads(artifact.content)
+    raw["resolution"] = {"strategy": "moving_head", "as_of": 123}
+    content = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+    malformed = EvidenceArtifact(
+        id=artifact.id,
+        path=artifact.path,
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+    )
+    result = evaluate_global_no_exhaustiveness(malformed)
     assert result.status is CheckStatus.ERROR
     assert result.reason_code == "GLOBAL_COVERAGE_MALFORMED"
 

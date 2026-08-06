@@ -241,7 +241,8 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
-- Global discovery verifies fetched bytes against each search-index git blob SHA, paginates with a fixed cap, and reports `head_unresolved`, `fetch_failed`, `decode_failed`, `provenance_mismatch`, and `no_adapter` exclusions.
+- Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. It paginates with a fixed cap and reports pin, fetch, decode, provenance, and adapter exclusions.
+- Irreducible limit: a remote search index is not itself a pinned input. Two live runs at different wall-clock times may see an advancing index, server-side ranking changes, or different `incomplete_results`; reproducibility holds for the recorded pinned hit set, not for re-querying the live index.
 
 ## Update notifications
 

@@ -14,6 +14,8 @@ from leitir.search import (
     Predicate,
     PredicateKind,
     RepoScope,
+    Resolution,
+    ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
@@ -40,6 +42,9 @@ def _report(**overrides) -> SearchReport:
                 score=2.0,
                 matched_kinds=(PredicateKind.SYMBOL_DEFINITION,),
             ),
+        ),
+        resolution=Resolution(
+            ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"
         ),
     )
     base.update(overrides)

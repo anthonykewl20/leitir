@@ -9,6 +9,8 @@ from leitir.search import (
     CoverageStatus,
     Predicate,
     PredicateKind,
+    Resolution,
+    ResolutionStrategy,
     RepoScope,
     SearchMode,
     SearchReport,
@@ -169,5 +171,10 @@ def test_report_round_trip_holds():
         files_indexed=9,
         files_excluded=1,
     )
-    report = SearchReport(_spec().digest(), coverage, (match,))
+    report = SearchReport(
+        _spec().digest(),
+        coverage,
+        (match,),
+        Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"),
+    )
     assert report.matches[0].source is ref

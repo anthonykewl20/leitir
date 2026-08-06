@@ -20,10 +20,13 @@ from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.credentials import validate_secret
 from leitir.engine import score_content
+from leitir.materialize import _utc_now
 from leitir.search import (
     Coverage,
     CoverageStatus,
     PredicateKind,
+    Resolution,
+    ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
@@ -42,6 +45,23 @@ def _git_blob_sha(content: bytes) -> str:
     return hashlib.sha1(header + content).hexdigest()
 
 
+def _cross_checked_commit_sha(item_url: str, html_url: str) -> str | None:
+    from urllib.parse import parse_qs, urlsplit
+
+    if not isinstance(item_url, str) or not isinstance(html_url, str):
+        return None
+    query_ref = parse_qs(urlsplit(item_url).query).get("ref", [""])[0]
+    html_match = re.search(r"/blob/([0-9a-f]{40})/", html_url)
+    html_ref = html_match.group(1) if html_match is not None else ""
+    if (
+        not _SHA1.fullmatch(query_ref)
+        or not _SHA1.fullmatch(html_ref)
+        or query_ref != html_ref
+    ):
+        return None
+    return query_ref
+
+
 @dataclass(frozen=True, slots=True)
 class CodeSearchHit:
     """One file-level result from a code search API."""
@@ -50,6 +70,7 @@ class CodeSearchHit:
     path: str
     blob_sha: str
     html_url: str
+    commit_sha: str
 
     def __post_init__(self) -> None:
         if not self.slug or "/" not in self.slug:
@@ -58,6 +79,8 @@ class CodeSearchHit:
             raise ValueError("path must be non-empty")
         if not _SHA1.fullmatch(self.blob_sha):
             raise ValueError("blob_sha must be a 40-char git SHA")
+        if not isinstance(self.commit_sha, str) or not _SHA1.fullmatch(self.commit_sha):
+            raise ValueError("commit_sha must be a 40-char git SHA")
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,14 +169,37 @@ class GitHubCodeSearchTransport:
         items = payload.get("items", [])
         hits: list[CodeSearchHit] = []
         for item in items:
+            if not isinstance(item, dict):
+                continue
             repo = item.get("repository", {})
+            if not isinstance(repo, dict):
+                continue
             slug = repo.get("full_name", "")
             path = item.get("path", "")
             sha = item.get("sha", "")
             html_url = item.get("html_url", "")
-            if not slug or not path or not _SHA1.fullmatch(sha):
+            item_url = item.get("url", "")
+            if (
+                not isinstance(slug, str)
+                or not slug
+                or not isinstance(path, str)
+                or not path
+                or not isinstance(sha, str)
+                or not _SHA1.fullmatch(sha)
+            ):
                 continue
-            hits.append(CodeSearchHit(slug=slug, path=path, blob_sha=sha, html_url=html_url))
+            commit_sha = _cross_checked_commit_sha(item_url, html_url)
+            if commit_sha is None:
+                continue
+            hits.append(
+                CodeSearchHit(
+                    slug=slug,
+                    path=path,
+                    blob_sha=sha,
+                    html_url=html_url,
+                    commit_sha=commit_sha,
+                )
+            )
 
         logger.debug("code search total_count=%s hits=%d", payload.get("total_count", 0), len(hits))
         return CodeSearchPage(
@@ -254,10 +300,10 @@ class GlobalSearcher:
         code_search: CodeSearchPort,
         tree_source: TreeSource,
         adapters: tuple[LanguageAdapter, ...],
-        head_resolver: Callable[[str], str] | None = None,
         blob_reader: Callable[[str, str, str], bytes] | None = None,
         max_results: int = 30,
         max_pages: int = 10,
+        clock: Callable[[], str] | None = None,
     ) -> None:
         if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1:
             raise ValueError("max_results must be a positive integer")
@@ -266,17 +312,16 @@ class GlobalSearcher:
         self._search = code_search
         self._tree = tree_source
         self._adapters = adapters
-        self._head_resolver = head_resolver
         self._blob_reader = blob_reader
         self._max_results = max_results
         self._max_pages = max_pages
+        self._clock = clock or _utc_now
 
     def search(self, spec: SearchSpec) -> SearchReport:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
             raise ValueError("GlobalSearcher only handles global_discovery")
 
         query = build_query(spec)
-        head_cache: dict[str, str] = {}
         matches: list[SourceMatch] = []
         exclusions: dict[str, int] = {}
         files_indexed = 0
@@ -308,9 +353,22 @@ class GlobalSearcher:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
                     continue
 
-                commit_sha = self._resolve_head(hit.slug, head_cache)
-                if commit_sha is None:
-                    exclusions["head_unresolved"] = exclusions.get("head_unresolved", 0) + 1
+                commit_sha = getattr(hit, "commit_sha", None)
+                if not isinstance(commit_sha, str) or not _SHA1.fullmatch(commit_sha):
+                    exclusions["unpinned_hit"] = exclusions.get("unpinned_hit", 0) + 1
+                    continue
+                html_match = (
+                    re.search(r"/blob/([0-9a-f]{40})/", hit.html_url)
+                    if isinstance(hit.html_url, str)
+                    else None
+                )
+                if html_match is None:
+                    exclusions["unpinned_hit"] = exclusions.get("unpinned_hit", 0) + 1
+                    continue
+                if html_match.group(1) != commit_sha:
+                    exclusions["pin_disagreement"] = (
+                        exclusions.get("pin_disagreement", 0) + 1
+                    )
                     continue
 
                 try:
@@ -360,22 +418,11 @@ class GlobalSearcher:
             spec_digest=spec.digest(),
             coverage=coverage,
             matches=tuple(matches),
+            resolution=Resolution(
+                strategy=ResolutionStrategy.INDEXED_COMMIT,
+                as_of=self._clock(),
+            ),
         )
-
-    def _resolve_head(self, slug: str, cache: dict[str, str]) -> str | None:
-        if slug in cache:
-            return cache[slug]
-        try:
-            if self._head_resolver is not None:
-                sha = self._head_resolver(slug)
-            else:
-                return None
-        except (CodeSearchError, OSError):
-            return None
-        if not isinstance(sha, str) or not _SHA1.fullmatch(sha):
-            return None
-        cache[slug] = sha
-        return sha
 
     def _read_content(
         self, slug: str, commit_sha: str, path: str, blob_sha: str
@@ -399,3 +446,18 @@ class GlobalSearcher:
             if adapter.eligible(path):
                 return adapter
         return None
+
+
+def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> None:
+    """Reject global reports whose provenance is not derived from indexed hits."""
+    resolution = getattr(report, "resolution", None)
+    if (
+        report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
+        and resolution is None
+    ):
+        raise ValueError("REJECT_MOVING_REFERENCE")
+    if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
+        return
+    indexed = {(hit.slug, hit.commit_sha) for hit in hits}
+    if any((match.source.slug, match.source.commit_sha) not in indexed for match in report.matches):
+        raise ValueError("REJECT_MOVING_REFERENCE")

@@ -24,6 +24,8 @@ from leitir.search import (
     Coverage,
     CoverageStatus,
     PredicateKind,
+    Resolution,
+    ResolutionStrategy,
     SearchReport,
     SearchSpec,
     SourceMatch,
@@ -75,6 +77,9 @@ class _FixtureSearcher:
                 files_excluded=0,
             ),
             matches=tuple(matches),
+            resolution=Resolution(
+                ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"
+            ),
         )
 
 
@@ -210,6 +215,9 @@ def test_search_report_digest_mismatch_is_rejected():
                     files_excluded=0,
                 ),
                 matches=(),
+                resolution=Resolution(
+                    ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"
+                ),
             )
 
     with pytest.raises(ValueError, match="digest mismatch"):
@@ -245,7 +253,7 @@ def test_artifact_digest_is_identical_across_python_hash_seeds():
     script = textwrap.dedent(
         """
         from leitir.bench import BenchmarkRunner, load_manifest
-        from leitir.search import Coverage, CoverageStatus, PredicateKind, SearchReport, SourceMatch, SourceRef
+        from leitir.search import Coverage, CoverageStatus, PredicateKind, Resolution, ResolutionStrategy, SearchReport, SourceMatch, SourceRef
 
         manifest = load_manifest()
         expected = {task.spec.digest(): task.expected_results[0] for task in manifest.tasks}
@@ -259,7 +267,8 @@ def test_artifact_digest_is_identical_across_python_hash_seeds():
                     SourceMatch(decoy, 1.0, (PredicateKind.SYMBOL_DEFINITION,)),
                 })
                 coverage = Coverage(CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE, 1, 1, 0)
-                return SearchReport(spec.digest(), coverage, matches)
+                resolution = Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z")
+                return SearchReport(spec.digest(), coverage, matches, resolution)
 
         print(BenchmarkRunner(SeedSearcher()).run(manifest).digest())
         """

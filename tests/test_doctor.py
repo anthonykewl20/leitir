@@ -70,7 +70,7 @@ def test_doctor_json_output_shape(tmp_path: Path) -> None:
     assert code == 0
     assert error == ""
     assert payload["schema"] == 1
-    assert payload["version"]
+    assert payload["version"] is None or isinstance(payload["version"], str)
     assert payload["generated_at"].endswith("Z")
     assert set(payload["summary"]) == {"pass", "warn", "error", "skip"}
     assert all(set(item) == {"name", "status", "summary", "detail", "data"}
@@ -83,13 +83,27 @@ def test_doctor_detects_python_version_below_floor(monkeypatch: pytest.MonkeyPat
     assert result.status == "error"
 
 
-def test_doctor_detects_missing_distribution_metadata(
+def test_doctor_source_checkout_passes_without_distribution_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def missing(_name: str) -> str:
         raise importlib.metadata.PackageNotFoundError("leitir")
 
     monkeypatch.setattr(importlib.metadata, "version", missing)
+    checks, _version = doctor.collect_checks(no_network=True, root=tmp_path)
+    result = next(check for check in checks if check.name == "install.version")
+    assert result.status == "pass"
+    assert "source checkout" in result.summary
+
+
+def test_doctor_detects_unimportable_install_as_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError("leitir")
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    monkeypatch.setattr(doctor, "_leitir_source_root", lambda: None)
     checks, _version = doctor.collect_checks(no_network=True, root=tmp_path)
     result = next(check for check in checks if check.name == "install.version")
     assert result.status == "error"

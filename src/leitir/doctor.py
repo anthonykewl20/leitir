@@ -90,16 +90,35 @@ def check_platform() -> Check:
                  json_data={"os": os_name, "architecture": architecture})
 
 
+def _leitir_source_root() -> Path | None:
+    """Return the on-disk package directory when leitir is importable from source.
+
+    A source checkout (``PYTHONPATH=src python -m leitir.cli ...``) is a documented,
+    supported invocation with no installed distribution metadata. Detecting it lets
+    the install checks pass rather than reporting a missing distribution as a defect.
+    """
+    try:
+        module = importlib.import_module("leitir")
+    except Exception:  # noqa: BLE001 - probe must never raise
+        return None
+    file = getattr(module, "__file__", None)
+    if not file:
+        return None
+    return Path(file).resolve().parent
+
+
 def check_install_location() -> Check:
     try:
         location = importlib.metadata.distribution("leitir").locate_file("")
-    except importlib.metadata.PackageNotFoundError as exc:
-        return Check(
-            "install.location",
-            "warn",
-            "distribution metadata not found (source checkout is still usable)",
-            str(exc),
-        )
+    except importlib.metadata.PackageNotFoundError:
+        source_root = _leitir_source_root()
+        if source_root is not None:
+            return Check("install.location", "pass",
+                         f"source checkout at {source_root.parent}",
+                         json_data={"path": str(source_root.parent), "source_checkout": True})
+        return Check("install.location", "error",
+                     "leitir is neither installed nor importable",
+                     None)
     absolute = Path(str(location)).absolute()
     return Check("install.location", "pass", str(absolute),
                  json_data={"path": str(absolute)})
@@ -108,8 +127,14 @@ def check_install_location() -> Check:
 def check_installed_version() -> Check:
     try:
         version = importlib.metadata.version("leitir")
-    except importlib.metadata.PackageNotFoundError as exc:
-        return Check("install.version", "error", "leitir distribution version not found", str(exc))
+    except importlib.metadata.PackageNotFoundError:
+        if _leitir_source_root() is not None:
+            return Check("install.version", "pass",
+                         "source checkout (version unavailable from distribution metadata)",
+                         json_data={"version": None, "source_checkout": True})
+        return Check("install.version", "error",
+                     "leitir is neither installed nor importable",
+                     None)
     return Check("install.version", "pass", version, json_data={"version": version})
 
 

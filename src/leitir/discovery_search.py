@@ -8,11 +8,13 @@ a ``SearchReport`` whose coverage is always ``INDETERMINATE_GLOBAL``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from leitir import _http
 from leitir.adapters import LanguageAdapter
@@ -21,19 +23,23 @@ from leitir.engine import score_content
 from leitir.search import (
     Coverage,
     CoverageStatus,
-    Predicate,
     PredicateKind,
     SearchMode,
     SearchReport,
     SearchSpec,
     SourceMatch,
 )
-from leitir.tree import TreeSource
+from leitir.tree import TreeReadError, TreeSource, TreeTruncatedError
 
 _API = "https://api.github.com"
 _RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 logger = logging.getLogger(__name__)
+
+
+def _git_blob_sha(content: bytes) -> str:
+    header = b"blob " + str(len(content)).encode("ascii") + b"\x00"
+    return hashlib.sha1(header + content).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,10 +164,10 @@ class GitHubCodeSearchTransport:
 
     def resolve_head_sha(self, slug: str, branch: str | None = None) -> str:
         """Resolve a repository's default HEAD, or an explicitly named branch."""
-        from urllib.request import Request
         from urllib.parse import urlencode
+        from urllib.request import Request
 
-        query = {"per_page": 1}
+        query: dict[str, int | str] = {"per_page": 1}
         if branch is not None:
             query = {"sha": branch, "per_page": 1}
         url = f"{self._base_url}/repos/{slug}/commits?{urlencode(query)}"
@@ -229,9 +235,7 @@ def build_query(spec: SearchSpec) -> str:
             PredicateKind.SIGNATURE,
             PredicateKind.CALL,
             PredicateKind.IMPORT,
-        ):
-            terms.append(pred.value)
-        elif pred.kind is PredicateKind.REGEX:
+        ) or pred.kind is PredicateKind.REGEX:
             terms.append(pred.value)
         if pred.language and language is None:
             language = pred.language
@@ -250,62 +254,107 @@ class GlobalSearcher:
         code_search: CodeSearchPort,
         tree_source: TreeSource,
         adapters: tuple[LanguageAdapter, ...],
-        head_resolver: object | None = None,
-        blob_reader: object | None = None,
+        head_resolver: Callable[[str], str] | None = None,
+        blob_reader: Callable[[str, str, str], bytes] | None = None,
         max_results: int = 30,
+        max_pages: int = 10,
     ) -> None:
+        if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1:
+            raise ValueError("max_results must be a positive integer")
+        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
+            raise ValueError("max_pages must be a positive integer")
         self._search = code_search
         self._tree = tree_source
         self._adapters = adapters
         self._head_resolver = head_resolver
         self._blob_reader = blob_reader
         self._max_results = max_results
+        self._max_pages = max_pages
 
     def search(self, spec: SearchSpec) -> SearchReport:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
             raise ValueError("GlobalSearcher only handles global_discovery")
 
         query = build_query(spec)
-        page = self._search.search(query, per_page=min(self._max_results, 100))
-
         head_cache: dict[str, str] = {}
         matches: list[SourceMatch] = []
-        files_seen = 0
+        exclusions: dict[str, int] = {}
+        files_indexed = 0
+        files_eligible = 0
+        incomplete_results = False
+        per_page = min(self._max_results, 100)
+        content_preds = tuple(
+            predicate for predicate in spec.must if predicate.kind is not PredicateKind.PATH
+        )
 
-        for hit in page.hits:
-            if files_seen >= self._max_results:
+        for page_number in range(1, self._max_pages + 1):
+            try:
+                page = self._search.search(query, per_page=per_page, page=page_number)
+            except (CodeSearchError, OSError):
+                if page_number == 1:
+                    raise
+                incomplete_results = True
                 break
-            files_seen += 1
+            if page_number == 1:
+                files_eligible = page.total_count
+            incomplete_results = incomplete_results or page.incomplete_results
 
-            commit_sha = self._resolve_head(hit.slug, head_cache)
-            if commit_sha is None:
-                continue
+            for hit in page.hits:
+                if files_indexed >= self._max_results:
+                    break
 
-            content = self._read_content(hit.slug, commit_sha, hit.path, hit.blob_sha)
-            if content is None:
-                continue
+                adapter = self._adapter_for(hit.path)
+                if adapter is None:
+                    exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
+                    continue
 
-            adapter = self._adapter_for(hit.path)
-            if adapter is None:
-                continue
+                commit_sha = self._resolve_head(hit.slug, head_cache)
+                if commit_sha is None:
+                    exclusions["head_unresolved"] = exclusions.get("head_unresolved", 0) + 1
+                    continue
 
-            content_preds = tuple(
-                p for p in spec.must if p.kind is not PredicateKind.PATH
-            )
-            matches.extend(
-                score_content(
-                    content, adapter, hit.slug, commit_sha,
-                    hit.path, hit.blob_sha,
-                    content_preds, spec.should, spec.must_not,
+                try:
+                    verified_content = self._read_content(
+                        hit.slug, commit_sha, hit.path, hit.blob_sha
+                    )
+                except UnicodeDecodeError:
+                    exclusions["decode_failed"] = exclusions.get("decode_failed", 0) + 1
+                    continue
+                except (CodeSearchError, TreeReadError, TreeTruncatedError, OSError):
+                    exclusions["fetch_failed"] = exclusions.get("fetch_failed", 0) + 1
+                    continue
+                if verified_content is None:
+                    exclusions["provenance_mismatch"] = (
+                        exclusions.get("provenance_mismatch", 0) + 1
+                    )
+                    continue
+
+                content, blob_sha = verified_content
+                matches.extend(
+                    score_content(
+                        content, adapter, hit.slug, commit_sha,
+                        hit.path, blob_sha,
+                        content_preds, spec.should, spec.must_not,
+                    )
                 )
-            )
+                files_indexed += 1
+
+            if files_indexed >= self._max_results:
+                break
+            if page.incomplete_results:
+                break
+            if not page.hits or len(page.hits) < per_page:
+                break
+            if page_number == self._max_pages:
+                incomplete_results = True
 
         coverage = Coverage(
             status=CoverageStatus.INDETERMINATE_GLOBAL,
-            files_eligible=page.total_count,
-            files_indexed=files_seen,
-            files_excluded=0,
-            incomplete_results=page.incomplete_results,
+            files_eligible=files_eligible,
+            files_indexed=files_indexed,
+            files_excluded=sum(exclusions.values()),
+            incomplete_results=incomplete_results,
+            exclusions=exclusions,
         )
         return SearchReport(
             spec_digest=spec.digest(),
@@ -321,22 +370,29 @@ class GlobalSearcher:
                 sha = self._head_resolver(slug)
             else:
                 return None
-            cache[slug] = sha
-            return sha
-        except Exception:
+        except (CodeSearchError, OSError):
             return None
+        if not isinstance(sha, str) or not _SHA1.fullmatch(sha):
+            return None
+        cache[slug] = sha
+        return sha
 
     def _read_content(
         self, slug: str, commit_sha: str, path: str, blob_sha: str
-    ) -> str | None:
-        try:
-            if self._blob_reader is not None:
-                data = self._blob_reader(slug, commit_sha, path)
-            else:
-                data = self._tree.read_blob(slug, blob_sha)
-            return data.decode("utf-8", errors="replace")
-        except Exception:
+    ) -> tuple[str, str] | None:
+        if self._blob_reader is not None:
+            data = self._blob_reader(slug, commit_sha, path)
+        else:
+            read_at_commit = getattr(self._tree, "read_blob_at_commit", None)
+            if not callable(read_at_commit):
+                raise TreeReadError(
+                    "tree source cannot read a path at a pinned commit"
+                )
+            data = read_at_commit(slug, commit_sha, path)
+        digest = _git_blob_sha(data)
+        if digest != blob_sha:
             return None
+        return data.decode("utf-8"), digest
 
     def _adapter_for(self, path: str) -> LanguageAdapter | None:
         for adapter in self._adapters:

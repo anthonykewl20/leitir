@@ -9,10 +9,17 @@ leakage between retries — simulating sustained real usage.
 
 from __future__ import annotations
 
+import hashlib
+
+import _http_server as hs
 import pytest
 
 from leitir.adapters import PythonAdapter
-from leitir.discovery_search import CodeSearchError, GitHubCodeSearchTransport, GlobalSearcher
+from leitir.discovery_search import (
+    CodeSearchError,
+    GitHubCodeSearchTransport,
+    GlobalSearcher,
+)
 from leitir.search import (
     CoverageStatus,
     Predicate,
@@ -22,10 +29,11 @@ from leitir.search import (
 )
 from leitir.tree import GitHubTreeSource, TreeReadError
 
-import _http_server as hs
-
 SHA = "a" * 40
-BLOB = "b" * 40
+BLOB_CONTENT = b'def urlencode(query, doseq=False):\n    return query\n'
+BLOB = hashlib.sha1(
+    b"blob " + str(len(BLOB_CONTENT)).encode("ascii") + b"\x00" + BLOB_CONTENT
+).hexdigest()
 
 SEARCH_OK = {
     "total_count": 1,
@@ -40,7 +48,6 @@ SEARCH_OK = {
     ],
 }
 COMMITS_OK = [{"sha": SHA}]
-BLOB_CONTENT = b'def urlencode(query, doseq=False):\n    return query\n'
 
 ITERATIONS = 12
 

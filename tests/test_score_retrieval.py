@@ -148,6 +148,7 @@ def _scenario():
                         "files_indexed": 1,
                         "files_excluded": 0,
                         "incomplete_results": False,
+                        "exclusions": {},
                     },
                     "results": [
                         {

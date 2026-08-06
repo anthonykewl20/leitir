@@ -2169,7 +2169,14 @@ def evaluate_result_provenance(artifact: EvidenceArtifact) -> CheckResult:
 def _coverage(raw: object) -> tuple[str, int, int, int, bool]:
     coverage = _object_keys(
         raw,
-        {"status", "files_eligible", "files_indexed", "files_excluded", "incomplete_results"},
+        {
+            "status",
+            "files_eligible",
+            "files_indexed",
+            "files_excluded",
+            "incomplete_results",
+            "exclusions",
+        },
         "coverage",
     )
     status = coverage["status"]
@@ -2178,6 +2185,15 @@ def _coverage(raw: object) -> tuple[str, int, int, int, bool]:
     eligible = _non_negative_json_int(coverage["files_eligible"], "files_eligible")
     indexed = _non_negative_json_int(coverage["files_indexed"], "files_indexed")
     excluded = _non_negative_json_int(coverage["files_excluded"], "files_excluded")
+    exclusions = coverage["exclusions"]
+    if not isinstance(exclusions, dict) or any(
+        not isinstance(reason, str)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        for reason, count in exclusions.items()
+    ):
+        raise ValueError("coverage exclusions must map text reasons to non-negative integers")
     incomplete = coverage["incomplete_results"]
     if not isinstance(incomplete, bool) or indexed > eligible:
         raise ValueError("coverage counters or incomplete flag are invalid")

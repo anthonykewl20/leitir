@@ -63,6 +63,31 @@ def _artifact(
     )
 
 
+def _global_artifact(exclusions: object) -> EvidenceArtifact:
+    content = json.dumps(
+        {
+            "spec_digest": "c" * 64,
+            "coverage": {
+                "status": "indeterminate_global",
+                "files_eligible": 2,
+                "files_indexed": 1,
+                "files_excluded": 1,
+                "incomplete_results": False,
+                "exclusions": exclusions,
+            },
+            "matches": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return EvidenceArtifact(
+        id="global.coverage",
+        path="global-report.json",
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+    )
+
+
 def _junit(name: str, process_exit: int) -> EvidenceArtifact:
     return _artifact(name, f"junit.{name.removesuffix('.xml')}", process_exit=process_exit)
 
@@ -341,6 +366,23 @@ def test_global_exhaustiveness_overclaim_is_a_known_failure():
     )
     assert result.status is CheckStatus.FAIL
     assert result.reason_code == "GLOBAL_EXHAUSTIVENESS_OVERCLAIM"
+
+
+def test_global_coverage_accepts_exclusion_breakdown():
+    result = evaluate_global_no_exhaustiveness(
+        _global_artifact({"decode_failed": 1})
+    )
+
+    assert result.status is CheckStatus.PASS
+    assert result.reason_code == "INDETERMINATE_GLOBAL_PRESERVED"
+
+
+@pytest.mark.parametrize("exclusions", [{"decode_failed": "1"}, {"decode_failed": -1}])
+def test_global_coverage_rejects_malformed_exclusion_breakdown(exclusions):
+    result = evaluate_global_no_exhaustiveness(_global_artifact(exclusions))
+
+    assert result.status is CheckStatus.ERROR
+    assert result.reason_code == "GLOBAL_COVERAGE_MALFORMED"
 
 
 def test_result_permalink_provenance_mismatch_is_a_known_failure():

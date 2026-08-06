@@ -8,17 +8,25 @@ here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import hashlib
 import json
 import re
-
+from dataclasses import dataclass, field
+from enum import Enum
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REPO_SLUG = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$")
 _SPACE = re.compile(r"\s+")
+_EXCLUSION_REASONS = frozenset(
+    {
+        "decode_failed",
+        "fetch_failed",
+        "head_unresolved",
+        "no_adapter",
+        "provenance_mismatch",
+    }
+)
 
 
 class SearchMode(str, Enum):
@@ -256,6 +264,7 @@ class Coverage:
     files_indexed: int
     files_excluded: int
     incomplete_results: bool = False
+    exclusions: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, CoverageStatus):
@@ -268,6 +277,19 @@ class Coverage:
             raise ValueError("files_indexed cannot exceed files_eligible")
         if not isinstance(self.incomplete_results, bool):
             raise TypeError("incomplete_results must be a bool")
+        if not isinstance(self.exclusions, dict):
+            raise TypeError("exclusions must be a dict")
+        for reason, count in self.exclusions.items():
+            if not isinstance(reason, str):
+                raise TypeError("exclusion reasons must be strings")
+            if reason not in _EXCLUSION_REASONS:
+                raise ValueError(f"unknown exclusion reason: {reason}")
+            if isinstance(count, bool) or not isinstance(count, int):
+                raise TypeError("exclusion counts must be integers")
+            if count < 0:
+                raise ValueError("exclusion counts must be non-negative")
+        if sum(self.exclusions.values()) > self.files_excluded:
+            raise ValueError("exclusion counts cannot exceed files_excluded")
         if (
             self.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
             and (self.incomplete_results or self.files_indexed != self.files_eligible)
@@ -283,6 +305,7 @@ class Coverage:
             "files_indexed": self.files_indexed,
             "files_excluded": self.files_excluded,
             "incomplete_results": self.incomplete_results,
+            "exclusions": dict(sorted(self.exclusions.items())),
         }
 
 

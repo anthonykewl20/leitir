@@ -17,17 +17,16 @@ from leitir.search import (
     SourceRef,
 )
 
-
 SHA = "a" * 40
 BLOB = "b" * 40
 
 
 def _spec(**overrides):
-    base = dict(
-        mode=SearchMode.SCOPED_EXHAUSTIVE,
-        must=(Predicate(PredicateKind.IDENTIFIER, "urlencode"),),
-        scopes=(RepoScope("python/cpython", SHA),),
-    )
+    base = {
+        "mode": SearchMode.SCOPED_EXHAUSTIVE,
+        "must": (Predicate(PredicateKind.IDENTIFIER, "urlencode"),),
+        "scopes": (RepoScope("python/cpython", SHA),),
+    }
     base.update(overrides)
     return SearchSpec(**base)
 
@@ -113,6 +112,52 @@ def test_complete_coverage_rejects_partial_results():
             files_excluded=0,
             incomplete_results=True,
         )
+
+
+def test_coverage_rejects_exclusion_breakdown_over_total():
+    with pytest.raises(ValueError, match="cannot exceed"):
+        Coverage(
+            CoverageStatus.PARTIAL,
+            files_eligible=10,
+            files_indexed=5,
+            files_excluded=1,
+            exclusions={"no_adapter": 2},
+        )
+
+
+@pytest.mark.parametrize(
+    "exclusions",
+    [
+        {1: 1},
+        {"fetch_failed": True},
+        {"fetch_failed": -1},
+        {"unknown_reason": 1},
+    ],
+)
+def test_coverage_rejects_invalid_exclusion_breakdown(exclusions):
+    with pytest.raises((TypeError, ValueError)):
+        Coverage(
+            CoverageStatus.PARTIAL,
+            files_eligible=10,
+            files_indexed=5,
+            files_excluded=1,
+            exclusions=exclusions,
+        )
+
+
+def test_coverage_serializes_exclusions_deterministically():
+    coverage = Coverage(
+        CoverageStatus.PARTIAL,
+        files_eligible=10,
+        files_indexed=5,
+        files_excluded=2,
+        exclusions={"provenance_mismatch": 1, "decode_failed": 1},
+    )
+
+    assert list(coverage.to_dict()["exclusions"]) == [
+        "decode_failed",
+        "provenance_mismatch",
+    ]
 
 
 def test_report_round_trip_holds():

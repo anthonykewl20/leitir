@@ -103,7 +103,8 @@ What transfers is the *spirit*:
 - This change covers every HTTP call site in the kernel
   (`discovery_search.py`, `resolver.py`, `tree.py`). There is **no aggregate
   retry budget or deadline** across a multi-call operation (e.g. a
-  `GlobalSearcher` search issues up to ~61 calls). Per-call caps bound the
+  `GlobalSearcher` search issues up to ~610 calls with its default ten-page
+  cap when every hit belongs to a different repository). Per-call caps bound the
   worst case, but a fully rate-limited search can still block for minutes. An
   operation-level budget with observability (using the existing `leitir.logging`
   redaction policy) is deferred as separate work.

@@ -107,6 +107,9 @@ enrichment behind the existing CLI (P5–P6).
 - [x] P5: Global discovery with honest coverage reporting.
       Add a `GlobalSearcher` that uses GitHub Code Search API for
       `GLOBAL_DISCOVERY` mode. Coverage is always `INDETERMINATE_GLOBAL`.
+      Fetched bytes are verified against search-index git blob SHAs, and
+      bounded pagination reports head-resolution, fetch, decode, provenance,
+      and adapter exclusions by reason.
       Wire into the CLI as `leitir search --global`.
       (`src/leitir/discovery_search.py`, `tests/test_global.py`,
       `tests/test_global_e2e.py`, `tests/test_global_e2e_live.py`)

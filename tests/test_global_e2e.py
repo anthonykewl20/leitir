@@ -8,8 +8,11 @@ INDETERMINATE_GLOBAL coverage.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+
+import fixtures_real as fx
 
 from leitir.adapters import PythonAdapter
 from leitir.cli import ExitCode, main
@@ -19,8 +22,6 @@ from leitir.discovery_search import (
     GlobalSearcher,
 )
 from leitir.tree import BlobEntry
-
-import fixtures_real as fx
 
 REPRESENTATIVE_CONTENT = """\
 def urlencode(query, doseq=False, safe='', encoding=None, errors=None,
@@ -38,6 +39,13 @@ def urlencode(query, doseq=False, safe='', encoding=None, errors=None,
         query = quote_via(query, safe, encoding, errors)
     return '&'.join(l)
 """
+REPRESENTATIVE_BYTES = REPRESENTATIVE_CONTENT.encode()
+REPRESENTATIVE_BLOB_SHA = hashlib.sha1(
+    b"blob "
+    + str(len(REPRESENTATIVE_BYTES)).encode("ascii")
+    + b"\x00"
+    + REPRESENTATIVE_BYTES
+).hexdigest()
 
 
 class _FakeCodeSearch:
@@ -56,7 +64,7 @@ class _FakeCodeSearch:
 
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
         if slug == fx.REPO_SLUG and path == fx.PATH:
-            return REPRESENTATIVE_CONTENT.encode()
+            return REPRESENTATIVE_BYTES
         return b""
 
 
@@ -77,12 +85,12 @@ def _page(*hits) -> CodeSearchPage:
 
 
 def _hit(**overrides) -> CodeSearchHit:
-    base = dict(
-        slug=fx.REPO_SLUG,
-        path=fx.PATH,
-        blob_sha=fx.BLOB_SHA,
-        html_url=f"https://github.com/{fx.REPO_SLUG}/blob/main/{fx.PATH}",
-    )
+    base = {
+        "slug": fx.REPO_SLUG,
+        "path": fx.PATH,
+        "blob_sha": REPRESENTATIVE_BLOB_SHA,
+        "html_url": f"https://github.com/{fx.REPO_SLUG}/blob/main/{fx.PATH}",
+    }
     base.update(overrides)
     return CodeSearchHit(**base)
 
@@ -110,7 +118,7 @@ def _invoke(argv, page=None):
 
 class TestGlobalHappyPath:
     def test_finds_urlencode_with_real_provenance(self):
-        code, out, err, _ = _invoke([
+        code, out, _, _ = _invoke([
             "search", "--global",
             "--must", "symbol_definition:urlencode:python",
         ])
@@ -121,10 +129,10 @@ class TestGlobalHappyPath:
         assert top["source"]["slug"] == fx.REPO_SLUG
         assert top["source"]["commit_sha"] == fx.COMMIT_SHA
         assert top["source"]["path"] == fx.PATH
-        assert top["source"]["blob_sha"] == fx.BLOB_SHA
+        assert top["source"]["blob_sha"] == REPRESENTATIVE_BLOB_SHA
 
     def test_coverage_is_indeterminate_global(self):
-        code, out, _, _ = _invoke([
+        _, out, _, _ = _invoke([
             "search", "--global",
             "--must", "identifier:urlencode:python",
         ])
@@ -132,7 +140,7 @@ class TestGlobalHappyPath:
         assert payload["coverage"]["status"] == "indeterminate_global"
 
     def test_permalink_in_output(self):
-        code, out, _, _ = _invoke([
+        _, out, _, _ = _invoke([
             "search", "--global",
             "--must", "symbol_definition:urlencode:python",
         ])
@@ -141,7 +149,7 @@ class TestGlobalHappyPath:
         assert f"/blob/{fx.COMMIT_SHA}/" in permalink
 
     def test_stderr_summary_present(self):
-        code, _, err, _ = _invoke([
+        _, _, err, _ = _invoke([
             "search", "--global",
             "--must", "identifier:urlencode:python",
         ])
@@ -149,7 +157,7 @@ class TestGlobalHappyPath:
         assert "matches=" in err
 
     def test_query_translated_correctly(self):
-        code, _, _, cs = _invoke([
+        _, _, _, cs = _invoke([
             "search", "--global",
             "--must", "identifier:urlencode:python",
         ])
@@ -171,7 +179,7 @@ class TestGlobalSadPaths:
 
     def test_incomplete_results_threaded(self):
         page = CodeSearchPage(hits=(), total_count=999, incomplete_results=True)
-        code, out, _, _ = _invoke(
+        _, out, _, _ = _invoke(
             ["search", "--global", "--must", "identifier:foo"],
             page=page,
         )

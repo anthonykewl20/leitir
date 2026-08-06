@@ -241,6 +241,7 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
+- Global discovery verifies fetched bytes against each search-index git blob SHA, paginates with a fixed cap, and reports `head_unresolved`, `fetch_failed`, `decode_failed`, `provenance_mismatch`, and `no_adapter` exclusions.
 
 ## Update notifications
 

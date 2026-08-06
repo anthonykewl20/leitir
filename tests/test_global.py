@@ -137,17 +137,27 @@ def _searcher(page=None, content=None, error=None):
 
 
 class TestBuildQuery:
-    def test_identifier_becomes_plain_term(self):
-        spec = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "urlencode"),))
+    @pytest.mark.parametrize(
+        "kind",
+        (
+            PredicateKind.EXACT_TEXT,
+            PredicateKind.IDENTIFIER,
+            PredicateKind.TOKEN_SEQUENCE,
+        ),
+    )
+    def test_lossless_text_predicates_become_plain_terms(
+        self, kind: PredicateKind
+    ) -> None:
+        spec = _spec(must=(Predicate(kind, "urlencode"),))
         assert build_query(spec) == "urlencode"
 
     def test_path_predicate_uses_qualifier(self):
         spec = _spec(must=(Predicate(PredicateKind.PATH, "Lib/urllib"),))
-        assert "path:Lib/urllib" in build_query(spec)
+        assert build_query(spec) == "path:Lib/urllib"
 
     def test_language_appended(self):
         spec = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "foo", "python"),))
-        assert "language:python" in build_query(spec)
+        assert build_query(spec) == "foo language:python"
 
     def test_multiple_must_terms_joined(self):
         spec = _spec(must=(

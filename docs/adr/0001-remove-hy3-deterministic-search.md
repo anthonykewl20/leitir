@@ -169,3 +169,13 @@ enrichment behind the existing CLI (P5–P6).
       26 skipped; live re-verification 1 passed. Run artifact byte-identical
       under PYTHONHASHSEED 0/1/12345/99999. All 12 pins re-verified against the
       GitHub contents API (blob SHA and line content) on 2026-08-02.
+
+- [ ] G6: Reject unexpressible global-query predicates.
+      `build_query` currently flattens REGEX and symbol predicates to plain
+      terms, silently changing their semantics. The committed legacy-endpoint
+      [probe matrix](../g6-probe-matrix.md) establishes that REGEX and all
+      `SYMBOL_*` predicates must be rejected with a typed failure and never
+      compiled. EXACT_TEXT, IDENTIFIER, and TOKEN_SEQUENCE compile losslessly
+      to bare terms, while PATH compiles with the honored `path:` qualifier.
+      Before G6 can be implemented, the report contract must include a
+      machine-readable `query_translation` record for every predicate.

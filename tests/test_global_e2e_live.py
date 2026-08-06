@@ -11,6 +11,7 @@ import io
 import itertools
 import json
 import os
+import random
 
 import pytest
 
@@ -282,3 +283,163 @@ class TestLiveGlobalRealDataOrdering:
             assert actual_matches == expected_matches, (
                 f"offline permutation {permutation_index} changed ordered output"
             )
+
+
+class TestLiveGlobalDedup:
+    """Verify G7 against one captured real-data snapshot.
+
+    G8 drift boundary: this never asserts which repositories appear or how
+    many duplicates exist. It checks only collapse invariants, the winner rule,
+    accounting, permutation determinism, and independently fetched bytes for
+    the captured snapshot.
+    """
+
+    def _token(self) -> str | None:
+        return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+
+    def test_real_vendored_snapshot_deduplicates_deterministically(self):
+        from urllib.parse import quote, urlencode
+        from urllib.request import Request
+
+        from leitir import _http
+        from leitir.adapters import PythonAdapter
+        from leitir.discovery_search import (
+            CodeSearchError,
+            CodeSearchPage,
+            GitHubCodeSearchTransport,
+            GlobalSearcher,
+            _git_blob_sha,
+            dedup_hits,
+            hit_identity,
+        )
+        from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+
+        class NullTree:
+            pass
+
+        class RecordingPort:
+            def __init__(self, delegate):
+                self.delegate = delegate
+                self.pages: list[CodeSearchPage] = []
+
+            def search(self, query, *, per_page=10, page=1):
+                result = self.delegate.search(query, per_page=per_page, page=page)
+                self.pages.append(result)
+                return result
+
+        transport = GitHubCodeSearchTransport(token=self._token())
+        recording = RecordingPort(transport)
+        byte_cache: dict[tuple[str, str, str], bytes] = {}
+
+        def read_and_record(slug, commit_sha, path):
+            key = (slug, commit_sha, path)
+            data = transport.read_blob_by_path(*key)
+            byte_cache[key] = data
+            return data
+
+        spec = SearchSpec(
+            mode=SearchMode.GLOBAL_DISCOVERY,
+            must=(Predicate(PredicateKind.IDENTIFIER, "add_metaclass", "python"),),
+        )
+        report = GlobalSearcher(
+            code_search=recording,
+            tree_source=NullTree(),  # type: ignore[arg-type]
+            adapters=(PythonAdapter(),),
+            blob_reader=read_and_record,
+            max_results=30,
+        ).search(spec)
+        captured = tuple(hit for page in recording.pages for hit in page.hits)
+        outcome = dedup_hits(captured)
+        if outcome.collapsed == 0:
+            pytest.skip("live index currently exposes no collapsible vendored copies")
+
+        origins: dict[str, set[tuple[str, str, str]]] = {}
+        for match in report.matches:
+            source = match.source
+            origins.setdefault(source.blob_sha, set()).add(
+                (source.slug, source.commit_sha, source.path)
+            )
+        assert all(len(items) == 1 for items in origins.values())
+        winners = {source for items in origins.values() for source in items}
+        for candidate, group in zip(outcome.candidates, outcome.groups, strict=True):
+            assert candidate == min(group, key=hit_identity)
+        expected_winners = set()
+        for group in outcome.groups:
+            for hit in group:
+                data = byte_cache.get((hit.slug, hit.commit_sha, hit.path))
+                if data is None or _git_blob_sha(data) != hit.blob_sha:
+                    continue
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                expected_winners.add(hit_identity(hit)[:3])
+                break
+        assert winners <= expected_winners
+        assert report.coverage.exclusions.get("deduplicated", 0) <= outcome.collapsed
+        assert (
+            report.coverage.files_indexed + report.coverage.files_excluded
+            <= report.coverage.files_eligible
+        )
+        assert sum(report.coverage.exclusions.values()) == report.coverage.files_excluded
+
+        expected = outcome
+        for seed in (0, 1, 42, 99999):
+            shuffled = list(captured)
+            random.Random(seed).shuffle(shuffled)
+            assert dedup_hits(shuffled) == expected
+
+        class SnapshotPort:
+            def __init__(self, hits):
+                self.hits = hits
+
+            def search(self, query, *, per_page=10, page=1):
+                if page == 1:
+                    return CodeSearchPage(
+                        tuple(self.hits), recording.pages[0].total_count, False
+                    )
+                return CodeSearchPage((), recording.pages[0].total_count, False)
+
+        digests = set()
+
+        def replay_blob(slug, commit_sha, path):
+            try:
+                return byte_cache[(slug, commit_sha, path)]
+            except KeyError as exc:
+                raise CodeSearchError("captured live fetch failure") from exc
+
+        for seed in (0, 1, 42, 99999):
+            shuffled = list(captured)
+            random.Random(seed).shuffle(shuffled)
+            replay = GlobalSearcher(
+                SnapshotPort(shuffled),
+                NullTree(),  # type: ignore[arg-type]
+                (PythonAdapter(),),
+                blob_reader=replay_blob,
+                max_results=30,
+            ).search(spec)
+            digests.add(replay.identity_digest())
+        assert len(digests) == 1
+
+        headers = {
+            "Accept": "application/vnd.github.raw+json",
+            "User-Agent": "leitir-live-test",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if self._token():
+            headers["Authorization"] = f"Bearer {self._token()}"
+        for slug, commit_sha, path in sorted(winners):
+            url = (
+                f"https://api.github.com/repos/{slug}/contents/"
+                f"{quote(path, safe='/')}?{urlencode({'ref': commit_sha})}"
+            )
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=30) as response:
+                data = response.read()
+            header = b"blob " + str(len(data)).encode("ascii") + b"\x00"
+            source_blob = next(
+                match.source.blob_sha
+                for match in report.matches
+                if (match.source.slug, match.source.commit_sha, match.source.path)
+                == (slug, commit_sha, path)
+            )
+            assert hashlib.sha1(header + data).hexdigest() == source_blob

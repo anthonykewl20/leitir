@@ -110,7 +110,14 @@ enrichment behind the existing CLI (P5–P6).
       Each result is pinned to the immutable search-index commit SHA recovered
       consistently from both API URLs; fetched bytes at that commit are
       verified against the search-index git blob SHA. Bounded pagination
-      reports pin, fetch, decode, provenance, and adapter exclusions by reason.
+      reports pin, fetch, decode, provenance, adapter, and duplicate exclusions by reason.
+      Duplicate exclusion records an index claim, not byte verification of
+      members that remain collapsed; only the deterministic representative,
+      or a deterministic promoted replacement after failure, is fetched.
+      The `max_results` budget bounds fetch attempts, including promoted
+      retries within a collapsed content group. Verification failures can
+      therefore produce an honestly incomplete report that does not include
+      every distinct candidate.
       The report records the `indexed_commit` strategy and resolution time;
       deterministic report identity excludes that observation timestamp.
       Irreducible limit: a remote search index is not a pinned input. Separate

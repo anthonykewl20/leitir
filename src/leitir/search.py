@@ -22,6 +22,7 @@ _SPACE = re.compile(r"\s+")
 _EXCLUSION_REASONS = frozenset(
     {
         "decode_failed",
+        "deduplicated",
         "fetch_failed",
         "head_unresolved",
         "no_adapter",

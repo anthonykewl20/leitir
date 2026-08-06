@@ -15,6 +15,8 @@ from leitir.discovery_search import (
     GlobalSearcher,
     _cross_checked_commit_sha,
     build_query,
+    dedup_hits,
+    hit_identity,
     validate_report,
 )
 from leitir.search import (
@@ -37,7 +39,21 @@ def urlencode(query, doseq=False):
             pass
     return query
 """
-CONTENT_BYTES = CONTENT.encode()
+DEFAULT_PATH = "Lib/urllib/parse.py"
+
+
+def _content_for(path: str) -> bytes:
+    return (CONTENT + f"\n# {path}\n").encode()
+
+
+def _blob_for(path: str) -> str:
+    content = _content_for(path)
+    return hashlib.sha1(
+        b"blob " + str(len(content)).encode("ascii") + b"\x00" + content
+    ).hexdigest()
+
+
+CONTENT_BYTES = _content_for(DEFAULT_PATH)
 BLOB = hashlib.sha1(
     b"blob " + str(len(CONTENT_BYTES)).encode("ascii") + b"\x00" + CONTENT_BYTES
 ).hexdigest()
@@ -82,13 +98,16 @@ class FakeTree:
 
 
 def _hit(**overrides) -> CodeSearchHit:
+    path = overrides.get("path", DEFAULT_PATH)
+    slug = overrides.get("slug", "python/cpython")
+    commit_sha = overrides.get("commit_sha", SHA)
     base = {
-        "slug": "python/cpython",
-        "path": "Lib/urllib/parse.py",
-        "blob_sha": BLOB,
-        "commit_sha": SHA,
+        "slug": slug,
+        "path": path,
+        "blob_sha": _blob_for(path),
+        "commit_sha": commit_sha,
         "html_url": (
-            f"https://github.com/python/cpython/blob/{SHA}/Lib/urllib/parse.py"
+            f"https://github.com/{slug}/blob/{commit_sha}/{path}"
         ),
     }
     base.update(overrides)
@@ -111,7 +130,7 @@ def _searcher(page=None, content=None, error=None):
         code_search=cs,
         tree_source=tree,
         adapters=(PythonAdapter(),),
-        blob_reader=lambda slug, sha, path: content or CONTENT.encode(),
+        blob_reader=lambda slug, sha, path: content or _content_for(path),
         clock=lambda: "2026-08-06T12:00:00Z",
     )
     return searcher, cs
@@ -188,7 +207,7 @@ class TestGlobalSearcher:
                 tree_source=FakeTree(),
                 adapters=(PythonAdapter(),),
                 blob_reader=lambda slug, sha, path: (
-                    low_content if path == "a.py" else CONTENT_BYTES
+                    low_content if path == "a.py" else _content_for(path)
                 ),
                 clock=lambda: "2026-08-06T12:00:00Z",
             )
@@ -208,13 +227,14 @@ class TestGlobalSearcher:
             ).encode()
             assert report.identity_digest() == expected.identity_digest()
 
-    def test_duplicate_source_identity_is_rejected(self):
+    def test_duplicate_source_identity_is_deduplicated(self):
         page = CodeSearchPage(
             hits=(_hit(), _hit()), total_count=2, incomplete_results=False
         )
         searcher, _ = _searcher(page=page)
-        with pytest.raises(ValueError, match="duplicate SourceRef"):
-            searcher.search(_spec())
+        report = searcher.search(_spec())
+        assert len(report.matches) == 1
+        assert report.coverage.exclusions == {"deduplicated": 1}
 
     def test_tampered_blob_is_rejected_and_counted(self):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
@@ -371,7 +391,7 @@ class TestGlobalSearcher:
             code_search=FakeCodeSearch(page=page),
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            blob_reader=lambda slug, sha, path: CONTENT_BYTES,
+            blob_reader=lambda slug, sha, path: _content_for(path),
         )
 
         report = searcher.search(_spec())
@@ -413,7 +433,7 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(),
             adapters=(PythonAdapter(),),
-            blob_reader=lambda slug, sha, path: CONTENT_BYTES,
+            blob_reader=lambda slug, sha, path: _content_for(path),
             max_results=2,
         )
 
@@ -442,7 +462,7 @@ class TestGlobalSearcher:
             code_search=code_search,
             tree_source=FakeTree(CONTENT_BYTES),
             adapters=(PythonAdapter(),),
-            blob_reader=lambda slug, sha, path: CONTENT_BYTES,
+            blob_reader=lambda slug, sha, path: _content_for(path),
             max_results=2,
         )
 
@@ -509,7 +529,7 @@ class TestGlobalSearcher:
                 raise CodeSearchError("read failed")
             if path == "mismatch.py":
                 return b"tampered"
-            return CONTENT_BYTES
+            return _content_for(path)
 
         searcher = GlobalSearcher(
             code_search=FakeCodeSearch(page=page),
@@ -529,6 +549,228 @@ class TestGlobalSearcher:
             "unpinned_hit": 1,
         }
         assert sum(report.coverage.exclusions.values()) == report.coverage.files_excluded
+
+
+class TestDedupHits:
+    def _hits(self):
+        shared = _blob_for("shared.py")
+        return (
+            _hit(slug="z/repo", path="six.py", blob_sha=shared),
+            _hit(slug="a/repo", path="vendor/six.py", blob_sha=shared),
+            _hit(slug="m/repo", path="other.py"),
+        )
+
+    def test_invariants_and_minimum_representative(self):
+        hits = self._hits()
+        expected = dedup_hits(hits)
+        for ordering in permutations(hits):
+            assert dedup_hits(ordering) == expected  # I1
+        assert dedup_hits(expected.candidates).collapsed == 0  # I2
+        assert {hit.blob_sha for hit in hits} == {
+            hit.blob_sha for hit in expected.candidates
+        }  # I3
+        assert len(hits) == len(expected.candidates) + expected.collapsed  # I4
+        assert expected.candidates[0] == min(expected.groups[0], key=hit_identity)  # I5
+
+    @pytest.mark.parametrize("path", ["six.py", "vendor/six.py"])
+    def test_different_content_in_different_repositories_survives(self, path):
+        hits = (
+            _hit(slug="a/one", path=path),
+            _hit(slug="b/two", path=path, blob_sha=_blob_for(f"other/{path}")),
+        )
+        assert dedup_hits(hits).candidates == tuple(sorted(hits, key=hit_identity))
+
+    def test_contradictory_pinned_path_is_pin_disagreement(self):
+        outcome = dedup_hits(
+            (_hit(path="same.py"), _hit(path="same.py", blob_sha=_blob_for("other.py")))
+        )
+        assert outcome.pin_disagreements == 1
+        assert outcome.collapsed == 0
+
+    def test_same_file_at_different_indexed_commits_uses_secondary_identity(self):
+        hits = (
+            _hit(path="drift.py", commit_sha="a" * 40),
+            _hit(
+                path="drift.py",
+                commit_sha="b" * 40,
+                blob_sha=_blob_for("new-drift.py"),
+            ),
+        )
+        outcome = dedup_hits(hits)
+        assert outcome.candidates == (min(hits, key=hit_identity),)
+        assert outcome.collapsed == 1
+
+    def test_repeated_path_does_not_annihilate_distinct_content_group(self):
+        blob_x = _blob_for("blob-x.py")
+        blob_y = _blob_for("blob-y.py")
+        hits = (
+            _hit(slug="a/one", path="p.py", commit_sha="1" * 40, blob_sha=blob_x),
+            _hit(slug="a/one", path="p.py", commit_sha="2" * 40, blob_sha=blob_y),
+            _hit(slug="b/two", path="q.py", commit_sha="3" * 40, blob_sha=blob_y),
+        )
+
+        outcome = dedup_hits(hits)
+
+        assert {hit.blob_sha for hit in outcome.candidates} == {blob_x, blob_y}
+
+    def test_html_url_breaks_identity_ties_deterministically(self):
+        good_url = f"https://a.example/o/r/blob/{SHA}/{DEFAULT_PATH}"
+        bad_url = f"https://z.example/o/r/blob/{'b' * 40}/{DEFAULT_PATH}"
+        hits = (_hit(html_url=bad_url), _hit(html_url=good_url))
+        reports = []
+        for ordering in permutations(hits):
+            reports.append(
+                GlobalSearcher(
+                    FakeCodeSearch(CodeSearchPage(ordering, 2, False)),
+                    FakeTree(),
+                    (PythonAdapter(),),
+                    blob_reader=lambda slug, sha, path: _content_for(path),
+                    clock=lambda: "2026-08-06T12:00:00Z",
+                ).search(_spec())
+            )
+
+        assert all(len(report.matches) > 0 for report in reports)
+        assert len({report.identity_digest() for report in reports}) == 1
+        assert dedup_hits(hits).groups[0][0].html_url == good_url
+
+    def test_report_invariants_and_permutation_identity(self):
+        hits = self._hits()
+        reports = []
+        for ordering in permutations(hits):
+            reports.append(
+                GlobalSearcher(
+                    FakeCodeSearch(CodeSearchPage(ordering, len(hits), False)),
+                    FakeTree(),
+                    (PythonAdapter(),),
+                    blob_reader=lambda slug, sha, path: (
+                        _content_for("shared.py")
+                        if path in {"six.py", "vendor/six.py"}
+                        else _content_for(path)
+                    ),
+                    clock=lambda: "2026-08-06T12:00:00Z",
+                ).search(_spec())
+            )
+        for report in reports:
+            origins: dict[str, set[tuple[str, str, str]]] = {}
+            for match in report.matches:
+                source = match.source
+                origins.setdefault(source.blob_sha, set()).add(
+                    (source.slug, source.commit_sha, source.path)
+                )
+            assert all(len(items) == 1 for items in origins.values())  # I6
+            assert report.coverage.exclusions["deduplicated"] == 1  # I7
+            assert sum(report.coverage.exclusions.values()) == report.coverage.files_excluded
+        assert len({report.identity_digest() for report in reports}) == 1  # I8
+
+
+class TestGlobalDedupIntegration:
+    def test_repeated_path_does_not_drop_distinct_implementation(self):
+        blob_x = _blob_for("blob-x.py")
+        blob_y = _blob_for("blob-y.py")
+        hits = (
+            _hit(slug="a/one", path="p.py", commit_sha="1" * 40, blob_sha=blob_x),
+            _hit(slug="a/one", path="p.py", commit_sha="2" * 40, blob_sha=blob_y),
+            _hit(slug="b/two", path="q.py", commit_sha="3" * 40, blob_sha=blob_y),
+        )
+        content_by_commit = {
+            "1" * 40: _content_for("blob-x.py"),
+            "2" * 40: _content_for("blob-y.py"),
+            "3" * 40: _content_for("blob-y.py"),
+        }
+        report = GlobalSearcher(
+            FakeCodeSearch(CodeSearchPage(hits, 3, False)),
+            FakeTree(),
+            (PythonAdapter(),),
+            blob_reader=lambda slug, sha, path: content_by_commit[sha],
+        ).search(_spec())
+
+        assert report.coverage.files_indexed == 2
+        assert {match.source.blob_sha for match in report.matches} == {blob_x, blob_y}
+
+    def test_cross_page_repeat_does_not_crash(self):
+        repeated = _hit()
+        pages = {
+            1: CodeSearchPage((repeated, _hit(path="README.md")), 4, False),
+            2: CodeSearchPage((repeated, _hit(path="docs/guide.md")), 4, False),
+        }
+        report = GlobalSearcher(
+            FakeCodeSearch(pages=pages), FakeTree(), (PythonAdapter(),),
+            blob_reader=lambda slug, sha, path: _content_for(path),
+            max_results=2, max_pages=2,
+        ).search(_spec())
+        assert len(report.matches) == 1
+        assert report.coverage.exclusions["deduplicated"] == 1
+
+    def test_collapsed_member_is_not_fetched(self):
+        shared = _blob_for("shared.py")
+        hits = (
+            _hit(slug="z/repo", path="z.py", blob_sha=shared),
+            _hit(slug="a/repo", path="a.py", blob_sha=shared),
+        )
+        calls: list[str] = []
+
+        def read_blob(slug, commit_sha, path):
+            calls.append(slug)
+            return _content_for("shared.py")
+
+        report = GlobalSearcher(
+            FakeCodeSearch(CodeSearchPage(hits, 2, False)), FakeTree(),
+            (PythonAdapter(),), blob_reader=read_blob,
+        ).search(_spec())
+        assert calls == ["a/repo"]
+        assert report.coverage.exclusions == {"deduplicated": 1}
+
+    def test_failed_representative_is_promoted(self):
+        shared = _blob_for("shared.py")
+        hits = (
+            _hit(slug="z/repo", path="z.py", blob_sha=shared),
+            _hit(slug="a/repo", path="a.py", blob_sha=shared),
+        )
+        calls: list[str] = []
+
+        def read_blob(slug, commit_sha, path):
+            calls.append(slug)
+            if slug == "a/repo":
+                raise CodeSearchError("gone")
+            return _content_for("shared.py")
+
+        report = GlobalSearcher(
+            FakeCodeSearch(CodeSearchPage(hits, 2, False)), FakeTree(),
+            (PythonAdapter(),), blob_reader=read_blob,
+        ).search(_spec())
+        assert calls == ["a/repo", "z/repo"]
+        assert {match.source.slug for match in report.matches} == {"z/repo"}
+        assert report.coverage.incomplete_results is True
+        assert report.coverage.exclusions == {"fetch_failed": 1}
+        assert (
+            report.coverage.files_indexed + report.coverage.files_excluded
+            == report.coverage.files_eligible
+        )
+
+    def test_all_promoted_members_fail_without_double_counting(self):
+        shared = _blob_for("shared.py")
+        hits = tuple(
+            _hit(slug=f"{owner}/repo", path=f"{owner}.py", blob_sha=shared)
+            for owner in ("a", "b", "c")
+        )
+
+        def fail_fetch(slug, commit_sha, path):
+            raise CodeSearchError("gone")
+
+        report = GlobalSearcher(
+            FakeCodeSearch(CodeSearchPage(hits, 3, False)),
+            FakeTree(),
+            (PythonAdapter(),),
+            blob_reader=fail_fetch,
+        ).search(_spec())
+
+        assert report.coverage.files_indexed == 0
+        assert report.coverage.exclusions == {"fetch_failed": 3}
+        assert "deduplicated" not in report.coverage.exclusions
+        assert (
+            report.coverage.files_indexed + report.coverage.files_excluded
+            == report.coverage.files_eligible
+        )
 
 
 class TestCodeSearchHit:
@@ -566,7 +808,14 @@ def test_head_resolver_keyword_is_removed():
 def test_blob_reads_use_only_indexed_commit_and_matches_are_repo_scopes():
     other = "b" * 40
     page = CodeSearchPage(
-        hits=(_hit(commit_sha=SHA), _hit(commit_sha=other, html_url=f"https://x/blob/{other}/x")),
+        hits=(
+            _hit(commit_sha=SHA),
+            _hit(
+                path="Lib/urllib/other.py",
+                commit_sha=other,
+                html_url=f"https://x/blob/{other}/x",
+            ),
+        ),
         total_count=2,
         incomplete_results=False,
     )
@@ -574,7 +823,7 @@ def test_blob_reads_use_only_indexed_commit_and_matches_are_repo_scopes():
 
     def read_blob(slug, commit_sha, path):
         calls.append(commit_sha)
-        return CONTENT_BYTES
+        return _content_for(path)
 
     searcher = GlobalSearcher(
         FakeCodeSearch(page=page), FakeTree(), (PythonAdapter(),), blob_reader=read_blob

@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -82,6 +82,75 @@ class CodeSearchHit:
             raise ValueError("blob_sha must be a 40-char git SHA")
         if not isinstance(self.commit_sha, str) or not _SHA1.fullmatch(self.commit_sha):
             raise ValueError("commit_sha must be a 40-char git SHA")
+
+
+def hit_identity(hit: CodeSearchHit) -> tuple[str, str, str, str, str]:
+    """Return the total-order file-level prefix of the P6 source identity."""
+    return (hit.slug, hit.commit_sha, hit.path, hit.blob_sha, hit.html_url)
+
+
+@dataclass(frozen=True, slots=True)
+class DedupOutcome:
+    """Pure result of collapsing search-index claims.
+
+    ``collapsed`` means that the index claimed identical content or repeated
+    the same repository path. It does not mean that collapsed hits' bytes were
+    fetched or verified. ``groups`` retains each content-claim group so a
+    failed representative can be promoted deterministically.
+    """
+
+    candidates: tuple[CodeSearchHit, ...]
+    collapsed: int
+    groups: tuple[tuple[CodeSearchHit, ...], ...]
+    pin_disagreements: int = 0
+
+
+def _collapse(
+    hits: Iterable[CodeSearchHit],
+    *,
+    key: Callable[[CodeSearchHit], Hashable],
+) -> tuple[list[CodeSearchHit], int, dict[CodeSearchHit, tuple[CodeSearchHit, ...]]]:
+    grouped: dict[Hashable, list[CodeSearchHit]] = {}
+    for hit in hits:
+        grouped.setdefault(key(hit), []).append(hit)
+    groups = [tuple(group) for group in grouped.values()]
+    survivors = [group[0] for group in groups]
+    return survivors, sum(len(group) - 1 for group in groups), dict(zip(survivors, groups))
+
+
+def dedup_hits(hits: Iterable[CodeSearchHit]) -> DedupOutcome:
+    """Deterministically collapse duplicate index hits without doing I/O.
+
+    Given identical fetch outcomes, representative selection is a pure
+    function of the hit set. The representative is the first member in
+    ``hit_identity`` order whose bytes verify.
+    """
+    ordered = sorted(hits, key=hit_identity)
+
+    # The same pinned path cannot truthfully name two different git blobs.
+    consistent: list[CodeSearchHit] = []
+    pins: dict[tuple[str, str, str], str] = {}
+    pin_disagreements = 0
+    for hit in ordered:
+        pin = (hit.slug, hit.commit_sha, hit.path)
+        if pin in pins and pins[pin] != hit.blob_sha:
+            pin_disagreements += 1
+            continue
+        pins[pin] = hit.blob_sha
+        consistent.append(hit)
+
+    survivors, collapsed1, _ = _collapse(
+        consistent, key=lambda hit: (hit.slug, hit.path)
+    )
+    survivors, collapsed2, content_groups = _collapse(
+        survivors, key=lambda hit: hit.blob_sha
+    )
+    return DedupOutcome(
+        candidates=tuple(survivors),
+        collapsed=collapsed1 + collapsed2,
+        groups=tuple(content_groups[hit] for hit in survivors),
+        pin_disagreements=pin_disagreements,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,11 +397,13 @@ class GlobalSearcher:
         files_indexed = 0
         files_eligible = 0
         incomplete_results = False
+        collected: list[CodeSearchHit] = []
         per_page = min(self._max_results, 100)
         content_preds = tuple(
             predicate for predicate in spec.must if predicate.kind is not PredicateKind.PATH
         )
 
+        # Phase A: collect a deterministic candidate set without blob I/O.
         for page_number in range(1, self._max_pages + 1):
             try:
                 page = self._search.search(query, per_page=per_page, page=page_number)
@@ -344,20 +415,56 @@ class GlobalSearcher:
             if page_number == 1:
                 files_eligible = page.total_count
             incomplete_results = incomplete_results or page.incomplete_results
+            collected.extend(page.hits)
+            provisional = dedup_hits(collected)
+            adapter_eligible = sum(
+                self._adapter_for(hit.path) is not None
+                for hit in provisional.candidates
+            )
+            if adapter_eligible >= self._max_results:
+                break
+            if page.incomplete_results:
+                break
+            if not page.hits or len(page.hits) < per_page:
+                break
+            if page_number == self._max_pages:
+                incomplete_results = True
 
-            for hit in page.hits:
-                if files_indexed >= self._max_results:
+        # Phase B: collapse only index claims. Collapsed members are not read.
+        outcome = dedup_hits(collected)
+        if outcome.pin_disagreements:
+            exclusions["pin_disagreement"] = outcome.pin_disagreements
+        eligible_groups: list[tuple[CodeSearchHit, ...]] = []
+        for candidate, group in zip(outcome.candidates, outcome.groups, strict=True):
+            if self._adapter_for(candidate.path) is None:
+                exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
+            else:
+                eligible_groups.append(group)
+
+        # Phase C: verify candidates in file-level P6 order. Verification
+        # failures promote the next member of the same claimed-content group.
+        attempts = 0
+        promoted_attempted = 0
+        verification_failed = False
+        for group in eligible_groups:
+            if attempts >= self._max_results:
+                incomplete_results = True
+                break
+            for group_index, hit in enumerate(group):
+                if attempts >= self._max_results:
+                    incomplete_results = True
                     break
-
+                if group_index >= 1:
+                    promoted_attempted += 1
+                attempts += 1
                 adapter = self._adapter_for(hit.path)
                 if adapter is None:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
                     continue
-
                 commit_sha = getattr(hit, "commit_sha", None)
                 if not isinstance(commit_sha, str) or not _SHA1.fullmatch(commit_sha):
                     exclusions["unpinned_hit"] = exclusions.get("unpinned_hit", 0) + 1
-                    continue
+                    break
                 html_match = (
                     re.search(r"/blob/([0-9a-f]{40})/", hit.html_url)
                     if isinstance(hit.html_url, str)
@@ -365,12 +472,12 @@ class GlobalSearcher:
                 )
                 if html_match is None:
                     exclusions["unpinned_hit"] = exclusions.get("unpinned_hit", 0) + 1
-                    continue
+                    break
                 if html_match.group(1) != commit_sha:
                     exclusions["pin_disagreement"] = (
                         exclusions.get("pin_disagreement", 0) + 1
                     )
-                    continue
+                    break
 
                 try:
                     verified_content = self._read_content(
@@ -378,14 +485,17 @@ class GlobalSearcher:
                     )
                 except UnicodeDecodeError:
                     exclusions["decode_failed"] = exclusions.get("decode_failed", 0) + 1
+                    verification_failed = True
                     continue
                 except (CodeSearchError, TreeReadError, TreeTruncatedError, OSError):
                     exclusions["fetch_failed"] = exclusions.get("fetch_failed", 0) + 1
+                    verification_failed = True
                     continue
                 if verified_content is None:
                     exclusions["provenance_mismatch"] = (
                         exclusions.get("provenance_mismatch", 0) + 1
                     )
+                    verification_failed = True
                     continue
 
                 content, blob_sha = verified_content
@@ -397,15 +507,14 @@ class GlobalSearcher:
                     )
                 )
                 files_indexed += 1
+                break
 
-            if files_indexed >= self._max_results:
-                break
-            if page.incomplete_results:
-                break
-            if not page.hits or len(page.hits) < per_page:
-                break
-            if page_number == self._max_pages:
-                incomplete_results = True
+        if verification_failed and files_indexed < self._max_results:
+            incomplete_results = True
+
+        deduplicated = outcome.collapsed - promoted_attempted
+        if deduplicated > 0:
+            exclusions["deduplicated"] = deduplicated
 
         coverage = Coverage(
             status=CoverageStatus.INDETERMINATE_GLOBAL,

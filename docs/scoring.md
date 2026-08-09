@@ -13,6 +13,12 @@ Its drift guard is the deterministic factor/weight contract test
 mutation test `test_swapping_age_and_tests_weights_changes_the_golden_score` in
 `tests/test_trust.py`. Those tests guard the seven factors and their effect on a
 golden runtime score; ADR-002 is not a second implementation of that policy.
+Its age factor reads the timezone-aware `published_at` manifest field. PyPI,
+npm, and crates materializations populate that field from registry release
+metadata; direct GitHub materializations use the resolved commit's committer
+date when it can be retrieved. Sources without a trustworthy timestamp (for
+example, Go modules whose available metadata omits one) remain honestly
+unknown.
 
 ## Commands
 
@@ -92,7 +98,9 @@ indeterminate assessment to a pass.
 `run` always regenerates the fixed ADR-001 pytest JUnit artifact using the
 allowlisted argument vector in `tools/score_engine.py`. Additional S3–S7 raw
 artifacts are consumed from `.leitir-score/evidence` by default, or from the
-directory supplied with `--evidence-dir`. A group is evaluated only when its
+directory supplied with `--evidence-dir`. The deterministic dogfood artifacts
+in that directory are tracked; the regenerated JUnit remains ignored and
+volatile. A group is evaluated only when its
 complete required file set is present; otherwise its policy checks remain
 explicitly unresolved.
 
@@ -121,8 +129,8 @@ coverage.py 7.15.2. The declared production scope is every Python module under
 an explicit empty block list for `__init__.py` and extracting each reported
 `mi` value. Coverage was run with `--branch --source=src/leitir` over the full
 offline pytest suite. Mutmut 3.7.0 was then scoped to `docpointers.py` and its
-16 focused tests: the clean control passed, the forced-failure sentinel failed
-as expected, and all 327 generated mutants completed (243 killed and 84
+17 focused tests: the clean control passed, the forced-failure sentinel failed
+as expected, and all 337 generated mutants completed (252 killed and 85
 survived). This closes the fail-closed four-file test-adequacy group without
 claiming mutation coverage outside that explicitly recorded scope.
 
@@ -145,14 +153,9 @@ The canonical dogfood result is
 [`scorecard/leitir-assessment.json`](../scorecard/leitir-assessment.json); the
 generated view is
 [`scorecard/leitir-assessment.html`](../scorecard/leitir-assessment.html). The
-published clean pinned run remains `decision=indeterminate`, `complete=false`,
-with an unknown exact score, `observed_score_bps=10000`, bounds `476..10000`,
-and 29 missing required checks.
-
-The separately generated current-worktree assessment in
-`.leitir-score/assessment.json` reports `decision=pass`, `complete=true`, an
-unknown exact score, `observed_score_bps=8382`, and bounds `5588..8922`. It has
-no missing required checks and no blockers. The fixed offline collector
+published clean pinned run reports `decision=pass`, `complete=true`, an unknown
+exact score, `observed_score_bps=8371`, and bounds `5581..8914`. It has no
+missing required checks and no blockers. The fixed offline collector
 explicitly deselects the live-gated Go resolver test rather than counting its
 intentional offline skip as a failure; the live test remains independently
 available under `LEITIR_ENABLE_LIVE_E2E=1`.
@@ -186,24 +189,28 @@ Regenerate it without reading identity from a dirty developer worktree:
 subject_dir=$(mktemp -d)
 git clone --quiet --no-hardlinks --no-checkout . "$subject_dir/pinned-subject"
 git -C "$subject_dir/pinned-subject" checkout --quiet --detach \
-  379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a
+  45c028b69fdbab65e6288f82f9f4d0ecbc7e95d4
 git -C "$subject_dir/pinned-subject" remote set-url origin \
   https://github.com/anthonykewl20/leitir.git
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python \
   tools/score_engine.py run --profile offline \
   --root "$subject_dir/pinned-subject" \
+  --evidence-dir "$PWD/.leitir-score/evidence" \
   --json-out "$PWD/scorecard/leitir-assessment.json" \
   --html-out "$PWD/scorecard/leitir-assessment.html" \
   --run-envelope-out "$PWD/.leitir-score/run-envelope.json"
 ```
 
-Exit 3 is expected for this published indeterminate result. The regeneration
+Exit 0 is expected for this published offline pass. The regeneration
 gate is `tests/test_score_dogfood.py`. It builds its own temporary clean clone
 at the pin and byte-compares both regenerated files with the published files.
 Therefore a hand edit to either JSON or HTML fails, as does a scorer/renderer
 change whose artifact was not regenerated. The current worktree may be dirty:
 it supplies the scorer code under test but is never represented as the clean
-subject. The test also asserts that none of the following manual snapshots is
+subject. Deterministic benchmark, code-health, coverage, mutation, scope, and
+tool-version evidence comes from the publishing checkout's tracked
+`.leitir-score/evidence`; only the pinned pytest JUnit is regenerated in the
+subject clone. The test also asserts that none of the following manual snapshots is
 an evidence path:
 
 - `docs/leitir-engine-scorecard.html`

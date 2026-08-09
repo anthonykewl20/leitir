@@ -13,8 +13,9 @@ from tools.score_engine import ExitCode, main
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PINNED_SUBJECT_COMMIT = "379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a"
+PINNED_SUBJECT_COMMIT = "45c028b69fdbab65e6288f82f9f4d0ecbc7e95d4"
 PINNED_REPOSITORY = "https://github.com/anthonykewl20/leitir.git"
+PUBLISHED_EVIDENCE = REPO_ROOT / ".leitir-score" / "evidence"
 PUBLISHED_JSON = REPO_ROOT / "scorecard" / "leitir-assessment.json"
 PUBLISHED_HTML = REPO_ROOT / "scorecard" / "leitir-assessment.html"
 HISTORICAL_SCORECARDS = {
@@ -99,6 +100,8 @@ def test_published_assessment_matches_fresh_clean_pinned_run(tmp_path):
             "offline",
             "--root",
             str(subject),
+            "--evidence-dir",
+            str(PUBLISHED_EVIDENCE),
             "--json-out",
             str(generated_json),
             "--html-out",
@@ -108,7 +111,7 @@ def test_published_assessment_matches_fresh_clean_pinned_run(tmp_path):
         stderr=stderr,
     )
 
-    assert code == ExitCode.INDETERMINATE
+    assert code == ExitCode.COMPLETE_PASS
     assert stderr.getvalue() == ""
     _assert_published_matches(generated_json, generated_html)
 
@@ -118,18 +121,21 @@ def test_published_assessment_matches_fresh_clean_pinned_run(tmp_path):
         "repository": PINNED_REPOSITORY,
         "worktree": "clean",
     }
-    assert assessment["aggregate"]["decision"] == "indeterminate"
-    assert assessment["aggregate"]["complete"] is False
+    assert assessment["aggregate"]["decision"] == "pass"
+    assert assessment["aggregate"]["complete"] is True
     assert assessment["aggregate"]["score_bps"] is None
-    assert assessment["aggregate"]["observed_score_bps"] == 10000
-    assert assessment["aggregate"]["lower_bound_bps"] == 476
-    assert assessment["aggregate"]["upper_bound_bps"] == 10000
-    assert len(assessment["aggregate"]["blockers"]) == 29
+    assert assessment["aggregate"]["observed_score_bps"] == 8371
+    assert assessment["aggregate"]["lower_bound_bps"] == 5581
+    assert assessment["aggregate"]["upper_bound_bps"] == 8914
+    assert assessment["aggregate"]["blockers"] == []
     assert "release_readiness=not_claimed" in stdout.getvalue()
 
     consumed_paths = {item["path"] for item in assessment["evidence"]}
     assert consumed_paths.isdisjoint(HISTORICAL_SCORECARDS)
-    assert assessment["evidence"][0]["normalization"] == (
+    pytest_evidence = next(
+        item for item in assessment["evidence"] if item["id"] == "engine.pytest-junit"
+    )
+    assert pytest_evidence["normalization"] == (
         "pytest-junit-volatile-v1"
     )
 

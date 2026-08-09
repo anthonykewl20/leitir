@@ -94,24 +94,24 @@ opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 
 ## What the scorer says about Leitir
 
-The current-worktree run in `.leitir-score/assessment.json` **passes the
-offline profile**:
+The published canonical self-assessment **passes the offline profile**:
 
 ```
 profile=offline  decision=pass  complete=true
-score_bps=unknown  observed_score_bps=8382
-lower_bound_bps=5588  upper_bound_bps=8922
+score_bps=unknown  observed_score_bps=8371
+lower_bound_bps=5581  upper_bound_bps=8914
 release_readiness=not_claimed          exit 0
 ```
 
-The current worktree artifact has no missing required results and no blockers.
+The published artifact has no missing required results and no blockers.
 The fixed offline gate deselects the explicitly live-gated Go resolver test;
 the live test remains available under `LEITIR_ENABLE_LIVE_E2E=1` but no longer
 makes the offline-only collector fail by construction. Advisory OpenSSF and
 performance evidence remains unknown, so the exact score remains unknown and
 this is not a release-readiness claim.
-The published clean pinned artifact remains `decision=indeterminate` with 29
-missing required results and is kept unchanged by its regeneration gate.
+Its deterministic evidence is tracked under `.leitir-score/evidence`; the
+offline pytest JUnit is regenerated for every clean pinned run. The regeneration
+gate byte-compares both canonical outputs.
 
 To narrow the remaining score bounds, collect the missing advisory evidence.
 Do **not** relax the policy: anti-gaming rule 2 makes policy, qrels, baselines

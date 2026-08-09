@@ -33,7 +33,12 @@ def _info_refs() -> bytes:
 
 
 def _resolver(base_url, **kwargs):
-    return SourcehutResolver(base_url=base_url, sleeper=lambda _: None, **kwargs)
+    return SourcehutResolver(
+        base_url=base_url,
+        sleeper=lambda _: None,
+        allow_insecure_http_for_tests=base_url.startswith("http://127.0.0.1:"),
+        **kwargs,
+    )
 
 
 def test_anonymous_info_refs_parsing_and_resolution_avoids_graphql():

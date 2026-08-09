@@ -14,6 +14,7 @@ from leitir.resolver import (
     GoResolver,
     GitHubTagResolver,
     MultiResolver,
+    NpmResolver,
     PackageRef,
     PackageResolver,
     PyPIResolver,
@@ -160,6 +161,45 @@ class TestResolvedPackage:
             ResolvedPackage(
                 ref=ref, scope=scope, tag="v1", registry_url="http://x.com"
             )
+
+
+class TestNetworkBaseUrlValidation:
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "ftp://registry.example",
+            "https:///missing-host",
+            "https://user:password@registry.example",
+            "https://registry.example/path#opaque-secret",
+        ],
+    )
+    def test_npm_rejects_unsafe_configured_base_urls(self, base_url):
+        with pytest.raises(ValueError, match="network base URL"):
+            NpmResolver(RecordingRepoResolver(), base_url=base_url)
+
+    def test_plaintext_base_url_with_credentials_is_rejected(self, monkeypatch):
+        monkeypatch.setenv("NPM_TOKEN", "sentinel-registry-token")
+
+        with pytest.raises(ValueError, match="must use HTTPS"):
+            NpmResolver(
+                RecordingRepoResolver(),
+                base_url="http://registry.npmjs.org",
+            )
+
+    def test_plaintext_base_url_with_explicit_token_is_rejected(self):
+        with pytest.raises(ValueError, match="must use HTTPS"):
+            GitHubTagResolver(
+                token="sentinel-explicit-token",
+                base_url="http://github-mirror.example",
+            )
+
+    def test_anonymous_plaintext_base_url_is_allowed(self):
+        resolver = NpmResolver(
+            RecordingRepoResolver(),
+            base_url="http://127.0.0.1:43210",
+        )
+
+        assert resolver._base_url == "http://127.0.0.1:43210"
 
 
 class TestGoMultiHostResolution:

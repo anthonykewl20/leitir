@@ -117,6 +117,59 @@ class _InfoRefsPermissionError(ResolutionError):
     """Sourcehut denied access to a repository's smart-HTTP advertisement."""
 
 
+def _validate_network_base_url(
+    base_url: str,
+    *,
+    credentialled: bool,
+    allow_insecure_http_for_tests: bool = False,
+) -> str:
+    """Validate and normalize a resolver endpoint before requests are built."""
+    from urllib.parse import urlsplit
+
+    try:
+        endpoint = urlsplit(base_url)
+        port = endpoint.port
+    except (TypeError, ValueError) as exc:
+        raise ValueError("network base URL is malformed") from exc
+    scheme = endpoint.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError("network base URL must use HTTP or HTTPS")
+    if scheme == "http" and credentialled and not allow_insecure_http_for_tests:
+        raise ValueError("network base URL must use HTTPS when credentials are configured")
+    if endpoint.hostname is None:
+        raise ValueError("network base URL must include a host")
+    if endpoint.username is not None or endpoint.password is not None:
+        raise ValueError("network base URL must not contain userinfo")
+    if endpoint.fragment:
+        raise ValueError("network base URL must not contain a fragment")
+    return base_url.rstrip("/")
+
+
+def _base_url_is_credentialled(
+    credentials: Credentials,
+    base_url: str,
+    *,
+    provider: str,
+    token: str | None = None,
+) -> bool:
+    """Return whether explicit or host-scoped credentials apply to an endpoint."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    if token:
+        return True
+    try:
+        endpoint = urlsplit(base_url)
+    except (TypeError, ValueError):
+        return False
+    if endpoint.hostname is None:
+        return False
+    hostname = endpoint.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    credential_probe = urlunsplit(("https", hostname, "/", "", ""))
+    return credentials.auth_for_url(credential_probe, provider=provider) is not None
+
+
 def resolve_corpus_spec(
     parsed: object, resolver: object, heads: object, cwd: Path
 ) -> tuple[object, str | None, str | None, str | None]:
@@ -176,11 +229,18 @@ class GitHubTagResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._token = token
         self._credentials = Credentials()
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=_base_url_is_credentialled(
+                self._credentials, base_url, provider="github", token=token
+            ),
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -304,11 +364,21 @@ class _HostedRepoResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._token = token
         self._credentials = Credentials()
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=_base_url_is_credentialled(
+                self._credentials,
+                base_url,
+                provider=self._CREDENTIAL_PROVIDER,
+                token=token,
+            ),
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -403,6 +473,7 @@ class GitLabResolver(_HostedRepoResolver):
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         super().__init__(
             token,
@@ -413,6 +484,7 @@ class GitLabResolver(_HostedRepoResolver):
             max_delay=max_delay,
             max_rate_limit_delay=max_rate_limit_delay,
             sleeper=sleeper,
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
         )
 
     @staticmethod
@@ -528,6 +600,7 @@ class BitbucketResolver(_HostedRepoResolver):
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         super().__init__(
             token,
@@ -538,6 +611,7 @@ class BitbucketResolver(_HostedRepoResolver):
             max_delay=max_delay,
             max_rate_limit_delay=max_rate_limit_delay,
             sleeper=sleeper,
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
         )
 
     @staticmethod
@@ -643,11 +717,13 @@ class CodebergResolver(_HostedRepoResolver):
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         super().__init__(
             token, timeout, base_url=base_url, max_attempts=max_attempts,
             base_delay=base_delay, max_delay=max_delay,
             max_rate_limit_delay=max_rate_limit_delay, sleeper=sleeper,
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
         )
 
     @staticmethod
@@ -753,11 +829,13 @@ class SourcehutResolver(_HostedRepoResolver):
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         super().__init__(
             token, timeout, base_url=base_url, max_attempts=max_attempts,
             base_delay=base_delay, max_delay=max_delay,
             max_rate_limit_delay=max_rate_limit_delay, sleeper=sleeper,
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
         )
         self._blob_urls: dict[tuple[str, str], str] = {}
         self._path_urls: dict[tuple[str, str, str], str] = {}
@@ -1089,11 +1167,18 @@ class PyPIResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
         self._credentials = Credentials()
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=_base_url_is_credentialled(
+                self._credentials, base_url, provider="pypi"
+            ),
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -1233,11 +1318,18 @@ class CratesResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
         self._credentials = Credentials()
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=_base_url_is_credentialled(
+                self._credentials, base_url, provider="crates"
+            ),
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -1362,6 +1454,7 @@ class GoResolver:
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
         repository_resolvers: dict[str, object] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._repository_resolvers = {
@@ -1372,7 +1465,11 @@ class GoResolver:
         if repository_resolvers is not None:
             self._repository_resolvers.update(repository_resolvers)
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=False,
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,
@@ -1540,11 +1637,18 @@ class NpmResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._tag_resolver = tag_resolver
         self._timeout = timeout
-        self._base_url = base_url.rstrip("/")
         self._credentials = Credentials()
+        self._base_url = _validate_network_base_url(
+            base_url,
+            credentialled=_base_url_is_credentialled(
+                self._credentials, base_url, provider="npm"
+            ),
+            allow_insecure_http_for_tests=allow_insecure_http_for_tests,
+        )
         self._retry = _http.make_retry(
             max_attempts=max_attempts,
             base_delay=base_delay,

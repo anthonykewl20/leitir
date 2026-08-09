@@ -27,7 +27,12 @@ def _tarball(content=CONTENT):
 
 
 def _resolver(server, *, token="test-token"):
-    resolver = SourcehutResolver(token=token, base_url=server.base_url, max_attempts=1)
+    resolver = SourcehutResolver(
+        token=token,
+        base_url=server.base_url,
+        max_attempts=1,
+        allow_insecure_http_for_tests=True,
+    )
     resolver.archive_url = lambda *_: f"{server.base_url}/archive"  # type: ignore[method-assign]
     return resolver
 

@@ -12,6 +12,7 @@ from leitir.logging import (
     configure_logging,
     install_redaction,
     redact,
+    register_secret,
     safe_record_message,
 )
 
@@ -102,6 +103,16 @@ class TestRedactionShapes:
         url = "https://host.example/path"
         assert redact(url) == url
 
+    def test_url_fragment_is_removed(self):
+        out = redact(f"request failed for https://host.example/path#{SENTINEL}")
+        assert SENTINEL not in out
+        assert out == "request failed for https://host.example/path"
+
+    def test_private_token_header_is_redacted(self):
+        out = redact({"headers": {"PRIVATE-TOKEN": SENTINEL}})
+        assert out["headers"]["PRIVATE-TOKEN"] == REDACTED
+        assert SENTINEL not in str(out)
+
     def test_bearer_redaction_in_nested_structures(self):
         data = {"headers": {"Authorization": "Bearer abc123xyz"}}
         out = redact(data)
@@ -162,6 +173,38 @@ class TestLogFilterIntegration:
         assert f.filter(record) is True
         rendered = record.getMessage()
         assert "leak123" not in rendered
+        assert REDACTED in rendered
+
+    def test_filter_redacts_registered_secret_from_exception_text(self):
+        exception_secret = "exception-only-secret-42d9"
+        register_secret(exception_secret)
+        try:
+            raise RuntimeError(f"transport failed: {exception_secret}")
+        except RuntimeError:
+            record = self._make_record("registry request failed")
+            record.exc_info = __import__("sys").exc_info()
+
+        RedactingFilter().filter(record)
+        rendered = record.getMessage()
+        assert exception_secret not in rendered
+        assert REDACTED in rendered
+
+    def test_resolved_credential_is_automatically_redacted_from_exception(self):
+        from leitir.credentials import Credentials
+
+        exception_secret = "resolved-exception-secret-72c1"
+        assert Credentials({"NPM_TOKEN": exception_secret}).auth_for_url(
+            "https://registry.npmjs.org/demo"
+        ) is not None
+        try:
+            raise RuntimeError(f"transport failed: {exception_secret}")
+        except RuntimeError:
+            record = self._make_record("registry request failed")
+            record.exc_info = __import__("sys").exc_info()
+
+        RedactingFilter().filter(record)
+        rendered = record.getMessage()
+        assert exception_secret not in rendered
         assert REDACTED in rendered
 
     def test_safe_record_message_does_not_mutate(self):

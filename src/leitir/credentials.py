@@ -119,6 +119,13 @@ class Credentials:
         if not secret:
             return None
         validate_secret(secret, kind="token")
+        try:
+            from .logging import register_secret
+
+            register_secret(secret)
+        except Exception:
+            # Redaction registration must never prevent credential use.
+            pass
         username = self._environ.get(selected.username_env) if selected.username_env else None
         if username:
             validate_secret(username, kind="username")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import logging
 import re
+import threading
 import traceback
 from typing import Any
 
@@ -13,7 +14,7 @@ REDACTED = "[REDACTED]"
 _SENSITIVE_KEY = re.compile(
     r"^(?:authorization|proxy[-_]?authorization|password|passwd|secret|"
     r"client[-_]?secret|credential(?:s)?|token|access[-_]?token|refresh[-_]?token|"
-    r"api[-_]?key|apikey|key)$",
+    r"api[-_]?key|apikey|private[-_]?token|x[-_]?api[-_]?key|key)$",
     re.IGNORECASE,
 )
 _AUTH_HEADER = re.compile(
@@ -26,7 +27,8 @@ _BEARER = re.compile(
 _KEY_VALUE = re.compile(
     r"""(?ix)
     (["']?(?:api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|
-       client[-_]?secret|password|passwd|secret|credential(?:s)?|
+       client[-_]?secret|password|passwd|secret|credential(?:s)?|private[-_]?token|
+       x[-_]?api[-_]?key|
        key)["']?\s*(?:=|:)\s*)
     (?:
        ["'][^"']*["'] |
@@ -42,9 +44,30 @@ _AUTH_VALUE = re.compile(
     """
 )
 _OPENROUTER_KEY = re.compile(r"\bsk-or-v1-[A-Za-z0-9._~+/=-]+\b", re.IGNORECASE)
+_URL_FRAGMENT = re.compile(r"(?i)(\bhttps?://[^\s#]+)#[^\s]*")
+_KNOWN_SECRETS: set[str] = set()
+_KNOWN_SECRETS_LOCK = threading.Lock()
+
+
+def register_secret(value: str) -> None:
+    """Register a loaded credential for exact redaction from unstructured text."""
+    if not isinstance(value, str):
+        raise TypeError("secret must be a string")
+    # Very short values cannot be replaced safely in arbitrary prose: a
+    # one-character test token would corrupt every subsequent log message.
+    # Real provider credentials exceed this floor; short values still receive
+    # the normal header/key-value shape redaction.
+    if len(value) >= 8:
+        with _KNOWN_SECRETS_LOCK:
+            _KNOWN_SECRETS.add(value)
 
 
 def _redact_text(value: str) -> str:
+    value = _URL_FRAGMENT.sub(r"\1", value)
+    with _KNOWN_SECRETS_LOCK:
+        secrets = tuple(sorted(_KNOWN_SECRETS, key=lambda item: (-len(item), item)))
+    for secret in secrets:
+        value = value.replace(secret, REDACTED)
     value = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1[REDACTED]@", value)
     value = _OPENROUTER_KEY.sub(REDACTED, value)
     value = _AUTH_HEADER.sub(lambda match: match.group(1) + REDACTED, value)

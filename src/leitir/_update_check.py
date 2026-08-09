@@ -4,7 +4,7 @@ The optional check sends only the installed leitir version in its User-Agent
 to the GitHub Releases API; it sends no identifying information or telemetry.
 
 Version comparison intentionally supports only final numeric releases (for
-example, ``0.2.0``).  Epochs, pre/dev/post releases, local versions, leading
+example, ``0.1.1``).  Epochs, pre/dev/post releases, local versions, leading
 ``v`` markers, whitespace, and every other non-numeric form are silently
 ignored rather than partially interpreted.
 

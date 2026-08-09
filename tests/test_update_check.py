@@ -44,7 +44,7 @@ def _tty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update.importlib.metadata, "version", lambda name: "0.1.0")
 
 
-def _cache_payload(*, checked: datetime | None, latest: str | None = "0.2.0") -> dict[str, object]:
+def _cache_payload(*, checked: datetime | None, latest: str | None = "0.1.1") -> dict[str, object]:
     created = datetime.now(UTC) - timedelta(days=2)
     return {
         "schema": 2,
@@ -53,7 +53,7 @@ def _cache_payload(*, checked: datetime | None, latest: str | None = "0.2.0") ->
         "last_checked_at": update._format_time(checked) if checked else None,
         "installed_version": "0.1.0",
         "latest_version": latest,
-        "release_url": "https://github.com/anthonykewl20/leitir/releases/tag/v0.2.0",
+        "release_url": "https://github.com/anthonykewl20/leitir/releases/tag/v0.1.1",
     }
 
 
@@ -145,8 +145,8 @@ def test_fresh_cache_skips_network(monkeypatch: pytest.MonkeyPatch) -> None:
     update._run_update_check("0.1.0")
     assert update._result == (
         "0.1.0",
-        "0.2.0",
-        "https://github.com/anthonykewl20/leitir/releases/tag/v0.2.0",
+        "0.1.1",
+        "https://github.com/anthonykewl20/leitir/releases/tag/v0.1.1",
     )
 
 
@@ -158,8 +158,8 @@ def test_stale_cache_triggers_network(monkeypatch: pytest.MonkeyPatch) -> None:
         nonlocal calls
         calls += 1
         return _Response(
-            b'{"tag_name":"v0.3.0","html_url":'
-            b'"https://github.com/anthonykewl20/leitir/releases/tag/v0.3.0"}'
+            b'{"tag_name":"v0.1.2","html_url":'
+            b'"https://github.com/anthonykewl20/leitir/releases/tag/v0.1.2"}'
         )
 
     monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
@@ -167,8 +167,8 @@ def test_stale_cache_triggers_network(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == 1
     assert update._result == (
         "0.1.0",
-        "0.3.0",
-        "https://github.com/anthonykewl20/leitir/releases/tag/v0.3.0",
+        "0.1.2",
+        "https://github.com/anthonykewl20/leitir/releases/tag/v0.1.2",
     )
 
 
@@ -202,21 +202,21 @@ def test_strips_leading_v_from_tag_name(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         update.urllib.request,
         "urlopen",
-        lambda *a, **k: _Response(b'{"tag_name":"v0.2.0"}'),
+        lambda *a, **k: _Response(b'{"tag_name":"v0.1.1"}'),
     )
-    assert update._fetch_latest_version("0.1.0") == "0.2.0"
+    assert update._fetch_latest_version("0.1.0") == "0.1.1"
 
 
 def test_newer_version_emits_notice_to_stderr(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    release_url = "https://github.com/anthonykewl20/leitir/releases/tag/v0.2.0"
-    monkeypatch.setattr(update, "_result", ("0.1.0", "0.2.0", release_url))
+    release_url = "https://github.com/anthonykewl20/leitir/releases/tag/v0.1.1"
+    monkeypatch.setattr(update, "_result", ("0.1.0", "0.1.1", release_url))
     update.maybe_emit_update_notice()
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (
-        "\nA new release of leitir is available: 0.1.0 → 0.2.0\n"
+        "\nA new release of leitir is available: 0.1.0 → 0.1.1\n"
         "Upgrade with: pip install --upgrade "
-        "git+https://github.com/anthonykewl20/leitir.git@v0.2.0\n"
+        "git+https://github.com/anthonykewl20/leitir.git@v0.1.1\n"
         f"{release_url}\n\n"
     )
 
@@ -224,18 +224,18 @@ def test_newer_version_emits_notice_to_stderr(monkeypatch: pytest.MonkeyPatch, c
 def test_release_url_in_notice(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    release_url = "https://github.com/anthonykewl20/leitir/releases/tag/v0.2.0"
-    monkeypatch.setattr(update, "_result", ("0.1.0", "0.2.0", release_url))
+    release_url = "https://github.com/anthonykewl20/leitir/releases/tag/v0.1.1"
+    monkeypatch.setattr(update, "_result", ("0.1.0", "0.1.1", release_url))
     update.maybe_emit_update_notice()
     assert release_url in capsys.readouterr().err
 
 
 def test_older_or_equal_version_emits_nothing(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    for latest in ("0.1.0", "0.2.0"):
+    for latest in ("0.1.0", "0.1.1"):
         monkeypatch.setattr(
             update,
             "_result",
-            ("0.2.0", latest, "https://github.com/anthonykewl20/leitir/releases"),
+            ("0.1.1", latest, "https://github.com/anthonykewl20/leitir/releases"),
         )
         update.maybe_emit_update_notice()
     assert capsys.readouterr().err == ""
@@ -301,10 +301,10 @@ def test_credentials_not_in_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
         assert request.full_url == update._GITHUB_RELEASES_URL  # type: ignore[attr-defined]
         assert request.get_header("Accept") == "application/vnd.github+json"  # type: ignore[attr-defined]
         return _Response(
-            b'{"tag_name":"v0.2.0","html_url":'
-            b'"https://github.com/anthonykewl20/leitir/releases/tag/v0.2.0"}'
+            b'{"tag_name":"v0.1.1","html_url":'
+            b'"https://github.com/anthonykewl20/leitir/releases/tag/v0.1.1"}'
         )
 
     monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
-    assert update._fetch_latest_version("0.1.0") == "0.2.0"
+    assert update._fetch_latest_version("0.1.0") == "0.1.1"
     assert seen == "leitir/0.1.0 update-check"

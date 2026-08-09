@@ -1,0 +1,60 @@
+name: Program work (BTS / milestone-tracked feature)
+description: Scoped, gated engineering work tracked by a milestone, with explicit acceptance, sad paths, and test discipline.
+title: ""
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Declarative statement of the current defect or missing capability, with the consequence in parentheses. Match house title style.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Product value and which user workflow this unblocks.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Real-world acceptance criteria
+      description: Checkbox list. Where portability applies, state exact expected pass/fail/skip counts rather than "tests pass".
+    validations:
+      required: true
+  - type: textarea
+    id: sadpaths
+    attributes:
+      label: Sad paths (must reject)
+      description: Every entry names its reject-reason enum member (see the BTS error-taxonomy issue) so "must reject" is testable, not prose.
+    validations:
+      required: true
+  - type: textarea
+    id: tdd
+    attributes:
+      label: Test-driven requirements
+      description: Offline unit/fixture tests, opt-in live tests behind LEITIR_ENABLE_LIVE_E2E=1, and tamper/reject tests for integrity paths.
+    validations:
+      required: true
+  - type: textarea
+    id: gates
+    attributes:
+      label: Engineering workflow gates
+      description: Which ADR this belongs to (ADR-008..011 or none), the determinism criterion (byte-identical across PYTHONHASHSEED where output is emitted), and the gate command.
+    validations:
+      required: true
+  - type: textarea
+    id: deps
+    attributes:
+      label: Dependencies
+      description: Blocks / blocked by issue numbers.
+  - type: textarea
+    id: nongoals
+    attributes:
+      label: Non-goals
+      description: Explicit boundary of what this issue does NOT do, especially for bounded-subset work.
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Files with line ranges, prior art with pinned revisions, and ADR links.

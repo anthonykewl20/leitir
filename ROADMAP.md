@@ -2,7 +2,7 @@
 
 ## Versioning philosophy
 
-- **v0.x** — active incremental development. Each minor release (0.2.0, 0.3.0, ...) addresses audit findings, ships features, and progresses toward production-ready quality. Breaking changes are permitted within 0.x and must be called out in the changelog.
+- **v0.x** — active incremental development following SemVer. Patch releases (0.1.1, 0.1.2, ...) address audit findings, bug fixes, and incremental progress toward production-ready quality. A minor bump (0.2.0) is reserved for a real feature or behavior milestone, not routine audit work. Breaking changes are permitted within 0.x (pre-1.0) and must be called out in the changelog.
 - **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x series when the Critical/High audit findings are resolved, the self-scorecard passes, and real load testing confirms behavior at scale. The README's "Not production-ready" line changes when the quality bar is met, not when a specific version is cut.
 - **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a feature or quality milestone. v1.0 happens when the community demonstrates the project has earned the stability commitment that SemVer 1.0 implies. Until then, we ship 0.x.
 
@@ -26,7 +26,7 @@
 
 ## Current status
 
-v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** See milestone [v0.2.0](https://github.com/anthonykewl20/leitir/milestone/1) for the next incremental step.
+v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** See milestone [v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1) for the next incremental step.
 
 ## Recently shipped
 
@@ -37,9 +37,9 @@ v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, 
 - ADR-002: deterministic evidence scoring engine (standalone repository scorer)
 - ADR-001: deterministic code-search kernel
 
-## Active work — [v0.2.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1)
+## Active work — [v0.1.1 milestone](https://github.com/anthonykewl20/leitir/milestone/1)
 
-Track at epic #42. Critical items must close before claiming "production-ready" quality; they do not gate the v0.2.0 version number itself (0.2.0 can ship with partial progress).
+Track at epic #42. Critical items must close before claiming "production-ready" quality; they do not gate the v0.1.1 version number itself (0.1.1 can ship with partial progress).
 
 ### Critical (blocks the "production-ready" quality label)
 
@@ -87,4 +87,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: pick an issue from the [v0.2.0 milestone](https://github.com/anthonykewl20/leitir/milestone/1) labeled `ready-for-agent` or `help wanted`.
+Humans: pick an issue from the [v0.1.1 milestone](https://github.com/anthonykewl20/leitir/milestone/1) labeled `ready-for-agent` or `help wanted`.

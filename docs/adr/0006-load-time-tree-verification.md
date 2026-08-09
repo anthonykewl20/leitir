@@ -19,7 +19,9 @@ verified legacy shelf to bypass the new check.
 Leitir stores a deterministic `materialized_tree_hash` in every newly written
 shelf and recomputes it whenever a verified shelf is loaded. A missing,
 malformed, unsupported, or mismatched digest makes the shelf a cache miss.
-Unverified shelves may omit the digest.
+The anchor is mandatory for every shelf, including shelves whose upstream
+verification result is false. This prevents deleting both `verified` and the
+digest from downgrading a shelf out of load-time integrity checking.
 
 The `get`, `info`, `api`, `examples`, `trust`, `sbom`, and `diff` commands
 reacquire the same per-target advisory lock used by materialization, repeat
@@ -74,11 +76,12 @@ complete.
 ## Migration
 
 The migration progressed from optional digests in issue #17 to mandatory
-digests for verified shelves in issue #18. Operators run `leitir upgrade-cache`
-to atomically backfill verified legacy shelves. The command is idempotent and
-supports `--dry-run`. Normal manifest updates also opportunistically attach a
-digest when the existing legacy provenance passes its non-tree-hash checks.
-Hashing failures leave the legacy manifest unchanged and emit a warning.
+digests for all shelves. Operators run `leitir upgrade-cache` to atomically
+backfill eligible verified legacy shelves. The command is idempotent and
+supports `--dry-run`. Normal manifest updates can attach a digest only through
+the private verified-provenance backfill path. Legacy unverified shelves cannot
+transfer trust this way: remove and re-materialize them. Hashing failures leave
+the legacy manifest unchanged and fail the update.
 
 ### Migration trust transfer
 

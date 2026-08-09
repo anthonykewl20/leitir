@@ -6,6 +6,7 @@ import json
 from leitir.cli import ExitCode, main
 from leitir.corpus import write_sources
 from leitir.materialize import MANIFEST_NAME
+from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
 
 SHA = "b" * 40
@@ -30,6 +31,8 @@ def _corpus(root):
         "docs_urls": [],
         "entry_points": [],
     }
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest.update(manifest_digest_fields(digest, scope=scope))
     (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
     entry = {
         "name": "widget",

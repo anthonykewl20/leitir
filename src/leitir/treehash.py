@@ -329,6 +329,7 @@ def manifest_digest_fields(value: str, *, scope: str = FULL) -> dict[str, str]:
 def _open_checked_regular_file(path: Path, expected: os.stat_result) -> BinaryIO:
     """Open the exact regular inode previously inspected, without following links."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = -1
     try:
         fd = os.open(path, flags)
         actual = os.fstat(fd)
@@ -338,9 +339,11 @@ def _open_checked_regular_file(path: Path, expected: os.stat_result) -> BinaryIO
             or actual.st_ino != expected.st_ino
         ):
             raise OSError("entry changed between lstat and open")
-        return os.fdopen(fd, "rb")
+        handle = os.fdopen(fd, "rb")
+        fd = -1
+        return handle
     except Exception:
-        if "fd" in locals():
+        if fd >= 0:
             os.close(fd)
         raise
 

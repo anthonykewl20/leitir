@@ -71,6 +71,10 @@ class GitHubTreeSource:
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._token = token
+        if token:
+            from leitir.logging import register_secret
+
+            register_secret(token)
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._raw_base_url = raw_base_url.rstrip("/")
@@ -84,6 +88,7 @@ class GitHubTreeSource:
 
     def _headers(self) -> dict[str, str]:
         from leitir.credentials import validate_secret
+        from urllib.parse import urlsplit
 
         headers = {
             "Accept": "application/vnd.github+json",
@@ -91,7 +96,13 @@ class GitHubTreeSource:
         }
         if self._token is not None:
             validate_secret(self._token, kind="token")
-        if self._token:
+        endpoint = urlsplit(self._base_url)
+        if (
+            self._token
+            and endpoint.scheme.lower() == "https"
+            and endpoint.hostname == "api.github.com"
+            and endpoint.port in (None, 443)
+        ):
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 

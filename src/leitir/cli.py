@@ -350,12 +350,9 @@ def _configure_logging_from_env(
         if not level_name
         else logging.getLevelNamesMapping().get(level_name)
     )
-    if level is None:
-        print(
-            f"leitir: warning: ignoring unknown LEITIR_LOG_LEVEL={level_value!r}",
-            file=stderr,
-        )
-        return
+    invalid_level = level is None
+    if invalid_level:
+        level = logging.WARNING
     from .logging import configure_logging
 
     namespace_logger = logging.getLogger("leitir")
@@ -369,6 +366,8 @@ def _configure_logging_from_env(
         logging.Formatter("leitir %(levelname)s %(name)s: %(message)s")
     )
     configure_logging(level, handler=handler)
+    if invalid_level:
+        logger.warning("ignoring unknown LEITIR_LOG_LEVEL=%r", level_value)
 
 
 def _validate_scope_args(args: argparse.Namespace) -> str | None:
@@ -718,11 +717,16 @@ def _gc_abandoned_staging(root: Path) -> int:
     for candidate, target, marker in candidates:
         generations.setdefault(target, []).append((candidate, marker))
 
-    for candidate, target, marker in sorted(
-        candidates, key=lambda item: item[0].as_posix()
-    ):
+    ordered_candidates = sorted(candidates, key=lambda item: item[0].as_posix())
+    # Remove incomplete staging generations first. A real interrupted publish
+    # can leave both staging and backup, and the backup must then be considered
+    # as the sole surviving complete generation in this same invocation.
+    ordered_candidates.sort(key=lambda item: 0 if item[2] == ".tmp-" else 1)
+    for candidate, target, marker in ordered_candidates:
         _assert_target_confinement(root, candidate)
-        identity = target.absolute().relative_to(root).as_posix().encode("utf-8")
+        identity = os.path.normcase(
+            str(target.absolute().relative_to(root))
+        ).encode("utf-8")
         lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
         with _file_lock(lock_path):
             _assert_target_confinement(root, candidate)
@@ -731,7 +735,9 @@ def _gc_abandoned_staging(root: Path) -> int:
                 # leaves this as the only valid cache generation. Restore only
                 # one intact, fully load-time-verified generation.
                 surviving = [
-                    path for path, _kind in generations[target] if path.exists()
+                    path
+                    for path, kind in generations[target]
+                    if kind == ".old-" and path.exists()
                 ]
                 if surviving != [candidate]:
                     continue
@@ -1100,8 +1106,7 @@ def _run_corpus_command(
         index_paths: list[Path] = []
         index_payloads: list[dict[str, object]] = []
         seen_targets: dict[
-            tuple[str, str, str],
-            tuple[Path, str | None, dict[str, object], str],
+            str, tuple[Path, str | None, dict[str, object], str]
         ] = {}
         resolved_requests: list[
             tuple[str, CorpusSpec, object, str | None, str | None, str, RepoScope]
@@ -1130,14 +1135,51 @@ def _run_corpus_command(
         resolved_specs: list[
             tuple[str, CorpusSpec, object, str | None, str | None, str, RepoScope, Path]
         ] = []
-        materialized_targets: dict[tuple[str, str, str], Path] = {}
+        materialized_targets: dict[str, Path] = {}
         for request in resolved_requests:
             raw, parsed, resolved, tag, version_source, materialize_host, scope = (
                 request
             )
-            target_identity = (materialize_host, scope.slug, scope.commit_sha)
+            from .materialize import target_path
+
+            scope_owner, scope_repo = scope.slug.rsplit("/", 1)
+            if materialize_host == "git.sr.ht" and not scope_owner.startswith("~"):
+                scope_owner = f"~{scope_owner}"
+            expected_path = target_path(
+                root,
+                scope_owner,
+                scope_repo,
+                scope.commit_sha,
+                host=materialize_host,
+            ).absolute()
+            # Hosted repository identities are case-insensitive even when the
+            # local filesystem is not. Collapse aliases before any writer runs.
+            target_identity = os.path.normcase(str(expected_path)).casefold()
             path = materialized_targets.get(target_identity)
             if path is None:
+                commit_published_at = None
+                timestamp_resolver = getattr(
+                    resolver, "published_at_for_commit", None
+                )
+                if (
+                    parsed.ecosystem is None
+                    and materialize_host == "github.com"
+                    and parsed.ref_kind != "sha"
+                    and callable(timestamp_resolver)
+                ):
+                    from .resolver import ResolutionError
+
+                    try:
+                        commit_published_at = timestamp_resolver(
+                            scope.slug, scope.commit_sha
+                        )
+                    except ResolutionError as exc:
+                        logger.warning(
+                            "commit publication timestamp unavailable for %s@%s: %s",
+                            scope.slug,
+                            scope.commit_sha,
+                            exc,
+                        )
                 path = materialize_source(
                     raw,
                     resolved,
@@ -1145,6 +1187,7 @@ def _run_corpus_command(
                     name=parsed.name,
                     tag=tag,
                     version_source=version_source,
+                    published_at=commit_published_at,
                     host=materialize_host,
                     repository_resolver=(
                         getattr(resolver, "_repository_resolvers", {}).get(
@@ -1179,8 +1222,8 @@ def _run_corpus_command(
             # Materialization above holds at most one writer lock at a time.
             locks = sorted(
                 (
-                    (path.absolute().as_posix(), target_identity[2], path)
-                    for target_identity, path in materialized_targets.items()
+                    (identity, path.name, path)
+                    for identity, path in materialized_targets.items()
                 ),
                 key=lambda item: (item[0], item[1]),
             )
@@ -1197,7 +1240,7 @@ def _run_corpus_command(
                 scope,
                 path,
             ) in resolved_specs:
-                target_identity = (materialize_host, scope.slug, scope.commit_sha)
+                target_identity = os.path.normcase(str(path.absolute())).casefold()
                 duplicate = seen_targets.get(target_identity)
                 if duplicate is not None:
                     duplicate_path, subpath, manifest, commit_sha = duplicate

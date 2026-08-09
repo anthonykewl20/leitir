@@ -76,6 +76,7 @@ def _fabricate(root):
     relative = f"repos/github.com/acme/demo/{SHA}"
     source = root / relative
     source.mkdir(parents=True)
+    digest, scope = compute_materialized_tree_hash(source)
     (source / "leitir-manifest.json").write_text(
         json.dumps(
             {
@@ -90,6 +91,7 @@ def _fabricate(root):
                 "fetched_at": "2026-08-03T00:00:00Z",
                 "verified": False,
                 "verified_at": None,
+                **manifest_digest_fields(digest, scope=scope),
             }
         ),
         encoding="utf-8",
@@ -166,7 +168,9 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
         return real_update(path, fields)
 
     def checked_upsert(_root, _entry):
-        assert writer_lock.locked()
+        # Pointer regeneration can lock multiple targets and therefore runs
+        # only after this target's writer lock is released.
+        assert not writer_lock.locked()
 
     monkeypatch.setattr(leitir.corpus, "_target_lock", process_lock)
     monkeypatch.setattr(leitir.corpus, "materialize_repo", fake_materialize)
@@ -191,6 +195,7 @@ def _fabricate_package(
     relative = f"repos/github.com/acme/{name}/{sha}"
     source = root / relative
     source.mkdir(parents=True)
+    digest, scope = compute_materialized_tree_hash(source)
     (source / "leitir-manifest.json").write_text(
         json.dumps(
             {
@@ -204,6 +209,7 @@ def _fabricate_package(
                 "fetch_method": "codeload-tarball",
                 "repo_url": f"https://github.com/acme/{name}",
                 "fetched_at": "2026-08-03T00:00:00Z",
+                **manifest_digest_fields(digest, scope=scope),
             }
         ),
         encoding="utf-8",
@@ -234,6 +240,8 @@ def _fabricate_repo(root, *, sha=SHA, tag=None):
         "repo_url": "https://github.com/owner/repo",
         "fetched_at": "2026-08-03T00:00:00Z",
     }
+    digest, scope = compute_materialized_tree_hash(source)
+    manifest.update(manifest_digest_fields(digest, scope=scope))
     if tag is not None:
         manifest["tag"] = tag
     (source / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -632,6 +640,24 @@ def test_gc_restores_sole_valid_backup_when_target_is_absent(tmp_path):
     assert code == ExitCode.SUCCESS, err
     assert json.loads(out)["removed"] == 0
     assert not backup.exists()
+    assert (parent / SHA / "proof").read_bytes() == b"valid cache generation"
+
+
+def test_gc_removes_staging_then_restores_valid_backup_in_one_run(tmp_path):
+    parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
+    staging = parent / f".{SHA}.tmp-interrupted"
+    backup = parent / f".{SHA}.old-interrupted"
+    staging.mkdir(parents=True)
+    (staging / "partial").write_bytes(b"partial")
+    backup.mkdir()
+    (backup / "proof").write_bytes(b"valid cache generation")
+    _write_valid_fake_manifest(backup, SHA, verified=True)
+
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert json.loads(out)["removed"] == 1
+    assert not staging.exists() and not backup.exists()
     assert (parent / SHA / "proof").read_bytes() == b"valid cache generation"
 
 
@@ -1046,6 +1072,65 @@ def test_get_json_emits_materialization_metadata(tmp_path, monkeypatch):
         ],
     }
     assert "resolving" in err
+
+
+def test_get_case_aliases_dedupe_to_one_target_lock_on_posix(tmp_path, monkeypatch):
+    import leitir.corpus
+    import leitir.materialize
+    from leitir.resolver import MultiResolver
+
+    corpus = tmp_path / "corpus"
+    calls = 0
+    locks = 0
+
+    def fake_materialize(raw, resolved, **options):
+        nonlocal calls
+        calls += 1
+        source = corpus / f"repos/github.com/ACME/DEMO/{SHA}"
+        source.mkdir(parents=True, exist_ok=True)
+        _write_valid_fake_manifest(
+            source,
+            SHA,
+            owner="ACME",
+            repo="DEMO",
+            repo_url="https://github.com/ACME/DEMO",
+            source="git-commit",
+            verified=True,
+        )
+        return source
+
+    real_lock = leitir.materialize._target_lock
+
+    @contextmanager
+    def counting_lock(root, target, commit_sha):
+        nonlocal locks
+        locks += 1
+        with real_lock(root, target, commit_sha):
+            yield
+
+    monkeypatch.setattr(leitir.corpus, "materialize_source", fake_materialize)
+    monkeypatch.setattr(leitir.materialize, "_target_lock", counting_lock)
+    monkeypatch.setattr(
+        MultiResolver,
+        "published_at_for_commit",
+        lambda self, slug, commit_sha: "2026-08-08T00:00:00Z",
+    )
+
+    code, out, err = _invoke(
+        [
+            "get",
+            f"github:ACME/DEMO@{SHA}",
+            f"github:acme/demo@{SHA}",
+            "--root",
+            str(corpus),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    assert len(json.loads(out)["results"]) == 2
+    assert calls == 1
+    assert locks == 1
 
 
 def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):

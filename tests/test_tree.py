@@ -14,6 +14,19 @@ def test_tree_token_control_character_is_rejected_without_disclosure(token):
     assert token not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    "base_url", ["http://api.github.com", "https://github-mirror.example"]
+)
+def test_tree_token_is_not_attached_to_untrusted_api_endpoint(base_url):
+    token = "sentinel-tree-token"
+    headers = GitHubTreeSource(token=token, base_url=base_url)._headers()
+
+    assert "Authorization" not in headers
+    from leitir.logging import redact
+
+    assert token not in redact(f"request failed with {token}")
+
+
 def test_read_blob_by_path_quotes_slug_and_path(monkeypatch):
     captured = {}
 

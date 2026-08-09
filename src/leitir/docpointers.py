@@ -131,27 +131,32 @@ def _source_sort_key(entry: Mapping[str, Any]) -> tuple[str, ...]:
 
 def _render_source(root: Path, entry: Mapping[str, Any]) -> list[str]:
     from leitir.corpus import api_index_path, examples_index_path
-    from leitir.materialize import MANIFEST_NAME, update_manifest
+    from leitir.materialize import MANIFEST_NAME, _target_lock, update_manifest
 
     relative = str(entry.get("path", ""))
     target = root / relative
     manifest: Mapping[str, Any] = {}
-    try:
-        loaded = json.loads((target / MANIFEST_NAME).read_text(encoding="utf-8"))
-        if isinstance(loaded, Mapping):
-            manifest = loaded
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        pass
-    if manifest and "entry_points" not in manifest:
-        subpath = manifest.get("subpath")
-        manifest = update_manifest(
-            target,
-            {
-                "entry_points": discover_entry_points(
-                    target, subpath if isinstance(subpath, str) else None
+    commit_sha = entry.get("commit_sha")
+    if isinstance(commit_sha, str):
+        with _target_lock(root, target, commit_sha):
+            try:
+                loaded = json.loads(
+                    (target / MANIFEST_NAME).read_text(encoding="utf-8")
                 )
-            },
-        )
+                if isinstance(loaded, Mapping):
+                    manifest = loaded
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pass
+            if manifest and "entry_points" not in manifest:
+                subpath = manifest.get("subpath")
+                manifest = update_manifest(
+                    target,
+                    {
+                        "entry_points": discover_entry_points(
+                            target, subpath if isinstance(subpath, str) else None
+                        )
+                    },
+                )
 
     name = str(entry.get("name", ""))
     lines = [f"## {name}", ""]

@@ -20,6 +20,7 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,7 @@ from leitir.treehash import (
 )
 
 logger = logging.getLogger(__name__)
+_TARGET_LOCK_STATE = threading.local()
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -121,6 +123,7 @@ def _assert_target_confinement(root: Path, target: Path) -> None:
 @contextmanager
 def _file_lock(path: Path) -> Iterator[None]:
     """Hold an interprocess exclusive lock without following a lock symlink."""
+    path = Path(os.path.normcase(str(path.absolute())))
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_CREAT | os.O_RDWR
     if hasattr(os, "O_NOFOLLOW"):
@@ -174,14 +177,28 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     _assert_target_confinement(root, lock_root)
     lock_root.mkdir(exist_ok=True)
     _assert_target_confinement(root, lock_root)
-    identity = target.absolute().relative_to(root).as_posix().encode("utf-8")
+    relative_target = target.absolute().relative_to(root)
+    identity = os.path.normcase(str(relative_target)).encode("utf-8")
     lock_path = lock_root / f"{hashlib.sha256(identity).hexdigest()}.lock"
-    with _file_lock(lock_path):
-        _assert_target_confinement(root, target)
-        if target.parent.exists():
-            for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
-                _remove_path(stale)
+    held = getattr(_TARGET_LOCK_STATE, "held", None)
+    if held is None or getattr(_TARGET_LOCK_STATE, "pid", None) != os.getpid():
+        held = set()
+        _TARGET_LOCK_STATE.held = held
+        _TARGET_LOCK_STATE.pid = os.getpid()
+    lock_identity = os.path.normcase(str(lock_path.absolute()))
+    if lock_identity in held:
         yield
+        return
+    with _file_lock(lock_path):
+        held.add(lock_identity)
+        try:
+            _assert_target_confinement(root, target)
+            if target.parent.exists():
+                for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
+                    _remove_path(stale)
+            yield
+        finally:
+            held.remove(lock_identity)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -304,20 +321,23 @@ def update_manifest(
             )
             is not None
         )
-        if (
+        if not (
             payload.get("verified") in (True, "sampled", "archive-only")
             and provenance_valid
         ):
-            try:
-                tree_digest, tree_scope = compute_materialized_tree_hash(Path(target))
-            except TreeHashError as exc:
-                logger.warning(
-                    "could not backfill materialized tree hash for %s: %s",
-                    target,
-                    exc,
-                )
-            else:
-                payload.update(manifest_digest_fields(tree_digest, scope=tree_scope))
+            raise ManifestIntegrityError(
+                f"manifest has no valid materialized tree hash for {target}"
+            )
+        try:
+            tree_digest, tree_scope = compute_materialized_tree_hash(Path(target))
+        except TreeHashError as exc:
+            logger.warning(
+                "could not backfill materialized tree hash for %s: %s", target, exc
+            )
+            raise ManifestIntegrityError(
+                f"could not backfill materialized tree hash for {target}"
+            ) from exc
+        payload.update(manifest_digest_fields(tree_digest, scope=tree_scope))
     payload.update(fields)
     _write_manifest(path, payload)
     return payload
@@ -562,12 +582,10 @@ def _read_valid_manifest(
         except TreeHashError:
             logger.warning("materialized tree hash verification failed for %s", target)
             return None
-    elif verified in (True, "sampled", "archive-only"):
-        # Migration is complete: verified shelves must have a load-time
-        # integrity anchor. The private exception is used only while safely
-        # transferring trust in update_manifest's legacy backfill path.
-        if not allow_missing_tree_hash:
-            return None
+    elif not allow_missing_tree_hash:
+        # Every producer writes the anchor. Missing anchors are accepted only
+        # by update_manifest's private, provenance-checked backfill path.
+        return None
     return payload
 
 

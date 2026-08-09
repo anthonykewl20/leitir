@@ -162,6 +162,38 @@ class TestResolvedPackage:
                 ref=ref, scope=scope, tag="v1", registry_url="http://x.com"
             )
 
+    def test_registry_timestamp_extractors_are_timezone_aware(self):
+        timestamp = "2026-08-08T12:34:56Z"
+
+        assert PyPIResolver._published_at(
+            {"urls": [{"upload_time_iso_8601": timestamp}]}
+        ) == timestamp
+        assert NpmResolver._published_at(
+            {"time": {"1.0.0": timestamp}}, "1.0.0"
+        ) == timestamp
+        assert CratesResolver._published_at(
+            {"version": {"created_at": timestamp}}, "1.0.0"
+        ) == timestamp
+
+    def test_malformed_registry_timestamp_is_not_produced(self):
+        assert PyPIResolver._published_at(
+            {"urls": [{"upload_time_iso_8601": "2026-08-08T12:34:56"}]}
+        ) is None
+
+
+def test_github_commit_timestamp_comes_from_committer_metadata(monkeypatch):
+    timestamp = "2026-08-08T12:34:56Z"
+
+    def fake_urlopen(request, timeout):
+        assert request.full_url == f"https://api.github.com/repos/acme/demo/commits/{SHA}"
+        return io.BytesIO(
+            json.dumps({"commit": {"committer": {"date": timestamp}}}).encode()
+        )
+
+    monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+
+    assert GitHubTagResolver().published_at_for_commit("acme/demo", SHA) == timestamp
+
 
 class TestNetworkBaseUrlValidation:
     @pytest.mark.parametrize(

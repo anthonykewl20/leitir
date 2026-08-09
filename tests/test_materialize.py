@@ -18,6 +18,7 @@ from leitir.materialize import (
     UnsafeArchiveError,
     _extract_tarball,
     materialize_github_repo,
+    read_valid_manifest,
 )
 from leitir.trust import compute_trust
 
@@ -152,6 +153,22 @@ def test_missing_source_timestamp_has_unknown_age_evidence(tmp_path):
     assert age["evidence"]["state"] == "unknown"
 
 
+def test_unverified_shelf_without_tree_hash_is_rejected(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    path = target / "leitir-manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for field in (
+        "materialized_tree_hash",
+        "materialized_tree_hash_algorithm",
+        "materialized_tree_hash_scope",
+    ):
+        manifest.pop(field)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
 @pytest.mark.parametrize("ecosystem", ["npm", "pypi", "crates", "go"])
 def test_manifest_producer_populates_age_field_for_each_ecosystem(tmp_path, ecosystem):
     published = "2020-01-02T03:04:05Z"
@@ -170,6 +187,39 @@ def test_manifest_producer_populates_age_field_for_each_ecosystem(tmp_path, ecos
     )
     assert age["evidence"]["state"] == "known"
     assert age["evidence"]["source"] == "published_at"
+
+
+def test_resolved_package_timestamp_is_threaded_into_materialized_manifest(tmp_path):
+    from leitir.corpus import materialize_source
+    from leitir.resolver import Ecosystem, PackageRef, ResolvedPackage
+    from leitir.search import RepoScope
+
+    published = "2026-08-08T03:04:05Z"
+    resolved = ResolvedPackage(
+        ref=PackageRef(Ecosystem.PYPI, "demo", "1.0.0"),
+        scope=RepoScope("example/demo", SHA),
+        tag="v1.0.0",
+        registry_url="https://pypi.org/project/demo/1.0.0/",
+        published_at=published,
+    )
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = materialize_source(
+            "pypi:demo@1.0.0",
+            resolved,
+            root=tmp_path,
+            base_url=server.base_url,
+            verify=False,
+        )
+
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["published_at"] == published
+    age = next(
+        factor
+        for factor in compute_trust(manifest, target).breakdown
+        if factor["factor"] == "age"
+    )
+    assert age["evidence"]["state"] == "known"
+    assert age["evidence"]["days_at_fetch"] < 100
 
 
 def test_manifest_producer_rejects_malformed_age_field(tmp_path):

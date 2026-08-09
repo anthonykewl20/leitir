@@ -12,6 +12,7 @@ from leitir.info import (
     build_info,
 )
 from leitir.materialize import MANIFEST_NAME
+from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
 
 SHA = "c" * 40
@@ -53,6 +54,8 @@ def _source(root, *, with_content=True):
         "docs_urls": [],
         "entry_points": ["README.md"] if with_content else [],
     }
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest.update(manifest_digest_fields(digest, scope=scope))
     (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
     write_sources(
         root,

@@ -158,6 +158,18 @@ class TestBuildQuery:
         spec = _spec(must=(Predicate(PredicateKind.PATH, "Lib/urllib"),))
         assert build_query(spec) == "path:Lib/urllib"
 
+    @pytest.mark.parametrize("clause", ("should", "must_not"))
+    def test_path_predicate_in_local_clause_is_rejected(self, clause: str) -> None:
+        spec = _spec(
+            **{clause: (Predicate(PredicateKind.PATH, "vendor/"),)}
+        )
+
+        with pytest.raises(
+            SearchSpecError,
+            match=rf"REJECT_SEMANTIC_DEGRADATION.*{clause} PATH predicate",
+        ):
+            build_query(spec)
+
     def test_language_appended(self):
         spec = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "foo", "python"),))
         assert build_query(spec) == "foo language:python"
@@ -248,6 +260,10 @@ class TestGlobalSearcher:
         assert [match.source.path for match in report.matches] == [matching.path]
         assert report.coverage.exclusions == {"path_mismatch": 1}
         assert report.query_translation[1].strategy == "github_superset_local_filter"
+        assert not any(
+            item.kind is PredicateKind.PATH and item.strategy == "local_filter"
+            for item in report.query_translation
+        )
 
     def test_symbol_definition_superset_is_locally_reverified(self):
         contents = {

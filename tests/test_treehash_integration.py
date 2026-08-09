@@ -111,10 +111,10 @@ def test_update_manifest_does_not_backfill_unverified_legacy_shelf(tmp_path):
     manifest["verified_at"] = None
     (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
 
-    updated = update_manifest(target, {"trust_score": 80})
-
-    assert "materialized_tree_hash" not in updated
-    assert updated["trust_score"] == 80
+    original = (target / MANIFEST_NAME).read_bytes()
+    with pytest.raises(ManifestIntegrityError):
+        update_manifest(target, {"trust_score": 80})
+    assert (target / MANIFEST_NAME).read_bytes() == original
 
 
 def test_update_manifest_backfill_is_idempotent(tmp_path, monkeypatch):
@@ -136,10 +136,10 @@ def test_update_manifest_refuses_backfill_for_invalid_legacy_provenance(tmp_path
     manifest["commit_sha"] = "b" * 40
     (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
 
-    updated = update_manifest(target, {"trust_score": 80})
-
-    assert "materialized_tree_hash" not in updated
-    assert updated["trust_score"] == 80
+    original = (target / MANIFEST_NAME).read_bytes()
+    with pytest.raises(ManifestIntegrityError):
+        update_manifest(target, {"trust_score": 80})
+    assert (target / MANIFEST_NAME).read_bytes() == original
 
 
 def test_update_manifest_backfills_symlink_bearing_shelf(tmp_path):
@@ -153,7 +153,7 @@ def test_update_manifest_backfills_symlink_bearing_shelf(tmp_path):
     assert updated["materialized_tree_hash_scope"] == scope
 
 
-def test_update_manifest_hash_failure_warns_and_preserves_legacy_path(
+def test_update_manifest_hash_failure_warns_and_rejects_legacy_update(
     tmp_path, monkeypatch
 ):
     target, _manifest = _shelf(tmp_path, digest=False)
@@ -166,10 +166,10 @@ def test_update_manifest_hash_failure_warns_and_preserves_legacy_path(
         "leitir.materialize.logger.warning", lambda *args: warnings.append(args)
     )
 
-    updated = update_manifest(target, {"trust_score": 80})
-
-    assert "materialized_tree_hash" not in updated
-    assert updated["trust_score"] == 80
+    original = (target / MANIFEST_NAME).read_bytes()
+    with pytest.raises(ManifestIntegrityError):
+        update_manifest(target, {"trust_score": 80})
+    assert (target / MANIFEST_NAME).read_bytes() == original
     assert warnings and warnings[0][1] == target
 
 

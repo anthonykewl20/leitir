@@ -51,7 +51,7 @@ def test_negative_evidence_and_bounds(tmp_path):
         "source": "git-commit",
         "has_tests": False,
         "fetched_at": "2026-01-01T00:00:00Z",
-        "commit_date": "2000-01-01T00:00:00Z",
+        "published_at": "2000-01-01T00:00:00Z",
     }
     result = compute_trust(manifest, tmp_path)
     factors = _by_factor(result)
@@ -147,6 +147,18 @@ def test_published_at_populates_age_and_changes_weighted_score(
     assert result.score == {100: 58, 50: 50, 25: 46}[expected_score]
 
 
+def test_unvalidated_date_alias_does_not_supply_age_evidence(tmp_path):
+    manifest = {
+        "commit_date": "2025-01-01T00:00:00Z",
+        "fetched_at": "2025-06-01T00:00:00Z",
+    }
+
+    age = _by_factor(compute_trust(manifest, tmp_path))["age"]
+
+    assert age["score"] == 50
+    assert age["evidence"]["state"] == "unknown"
+
+
 def test_configured_weights_match_the_seven_factor_contract():
     assert trust_module._WEIGHTS == {
         "age": 15,
@@ -169,7 +181,7 @@ def test_swapping_age_and_tests_weights_changes_the_golden_score(tmp_path, monke
         "entry_points": [],
         "source": "git-commit",
         "has_tests": False,
-        "commit_date": "2000-01-01T00:00:00Z",
+        "published_at": "2000-01-01T00:00:00Z",
         "fetched_at": "2026-01-01T00:00:00Z",
     }
     assert compute_trust(manifest, tmp_path).score == 8

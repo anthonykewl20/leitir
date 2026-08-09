@@ -101,9 +101,10 @@ leitir gc --root "$HOME/.leitir"
 `gc` reports JSON with the root and number removed. It removes repository-level
 `.<commit-sha>.tmp-*` staging directories and obsolete
 `.<commit-sha>.old-*` backup generations. It holds the corresponding target lock while
-deciding what to remove. If a crash left an `.old-` generation while the target
-is absent, `gc` preserves that sole backup so it can remain the valid cache
-generation.
+deciding what to remove. If an interrupted publish left both `.tmp-` staging
+and `.old-` backup generations while the target is absent, one `gc` invocation
+first removes staging and then restores the sole intact, load-time-verified
+backup. A corrupt backup is never restored.
 
 To empty a corpus using the supported command:
 
@@ -127,13 +128,13 @@ staging candidates.
 Materialization writes a complete staged tree and manifest, then installs it
 with an atomic rename. A failed operation normally removes its staging tree;
 an abrupt process termination can leave `.tmp-*` staging or `.old-*` backup
-directories. Run `leitir gc --root <root>` to clean abandoned staging while
-preserving a sole old generation when appropriate.
+directories. Run `leitir gc --root <root>` once to clean abandoned staging and
+restore a sole valid old generation when appropriate.
 
-On corpus load, a verified shelf's `materialized_tree_hash` is recomputed and
+On corpus load, every shelf's `materialized_tree_hash` is recomputed and
 compared with its manifest. Missing, malformed, unsupported, or mismatched
-integrity data is rejected closed, so a corrupted shelf is not served as a
-verified source. Do not calculate a new digest over a suspicious shelf as a
+integrity data is rejected closed, so corrupted or downgraded shelf metadata is
+not served. Do not calculate a new digest over a suspicious shelf as a
 repair. Remove and re-materialize it instead:
 
 ```bash
@@ -145,7 +146,13 @@ leitir gc --root <root>
 Use the exact supported corpus spec for the source being repaired. For a
 trusted legacy verified shelf that only lacks the load-time digest, use
 `leitir upgrade-cache --root <root>`; this computes the digest from current
-bytes, so it is appropriate only when those bytes are already trusted.
+bytes, so it is appropriate only when those bytes are already trusted. Legacy
+unverified shelves without a digest must be removed and re-materialized.
+
+Target locks use normalized filesystem paths. Hosted repository aliases that
+differ only by letter case are deduplicated before materialization; on
+case-insensitive platforms the lock identity is case-normalized as well, so
+aliases cannot enter the same target concurrently.
 
 ## Worked Backup And Restore
 

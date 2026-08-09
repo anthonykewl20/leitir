@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -215,6 +216,24 @@ def test_pointers_backfill_only_legacy_manifests(tmp_path):
     legacy_manifest = json.loads(legacy_manifest_path.read_text())
     legacy_manifest.pop("entry_points")
     legacy_manifest["subpath"] = None
+    from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
+
+    digest, scope = compute_materialized_tree_hash(legacy_target)
+    legacy_manifest.update(
+        {
+            "spec": f"github:acme/legacy@{SHA_A}",
+            "host": "github.com",
+            "owner": "acme",
+            "repo": "legacy",
+            "commit_sha": SHA_A,
+            "fetch_method": "codeload-tarball",
+            "repo_url": "https://github.com/acme/legacy",
+            "fetched_at": "2026-08-03T00:00:00Z",
+            "verified": True,
+            "verified_at": "2026-08-03T00:00:00Z",
+            **manifest_digest_fields(digest, scope=scope),
+        }
+    )
     legacy_manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
 
     pointer = regenerate_pointers(tmp_path, [legacy, scanned])
@@ -231,6 +250,70 @@ def test_pointers_backfill_only_legacy_manifests(tmp_path):
     assert "`README.md`" in legacy_section
     assert "`docs/`" in legacy_section
     assert "Practice entry points: none found" in scanned_section
+
+
+def test_pointer_regeneration_serializes_manifest_update_with_publisher(
+    tmp_path, monkeypatch
+):
+    from leitir.materialize import _target_lock, update_manifest
+    from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
+
+    entry = _source(tmp_path, "legacy", SHA_A, docs_urls=[], entry_points=[])
+    target = tmp_path / entry["path"]
+    manifest_path = target / "leitir-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("entry_points")
+    manifest.update(
+        {
+            "spec": f"github:acme/legacy@{SHA_A}",
+            "host": "github.com",
+            "owner": "acme",
+            "repo": "legacy",
+            "commit_sha": SHA_A,
+            "fetch_method": "codeload-tarball",
+            "repo_url": "https://github.com/acme/legacy",
+            "fetched_at": "2026-08-03T00:00:00Z",
+            "verified": True,
+            "verified_at": "2026-08-03T00:00:00Z",
+        }
+    )
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    entered = threading.Event()
+    release = threading.Event()
+    publisher_acquired = threading.Event()
+    real_discover = discover_entry_points
+
+    def blocked_discover(source, subpath=None):
+        entered.set()
+        assert release.wait(2)
+        return real_discover(source, subpath)
+
+    monkeypatch.setattr("leitir.docpointers.discover_entry_points", blocked_discover)
+
+    pointer = threading.Thread(target=regenerate_pointers, args=(tmp_path, [entry]))
+
+    def publish():
+        assert entered.wait(2)
+        with _target_lock(tmp_path, target, SHA_A):
+            publisher_acquired.set()
+            update_manifest(target, {"publisher_field": "kept"})
+
+    publisher = threading.Thread(target=publish)
+    pointer.start()
+    publisher.start()
+    assert entered.wait(2)
+    assert not publisher_acquired.wait(0.1)
+    release.set()
+    pointer.join(2)
+    publisher.join(2)
+
+    assert not pointer.is_alive() and not publisher.is_alive()
+    updated = json.loads(manifest_path.read_text())
+    assert updated["entry_points"] == []
+    assert updated["publisher_field"] == "kept"
 
 
 def test_pointers_regenerate_after_index_add_and_remove(tmp_path):

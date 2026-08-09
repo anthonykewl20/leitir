@@ -18,13 +18,7 @@ _WEIGHTS = {
     "tests": 10,
     "verification": 20,
 }
-_DATE_FIELDS = (
-    "published_at",
-    "publish_date",
-    "release_date",
-    "commit_date",
-    "committed_at",
-)
+_DATE_FIELDS = ("published_at",)
 logger = logging.getLogger(__name__)
 
 

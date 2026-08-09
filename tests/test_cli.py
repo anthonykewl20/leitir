@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 
 import pytest
 
@@ -25,6 +26,25 @@ from leitir.search import (
 
 SHA = "a" * 40
 BLOB = "b" * 40
+
+
+def test_invalid_log_level_keeps_redaction_installed(monkeypatch):
+    from argparse import Namespace
+    from leitir.cli import _configure_logging_from_env
+    from leitir.logging import RedactingFilter, register_secret
+
+    stderr = io.StringIO()
+    secret = "sentinel-cli-secret"
+    register_secret(secret)
+    monkeypatch.setenv("LEITIR_LOG_LEVEL", "not-a-level")
+
+    _configure_logging_from_env(Namespace(debug=False), stderr)
+    namespace_logger = logging.getLogger("leitir")
+    namespace_logger.warning("credential=%s", secret)
+
+    assert any(isinstance(item, RedactingFilter) for item in namespace_logger.filters)
+    assert secret not in stderr.getvalue()
+    assert "[REDACTED]" in stderr.getvalue()
 
 
 def _report(**overrides) -> SearchReport:

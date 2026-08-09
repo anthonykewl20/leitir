@@ -400,6 +400,11 @@ def _compile_query(
 
     for clause in ("should", "must_not"):
         for index, pred in enumerate(getattr(spec, clause)):
+            if pred.kind is PredicateKind.PATH:
+                raise SearchSpecError(
+                    "REJECT_SEMANTIC_DEGRADATION: GitHub legacy code search cannot "
+                    f"express {clause} PATH predicate"
+                )
             translations.append(
                 QueryTranslation(
                     clause=clause,

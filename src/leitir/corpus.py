@@ -12,6 +12,7 @@ from typing import Any
 
 from leitir.materialize import (
     ArtifactRetrievalError,
+    MANIFEST_NAME,
     _assert_target_confinement,
     _file_lock,
     _fsync_directory,
@@ -436,6 +437,7 @@ def materialize_source(
     name: str | None = None,
     tag: str | None = None,
     version_source: str | None = None,
+    published_at: str | None = None,
     host: str = "github.com",
     repository_resolver: object | None = None,
     on_fetch: Callable[[], None] | None = None,
@@ -469,6 +471,8 @@ def materialize_source(
             registry_url=resolved.registry_url,
             docs_urls=list(resolved.docs_urls),
         )
+        if resolved.published_at is not None:
+            manifest_fields["published_at"] = resolved.published_at
         subpath = resolved.subpath
     elif isinstance(resolved, RepoScope):
         scope = resolved
@@ -477,6 +481,8 @@ def materialize_source(
         subpath = None
     else:
         raise TypeError("resolved must be a RepoScope or ResolvedPackage")
+    if published_at is not None:
+        manifest_fields["published_at"] = published_at
 
     owner, repo = scope.slug.split("/", 1)
     artifact = None
@@ -631,7 +637,9 @@ def materialize_source(
             "fetched_at": manifest["fetched_at"],
             "verified": manifest.get("verified", False),
         }
-        _upsert(corpus_root, entry)
+    # Pointer regeneration may lock every indexed target. Do it only after
+    # releasing this target's writer lock to preserve the global lock order.
+    _upsert(corpus_root, entry)
     return target
 
 
@@ -678,6 +686,24 @@ def lock_project(
                 )
                 scope = resolved.scope if hasattr(resolved, "scope") else resolved
                 with _target_lock(corpus_root, target, scope.commit_sha):
+                    # Enforce the producer contract for injected materializers
+                    # as well as the built-in one before any manifest update.
+                    manifest_path = target / MANIFEST_NAME
+                    produced = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if not isinstance(produced, dict):
+                        raise ValueError("source manifest must be an object")
+                    if produced.get("materialized_tree_hash") is None:
+                        from leitir.materialize import _write_manifest
+                        from leitir.treehash import (
+                            compute_materialized_tree_hash,
+                            manifest_digest_fields,
+                        )
+
+                        digest, digest_scope = compute_materialized_tree_hash(target)
+                        produced.update(
+                            manifest_digest_fields(digest, scope=digest_scope)
+                        )
+                        _write_manifest(manifest_path, produced)
                     update_manifest(target, {"graph": closure.graph, "deps": deps})
                 results.append(
                     {

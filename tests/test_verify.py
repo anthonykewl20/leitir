@@ -336,7 +336,7 @@ def test_no_verify_records_explicit_false_without_tree_request(tmp_path, monkeyp
     assert paths == [f"/acme/demo/tar.gz/{SHA}"]
 
 
-def test_legacy_manifest_without_verification_fields_still_loads(tmp_path):
+def test_legacy_manifest_without_verification_fields_is_rejected(tmp_path):
     target = tmp_path / "legacy"
     target.mkdir()
     payload = {
@@ -351,27 +351,14 @@ def test_legacy_manifest_without_verification_fields_still_loads(tmp_path):
         "fetch_method": "codeload-tarball",
     }
     (target / "leitir-manifest.json").write_text(json.dumps(payload))
-    assert read_valid_manifest(target, "acme", "demo", SHA) == payload
+    assert read_valid_manifest(target, "acme", "demo", SHA) is None
 
 
-def test_no_verify_upgrades_cached_legacy_manifest_to_explicit_false(tmp_path):
-    target = tmp_path / "repos/github.com/acme/demo" / SHA
-    target.mkdir(parents=True)
-    payload = {
-        "spec": "acme/demo",
-        "host": "github.com",
-        "owner": "acme",
-        "repo": "demo",
-        "commit_sha": SHA,
-        "tag": None,
-        "repo_url": "https://github.com/acme/demo",
-        "fetched_at": "2026-08-03T00:00:00Z",
-        "fetch_method": "codeload-tarball",
-    }
-    (target / "leitir-manifest.json").write_text(json.dumps(payload))
-    result = materialize_github_repo(
-        tmp_path, "acme/demo", "acme", "demo", SHA, verify=False
-    )
+def test_no_verify_fresh_materialization_records_explicit_false(tmp_path):
+    files = {"proof.txt": b"proof"}
+    routes = {f"/acme/demo/tar.gz/{SHA}": (200, {}, _tarball(files))}
+    with routed_server(routes) as server:
+        result = _materialize(tmp_path, server.base_url, verify=False)
     manifest = json.loads((result / "leitir-manifest.json").read_text())
     assert manifest["verified"] is False
     assert manifest["verified_at"] is None

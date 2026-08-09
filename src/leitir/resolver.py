@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
@@ -69,6 +70,7 @@ class ResolvedPackage:
     docs_urls: tuple[str, ...] = ()
     artifact: ArtifactInfo | None = None
     host: str = "github.com"
+    published_at: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, PackageRef):
@@ -92,6 +94,24 @@ class ResolvedPackage:
             raise ValueError("docs_urls must be a tuple of HTTP(S) URLs")
         if self.host not in {"github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"}:
             raise ValueError(f"unsupported repository host {self.host!r}")
+        if self.published_at is not None and not _valid_published_at(
+            self.published_at
+        ):
+            raise ValueError("published_at must be a timezone-aware ISO-8601 timestamp")
+
+
+def _valid_published_at(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _first_valid_timestamp(*values: object) -> str | None:
+    return next((value for value in values if _valid_published_at(value)), None)
 
 
 @runtime_checkable
@@ -317,6 +337,33 @@ class GitHubTagResolver:
         if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
             raise ResolutionError(f"GitHub returned malformed commit metadata for {slug}")
         return sha.lower()
+
+    def published_at_for_commit(self, slug: str, commit_sha: str) -> str:
+        """Return GitHub's timezone-aware committer timestamp for a commit."""
+        from urllib.parse import quote
+        from urllib.request import Request
+
+        url = f"{self._base_url}/repos/{slug}/commits/{quote(commit_sha, safe='')}"
+
+        def _fetch() -> dict:
+            with _http.safe_urlopen(
+                Request(url, headers=self._headers()), timeout=self._timeout
+            ) as response:
+                return json.load(response)
+
+        try:
+            payload = self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ResolutionError(
+                f"commit metadata for {commit_sha!r} not found in {slug}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
+        commit = payload.get("commit") if isinstance(payload, dict) else None
+        committer = commit.get("committer") if isinstance(commit, dict) else None
+        published_at = committer.get("date") if isinstance(committer, dict) else None
+        if not _valid_published_at(published_at):
+            raise ResolutionError(f"GitHub returned malformed commit timestamp for {slug}")
+        return published_at
 
     def _dereference_annotated_tag(self, slug: str, tag_sha: str) -> str:
         from urllib.error import HTTPError
@@ -1231,6 +1278,7 @@ class PyPIResolver:
             registry_url=f"https://pypi.org/project/{ref.name}/{ref.version}/",
             docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
             artifact=self._artifact(ref, payload),
+            published_at=self._published_at(payload),
         )
 
     def latest_version(self, name: str) -> str:
@@ -1267,6 +1315,17 @@ class PyPIResolver:
         from leitir.parity import artifact_from_metadata
 
         return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
+
+    @staticmethod
+    def _published_at(payload: object) -> str | None:
+        urls = payload.get("urls") if isinstance(payload, dict) else None
+        timestamps = sorted(
+            item["upload_time_iso_8601"]
+            for item in urls
+            if isinstance(item, dict)
+            and _valid_published_at(item.get("upload_time_iso_8601"))
+        ) if isinstance(urls, list) else []
+        return timestamps[0] if timestamps else None
 
     def _extract_github_slug(self, payload: dict) -> str | None:
         info = payload.get("info", {})
@@ -1385,6 +1444,7 @@ class CratesResolver:
             registry_url=f"https://crates.io/crates/{ref.name}/{ref.version}",
             docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
             artifact=self._artifact(ref, payload),
+            published_at=self._published_at(payload, ref.version),
         )
 
     def latest_version(self, name: str) -> str:
@@ -1419,6 +1479,27 @@ class CratesResolver:
         from leitir.parity import artifact_from_metadata
 
         return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
+
+    @staticmethod
+    def _published_at(payload: object, version: str) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        selected = payload.get("version")
+        if not isinstance(selected, dict):
+            versions = payload.get("versions")
+            selected = next(
+                (
+                    item
+                    for item in versions
+                    if isinstance(item, dict) and item.get("num") == version
+                ),
+                None,
+            ) if isinstance(versions, list) else None
+        if not isinstance(selected, dict):
+            return None
+        return _first_valid_timestamp(
+            selected.get("created_at"), selected.get("updated_at")
+        )
 
     def _resolve_first_tag(
         self, slug: str, name: str, version: str
@@ -1803,6 +1884,7 @@ class NpmResolver:
                     subpath=directory,
                     docs_urls=docs_urls,
                     artifact=self._artifact(ref, payload),
+                    published_at=self._published_at(payload, ref.version),
                 )
             except TagAbsentError:
                 pass
@@ -1817,6 +1899,15 @@ class NpmResolver:
         from leitir.parity import artifact_from_metadata
 
         return artifact_from_metadata(ref.ecosystem.value, ref.name, ref.version, payload)
+
+    @staticmethod
+    def _published_at(payload: object, version: str) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        times = payload.get("time")
+        if not isinstance(times, dict):
+            return None
+        return _first_valid_timestamp(times.get(version), times.get("created"))
 
 
 class MultiResolver:
@@ -1872,3 +1963,7 @@ class MultiResolver:
         if resolver is None:
             raise ResolutionError(f"no repository resolver for {host}")
         return resolver.resolve_tag_to_sha(slug, tag)
+
+    def published_at_for_commit(self, slug: str, commit_sha: str) -> str:
+        """Return GitHub commit publication metadata for direct GitHub specs."""
+        return self._tag_resolver.published_at_for_commit(slug, commit_sha)

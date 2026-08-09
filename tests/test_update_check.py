@@ -264,13 +264,38 @@ def test_notice_never_goes_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert capsys.readouterr().out == ""
 
 
+def _assert_atomic_cache_state(
+    path: Path, payloads: list[dict[str, object]]
+) -> None:
+    """Assert the post-conditions of an atomic cache write.
+
+    Independent of which concurrent writer won the race: the surviving file is
+    one intact payload (never torn/corrupt) and no staging temp files remain.
+    """
+    assert not list(path.parent.glob(".update-check.json.tmp-*"))
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written in payloads
+
+
 def test_cache_is_atomic(tmp_path: Path) -> None:
     path = tmp_path / "cache" / "update-check.json"
     payloads = [dict(_cache_payload(checked=None), latest_version=f"0.{index}.0") for index in range(20)]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        assert all(pool.map(lambda payload: update._write_cache(path, payload), payloads))
-    assert json.loads(path.read_text(encoding="utf-8")) in payloads
-    assert not list(path.parent.glob(".update-check.json.tmp-*"))
+        # Under concurrent os.replace, Windows mandatory locking means some writers
+        # lose the race and correctly return False (fail-closed), leaving the prior
+        # valid cache intact. The atomicity contract is about the final state, not
+        # about every writer winning, so we assert post-conditions rather than all().
+        list(pool.map(lambda payload: update._write_cache(path, payload), payloads))
+    _assert_atomic_cache_state(path, payloads)
+
+
+def test_cache_atomic_postcondition_detects_torn_write(tmp_path: Path) -> None:
+    path = tmp_path / "cache" / "update-check.json"
+    payloads = [dict(_cache_payload(checked=None), latest_version="0.1.1")]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'{"torn":')  # a write interrupted mid-stream
+    with pytest.raises(json.JSONDecodeError):
+        _assert_atomic_cache_state(path, payloads)
 
 
 def test_schema_1_cache_is_discarded() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 import tarfile
@@ -31,7 +32,11 @@ def test_offline_snapshot_restores_complete_corpus(tmp_path):
     }
     lock, _tarball = export_corpus(tmp_path / "offline.lock", root=original)
     restored = tmp_path / "restored"
-    imported = import_corpus(lock, root=restored)
+    imported = import_corpus(
+        lock,
+        root=restored,
+        expected_lock_sha256=hashlib.sha256(lock.read_bytes()).hexdigest(),
+    )
     assert json.loads((restored / "sources.json").read_text(encoding="utf-8")) == imported
     assert (restored / "sources.json").read_bytes() == expected_index
     assert (restored / "POINTERS.md").read_bytes() == expected_pointers
@@ -86,7 +91,11 @@ def test_gitlab_subgroup_snapshot_round_trip_and_removal(tmp_path):
 
     lock, _tarball = export_corpus(tmp_path / "subgroup.lock", root=original)
     restored = tmp_path / "restored-subgroup"
-    imported = import_corpus(lock, root=restored)
+    imported = import_corpus(
+        lock,
+        root=restored,
+        expected_lock_sha256=hashlib.sha256(lock.read_bytes()).hexdigest(),
+    )
     assert imported == [entry]
     assert enumerate_shelved_sources(restored)[0][1]["owner"] == "group/subgroup"
     assert remove_source(

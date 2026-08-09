@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-08-05
 - Implementation: complete
-- Related: issues #17, #18, #19, #20; [ADR-0004](0004-local-source-materialization.md)
+- Related: issues #17, #18, #19, #20, #39; [ADR-0004](0004-local-source-materialization.md)
 
 ## Context
 
@@ -20,6 +20,20 @@ Leitir stores a deterministic `materialized_tree_hash` in every newly written
 shelf and recomputes it whenever a verified shelf is loaded. A missing,
 malformed, unsupported, or mismatched digest makes the shelf a cache miss.
 Unverified shelves may omit the digest.
+
+The shared `get`/`info`/`api`/`examples` read-and-serve path reacquires the same
+per-target advisory lock used by materialization, repeats manifest and tree
+verification under that lock, and retains the lock through its subsequent
+reads. Writers publish by atomic rename while holding that lock. Thus a
+cooperating writer cannot replace a shelf during those command reads: the
+reader sees the verified generation, or verification fails cleanly.
+
+Other corpus operations do not currently share that lock lifetime. In
+particular, `trust`, `sbom`, `diff`, `lock`, `remove`, `clean`, `export`, and
+internal source enumeration may read or mutate shelf-related bytes without
+holding each target lock continuously from verification through consumption.
+They retain a residual cooperating-writer TOCTOU surface; this ADR does not
+claim issue #39's lock binding for those paths.
 
 The digest uses Go's directory `Hash1` (`h1:`) construction: each regular file
 contributes a SHA-256 content digest, two spaces, its strict-UTF-8 POSIX path,
@@ -79,3 +93,17 @@ but directory enumeration and content-digest ordering still have costs). The
 residual O(total-tree-bytes) initial scan is documented in `treehash.py`'s
 module docstring; if benchmarks at production scale show this matters, a
 follow-up will be filed.
+
+The locks are advisory. They protect against leitir writers and other
+cooperating processes, not a process that ignores the protocol and edits files
+in place. The `get` command returns a filesystem path; a different process that
+uses that path after leitir exits is outside the lock lifetime and must perform
+its own verified/locked read. Windows and POSIX use different stdlib locking
+primitives, so cross-platform interruption and network-filesystem semantics
+remain platform-dependent.
+
+Path confinement and pre-open `lstat()` checks reject known symlinks, but the
+tree hasher's path-based regular-file open can still race a non-cooperating
+attacker that swaps an entry after the check. Closing that final window needs
+an fd-relative `open`/`fstat` implementation in `treehash.py` (with
+`O_NOFOLLOW` where available); it is not provided by the CLI locking change.

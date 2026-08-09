@@ -11,16 +11,19 @@ recorded distinctly so partial verification is never represented as complete.
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import logging
 import os
 import re
 import shutil
+import stat
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Callable, Mapping
+from typing import Callable, Iterator, Mapping
 
 from leitir import _http
 from leitir.search import RepoScope
@@ -74,6 +77,115 @@ class ArtifactRetrievalError(MaterializationError):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _valid_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _assert_target_confinement(root: Path, target: Path) -> None:
+    """Reject corpus-relative symlinks and paths resolving outside ``root``."""
+    lexical_root = root.expanduser().absolute()
+    lexical_target = target.expanduser().absolute()
+    try:
+        relative = lexical_target.relative_to(lexical_root)
+    except ValueError as exc:
+        raise MaterializationError("materialization target escapes corpus root") from exc
+    current = lexical_root
+    for part in relative.parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            raise MaterializationError(
+                f"materialization target contains a symbolic link: {current}"
+            )
+    resolved_root = lexical_root.resolve(strict=False)
+    resolved_parent = lexical_target.parent.resolve(strict=False)
+    if resolved_parent != resolved_root and not resolved_parent.is_relative_to(resolved_root):
+        raise MaterializationError("materialization target parent escapes corpus root")
+
+
+@contextmanager
+def _file_lock(path: Path) -> Iterator[None]:
+    """Hold an interprocess exclusive lock without following a lock symlink."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise MaterializationError(f"cannot safely open materialization lock: {path}") from exc
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
+    root = root.expanduser().absolute()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_root = root / ".locks"
+    _assert_target_confinement(root, lock_root)
+    lock_root.mkdir(exist_ok=True)
+    _assert_target_confinement(root, lock_root)
+    identity = target.absolute().relative_to(root).as_posix().encode("utf-8")
+    lock_path = lock_root / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    with _file_lock(lock_path):
+        _assert_target_confinement(root, target)
+        if target.parent.exists():
+            for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
+                _remove_path(stale)
+        yield
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _failure_detail(exc: BaseException) -> str:
@@ -274,6 +386,8 @@ def _read_valid_manifest(
     allow_missing_tree_hash: bool,
 ) -> dict[str, object] | None:
     """Validate a manifest, optionally permitting a legacy missing digest."""
+    if Path(target).is_symlink():
+        return None
     metadata = _HOST_METADATA.get(host)
     if metadata is None:
         return None
@@ -306,6 +420,8 @@ def _read_valid_manifest(
     if payload.get("repo_url") != f"{canonical_base}/{owner}/{repo}":
         return None
     if not isinstance(payload.get("fetched_at"), str) or not payload["fetched_at"]:
+        return None
+    if "published_at" in payload and not _valid_timestamp(payload.get("published_at")):
         return None
     if payload.get("tag") is not None and not isinstance(payload.get("tag"), str):
         return None
@@ -911,6 +1027,49 @@ def _materialize_hosted_repo(
     archive_root: str | None = None,
 ) -> Path:
     owner, repo, _parts = _normalize_identity(owner, repo, commit_sha, host)
+    root_path = Path(root).expanduser().absolute()
+    target = target_path(root_path, owner, repo, commit_sha, host=host)
+    with _target_lock(root_path, target, commit_sha):
+        return _materialize_hosted_repo_locked(
+            root_path,
+            spec,
+            owner,
+            repo,
+            commit_sha,
+            host=host,
+            fetch_archive=fetch_archive,
+            tree_source=tree_source,
+            tag=tag,
+            subpath=subpath,
+            manifest_fields=manifest_fields,
+            verify=verify,
+            verification_max_files=verification_max_files,
+            verification_max_bytes=verification_max_bytes,
+            on_fetch=on_fetch,
+            archive_root=archive_root,
+        )
+
+
+def _materialize_hosted_repo_locked(
+    root: str | os.PathLike[str],
+    spec: str,
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str,
+    fetch_archive: Callable[[], bytes],
+    tree_source: object | None,
+    tag: str | None = None,
+    subpath: str | None = None,
+    manifest_fields: Mapping[str, object] | None = None,
+    verify: bool = True,
+    verification_max_files: int = VERIFY_MAX_FILES,
+    verification_max_bytes: int = VERIFY_MAX_BYTES,
+    on_fetch: Callable[[], None] | None = None,
+    archive_root: str | None = None,
+) -> Path:
+    owner, repo, _parts = _normalize_identity(owner, repo, commit_sha, host)
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("spec must be non-empty")
     metadata = _HOST_METADATA.get(host)
@@ -918,6 +1077,7 @@ def _materialize_hosted_repo(
         raise ValueError(f"unsupported repository host {host!r}")
     fetch_method, canonical_base = metadata
     target = target_path(root, owner, repo, commit_sha, host=host)
+    _assert_target_confinement(Path(root), target)
     existing = (
         read_valid_manifest(target, owner, repo, commit_sha, host=host)
         if target.is_dir()
@@ -933,20 +1093,24 @@ def _materialize_hosted_repo(
             if "verified" not in existing:
                 existing.update(verified=False, verified_at=None)
                 _write_manifest(target / MANIFEST_NAME, existing)
+            _assert_target_confinement(Path(root), target)
             return target
         if existing.get("verified") in (True, "sampled"):
+            _assert_target_confinement(Path(root), target)
             return target
         if (
             existing.get("verified") == "archive-only"
             and not getattr(tree_source, "full_tree_verification_available", lambda: True)()
         ):
+            _assert_target_confinement(Path(root), target)
             return target
     if verify and tree_source is None:
         raise ValueError("tree_source is required when verification is enabled")
     if on_fetch is not None:
         on_fetch()
     target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-", dir=target.parent))
+    _assert_target_confinement(Path(root), target)
+    staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
     try:
         data = fetch_archive()
         logger.debug("materialize downloaded bytes=%d method=%s", len(data), fetch_method)
@@ -986,6 +1150,8 @@ def _materialize_hosted_repo(
         )
         fetched_at = _utc_now()
         manifest: dict[str, object] = dict(manifest_fields or {})
+        if "published_at" in manifest and not _valid_timestamp(manifest["published_at"]):
+            raise MaterializationError("published_at must be a timezone-aware ISO-8601 timestamp")
         manifest.update(
             {
                 "spec": spec,
@@ -1008,16 +1174,31 @@ def _materialize_hosted_repo(
         tree_digest, tree_scope = compute_materialized_tree_hash(staging)
         manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
+        _assert_target_confinement(Path(root), target)
         if target.exists():
-            shutil.rmtree(target)
-        os.replace(staging, target)
+            current = read_valid_manifest(target, owner, repo, commit_sha, host=host)
+            if current is not None and _cache_matches_source(
+                current, source="git-commit", fetch_method=fetch_method
+            ):
+                shutil.rmtree(staging)
+                return target
+            backup = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.old-", dir=target.parent))
+            backup.rmdir()
+            os.replace(target, backup)
+        else:
+            backup = None
+        try:
+            os.replace(staging, target)
+        except Exception:
+            if backup is not None and backup.exists() and not target.exists():
+                os.replace(backup, target)
+            raise
+        _fsync_directory(target.parent)
+        if backup is not None:
+            _remove_path(backup)
         return target
     except Exception as exc:
         shutil.rmtree(staging, ignore_errors=True)
-        if target.exists() and read_valid_manifest(
-            target, owner, repo, commit_sha, host=host
-        ) is None:
-            shutil.rmtree(target, ignore_errors=True)
         _prune_empty(target.parent, Path(root))
         if isinstance(exc, MaterializationError):
             raise
@@ -1028,6 +1209,36 @@ def _materialize_hosted_repo(
 
 
 def materialize_artifact(
+    root: str | os.PathLike[str],
+    spec: str,
+    scope: RepoScope,
+    artifact: object,
+    *,
+    tag: str | None = None,
+    subpath: str | None = None,
+    manifest_fields: Mapping[str, object] | None = None,
+    fetcher: object | None = None,
+    on_fetch: Callable[[], None] | None = None,
+) -> Path:
+    if not isinstance(scope, RepoScope):
+        raise TypeError("scope must be a RepoScope")
+    owner, repo = scope.slug.split("/", 1)
+    target = target_path(root, owner, repo, scope.commit_sha)
+    with _target_lock(Path(root), target, scope.commit_sha):
+        return _materialize_artifact_locked(
+            root,
+            spec,
+            scope,
+            artifact,
+            tag=tag,
+            subpath=subpath,
+            manifest_fields=manifest_fields,
+            fetcher=fetcher,
+            on_fetch=on_fetch,
+        )
+
+
+def _materialize_artifact_locked(
     root: str | os.PathLike[str],
     spec: str,
     scope: RepoScope,
@@ -1057,6 +1268,7 @@ def materialize_artifact(
     owner, repo = scope.slug.split("/", 1)
     _validate_identity(owner, repo, scope.commit_sha)
     target = target_path(root, owner, repo, scope.commit_sha)
+    _assert_target_confinement(Path(root), target)
     existing = (
         read_valid_manifest(target, owner, repo, scope.commit_sha)
         if target.is_dir()
@@ -1069,6 +1281,7 @@ def materialize_artifact(
         artifact_kind=artifact.artifact_kind,
         artifact_checksum=artifact.checksum,
     ):
+        _assert_target_confinement(Path(root), target)
         return target
 
     client = fetcher or RegistryArtifactFetcher(max_bytes=ARCHIVE_MAX_COMPRESSED_BYTES)
@@ -1090,11 +1303,14 @@ def materialize_artifact(
         )
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-", dir=target.parent))
+    _assert_target_confinement(Path(root), target)
+    staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
     try:
         extract_artifact(data, staging)
         now = _utc_now()
         manifest: dict[str, object] = dict(manifest_fields or {})
+        if "published_at" in manifest and not _valid_timestamp(manifest["published_at"]):
+            raise MaterializationError("published_at must be a timezone-aware ISO-8601 timestamp")
         manifest.update(
             {
                 "spec": spec,
@@ -1119,9 +1335,32 @@ def materialize_artifact(
         tree_digest, tree_scope = compute_materialized_tree_hash(staging)
         manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
+        _assert_target_confinement(Path(root), target)
         if target.exists():
-            shutil.rmtree(target)
-        os.replace(staging, target)
+            current = read_valid_manifest(target, owner, repo, scope.commit_sha)
+            if current is not None and _cache_matches_source(
+                current,
+                source="registry-artifact",
+                fetch_method="registry-artifact",
+                artifact_kind=artifact.artifact_kind,
+                artifact_checksum=artifact.checksum,
+            ):
+                shutil.rmtree(staging)
+                return target
+            backup = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent))
+            backup.rmdir()
+            os.replace(target, backup)
+        else:
+            backup = None
+        try:
+            os.replace(staging, target)
+        except Exception:
+            if backup is not None and backup.exists() and not target.exists():
+                os.replace(backup, target)
+            raise
+        _fsync_directory(target.parent)
+        if backup is not None:
+            _remove_path(backup)
         return target
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

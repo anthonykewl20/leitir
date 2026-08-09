@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import multiprocessing
 import shutil
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -17,10 +19,34 @@ from leitir.materialize import (
     _extract_tarball,
     materialize_github_repo,
 )
+from leitir.trust import compute_trust
 
 from _http_server import scripted_server
 
 SHA = "a" * 40
+
+
+def _concurrent_materialize_worker(
+    root: str,
+    started: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event,
+    queue: multiprocessing.queues.Queue,
+) -> None:
+    def fetch_started() -> None:
+        started.set()
+        release.wait(5)
+
+    try:
+        with scripted_server([(200, {}, _tarball())]) as server:
+            result = _materialize(Path(root), server.base_url, on_fetch=fetch_started)
+        queue.put(str(result))
+    except BaseException as exc:
+        queue.put(repr(exc))
+
+
+def _materialization_waiter(root: str) -> None:
+    with scripted_server([]) as server:
+        _materialize(Path(root), server.base_url)
 
 
 def _snapshot(path: Path) -> set[str]:
@@ -108,8 +134,52 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "verification_notes": [],
     }
     assert manifest["fetched_at"].endswith("Z")
+    assert "published_at" not in manifest
     assert manifest["verified"] is False
     assert manifest["verified_at"] is None
+
+
+def test_missing_source_timestamp_has_unknown_age_evidence(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+
+    age = next(
+        factor for factor in compute_trust(manifest, target).breakdown
+        if factor["factor"] == "age"
+    )
+    assert age["score"] == 50
+    assert age["evidence"]["state"] == "unknown"
+
+
+@pytest.mark.parametrize("ecosystem", ["npm", "pypi", "crates", "go"])
+def test_manifest_producer_populates_age_field_for_each_ecosystem(tmp_path, ecosystem):
+    published = "2020-01-02T03:04:05Z"
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(
+            tmp_path,
+            server.base_url,
+            manifest_fields={"ecosystem": ecosystem, "published_at": published},
+        )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["ecosystem"] == ecosystem
+    assert manifest["published_at"] == published
+    age = next(
+        factor for factor in compute_trust(manifest, target).breakdown
+        if factor["factor"] == "age"
+    )
+    assert age["evidence"]["state"] == "known"
+    assert age["evidence"]["source"] == "published_at"
+
+
+def test_manifest_producer_rejects_malformed_age_field(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError, match="timezone-aware"):
+            _materialize(
+                tmp_path,
+                server.base_url,
+                manifest_fields={"published_at": "2020-01-02T03:04:05"},
+            )
 
 
 def test_existing_valid_manifest_is_idempotent(tmp_path):
@@ -156,6 +226,94 @@ def test_invalid_tarball_cleans_partial_target(tmp_path):
         with pytest.raises(MaterializationError, match="ReadError"):
             _materialize(tmp_path, server.base_url)
     assert not (tmp_path / "repos/github.com/example/demo" / SHA).exists()
+
+
+def test_target_symlink_to_external_cache_is_rejected(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = tmp_path / "corpus/repos/github.com/example/demo" / SHA
+    target.parent.mkdir(parents=True)
+    target.symlink_to(outside, target_is_directory=True)
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError, match="symbolic link"):
+            _materialize(tmp_path / "corpus", server.base_url)
+    assert list(outside.iterdir()) == []
+
+
+def test_parent_symlink_escape_write_is_rejected(tmp_path):
+    corpus = tmp_path / "corpus"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    corpus.mkdir()
+    (corpus / "repos").symlink_to(outside, target_is_directory=True)
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError, match="symbolic link"):
+            _materialize(corpus, server.base_url)
+    assert list(outside.iterdir()) == []
+
+
+def test_deep_parent_symlink_chain_is_rejected(tmp_path):
+    corpus = tmp_path / "corpus"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (corpus / "repos/github.com/example").mkdir(parents=True)
+    (corpus / "repos/github.com/example/demo").symlink_to(
+        outside, target_is_directory=True
+    )
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError, match="symbolic link"):
+            _materialize(corpus, server.base_url)
+    assert list(outside.iterdir()) == []
+
+
+def test_abandoned_staging_is_cleaned_under_target_lock(tmp_path):
+    parent = tmp_path / "repos/github.com/example/demo"
+    parent.mkdir(parents=True)
+    stale = parent / f".{SHA}.tmp-999999-abandoned"
+    stale.mkdir()
+    (stale / "partial").write_bytes(b"partial")
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    assert target.is_dir()
+    assert not stale.exists()
+
+
+def test_concurrent_materializations_publish_once_without_cache_gap(tmp_path):
+    started = multiprocessing.Event()
+    release = multiprocessing.Event()
+
+    queue = multiprocessing.Queue()
+    args = (str(tmp_path), started, release, queue)
+    first = multiprocessing.Process(target=_concurrent_materialize_worker, args=args)
+    second = multiprocessing.Process(target=_concurrent_materialize_worker, args=args)
+    first.start()
+    assert started.wait(5)
+    second.start()
+    time.sleep(0.1)
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert first.exitcode == second.exitcode == 0
+    results = sorted([queue.get(timeout=2), queue.get(timeout=2)])
+    target = tmp_path / "repos/github.com/example/demo" / SHA
+    assert results == [str(target), str(target)]
+    assert (target / "src/example.py").read_bytes() == b"pinned source\n"
+    assert not list(target.parent.glob(f".{SHA}.tmp-*"))
+
+
+def test_killed_waiter_cannot_destroy_valid_cache(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+
+    with materialize_module._target_lock(tmp_path, target, SHA):
+        process = multiprocessing.Process(target=_materialization_waiter, args=(str(tmp_path),))
+        process.start()
+        time.sleep(0.1)
+        process.terminate()
+        process.join(5)
+    assert process.exitcode is not None and process.exitcode != 0
+    assert (target / "src/example.py").read_bytes() == b"pinned source\n"
+    assert json.loads((target / "leitir-manifest.json").read_text())["commit_sha"] == SHA
 
 
 def test_path_traversal_member_is_rejected(tmp_path):

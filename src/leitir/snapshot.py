@@ -6,6 +6,8 @@ import gzip
 import hashlib
 import json
 import os
+import re
+import secrets
 import shutil
 import stat
 import tarfile
@@ -22,7 +24,7 @@ from leitir.docpointers import POINTERS_NAME
 from leitir.materialize import MANIFEST_NAME, _extract_tarball, read_valid_manifest
 from leitir.tree import GitHubTreeSource
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 CORPUS_VERSION = 2
 ARCHIVE_ROOT = "leitir-corpus-v1"
 
@@ -168,17 +170,24 @@ def export_corpus(
     except FileNotFoundError:
         pointers = b""
     _write_tarball(tarball_path, sources, pointers)
+    tarball_sha256 = hashlib.sha256(tarball_path.read_bytes()).hexdigest()
     payload = {
         "format_version": FORMAT_VERSION,
         "corpus_version": CORPUS_VERSION,
         "tarball": tarball_path.name,
+        "tarball_sha256": tarball_sha256,
         "pointers_sha256": hashlib.sha256(pointers).hexdigest(),
         "sources": records,
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = lock_path.with_name(f".{lock_path.name}.tmp-{os.getpid()}")
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{lock_path.name}.tmp-", dir=lock_path.parent)
+    temporary = Path(temporary_name)
     try:
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, lock_path)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -186,9 +195,17 @@ def export_corpus(
     return lock_path, tarball_path
 
 
-def _load_lock(path: Path) -> tuple[dict[str, object], list[dict[str, Any]]]:
+def _load_lock(
+    path: Path, expected_sha256: str | None = None
+) -> tuple[dict[str, object], list[dict[str, Any]]]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        lock_bytes = path.read_bytes()
+        if expected_sha256 is not None:
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+                raise SnapshotError("trusted lock SHA-256 must be 64 lowercase hex characters")
+            if not secrets.compare_digest(hashlib.sha256(lock_bytes).hexdigest(), expected_sha256):
+                raise SnapshotVerificationError("snapshot lock SHA-256 mismatch")
+        payload = json.loads(lock_bytes.decode("utf-8"))
     except FileNotFoundError:
         raise SnapshotError(f"snapshot lock not found: {path}") from None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -199,6 +216,25 @@ def _load_lock(path: Path) -> tuple[dict[str, object], list[dict[str, Any]]]:
     if not isinstance(sources, list) or not all(isinstance(item, dict) for item in sources):
         raise SnapshotError("snapshot sources must be a list of objects")
     return payload, sources
+
+
+def _validate_membership(staging: Path, records: list[dict[str, Any]]) -> None:
+    declared = sorted((PurePosixPath(record["path"]) for record in records), key=str)
+    for path in sorted(staging.rglob("*"), key=lambda item: item.relative_to(staging).as_posix()):
+        relative = PurePosixPath(path.relative_to(staging).as_posix())
+        if relative == PurePosixPath(POINTERS_NAME):
+            if path.is_symlink() or not path.is_file():
+                raise SnapshotVerificationError(f"snapshot has invalid {POINTERS_NAME}")
+            continue
+        inside = any(relative == shelf or relative.is_relative_to(shelf) for shelf in declared)
+        ancestor = any(shelf.is_relative_to(relative) for shelf in declared)
+        if inside:
+            continue
+        if ancestor and path.is_dir() and not path.is_symlink():
+            continue
+        raise SnapshotVerificationError(
+            f"snapshot archive member is not declared by corpus.lock: {relative}"
+        )
 
 
 def _validate_record(record: dict[str, Any], staging: Path) -> dict[str, Any]:
@@ -243,10 +279,23 @@ def import_corpus(
     lock: str | os.PathLike[str],
     *,
     root: str | os.PathLike[str] | None = None,
+    expected_lock_sha256: str | None = None,
+    allow_unverified_lock: bool = False,
 ) -> list[dict[str, Any]]:
-    """Verify every snapshot source before installing any of them."""
+    """Verify every snapshot source before installing any of them.
+
+    The lock file itself must normally be bound to an externally trusted
+    SHA-256 digest.  Callers deliberately accepting an untrusted lock must opt
+    out explicitly with ``allow_unverified_lock=True``.
+    """
+    if not isinstance(allow_unverified_lock, bool):
+        raise TypeError("allow_unverified_lock must be a bool")
+    if expected_lock_sha256 is None and not allow_unverified_lock:
+        raise SnapshotVerificationError(
+            "expected_lock_sha256 is required unless allow_unverified_lock=True"
+        )
     lock_path = Path(lock).expanduser().absolute()
-    payload, records = _load_lock(lock_path)
+    payload, records = _load_lock(lock_path, expected_lock_sha256)
     tarball_name = payload.get("tarball")
     if not isinstance(tarball_name, str) or Path(tarball_name).name != tarball_name:
         raise SnapshotError("snapshot tarball must be an adjacent file name")
@@ -255,6 +304,13 @@ def import_corpus(
         data = tarball.read_bytes()
     except FileNotFoundError:
         raise SnapshotError(f"snapshot tarball not found: {tarball}") from None
+    expected_tarball_sha256 = payload.get("tarball_sha256")
+    if not isinstance(expected_tarball_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_tarball_sha256
+    ):
+        raise SnapshotVerificationError("snapshot lock has no valid tarball_sha256")
+    if not secrets.compare_digest(hashlib.sha256(data).hexdigest(), expected_tarball_sha256):
+        raise SnapshotVerificationError("snapshot tarball SHA-256 mismatch")
     staging = Path(tempfile.mkdtemp(prefix="leitir-snapshot-import-"))
     try:
         _extract_tarball(data, staging, "snapshot", "0" * 40, archive_root=ARCHIVE_ROOT)
@@ -275,6 +331,7 @@ def import_corpus(
             for right in path_parts
         ):
             raise SnapshotError("snapshot contains overlapping shelf paths")
+        _validate_membership(staging, records)
         shelve_imported_sources(staging, root, entries, pointers_name=POINTERS_NAME)
         return entries
     finally:

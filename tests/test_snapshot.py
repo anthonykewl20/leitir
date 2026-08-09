@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import tarfile
 from pathlib import Path
 
 import pytest
 
+import leitir.corpus as corpus_module
 from leitir.cli import ExitCode, main
 from leitir.corpus import load_sources, write_sources
 from leitir.materialize import MANIFEST_NAME, UnsafeArchiveError
@@ -102,6 +104,16 @@ def _replace_archive_member(path: Path, member_name: str, data: bytes) -> None:
                 output.addfile(member)
 
 
+def _rebind_tarball(lock: Path, tarball: Path) -> None:
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    payload["tarball_sha256"] = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    lock.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
+def _import_unverified(lock: Path, *, root: Path) -> list[dict[str, object]]:
+    return import_corpus(lock, root=root, allow_unverified_lock=True)
+
+
 def test_export_import_round_trip_is_byte_identical(tmp_path):
     source = tmp_path / "source"
     expected_entries = make_corpus(source)
@@ -113,13 +125,14 @@ def test_export_import_round_trip_is_byte_identical(tmp_path):
     lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
     payload = json.loads(lock.read_text(encoding="utf-8"))
     assert tarball.name == "corpus.tar.gz"
-    assert payload["format_version"] == 1
+    assert payload["format_version"] == 2
     assert payload["corpus_version"] == 2
+    assert payload["tarball_sha256"] == hashlib.sha256(tarball.read_bytes()).hexdigest()
     assert [record["tree_sha"] for record in payload["sources"]] == [
         tree_sha(source / record["path"]) for record in payload["sources"]
     ]
     fresh = tmp_path / "fresh"
-    import_corpus(lock, root=fresh)
+    _import_unverified(lock, root=fresh)
     actual = {
         path.relative_to(fresh).as_posix(): path.read_bytes()
         for path in fresh.rglob("*")
@@ -140,7 +153,7 @@ def test_lock_tampering_is_fail_closed(tmp_path, field):
     lock.write_text(json.dumps(payload), encoding="utf-8")
     destination = tmp_path / "destination"
     with pytest.raises(SnapshotVerificationError):
-        import_corpus(lock, root=destination)
+        _import_unverified(lock, root=destination)
     assert not destination.exists()
 
 
@@ -153,7 +166,7 @@ def test_tarball_content_tampering_is_fail_closed(tmp_path):
     _replace_archive_member(tarball, member, b"tampered")
     destination = tmp_path / "destination"
     with pytest.raises(SnapshotVerificationError):
-        import_corpus(lock, root=destination)
+        _import_unverified(lock, root=destination)
     assert not destination.exists()
 
 
@@ -162,9 +175,10 @@ def test_tarball_pointers_tampering_is_fail_closed(tmp_path):
     make_corpus(source)
     lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
     _replace_archive_member(tarball, "leitir-corpus-v1/POINTERS.md", b"tampered pointers\n")
+    _rebind_tarball(lock, tarball)
     destination = tmp_path / "destination"
     with pytest.raises(SnapshotVerificationError, match="POINTERS.md checksum mismatch"):
-        import_corpus(lock, root=destination)
+        _import_unverified(lock, root=destination)
     assert not destination.exists()
 
 
@@ -188,10 +202,168 @@ def test_snapshot_tarball_reuses_safe_extraction_guards(tmp_path):
         unsafe = tarfile.TarInfo("leitir-corpus-v1/../escape")
         unsafe.size = 1
         archive.addfile(unsafe, io.BytesIO(b"x"))
+    _rebind_tarball(lock, tarball)
     destination = tmp_path / "destination"
     with pytest.raises(UnsafeArchiveError):
-        import_corpus(lock, root=destination)
+        _import_unverified(lock, root=destination)
     assert not destination.exists()
+
+
+def test_tarball_binding_rejects_exact_byte_tamper_before_extraction(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    data = bytearray(tarball.read_bytes())
+    data[9] ^= 1
+    tarball.write_bytes(data)
+    destination = tmp_path / "destination"
+    with pytest.raises(SnapshotVerificationError, match="tarball SHA-256 mismatch"):
+        _import_unverified(lock, root=destination)
+    assert not destination.exists()
+
+
+def test_tarball_binding_rejects_old_lock_new_tar_and_reverse(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    make_corpus(first)
+    make_corpus(second)
+    entry = json.loads((second / "sources.json").read_text(encoding="utf-8"))[0]
+    (second / entry["path"] / "src/data.bin").write_bytes(b"different snapshot bytes")
+    manifest_path = second / entry["path"] / MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["materialized_tree_hash"]
+    del manifest["materialized_tree_hash_algorithm"]
+    del manifest["materialized_tree_hash_scope"]
+    digest, scope = compute_materialized_tree_hash(second / entry["path"])
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    first_lock, first_tar = export_corpus(tmp_path / "first.lock", root=first)
+    second_lock, second_tar = export_corpus(tmp_path / "second.lock", root=second)
+    first_bytes, second_bytes = first_tar.read_bytes(), second_tar.read_bytes()
+    first_tar.write_bytes(second_bytes)
+    second_tar.write_bytes(first_bytes)
+    with pytest.raises(SnapshotVerificationError, match="tarball SHA-256 mismatch"):
+        _import_unverified(first_lock, root=tmp_path / "first-destination")
+    with pytest.raises(SnapshotVerificationError, match="tarball SHA-256 mismatch"):
+        _import_unverified(second_lock, root=tmp_path / "second-destination")
+
+
+def test_external_lock_digest_rejects_coordinated_lock_and_tar_tamper(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    trusted = hashlib.sha256(lock.read_bytes()).hexdigest()
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    member = f"leitir-corpus-v1/{payload['sources'][0]['path']}/src/data.bin"
+    _replace_archive_member(tarball, member, b"coordinated wrong bytes")
+    payload["sources"][0]["tree_sha"] = "0" * 64
+    payload["tarball_sha256"] = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    lock.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="lock SHA-256 mismatch"):
+        import_corpus(lock, root=tmp_path / "destination", expected_lock_sha256=trusted)
+
+
+def test_library_import_requires_explicit_lock_binding_or_opt_out(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, _tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+
+    with pytest.raises(SnapshotVerificationError, match="expected_lock_sha256 is required"):
+        import_corpus(lock, root=tmp_path / "rejected")
+
+    trusted = hashlib.sha256(lock.read_bytes()).hexdigest()
+    entries = import_corpus(
+        lock,
+        root=tmp_path / "verified",
+        expected_lock_sha256=trusted,
+    )
+    assert len(entries) == 2
+
+    opted_out = import_corpus(
+        lock,
+        root=tmp_path / "explicit-opt-out",
+        allow_unverified_lock=True,
+    )
+    assert len(opted_out) == 2
+
+
+def test_archive_membership_closure_rejects_undeclared_file(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    with tarfile.open(tarball, "r:gz") as old:
+        members = old.getmembers()
+        contents = {
+            member.name: old.extractfile(member).read()
+            for member in members
+            if member.isreg()
+        }
+    with tarfile.open(tarball, "w:gz") as archive:
+        for member in members:
+            archive.addfile(member, io.BytesIO(contents[member.name]) if member.isreg() else None)
+        extra = tarfile.TarInfo("leitir-corpus-v1/undeclared.txt")
+        extra.size = 5
+        archive.addfile(extra, io.BytesIO(b"extra"))
+    _rebind_tarball(lock, tarball)
+    with pytest.raises(SnapshotVerificationError, match="not declared"):
+        _import_unverified(lock, root=tmp_path / "destination")
+
+
+def test_import_rejects_any_preexisting_destination_entry(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, _tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    (destination / "keep.txt").write_bytes(b"must survive")
+    with pytest.raises(FileExistsError, match="not empty"):
+        _import_unverified(lock, root=destination)
+    assert (destination / "keep.txt").read_bytes() == b"must survive"
+
+
+def test_import_rejects_symlink_destination(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, _tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    destination = tmp_path / "destination"
+    destination.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(FileExistsError, match="ordinary directory"):
+        _import_unverified(lock, root=destination)
+    assert list(outside.iterdir()) == []
+
+
+def test_import_cleans_abandoned_sibling_staging(tmp_path):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, _tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    destination = tmp_path / "destination"
+    abandoned = tmp_path / ".destination.snapshot-import-dead"
+    abandoned.mkdir()
+    (abandoned / "partial").write_bytes(b"partial")
+    _import_unverified(lock, root=destination)
+    assert not abandoned.exists()
+    assert (destination / "sources.json").is_file()
+
+
+def test_import_publish_failure_leaves_no_partial_corpus(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    make_corpus(source)
+    lock, _tarball = export_corpus(tmp_path / "corpus.lock", root=source)
+    destination = tmp_path / "destination"
+    real_replace = corpus_module.os.replace
+
+    def fail_final_replace(source_path, destination_path):
+        if Path(destination_path) == destination:
+            raise OSError("simulated crash boundary")
+        real_replace(source_path, destination_path)
+
+    monkeypatch.setattr(corpus_module.os, "replace", fail_final_replace)
+    with pytest.raises(OSError, match="simulated crash boundary"):
+        _import_unverified(lock, root=destination)
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".destination.snapshot-import-*"))
 
 
 def test_missing_tarball_has_clear_error(tmp_path):
@@ -200,7 +372,7 @@ def test_missing_tarball_has_clear_error(tmp_path):
     lock, tarball = export_corpus(tmp_path / "corpus.lock", root=source)
     tarball.unlink()
     with pytest.raises(SnapshotError, match="snapshot tarball not found"):
-        import_corpus(lock, root=tmp_path / "destination")
+        _import_unverified(lock, root=tmp_path / "destination")
 
 
 def test_snapshot_cli_outputs_machine_readable_paths_and_summary(tmp_path):
@@ -210,11 +382,18 @@ def test_snapshot_cli_outputs_machine_readable_paths_and_summary(tmp_path):
     stdout = io.StringIO()
     stderr = io.StringIO()
     assert main(["export", "--root", str(source), "-o", str(lock)], stdout=stdout, stderr=stderr) == ExitCode.SUCCESS
-    assert json.loads(stdout.getvalue())["lock"] == str(lock)
+    exported = json.loads(stdout.getvalue())
+    assert exported["lock"] == str(lock)
+    trusted = hashlib.sha256(lock.read_bytes()).hexdigest()
+    assert exported["lock_sha256"] == trusted
     assert "exported" in stderr.getvalue()
     stdout = io.StringIO()
     stderr = io.StringIO()
     destination = tmp_path / "destination"
-    assert main(["import", str(lock), "--root", str(destination)], stdout=stdout, stderr=stderr) == ExitCode.SUCCESS
+    assert main(
+        ["import", str(lock), "--root", str(destination), "--lock-sha256", trusted],
+        stdout=stdout,
+        stderr=stderr,
+    ) == ExitCode.SUCCESS
     assert json.loads(stdout.getvalue())["sources"] == 2
     assert "imported 2 source(s)" in stderr.getvalue()

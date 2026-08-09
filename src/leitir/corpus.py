@@ -12,6 +12,9 @@ from typing import Any
 
 from leitir.materialize import (
     ArtifactRetrievalError,
+    _assert_target_confinement,
+    _file_lock,
+    _fsync_directory,
     materialize_artifact,
     materialize_repo,
     read_valid_manifest,
@@ -98,6 +101,7 @@ def enumerate_shelved_sources(
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"invalid shelved source path: {entry['path']!r}")
         target = corpus_root / relative
+        _assert_target_confinement(corpus_root, target)
         manifest = read_valid_manifest(
             target,
             entry["owner"],
@@ -303,32 +307,53 @@ def shelve_imported_sources(
 ) -> None:
     """Install a fully verified staged snapshot into an empty corpus."""
     corpus_root = resolve_root(root)
-    if (corpus_root / INDEX_NAME).exists() or (corpus_root / "repos").exists():
-        raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
-    installed: list[Path] = []
-    corpus_root.mkdir(parents=True, exist_ok=True)
-    try:
-        for entry in entries:
-            relative = Path(entry["path"])
-            source = staging / relative
-            destination = corpus_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, destination)
-            installed.append(destination)
-        source_pointers = staging / pointers_name
-        if not source_pointers.is_file():
-            raise ValueError(f"snapshot is missing {pointers_name}")
-        temporary_pointers = corpus_root / f".{pointers_name}.tmp"
-        shutil.copyfile(source_pointers, temporary_pointers)
-        os.replace(temporary_pointers, corpus_root / pointers_name)
-        write_sources(corpus_root, entries)
-    except Exception:
-        for destination in reversed(installed):
-            shutil.rmtree(destination, ignore_errors=True)
-        (corpus_root / INDEX_NAME).unlink(missing_ok=True)
-        (corpus_root / pointers_name).unlink(missing_ok=True)
-        (corpus_root / f".{pointers_name}.tmp").unlink(missing_ok=True)
-        raise
+    parent = corpus_root.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    lock_path = parent / f".{corpus_root.name}.snapshot-import.lock"
+    with _file_lock(lock_path):
+        if corpus_root.is_symlink() or (corpus_root.exists() and not corpus_root.is_dir()):
+            raise FileExistsError(f"destination corpus is not an ordinary directory: {corpus_root}")
+        if corpus_root.exists() and any(corpus_root.iterdir()):
+            raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
+        prefix = f".{corpus_root.name}.snapshot-import-"
+        for abandoned in sorted(parent.glob(f"{prefix}*")):
+            if abandoned.is_dir() and not abandoned.is_symlink():
+                shutil.rmtree(abandoned, ignore_errors=True)
+            else:
+                abandoned.unlink(missing_ok=True)
+        install = Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
+        try:
+            for entry in sorted(entries, key=lambda item: str(item["path"])):
+                relative = Path(entry["path"])
+                source = staging / relative
+                destination = install / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, destination, symlinks=True)
+            source_pointers = staging / pointers_name
+            if not source_pointers.is_file() or source_pointers.is_symlink():
+                raise ValueError(f"snapshot is missing {pointers_name}")
+            shutil.copyfile(source_pointers, install / pointers_name)
+            write_sources(install, entries)
+            if os.name != "nt":
+                for path in sorted(install.rglob("*"), key=lambda item: item.as_posix()):
+                    if path.is_file() and not path.is_symlink():
+                        fd = os.open(path, os.O_RDONLY)
+                        try:
+                            os.fsync(fd)
+                        finally:
+                            os.close(fd)
+                directories = [install, *(path for path in install.rglob("*") if path.is_dir())]
+                for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+                    _fsync_directory(directory)
+            if corpus_root.is_symlink() or (corpus_root.exists() and not corpus_root.is_dir()):
+                raise FileExistsError(f"destination corpus is not an ordinary directory: {corpus_root}")
+            if corpus_root.exists() and any(corpus_root.iterdir()):
+                raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
+            os.replace(install, corpus_root)
+            _fsync_directory(parent)
+        except Exception:
+            shutil.rmtree(install, ignore_errors=True)
+            raise
 
 
 def _key(entry: dict[str, Any]) -> tuple[object, object, object, object]:

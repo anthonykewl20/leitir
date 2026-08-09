@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -93,6 +95,25 @@ def _fabricate(root):
     }
     write_sources(root, [entry])
     return source, entry
+
+
+def _write_valid_fake_manifest(target, sha, **fields):
+    digest, scope = compute_materialized_tree_hash(target)
+    payload = {
+        "spec": f"acme/demo@{sha}",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "demo",
+        "commit_sha": sha,
+        "fetch_method": "codeload-tarball",
+        "repo_url": "https://github.com/acme/demo",
+        "fetched_at": "2026-08-04T00:00:00Z",
+        **manifest_digest_fields(digest, scope=scope),
+        **fields,
+    }
+    if payload.get("verified") in (True, "sampled", "archive-only"):
+        payload.setdefault("verified_at", "2026-08-04T00:00:00Z")
+    (target / "leitir-manifest.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _fabricate_package(root, *, sha=SHA, ecosystem="pypi", name="six", version="1.17.0"):
@@ -386,6 +407,230 @@ def test_remove_and_clean_fabricated_corpus(tmp_path, monkeypatch):
     assert not (tmp_path / "POINTERS.md").exists()
 
 
+def test_import_requires_and_forwards_trusted_lock_digest(tmp_path, monkeypatch):
+    import leitir.snapshot
+
+    lock = tmp_path / "corpus.lock"
+    lock.write_bytes(b"trusted lock bytes")
+    trusted = hashlib.sha256(lock.read_bytes()).hexdigest()
+    seen: dict[str, object] = {}
+
+    def fake_import(path, **options):
+        seen.update(path=path, options=options)
+        return []
+
+    monkeypatch.setattr(leitir.snapshot, "import_corpus", fake_import)
+    destination = tmp_path / "destination"
+    code, out, err = _invoke(
+        [
+            "import",
+            str(lock),
+            "--root",
+            str(destination),
+            "--lock-sha256",
+            trusted,
+        ]
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    assert seen == {
+        "path": str(lock),
+        "options": {"root": destination, "expected_lock_sha256": trusted},
+    }
+    assert json.loads(out)["sources"] == 0
+
+
+def test_import_without_trusted_lock_digest_is_rejected_as_usage_error(tmp_path):
+    from leitir.cli import build_parser
+
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["import", str(tmp_path / "corpus.lock")])
+    assert exc.value.code == ExitCode.MALFORMED_USAGE
+
+
+def test_import_rejects_coordinated_lock_tamper_against_trusted_digest(tmp_path):
+    from leitir.snapshot import export_corpus
+
+    corpus = tmp_path / "corpus"
+    _fabricate(corpus)
+    lock, _tarball = export_corpus(tmp_path / "snapshot.lock", root=corpus)
+    trusted = hashlib.sha256(lock.read_bytes()).hexdigest()
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    payload["sources"][0]["tree_sha"] = "0" * 40
+    lock.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    code, out, err = _invoke(
+        [
+            "import",
+            str(lock),
+            "--root",
+            str(tmp_path / "destination"),
+            "--lock-sha256",
+            trusted,
+        ]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert out == ""
+    assert "lock SHA-256 mismatch" in err
+    assert not (tmp_path / "destination").exists()
+
+
+def test_gc_removes_abandoned_staging_and_backup_under_target_lock(tmp_path):
+    parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
+    staging = parent / f".{SHA}.tmp-999999-abandoned"
+    backup = parent / f".{SHA}.old-abandoned"
+    staging.mkdir(parents=True)
+    backup.mkdir()
+    (parent / SHA).mkdir()
+    (staging / "partial").write_bytes(b"partial")
+
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert json.loads(out) == {"removed": 2, "root": str(tmp_path)}
+    assert not staging.exists()
+    assert not backup.exists()
+
+
+def test_gc_skips_backup_when_target_is_absent(tmp_path):
+    parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
+    backup = parent / f".{SHA}.old-only-valid-copy"
+    backup.mkdir(parents=True)
+    (backup / "proof").write_bytes(b"valid cache generation")
+
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert json.loads(out)["removed"] == 0
+    assert (backup / "proof").read_bytes() == b"valid cache generation"
+
+
+def test_gc_does_not_sweep_matching_user_directory(tmp_path):
+    user_directory = tmp_path / "user-data" / f".{SHA}.tmp-looks-abandoned"
+    user_directory.mkdir(parents=True)
+    proof = user_directory / "proof"
+    proof.write_bytes(b"keep")
+
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert json.loads(out)["removed"] == 0
+    assert proof.read_bytes() == b"keep"
+
+
+def test_gc_ignores_candidate_removed_while_waiting_for_lock(tmp_path, monkeypatch):
+    import contextlib
+    import leitir.materialize
+
+    parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
+    staging = parent / f".{SHA}.tmp-racing"
+    staging.mkdir(parents=True)
+    real_lock = leitir.materialize._file_lock
+
+    @contextlib.contextmanager
+    def removing_lock(path):
+        with real_lock(path):
+            staging.rmdir()
+            yield
+
+    monkeypatch.setattr(leitir.materialize, "_file_lock", removing_lock)
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert json.loads(out)["removed"] == 0
+
+
+def test_gc_refuses_matching_symlink_without_deleting_outside_root(tmp_path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    proof = outside / "proof"
+    proof.write_bytes(b"keep")
+    parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
+    parent.mkdir(parents=True)
+    (parent / f".{SHA}.tmp-999999-abandoned").symlink_to(outside, target_is_directory=True)
+
+    code, out, err = _invoke(["gc", "--root", str(tmp_path)])
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert out == ""
+    assert "refusing symbolic-link staging candidate" in err
+    assert proof.read_bytes() == b"keep"
+
+
+def test_gc_refuses_symlink_corpus_root(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_root = tmp_path / "linked"
+    linked_root.symlink_to(outside, target_is_directory=True)
+
+    code, out, err = _invoke(["gc", "--root", str(linked_root)])
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert out == ""
+    assert "corpus root is a symbolic link" in err
+
+
+def test_api_holds_target_lock_from_load_time_verify_through_tree_read(
+    tmp_path, monkeypatch
+):
+    import leitir.apisurface
+    import leitir.corpus
+    import leitir.materialize
+
+    corpus = tmp_path / "corpus"
+    source = corpus / f"repos/github.com/acme/demo/{SHA}"
+    source.mkdir(parents=True)
+    (source / "demo.py").write_text("def public():\n    pass\n", encoding="utf-8")
+    entry = {
+        "name": "acme/demo",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "demo",
+        "commit_sha": SHA,
+        "path": f"repos/github.com/acme/demo/{SHA}",
+        "fetched_at": "2026-08-04T00:00:00Z",
+    }
+    write_sources(corpus, [entry])
+    manifest = {
+        "version": "1.0.0",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "demo",
+        "commit_sha": SHA,
+    }
+    held = False
+
+    @contextmanager
+    def tracked_lock(root, target, commit_sha):
+        nonlocal held
+        assert (root, target, commit_sha) == (corpus, source, SHA)
+        held = True
+        try:
+            yield
+        finally:
+            held = False
+
+    def verified_manifest(*_args, **_kwargs):
+        assert held
+        return manifest
+
+    def extract(path, _language):
+        assert held
+        assert (path / "demo.py").read_text(encoding="utf-8").startswith("def public")
+        return {"schema_version": 1, "symbols": [], "methods": []}
+
+    monkeypatch.setattr(leitir.corpus, "materialize_source", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(leitir.materialize, "_target_lock", tracked_lock)
+    monkeypatch.setattr(leitir.materialize, "read_valid_manifest", verified_manifest)
+    monkeypatch.setattr(leitir.apisurface, "extract_api_surface", extract)
+
+    code, _out, err = _invoke(["api", f"acme/demo@{SHA}", "--root", str(corpus)])
+
+    assert code == ExitCode.SUCCESS, err
+    assert held is False
+
+
 def test_lock_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     import leitir.corpus
 
@@ -505,13 +750,11 @@ def test_get_json_emits_materialization_metadata(tmp_path, monkeypatch):
     def fake_materialize(raw, resolved, **options):
         source = corpus / f"repos/github.com/acme/demo/{resolved.commit_sha}"
         source.mkdir(parents=True)
-        (source / "leitir-manifest.json").write_text(
-            json.dumps({
-                "commit_sha": resolved.commit_sha,
-                "source": "git-commit",
-                "verified": "sampled",
-            }),
-            encoding="utf-8",
+        _write_valid_fake_manifest(
+            source,
+            resolved.commit_sha,
+            source="git-commit",
+            verified="sampled",
         )
         return source
 
@@ -549,9 +792,7 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
         source = corpus / f"repos/github.com/acme/demo/{SHA}"
         source.mkdir(parents=True, exist_ok=True)
         (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
-        (source / "leitir-manifest.json").write_text(
-            json.dumps({"version": "1.0.0"}), encoding="utf-8"
-        )
+        _write_valid_fake_manifest(source, SHA, version="1.0.0")
         write_sources(
             corpus,
             [{
@@ -608,9 +849,8 @@ def test_examples_materializes_ensures_api_and_prints_cache_path(tmp_path, monke
         (source / "examples").mkdir(parents=True, exist_ok=True)
         (source / "demo.py").write_text("def public(value: int):\n    pass\n", encoding="utf-8")
         (source / "examples" / "use.py").write_text("public(1)\n", encoding="utf-8")
-        (source / "leitir-manifest.json").write_text(
-            json.dumps({"version": "1.0.0", "entry_points": ["examples/"]}),
-            encoding="utf-8",
+        _write_valid_fake_manifest(
+            source, SHA, version="1.0.0", entry_points=["examples/"]
         )
         write_sources(
             corpus,

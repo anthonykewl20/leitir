@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 
 from leitir.cli import ExitCode, main
@@ -14,20 +17,22 @@ from _http_server import routed_server, scripted_server, json_body
 SHA = "b" * 40
 
 
-def _tarball(*, package_subpath: str | None = None) -> bytes:
+def _tarball(
+    *, package_subpath: str | None = None, commit_sha: str = SHA
+) -> bytes:
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
         for name, content in (("proof.txt", b"proof\n"), ("README.md", b"read me\n")):
-            member = tarfile.TarInfo(f"demo-{SHA}/{name}")
+            member = tarfile.TarInfo(f"demo-{commit_sha}/{name}")
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
-        docs = tarfile.TarInfo(f"demo-{SHA}/docs")
+        docs = tarfile.TarInfo(f"demo-{commit_sha}/docs")
         docs.type = tarfile.DIRTYPE
         archive.addfile(docs)
         if package_subpath is not None:
             content = b'{"name":"@scope/demo"}\n'
             member = tarfile.TarInfo(
-                f"demo-{SHA}/{package_subpath}/package.json"
+                f"demo-{commit_sha}/{package_subpath}/package.json"
             )
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
@@ -97,6 +102,87 @@ def test_get_prints_usable_path_and_cache_hit(tmp_path, monkeypatch):
         code, _, clean_err = _invoke(["clean"])
         assert code == ExitCode.SUCCESS, clean_err
         assert not pointers.exists()
+
+
+def test_get_duplicate_target_completes_without_recursive_lock_hang(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        environment = dict(os.environ)
+        environment.update(
+            LEITIR_CODELOAD_BASE_URL=server.base_url,
+            LEITIR_HOME=str(tmp_path),
+            PYTHONPATH=str(Path(__file__).parents[1] / "src"),
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from leitir.cli import main; sys.exit(main())",
+                "get",
+                f"acme/demo@{SHA}",
+                f"acme/demo@{SHA}",
+                "--no-verify",
+            ],
+            cwd=Path(__file__).parents[1],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    assert completed.returncode == 0, completed.stderr
+    assert len(completed.stdout.splitlines()) == 2
+    assert completed.stdout.splitlines()[0] == completed.stdout.splitlines()[1]
+    assert server.state.served_count == 1
+
+
+def test_concurrent_gets_with_reversed_target_order_do_not_deadlock(tmp_path):
+    other_sha = "c" * 40
+    repository = Path(__file__).parents[1]
+    environment = dict(os.environ)
+    environment.update(
+        LEITIR_HOME=str(tmp_path),
+        PYTHONPATH=str(repository / "src"),
+    )
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; from leitir.cli import main; raise SystemExit(main())",
+        "get",
+    ]
+    specs = (f"acme/demo@{SHA}", f"acme/demo@{other_sha}")
+
+    with scripted_server(
+        [(200, {}, _tarball()), (200, {}, _tarball(commit_sha=other_sha))]
+    ) as server:
+        environment["LEITIR_CODELOAD_BASE_URL"] = server.base_url
+        for spec in specs:
+            populated = subprocess.run(
+                [*command, spec, "--no-verify"],
+                cwd=repository,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            assert populated.returncode == 0, populated.stderr
+
+    for left, right in ((specs, specs), (specs, tuple(reversed(specs)))):
+        processes = [
+            subprocess.Popen(
+                [*command, *ordered_specs, "--no-verify"],
+                cwd=repository,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for ordered_specs in (left, right)
+        ]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=10)
+            assert process.returncode == 0, stderr
+            assert len(stdout.splitlines()) == 2
 
 
 def test_local_creates_root_and_gitignore(tmp_path, monkeypatch):

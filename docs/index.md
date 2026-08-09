@@ -18,6 +18,8 @@ plus a deterministic code-search kernel for AI coding agents.
 - [Commands](../README.md#commands) — get, fetch, list, info, api, examples, trust, sbom, diff, lock, export, import, upgrade-cache
 - [Specifications](../README.md#commands) — npm:, pypi:, crates:, go:, github:, gitlab:, bitbucket:, codeberg:, sourcehut:
 - [Honesty guarantees](../README.md#honesty-guarantees)
+- [Corpus cache operations](operations.md) — backup, restore, cleanup, and recovery
+- [Versioning and compatibility](versioning.md) — release, manifest, and snapshot compatibility policy
 
 ## Architecture
 

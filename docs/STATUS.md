@@ -58,6 +58,25 @@ are closed; #20 is closed with its performance optimization deferred. The
 originating #17 is also closed. Broader audit work is tracked by the
 [Production-ready path (v0.x series)](https://github.com/anthonykewl20/leitir/milestone/1).
 
+## Operational readiness
+
+Epic #42 documentation gates:
+
+- [x] **MET by documentation:** corpus-cache backup and restore runbook,
+  including snapshot lock/tarball handling, trusted lock digest restore,
+  cleanup, and interrupted-materialization recovery. See
+  [Corpus cache operations](operations.md).
+- [x] **MET by documentation:** versioning and compatibility policy for 0.x
+  releases, manifest integrity changes, and snapshot format changes. See
+  [Versioning and compatibility](versioning.md).
+- [x] **MET by documentation:** public operational and compatibility guidance
+  reviewed against the current CLI and cache implementation, with the
+  historical v1 material explicitly separated from current behavior.
+- [ ] **REMAINING HUMAN GATE:** external dogfood run with feedback.
+- [ ] **REMAINING HUMAN GATE:** real load test using a corpus of 100 or more
+  packages.
+- [ ] **REMAINING HUMAN GATE:** final human security sign-off.
+
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact
 sources); Bitbucket live tolerance of anonymous rate-limiting; `leitir lock
@@ -69,32 +88,35 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **1355 passed, 55 skipped**. The 55 skips are opt-in live tests
-behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
+Offline suite under branch coverage: **1516 passed, 56 skipped**. The skips are
+opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
+`LEITIR_ENABLE_SCORE_LIVE=1`.
 
 ## What the scorer says about Leitir
 
-Run against this repository, the engine **declines to pass itself**:
+The current-worktree run in `.leitir-score/assessment.json` **passes the
+offline profile**:
 
 ```
-profile=offline  decision=indeterminate  complete=false
-score_bps=unknown  observed_score_bps=10000
-lower_bound_bps=476  upper_bound_bps=10000
-release_readiness=not_claimed          exit 3
+profile=offline  decision=pass  complete=true
+score_bps=unknown  observed_score_bps=8382
+lower_bound_bps=5588  upper_bound_bps=8922
+release_readiness=not_claimed          exit 0
 ```
 
-The published artifact assesses clean commit
-`379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a` and has 29 missing required
-results. A separate current-worktree rerun reports `decision=fail`,
-`observed_score_bps=9984`, and bounds `476..9999`: it has the same missing
-results plus one skipped fixed-gate test in `engine.offline_contracts`. The
-missing evidence keeps both exact scores unknown; the skipped required test
-gives the current-worktree run a known failure rather than indeterminate.
+The current worktree artifact has no missing required results and no blockers.
+The fixed offline gate deselects the explicitly live-gated Go resolver test;
+the live test remains available under `LEITIR_ENABLE_LIVE_E2E=1` but no longer
+makes the offline-only collector fail by construction. Advisory OpenSSF and
+performance evidence remains unknown, so the exact score remains unknown and
+this is not a release-readiness claim.
+The published clean pinned artifact remains `decision=indeterminate` with 29
+missing required results and is kept unchanged by its regeneration gate.
 
-To improve that number, collect the missing evidence. Do **not** relax the
-policy: anti-gaming rule 2 makes policy, qrels, baselines and exclusions
-separately reviewable artifacts that are never changed in the same slice as an
-implementation.
+To narrow the remaining score bounds, collect the missing advisory evidence.
+Do **not** relax the policy: anti-gaming rule 2 makes policy, qrels, baselines
+and exclusions separately reviewable artifacts that are never changed in the
+same slice as an implementation.
 
 ## History worth knowing
 
@@ -129,15 +151,12 @@ the scoring engine's gate precedence.
   index) are a future follow-up on top of the unified credentials layer.
 - **Sourcehut live** — covered offline + a live resolver test; full live
   materialization needs an `SRHT_TOKEN`.
-- **Collect the 29 missing required results** so the assessment resolves to a
-  real score instead of honest bounds. Collect evidence; never relax policy.
-- **Self-scorecard release gate (#41)** — a pass was not reached offline. The
-  published run binds freshly regenerated fixed pytest evidence. Real benchmark
-  replay/global reports and complete code-health/test-adequacy artifact groups
-  remain absent; release readiness additionally requires opt-in live OpenSSF
-  evidence and an approved controlled-performance baseline. Commit timestamps
-  and license statements are not inputs to this six-dimension policy. The hard
-  pass gate is due before v1.0 (the 10,000-user adoption milestone), not v0.1.1.
+- **Self-scorecard release gate (#41)** — the current worktree reaches an
+  offline-only pass with complete required benchmark, coverage, and mutation
+  evidence. The public OpenSSF API still returns 404, and release readiness
+  additionally requires live OpenSSF evidence and an approved controlled
+  performance baseline. The hard release gate is due before v1.0 (the
+  10,000-user adoption milestone), not v0.1.1.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require
   these to be adopted in a separate reviewable change once a measured corpus
   exists; no slice may bundle them with an implementation.

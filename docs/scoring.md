@@ -115,6 +115,17 @@ SHA-256-bound into the assessment. Missing, partial, malformed, mismatched, or
 unapproved evidence remains unresolved or becomes a known policy failure as
 defined by its adapter.
 
+The current self-assessment evidence was collected with Radon 6.0.1 and
+coverage.py 7.15.2. The declared production scope is every Python module under
+`src/leitir`; Radon's JSON was normalized to the adapter contract by retaining
+an explicit empty block list for `__init__.py` and extracting each reported
+`mi` value. Coverage was run with `--branch --source=src/leitir` over the full
+offline pytest suite. Mutmut 3.7.0 was then scoped to `docpointers.py` and its
+16 focused tests: the clean control passed, the forced-failure sentinel failed
+as expected, and all 327 generated mutants completed (243 killed and 84
+survived). This closes the fail-closed four-file test-adequacy group without
+claiming mutation coverage outside that explicitly recorded scope.
+
 Collector-generated formats are normalized only where their schemas contain
 non-semantic run volatility. Pytest JUnit drops suite `timestamp` and
 `hostname` plus every `time`/`duration` attribute; coverage.py JSON drops
@@ -133,30 +144,41 @@ collector overhead.
 The canonical dogfood result is
 [`scorecard/leitir-assessment.json`](../scorecard/leitir-assessment.json); the
 generated view is
-[`scorecard/leitir-assessment.html`](../scorecard/leitir-assessment.html). It
-assesses clean commit
-`379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a` with the offline profile. The
-published gate is honestly `indeterminate`, its exact score is `unknown`, its
-observed score is `10000`, and its bounds are `476` through `10000`; it makes no
-release-readiness claim because 29 required results remain uncollected.
+[`scorecard/leitir-assessment.html`](../scorecard/leitir-assessment.html). The
+published clean pinned run remains `decision=indeterminate`, `complete=false`,
+with an unknown exact score, `observed_score_bps=10000`, bounds `476..10000`,
+and 29 missing required checks.
 
-A separate rerun against the current dirty worktree reports `decision=fail`,
-`observed_score_bps=9984`, and bounds `476..9999`: the same 29 required results
-are missing and one fixed ADR-001 gate test is skipped, making
-`engine.offline_contracts` a known failure. It is not published as a clean
-release artifact and does not supersede the pinned assessment's subject claim.
+The separately generated current-worktree assessment in
+`.leitir-score/assessment.json` reports `decision=pass`, `complete=true`, an
+unknown exact score, `observed_score_bps=8382`, and bounds `5588..8922`. It has
+no missing required checks and no blockers. The fixed offline collector
+explicitly deselects the live-gated Go resolver test rather than counting its
+intentional offline skip as a failure; the live test remains independently
+available under `LEITIR_ENABLE_LIVE_E2E=1`.
 
-The offline run regenerates and binds its fixed pytest JUnit evidence. No other
-local S3-S7 evidence is published because this repository currently has no
-documented deterministic collector that produces the complete required raw
-artifact groups. Commit/release timestamps and a license statement are not
-ADR-002 policy inputs and must not be relabeled as evidence for its six
-dimensions. Closing the offline blockers requires real benchmark replay/global
-reports plus complete code-health and test-adequacy artifacts in the formats
-listed above. A release-profile pass additionally requires opt-in live OpenSSF
-evidence and an approved controlled-performance baseline. Issue #41's hard gate
-is the v1.0 (10,000-user adoption) milestone; this offline artifact does not
-claim that gate is met.
+Real Radon code-health evidence resolves all four required `code.*` checks;
+maintainability index is advisory. Primary, repeat, and input-permuted
+`search-v1` runs were reproduced through a local HTTP server from pinned bytes
+whose git blob hashes match the committed manifest. Their canonical bytes and
+manifest identity are identical. A local-server global search report preserves
+`indeterminate_global`; the scorer accepts the current `SearchReport` schema's
+`query_translation` field as well as the legacy report shape. Controlled mutmut
+evidence makes the existing coverage artifact consumable and resolves all five
+required `test.*` checks.
+
+The public OpenSSF API returned HTTP 404 again for this repository. OpenSSF,
+ASV controlled performance, and live latency are advisory in the offline
+profile and do not block the offline pass. ASV 0.6.6 is installable, but this
+repository has no ASV configuration or benchmark suite and no approved
+baseline from which honest performance artifacts could be produced.
+
+The collected required evidence therefore reaches an offline-only pass. The
+unknown advisory checks keep the exact diagnostic score unknown and prevent any
+release-readiness claim. Commit/release timestamps and license statements are
+not ADR-002 policy inputs and must not be relabeled as evidence. A
+release-profile pass additionally requires opt-in live OpenSSF evidence and an
+approved controlled-performance baseline.
 
 Regenerate it without reading identity from a dirty developer worktree:
 

@@ -174,6 +174,9 @@ ADR001_OFFLINE_GATE_TESTS = (
     "tests/test_ranking.py",
     "tests/test_bench.py",
 )
+_ADR001_LIVE_TEST = (
+    "tests/test_resolver.py::test_live_go_golang_x_module_resolves_to_pinned_github_commit"
+)
 _PYTEST_JUNIT_PATH = ".leitir-score/evidence/adr001-offline-junit.xml"
 ADR001_OFFLINE_GATE_ARGV = (
     "python",
@@ -182,6 +185,7 @@ ADR001_OFFLINE_GATE_ARGV = (
     *ADR001_OFFLINE_GATE_TESTS,
     "-p",
     "no:cacheprovider",
+    f"--deselect={_ADR001_LIVE_TEST}",
     f"--junitxml={_PYTEST_JUNIT_PATH}",
 )
 _MAX_JUNIT_BYTES = 16 * 1024 * 1024
@@ -2242,11 +2246,12 @@ def evaluate_global_no_exhaustiveness(artifact: EvidenceArtifact) -> CheckResult
     if not isinstance(artifact, EvidenceArtifact):
         raise TypeError("artifact must be an EvidenceArtifact")
     try:
-        raw = _object_keys(
-            _load_json_object(artifact, "global search report"),
-            {"spec_digest", "coverage", "matches", "resolution"},
-            "global search report",
-        )
+        raw = _load_json_object(artifact, "global search report")
+        legacy_keys = {"spec_digest", "coverage", "matches", "resolution"}
+        if set(raw) not in {frozenset(legacy_keys), frozenset((*legacy_keys, "query_translation"))}:
+            raise ValueError("global search report has an invalid field set")
+        if "query_translation" in raw:
+            _list_value(raw["query_translation"], "global query translation")
         if not isinstance(raw["spec_digest"], str) or not _SHA256.fullmatch(
             raw["spec_digest"]
         ):

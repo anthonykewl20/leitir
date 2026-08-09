@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from leitir.trust import compute_trust
+import pytest
+
+import leitir.trust as trust_module
+from leitir.trust import _factor, compute_trust
 
 
 def _by_factor(result):
@@ -18,6 +21,7 @@ def test_factor_subscores_and_breakdown(tmp_path):
         "entry_points": ["README.md"],
         "artifact_checksum": "sha256:abc",
         "artifact_kind": "sdist",
+        "has_tests": True,
         "published_at": "2025-01-01T00:00:00Z",
         "fetched_at": "2025-06-01T00:00:00Z",
     }
@@ -34,7 +38,7 @@ def test_factor_subscores_and_breakdown(tmp_path):
     }
     assert list(factors) == sorted(factors)
     assert all(set(item) == {"factor", "score", "weight", "evidence"} for item in result.breakdown)
-    assert 0 <= result.score <= 100
+    assert result.score == 95
 
 
 def test_negative_evidence_and_bounds(tmp_path):
@@ -44,6 +48,8 @@ def test_negative_evidence_and_bounds(tmp_path):
         "license_confidence": "low",
         "docs_urls": [],
         "entry_points": [],
+        "source": "git-commit",
+        "has_tests": False,
         "fetched_at": "2026-01-01T00:00:00Z",
         "commit_date": "2000-01-01T00:00:00Z",
     }
@@ -56,7 +62,7 @@ def test_negative_evidence_and_bounds(tmp_path):
     assert factors["tests"]["score"] == 0
     assert factors["artifact_checksum"]["score"] == 0
     assert factors["age"]["score"] == 25
-    assert 0 <= result.score <= 100
+    assert result.score == 8
 
 
 def test_missing_evidence_is_neutral_unknown_and_deterministic(tmp_path):
@@ -64,10 +70,19 @@ def test_missing_evidence_is_neutral_unknown_and_deterministic(tmp_path):
     second = compute_trust({}, tmp_path)
     assert first == second
     factors = _by_factor(first)
-    for name in ("age", "documentation", "parity", "verification"):
+    assert set(factors) == {
+        "age",
+        "artifact_checksum",
+        "documentation",
+        "license",
+        "parity",
+        "tests",
+        "verification",
+    }
+    for name in factors:
         assert factors[name]["score"] == 50
         assert factors[name]["evidence"]["state"] == "unknown"
-    assert factors["license"]["evidence"]["state"] == "low"
+    assert first.score == 50
 
 
 def test_partial_checksum_is_unknown(tmp_path):
@@ -96,3 +111,83 @@ def test_artifact_test_presence_is_neutral_when_unknown(tmp_path):
         factor = _by_factor(compute_trust(manifest, tmp_path))["tests"]
         assert factor["score"] == 50
         assert factor["evidence"]["state"] == "unknown"
+
+
+def test_uncached_test_evidence_does_not_become_absent_from_directory_scan(tmp_path):
+    assert not (tmp_path / "tests").exists()
+    factor = _by_factor(compute_trust({"source": "git-commit"}, tmp_path))["tests"]
+    assert factor["score"] == 50
+    assert factor["evidence"]["state"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("published_at", "expected_score", "expected_days"),
+    [
+        ("2025-01-01T00:00:00Z", 100, 151),
+        ("2021-01-01T00:00:00+00:00", 50, 1612),
+        ("2010-01-01T00:00:00Z", 25, 5630),
+    ],
+)
+def test_published_at_populates_age_and_changes_weighted_score(
+    tmp_path, published_at, expected_score, expected_days
+):
+    manifest = {
+        "published_at": published_at,
+        "fetched_at": "2025-06-01T00:00:00Z",
+    }
+    result = compute_trust(manifest, tmp_path)
+    age = _by_factor(result)["age"]
+    assert age["score"] == expected_score
+    assert age["evidence"] == {
+        "state": "known",
+        "source": "published_at",
+        "days_at_fetch": expected_days,
+        "reason": "age measured at cached fetch time",
+    }
+    assert result.score == {100: 58, 50: 50, 25: 46}[expected_score]
+
+
+def test_configured_weights_match_the_seven_factor_contract():
+    assert trust_module._WEIGHTS == {
+        "age": 15,
+        "artifact_checksum": 15,
+        "documentation": 10,
+        "license": 15,
+        "parity": 15,
+        "tests": 10,
+        "verification": 20,
+    }
+    assert sum(trust_module._WEIGHTS.values()) == 100
+
+
+def test_swapping_age_and_tests_weights_changes_the_golden_score(tmp_path, monkeypatch):
+    manifest = {
+        "verified": False,
+        "parity": "drift",
+        "license_confidence": "low",
+        "docs_urls": [],
+        "entry_points": [],
+        "source": "git-commit",
+        "has_tests": False,
+        "commit_date": "2000-01-01T00:00:00Z",
+        "fetched_at": "2026-01-01T00:00:00Z",
+    }
+    assert compute_trust(manifest, tmp_path).score == 8
+    mutated = dict(trust_module._WEIGHTS)
+    mutated["age"], mutated["tests"] = mutated["tests"], mutated["age"]
+    monkeypatch.setattr(trust_module, "_WEIGHTS", mutated)
+    assert compute_trust(manifest, tmp_path).score == 6
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [True, False, 1.5, float("nan"), float("inf"), float("-inf"), "50", None],
+)
+def test_factor_rejects_non_integer_and_non_finite_scores(invalid):
+    with pytest.raises(ValueError, match="factor score must be an integer"):
+        _factor("age", invalid, {})
+
+
+def test_factor_clamps_out_of_range_integer_scores():
+    assert _factor("age", -1, {})["score"] == 0
+    assert _factor("age", 101, {})["score"] == 100

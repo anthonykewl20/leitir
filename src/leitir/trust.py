@@ -40,6 +40,14 @@ class TrustScore:
 
 
 def _factor(name: str, score: int, evidence: Mapping[str, object]) -> dict[str, object]:
+    """Build one factor, accepting only integer scores and bounding them to 0..100.
+
+    Booleans, floats (including NaN and infinities), and all other non-integer
+    values are invalid rather than evidence that can be promoted by clamping.
+    """
+
+    if not isinstance(score, int) or isinstance(score, bool):
+        raise ValueError("factor score must be an integer")
     return {
         "factor": name,
         "score": max(0, min(100, score)),
@@ -83,6 +91,12 @@ def _license(manifest: Mapping[str, object], target_path: Path) -> dict[str, obj
         result = infer_license(dict(manifest), target_path)
         confidence = result.confidence
         method = result.method
+        if result.identifier is None and result.method == "unknown":
+            return _factor(
+                "license",
+                50,
+                {"state": "unknown", "reason": "license evidence is unavailable"},
+            )
     scores = {"high": 100, "medium": 65, "low": 25}
     if confidence not in scores:
         return _factor("license", 50, {"state": "unknown", "reason": "license confidence is unavailable"})
@@ -111,6 +125,7 @@ def _documentation(manifest: Mapping[str, object]) -> dict[str, object]:
 
 
 def _tests(manifest: Mapping[str, object], target_path: Path) -> dict[str, object]:
+    del target_path  # Test-tree inspection is represented by the cached field.
     cached = manifest.get("has_tests")
     if isinstance(cached, bool):
         return _factor(
@@ -118,20 +133,10 @@ def _tests(manifest: Mapping[str, object], target_path: Path) -> dict[str, objec
             100 if cached else 0,
             {"state": "present" if cached else "absent", "reason": "cached Git tree tests/ presence"},
         )
-    if cached is None and manifest.get("source") == "registry-artifact":
-        return _factor(
-            "tests",
-            50,
-            {"state": "unknown", "reason": "Git tree tests/ presence is unknown"},
-        )
-    try:
-        present = (target_path / "tests").is_dir()
-    except OSError:
-        return _factor("tests", 50, {"state": "unknown", "reason": "materialized tree could not be inspected"})
     return _factor(
         "tests",
-        100 if present else 0,
-        {"state": "present" if present else "absent", "reason": "tests/ directory scan"},
+        50,
+        {"state": "unknown", "reason": "Git tree tests/ presence is not cached"},
     )
 
 
@@ -140,8 +145,18 @@ def _checksum(manifest: Mapping[str, object]) -> dict[str, object]:
     kind = manifest.get("artifact_kind")
     if isinstance(checksum, str) and checksum and isinstance(kind, str) and kind:
         return _factor("artifact_checksum", 100, {"state": "present", "artifact_kind": kind, "reason": "cached artifact checksum and kind are present"})
-    if checksum is None and kind is None:
-        return _factor("artifact_checksum", 0, {"state": "absent", "reason": "no artifact checksum is cached"})
+    if checksum is None and kind is None and manifest.get("source") == "git-commit":
+        return _factor(
+            "artifact_checksum",
+            0,
+            {"state": "absent", "reason": "cached source mode confirms there is no registry artifact"},
+        )
+    if "artifact_checksum" not in manifest and "artifact_kind" not in manifest:
+        return _factor(
+            "artifact_checksum",
+            50,
+            {"state": "unknown", "reason": "artifact checksum evidence is not cached"},
+        )
     return _factor("artifact_checksum", 50, {"state": "unknown", "reason": "artifact checksum metadata is incomplete"})
 
 

@@ -74,6 +74,59 @@ jobs:
           python -m pytest tests/test_treehash.py tests/test_materialize.py
           tests/test_parity.py tests/test_snapshot.py -q
 
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Measure offline line and branch coverage
+        env:
+          PYTHONPATH: src
+        run: >-
+          uv run --no-project --with-requirements requirements.txt --with coverage==7.15.2
+          python -m coverage run --branch --source=leitir -m pytest -q
+          -p no:cacheprovider
+      - name: Write coverage reports
+        run: |
+          uv run --no-project --with coverage==7.15.2 python -m coverage report --precision=2 --fail-under=82.5
+          uv run --no-project --with coverage==7.15.2 python -m coverage xml -o coverage.xml
+          uv run --no-project --with coverage==7.15.2 python -m coverage json -o coverage.json
+      - name: Enforce total and critical-module baselines
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          baseline = json.loads(
+              Path(".github/workflows/coverage-baseline.json").read_text(encoding="utf-8")
+          )
+          report = json.loads(Path("coverage.json").read_text(encoding="utf-8"))
+          failures = []
+          total = report["totals"]["percent_covered"]
+          total_minimum = baseline["combined_line_and_branch_percent"]["minimum"]
+          if total < total_minimum:
+              failures.append(f"total {total:.4f}% < {total_minimum:.4f}%")
+          for module, minimum in sorted(baseline["modules"].items()):
+              actual = report["files"][module]["summary"]["percent_covered"]
+              if actual < minimum:
+                  failures.append(f"{module} {actual:.4f}% < {minimum:.4f}%")
+          if failures:
+              raise SystemExit("coverage regression:\n" + "\n".join(failures))
+          print(f"combined line+branch coverage: {total:.4f}%")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-report
+          path: coverage.xml
+
   package:
     runs-on: ubuntu-latest
     steps:
@@ -139,6 +192,7 @@ jobs:
     needs:
       - test
       - determinism
+      - coverage
       - package
       - lint
     runs-on: ubuntu-latest

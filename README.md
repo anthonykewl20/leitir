@@ -45,7 +45,9 @@ flowchart TD
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
 - Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.
-- Standalone evidence-scoring engine from ADR-002 that drives gate decisions without model calls.
+- Standalone ADR-002 repository self-assessment engine that drives its own
+  six-dimension gate decisions without model calls; it is separate from runtime
+  corpus trust scoring.
 
 ```mermaid
 flowchart LR
@@ -152,6 +154,8 @@ flowchart LR
 - `list`: show current corpus entries and trust/verification state.
 - `remove`: delete a shelved source entry.
 - `clean`: clear corpus metadata and cached materialization.
+- `gc`: remove abandoned repository staging and obsolete backups under target locks;
+  a sole `.old-` generation is left in place when its target is absent.
 
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
@@ -163,8 +167,9 @@ flowchart LR
 
 ### Closure and reproducibility
 - `lock`: materialize the project's transitive dependency closure.
-- `export`: write immutable `corpus.lock` plus compressed corpus snapshot tarball.
-- `import`: verify and rehydrate a snapshot into an empty destination, fail-closed.
+- `export`: write a v2 `corpus.lock` plus compressed snapshot and emit the lock digest.
+- `import`: verify and rehydrate a v2 snapshot into an empty destination; the trusted
+  `--lock-sha256` is mandatory. Existing v1 snapshots must be re-exported.
 
 #### Screenshots
 
@@ -238,10 +243,15 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry. Archive symlink chains are resolved lexically before extraction, so confinement does not depend on host symlink behavior.
 - Legacy verified caches require `leitir upgrade-cache` to add a materialized-tree digest and gain load-time verification; until upgraded they are rejected as cache misses.
 - Runtime `leitir trust` turns unknown factors into neutral numeric scores (50/100), rather than `indeterminate`. Only the ADR-002 repository assessment gate preserves `indeterminate` as a decision.
+- Trust evidence is never fabricated: age requires a real source timestamp, missing
+  license evidence is neutral (50), and legacy manifests without `has_tests` treat
+  tests as unknown until `upgrade-cache` or re-materialization refreshes evidence.
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
 - Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. It paginates with a fixed cap and reports pin, fetch, decode, provenance, adapter, and duplicate exclusions. Duplicate candidates are collapsed from repeated repository paths and then the index's claimed blob SHA; only the elected representative (or a deterministic promoted replacement after failure) is fetched, so `deduplicated` does not claim byte verification of members that remain collapsed. The `max_results` budget bounds fetch attempts, including promoted retries within a collapsed content group. Verification failures can therefore produce an honestly incomplete report that does not include every distinct candidate.
+- Global discovery rejects unsupported must predicates such as REGEX. Structural and
+  PATH predicates use GitHub only as a candidate superset and are locally re-verified.
 - Irreducible limit: a remote search index is not itself a pinned input. Two live runs at different wall-clock times may see an advancing index, server-side ranking changes, or different `incomplete_results`; reproducibility holds for the recorded pinned hit set, not for re-querying the live index.
 
 ## Update notifications
@@ -255,7 +265,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Scoring
 
-`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement or independently verify the runtime `leitir trust` seven-factor trust model. The two systems share only the abstract principle that “unknown is neither zero nor pass.” At current HEAD the scorer reports `decision=fail`, `observed_score_bps=9980`, and bounds `475..9999`: 29 required results are missing and one fixed-gate test in `engine.offline_contracts` is skipped and therefore a known failed check. Details are tracked in [docs/scoring.md](docs/scoring.md).
+`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=indeterminate`, while a current-worktree offline rerun reports `decision=fail` because one fixed-gate test is skipped; neither reaches pass. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
 
 ## Tests
 

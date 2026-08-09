@@ -3,15 +3,45 @@
 All notable changes to leitir will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-once it reaches 1.0.0. Before 1.0.0, minor versions may include breaking changes.
+and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
+within the 0.x series, patch releases (0.1.1, 0.1.2, ...) ship audit fixes and
+incremental work, while a minor bump (0.2.0) marks a feature or behavior milestone.
+Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Added
+- Added `leitir gc`, which removes abandoned repository staging and obsolete
+  backup generations while holding each target lock (#30).
+
 ### Changed
+- **Breaking:** snapshot format v2 binds the archive bytes with mandatory
+  `tarball_sha256`; v1 snapshots are no longer importable and must be re-exported.
+- **Breaking:** `leitir import` now requires a trusted `--lock-sha256`; `export`
+  emits `lock_sha256`. The `import_corpus` API likewise requires a trusted lock
+  digest unless callers explicitly opt out (#31).
+- **Breaking:** global search rejects predicates that GitHub search cannot
+  preserve (including REGEX), rather than silently degrading them. Structural
+  and PATH predicates are locally re-verified after server-side filtering (#49).
+- Trust scoring treats missing evidence as unknown (50), not zero. Age is only
+  populated from real source timestamps, license no-evidence is 50 rather than
+  25, and legacy manifests without `has_tests` no longer scan the offline tree;
+  run `upgrade-cache` or re-materialize to refresh that evidence (#23, #24).
+- Credentialled resolution now rejects plaintext HTTP endpoints (#26).
+- Versioning policy: 0.x incremental releases now use patch bumps (next release
+  is 0.1.1); a minor bump is reserved for a feature/behavior milestone. See
+  ROADMAP. The v0.2.0 milestone was renamed to v0.1.1 accordingly.
 - Distribution model is GitHub-only (not PyPI). Install with
   `pip install git+https://github.com/anthonykewl20/leitir.git`.
 - Update notifications now poll the GitHub Releases API instead of PyPI.
+
+### Fixed
+- Corpus commands acquire deduplicated target locks in canonical path order,
+  preventing duplicate-target and reversed-order cross-process deadlocks.
+
+### Security
+- Snapshot import now binds both the trusted lock digest and exact archive bytes,
+  closing coordinated lock/archive tampering (#31).
 
 ## [0.1.0] - 2026-08-05
 

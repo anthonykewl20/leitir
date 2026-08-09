@@ -7,6 +7,13 @@ independently verify that model. The systems share only the abstract principle
 that unknown is neither zero nor pass. The scorer uses no model, imports no
 `leitir` package code, and does not download or upgrade scoring tools.
 
+The runtime corpus-trust policy is instead owned by `src/leitir/trust.py`.
+Its drift guard is the deterministic factor/weight contract test
+`test_configured_weights_match_the_seven_factor_contract` and the weight-swap
+mutation test `test_swapping_age_and_tests_weights_changes_the_golden_score` in
+`tests/test_trust.py`. Those tests guard the seven factors and their effect on a
+golden runtime score; ADR-002 is not a second implementation of that policy.
+
 ## Commands
 
 Run the locally collectible profile and write canonical JSON plus deterministic
@@ -132,6 +139,24 @@ assesses clean commit
 published gate is honestly `indeterminate`, its exact score is `unknown`, its
 observed score is `10000`, and its bounds are `476` through `10000`; it makes no
 release-readiness claim because 29 required results remain uncollected.
+
+A separate rerun against the current dirty worktree reports `decision=fail`,
+`observed_score_bps=9984`, and bounds `476..9999`: the same 29 required results
+are missing and one fixed ADR-001 gate test is skipped, making
+`engine.offline_contracts` a known failure. It is not published as a clean
+release artifact and does not supersede the pinned assessment's subject claim.
+
+The offline run regenerates and binds its fixed pytest JUnit evidence. No other
+local S3-S7 evidence is published because this repository currently has no
+documented deterministic collector that produces the complete required raw
+artifact groups. Commit/release timestamps and a license statement are not
+ADR-002 policy inputs and must not be relabeled as evidence for its six
+dimensions. Closing the offline blockers requires real benchmark replay/global
+reports plus complete code-health and test-adequacy artifacts in the formats
+listed above. A release-profile pass additionally requires opt-in live OpenSSF
+evidence and an approved controlled-performance baseline. Issue #41's hard gate
+is the v1.0 (10,000-user adoption) milestone; this offline artifact does not
+claim that gate is met.
 
 Regenerate it without reading identity from a dirty developer worktree:
 

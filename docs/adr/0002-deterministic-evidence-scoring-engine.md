@@ -3,10 +3,20 @@
 - Status: accepted
 - Date: 2026-08-02
 - Implementation: complete
-- Related: [ADR-0001](0001-remove-hy3-deterministic-search.md) deterministic code-search kernel, especially P6
+- Related: [ADR-0001](0001-remove-hy3-deterministic-search.md) deterministic code-search kernel, especially P6; `src/leitir/trust.py` owns a separate runtime seven-factor corpus-trust model
 - User-facing shape: standalone script, not a `leitir` CLI subcommand
 
 Implementation note: completed 2026-08-03 when S1–S9 landed.
+
+Scope clarification (issue #22): this ADR defines a six-dimension assessment of
+the Leitir repository, its search output, and its engineering process. It does
+not define, implement, mirror, or independently verify the runtime seven-factor
+corpus-trust policy used when materializing dependency source. That policy is
+owned by `src/leitir/trust.py`; its factor/weight contract and weight sensitivity
+are guarded directly by
+`test_configured_weights_match_the_seven_factor_contract` and
+`test_swapping_age_and_tests_weights_changes_the_golden_score` in
+`tests/test_trust.py`.
 
 ## Context
 

@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-04)
+# Leitir — Status (2026-08-09)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -16,6 +16,11 @@ provenance, and collectors for engine correctness, retrieval effectiveness,
 code health, test adequacy, supply chain, and controlled performance, plus a
 deterministic renderer, release profile, and a published self-assessment
 guarded by a regeneration drift check.
+
+ADR-002 is a six-dimension repository self-assessment, not an independent
+implementation of runtime corpus trust. The runtime seven-factor model remains
+owned by `src/leitir/trust.py` and is guarded by its deterministic weight/factor
+contract and weight-swap mutation tests in `tests/test_trust.py`.
 
 **ADR-004 is implemented; slices M1–M7 are complete.** It adds a local
 source materialization layer (corpus): SHA-pinned, verified, complete
@@ -72,16 +77,19 @@ behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`.
 Run against this repository, the engine **declines to pass itself**:
 
 ```
-profile=offline  decision=fail  complete=false
-score_bps=unknown  observed_score_bps=9980
-lower_bound_bps=475  upper_bound_bps=9999
+profile=offline  decision=indeterminate  complete=false
+score_bps=unknown  observed_score_bps=10000
+lower_bound_bps=476  upper_bound_bps=10000
 release_readiness=not_claimed          exit 3
 ```
 
-The scorer finds 29 missing required results and one known failed check: a
-skipped fixed-gate test in `engine.offline_contracts`. The missing evidence
-keeps the exact score unknown and the bounds wide, while the known failure gives
-the run a `fail` decision rather than `indeterminate`.
+The published artifact assesses clean commit
+`379cc7ae94ddc89ebe261e1fb8ab7a0b57b0768a` and has 29 missing required
+results. A separate current-worktree rerun reports `decision=fail`,
+`observed_score_bps=9984`, and bounds `476..9999`: it has the same missing
+results plus one skipped fixed-gate test in `engine.offline_contracts`. The
+missing evidence keeps both exact scores unknown; the skipped required test
+gives the current-worktree run a known failure rather than indeterminate.
 
 To improve that number, collect the missing evidence. Do **not** relax the
 policy: anti-gaming rule 2 makes policy, qrels, baselines and exclusions
@@ -123,6 +131,13 @@ the scoring engine's gate precedence.
   materialization needs an `SRHT_TOKEN`.
 - **Collect the 29 missing required results** so the assessment resolves to a
   real score instead of honest bounds. Collect evidence; never relax policy.
+- **Self-scorecard release gate (#41)** — a pass was not reached offline. The
+  published run binds freshly regenerated fixed pytest evidence. Real benchmark
+  replay/global reports and complete code-health/test-adequacy artifact groups
+  remain absent; release readiness additionally requires opt-in live OpenSSF
+  evidence and an approved controlled-performance baseline. Commit timestamps
+  and license statements are not inputs to this six-dimension policy. The hard
+  pass gate is due before v1.0 (the 10,000-user adoption milestone), not v0.1.1.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require
   these to be adopted in a separate reviewable change once a measured corpus
   exists; no slice may bundle them with an implementation.

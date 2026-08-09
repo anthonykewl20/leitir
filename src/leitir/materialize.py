@@ -23,7 +23,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Callable, Iterator, Mapping
+from typing import BinaryIO, Callable, Iterator, Mapping
 
 from leitir import _http
 from leitir.search import RepoScope
@@ -96,7 +96,9 @@ def _assert_target_confinement(root: Path, target: Path) -> None:
     try:
         relative = lexical_target.relative_to(lexical_root)
     except ValueError as exc:
-        raise MaterializationError("materialization target escapes corpus root") from exc
+        raise MaterializationError(
+            "materialization target escapes corpus root"
+        ) from exc
     current = lexical_root
     for part in relative.parts:
         current = current / part
@@ -110,7 +112,9 @@ def _assert_target_confinement(root: Path, target: Path) -> None:
             )
     resolved_root = lexical_root.resolve(strict=False)
     resolved_parent = lexical_target.parent.resolve(strict=False)
-    if resolved_parent != resolved_root and not resolved_parent.is_relative_to(resolved_root):
+    if resolved_parent != resolved_root and not resolved_parent.is_relative_to(
+        resolved_root
+    ):
         raise MaterializationError("materialization target parent escapes corpus root")
 
 
@@ -124,7 +128,9 @@ def _file_lock(path: Path) -> Iterator[None]:
     try:
         fd = os.open(path, flags, 0o600)
     except OSError as exc:
-        raise MaterializationError(f"cannot safely open materialization lock: {path}") from exc
+        raise MaterializationError(
+            f"cannot safely open materialization lock: {path}"
+        ) from exc
     try:
         if os.name == "nt":
             import msvcrt
@@ -188,6 +194,23 @@ def _fsync_directory(path: Path) -> None:
         os.close(fd)
 
 
+@contextmanager
+def _open_new_regular_file(path: Path, root: Path) -> Iterator[BinaryIO]:
+    """Create a regular extraction output without following a final symlink."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise UnsafeArchiveError("archive output is not a regular file")
+        _assert_confined(path, root)
+        with os.fdopen(fd, "wb") as handle:
+            fd = -1
+            yield handle
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _failure_detail(exc: BaseException) -> str:
     current: BaseException | None = exc
     while current is not None:
@@ -221,7 +244,9 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
         raise
 
 
-def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]) -> dict[str, object]:
+def update_manifest(
+    target: str | os.PathLike[str], fields: Mapping[str, object]
+) -> dict[str, object]:
     """Verify a shelf, then atomically merge fields into its manifest.
 
     Raises :class:`ManifestIntegrityError` without writing if the existing
@@ -262,7 +287,7 @@ def update_manifest(target: str | os.PathLike[str], fields: Mapping[str, object]
             canonical_target = False
         else:
             suffix = ("repos", host, *identity_parts, commit_sha)
-            canonical_target = target_parts[-len(suffix):] == suffix
+            canonical_target = target_parts[-len(suffix) :] == suffix
         provenance_valid = (
             canonical_target
             and isinstance(owner, str)
@@ -303,7 +328,9 @@ def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
     tree = target / subpath if subpath else target
     if not tree.is_dir():
         return False
-    return any(child.is_dir() and child.name.casefold() == "tests" for child in tree.iterdir())
+    return any(
+        child.is_dir() and child.name.casefold() == "tests" for child in tree.iterdir()
+    )
 
 
 def _prune_empty(path: Path, stop: Path) -> None:
@@ -438,8 +465,10 @@ def _read_valid_manifest(
         return None
     if source is not None and source not in {"registry-artifact", "git-commit"}:
         return None
-    if "has_tests" in payload and payload.get("has_tests") is not None and not isinstance(
-        payload.get("has_tests"), bool
+    if (
+        "has_tests" in payload
+        and payload.get("has_tests") is not None
+        and not isinstance(payload.get("has_tests"), bool)
     ):
         return None
     artifact_fields = ("artifact_kind", "artifact_checksum")
@@ -448,11 +477,18 @@ def _read_valid_manifest(
             return None
         if payload.get("artifact_kind") not in {"npm-tarball", "sdist", "crate"}:
             return None
-        if not isinstance(payload.get("artifact_checksum"), str) or not payload["artifact_checksum"]:
+        if (
+            not isinstance(payload.get("artifact_checksum"), str)
+            or not payload["artifact_checksum"]
+        ):
             return None
     elif any(field in payload for field in artifact_fields):
         return None
-    if "parity" in payload and payload.get("parity") not in {"exact", "drift", "unknown"}:
+    if "parity" in payload and payload.get("parity") not in {
+        "exact",
+        "drift",
+        "unknown",
+    }:
         return None
     if "graph" in payload and payload.get("graph") not in {"complete", "direct-only"}:
         return None
@@ -462,7 +498,10 @@ def _read_valid_manifest(
             return None
         for dependency in deps:
             if not isinstance(dependency, dict) or set(dependency) != {
-                "name", "version", "resolved_sha", "spec"
+                "name",
+                "version",
+                "resolved_sha",
+                "spec",
             }:
                 return None
             if not all(
@@ -493,7 +532,12 @@ def _read_valid_manifest(
         if not isinstance(breakdown, list):
             return None
         for factor in breakdown:
-            if not isinstance(factor, dict) or set(factor) != {"factor", "score", "weight", "evidence"}:
+            if not isinstance(factor, dict) or set(factor) != {
+                "factor",
+                "score",
+                "weight",
+                "evidence",
+            }:
                 return None
             if not isinstance(factor["factor"], str) or not factor["factor"]:
                 return None
@@ -516,9 +560,7 @@ def _read_valid_manifest(
                 scope=payload.get("materialized_tree_hash_scope", "full"),
             )
         except TreeHashError:
-            logger.warning(
-                "materialized tree hash verification failed for %s", target
-            )
+            logger.warning("materialized tree hash verification failed for %s", target)
             return None
     elif verified in (True, "sampled", "archive-only"):
         # Migration is complete: verified shelves must have a load-time
@@ -541,10 +583,14 @@ def _archive_path(name: str) -> PurePosixPath:
     return PurePosixPath(*parts)
 
 
-def _stripped_member_path(member: tarfile.TarInfo, expected_root: str) -> PurePosixPath | None:
+def _stripped_member_path(
+    member: tarfile.TarInfo, expected_root: str
+) -> PurePosixPath | None:
     path = _archive_path(member.name)
     if path.parts[0] != expected_root:
-        raise UnsafeArchiveError("archive does not have the expected single top-level directory")
+        raise UnsafeArchiveError(
+            "archive does not have the expected single top-level directory"
+        )
     if len(path.parts) == 1:
         return None
     return PurePosixPath(*path.parts[1:])
@@ -687,12 +733,18 @@ def _extract_tarball(
                 raise UnsafeArchiveError("archive top-level member is not a directory")
             if path is not None:
                 if path == PurePosixPath(MANIFEST_NAME):
-                    raise UnsafeArchiveError("archive contains Leitir's reserved manifest path")
+                    raise UnsafeArchiveError(
+                        "archive contains Leitir's reserved manifest path"
+                    )
                 if path in seen:
                     raise UnsafeArchiveError("archive contains duplicate member paths")
                 seen.add(path)
-            if not (member.isdir() or member.isreg() or member.issym() or member.islnk()):
-                raise UnsafeArchiveError("archive contains a device or other special file")
+            if not (
+                member.isdir() or member.isreg() or member.issym() or member.islnk()
+            ):
+                raise UnsafeArchiveError(
+                    "archive contains a device or other special file"
+                )
             if member.issym() and path is not None:
                 _symlink_destination(path, member.linkname)
             if member.islnk():
@@ -722,7 +774,7 @@ def _extract_tarball(
             if source is None:
                 raise UnsafeArchiveError("regular archive member has no data")
             _assert_confined(output, root)
-            with source, output.open("xb") as handle:
+            with source, _open_new_regular_file(output, root) as handle:
                 shutil.copyfileobj(source, handle)
             output.chmod(member.mode & 0o777)
             regular_paths.add(path)
@@ -732,7 +784,9 @@ def _extract_tarball(
                 continue
             linked = _hardlink_path(member.linkname, expected_root)
             if linked not in regular_paths:
-                raise UnsafeArchiveError("hard link does not target a regular archive member")
+                raise UnsafeArchiveError(
+                    "hard link does not target a regular archive member"
+                )
             output = destination.joinpath(*path.parts)
             _assert_confined(output, root)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -791,7 +845,9 @@ def _verify_extracted_tree(
     }
 
     entries = tree_source.list_blobs(f"{owner}/{repo}", commit_sha)  # type: ignore[attr-defined]
-    logger.debug("verifying extracted tree repo=%s/%s blobs=%d", owner, repo, len(entries))
+    logger.debug(
+        "verifying extracted tree repo=%s/%s blobs=%d", owner, repo, len(entries)
+    )
     expected: dict[str, object] = {}
     for entry in entries:
         if entry.path in expected:
@@ -844,9 +900,7 @@ def _verify_extracted_tree(
         selected = sorted(
             candidates,
             key=lambda path: hashlib.sha256(
-                commit_sha.encode("ascii")
-                + b"\0"
-                + path.encode("utf-8")
+                commit_sha.encode("ascii") + b"\0" + path.encode("utf-8")
             ).digest(),
         )
         bounded: list[str] = []
@@ -882,17 +936,22 @@ def _verify_extracted_tree(
                 blob_bytes = read_at_commit(f"{owner}/{repo}", commit_sha, relative)
             else:
                 blob_bytes = tree_source.read_blob(  # type: ignore[attr-defined]
-                    f"{owner}/{repo}", entry.blob_sha  # type: ignore[attr-defined]
+                    f"{owner}/{repo}",
+                    entry.blob_sha,  # type: ignore[attr-defined]
                 )
             if extracted_bytes != blob_bytes:
-                raise VerificationError(f"Git symbolic-link blob digest mismatch: {relative}")
+                raise VerificationError(
+                    f"Git symbolic-link blob digest mismatch: {relative}"
+                )
     for relative in selected:
         path = extracted.get(relative)
         entry = expected.get(relative)
         if path is None:
             raise VerificationError(f"missing extracted regular file: {relative}")
         if entry is None:
-            raise VerificationError(f"extracted file is absent from Git tree: {relative}")
+            raise VerificationError(
+                f"extracted file is absent from Git tree: {relative}"
+            )
         extracted_bytes = path.read_bytes()
         actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
@@ -903,13 +962,16 @@ def _verify_extracted_tree(
                 # Compatibility for injected TreeSource implementations. The
                 # blob SHA came from the pinned commit's tree listing.
                 blob_bytes = tree_source.read_blob(  # type: ignore[attr-defined]
-                    f"{owner}/{repo}", entry.blob_sha  # type: ignore[attr-defined]
+                    f"{owner}/{repo}",
+                    entry.blob_sha,  # type: ignore[attr-defined]
                 )
             if extracted_bytes not in (blob_bytes, blob_bytes.replace(b"\n", b"\r\n")):
                 raise VerificationError(f"Git blob digest mismatch: {relative}")
             text_normalized += 1
     outcome: bool | str = "sampled" if sampled else True
-    logger.debug("tree verification outcome=%s normalized_files=%d", outcome, text_normalized)
+    logger.debug(
+        "tree verification outcome=%s normalized_files=%d", outcome, text_normalized
+    )
     return outcome, text_normalized
 
 
@@ -971,7 +1033,9 @@ def materialize_github_repo(
         headers["Authorization"] = f"Bearer {github_token}"
 
     def _fetch() -> bytes:
-        with _http.safe_urlopen(Request(url, headers=headers), timeout=timeout) as response:
+        with _http.safe_urlopen(
+            Request(url, headers=headers), timeout=timeout
+        ) as response:
             return _read_bounded(response, ARCHIVE_MAX_COMPRESSED_BYTES)
 
     if tree_source is None and verify:
@@ -1100,7 +1164,9 @@ def _materialize_hosted_repo_locked(
             return target
         if (
             existing.get("verified") == "archive-only"
-            and not getattr(tree_source, "full_tree_verification_available", lambda: True)()
+            and not getattr(
+                tree_source, "full_tree_verification_available", lambda: True
+            )()
         ):
             _assert_target_confinement(Path(root), target)
             return target
@@ -1110,10 +1176,14 @@ def _materialize_hosted_repo_locked(
         on_fetch()
     target.parent.mkdir(parents=True, exist_ok=True)
     _assert_target_confinement(Path(root), target)
-    staging = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{commit_sha}.tmp-{os.getpid()}-", dir=target.parent)
+    )
     try:
         data = fetch_archive()
-        logger.debug("materialize downloaded bytes=%d method=%s", len(data), fetch_method)
+        logger.debug(
+            "materialize downloaded bytes=%d method=%s", len(data), fetch_method
+        )
         if len(data) > ARCHIVE_MAX_COMPRESSED_BYTES:
             raise MaterializationError("archive download exceeds compressed size limit")
         _extract_tarball(
@@ -1144,14 +1214,16 @@ def _materialize_hosted_repo_locked(
             verified_at = None
             text_normalized = 0
         verification_notes = (
-            [f"text-normalized: {text_normalized} file(s)"]
-            if text_normalized
-            else []
+            [f"text-normalized: {text_normalized} file(s)"] if text_normalized else []
         )
         fetched_at = _utc_now()
         manifest: dict[str, object] = dict(manifest_fields or {})
-        if "published_at" in manifest and not _valid_timestamp(manifest["published_at"]):
-            raise MaterializationError("published_at must be a timezone-aware ISO-8601 timestamp")
+        if "published_at" in manifest and not _valid_timestamp(
+            manifest["published_at"]
+        ):
+            raise MaterializationError(
+                "published_at must be a timezone-aware ISO-8601 timestamp"
+            )
         manifest.update(
             {
                 "spec": spec,
@@ -1182,7 +1254,9 @@ def _materialize_hosted_repo_locked(
             ):
                 shutil.rmtree(staging)
                 return target
-            backup = Path(tempfile.mkdtemp(prefix=f".{commit_sha}.old-", dir=target.parent))
+            backup = Path(
+                tempfile.mkdtemp(prefix=f".{commit_sha}.old-", dir=target.parent)
+            )
             backup.rmdir()
             os.replace(target, backup)
         else:
@@ -1262,7 +1336,11 @@ def _materialize_artifact_locked(
 
     if not isinstance(artifact, ArtifactInfo):
         raise TypeError("artifact must be an ArtifactInfo")
-    logger.debug("materialize fetch method=registry-artifact kind=%s url=%s", artifact.artifact_kind, artifact.url)
+    logger.debug(
+        "materialize fetch method=registry-artifact kind=%s url=%s",
+        artifact.artifact_kind,
+        artifact.url,
+    )
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("spec must be non-empty")
     owner, repo = scope.slug.split("/", 1)
@@ -1304,13 +1382,21 @@ def _materialize_artifact_locked(
 
     target.parent.mkdir(parents=True, exist_ok=True)
     _assert_target_confinement(Path(root), target)
-    staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{scope.commit_sha}.tmp-{os.getpid()}-", dir=target.parent
+        )
+    )
     try:
         extract_artifact(data, staging)
         now = _utc_now()
         manifest: dict[str, object] = dict(manifest_fields or {})
-        if "published_at" in manifest and not _valid_timestamp(manifest["published_at"]):
-            raise MaterializationError("published_at must be a timezone-aware ISO-8601 timestamp")
+        if "published_at" in manifest and not _valid_timestamp(
+            manifest["published_at"]
+        ):
+            raise MaterializationError(
+                "published_at must be a timezone-aware ISO-8601 timestamp"
+            )
         manifest.update(
             {
                 "spec": spec,
@@ -1347,7 +1433,9 @@ def _materialize_artifact_locked(
             ):
                 shutil.rmtree(staging)
                 return target
-            backup = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent))
+            backup = Path(
+                tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent)
+            )
             backup.rmdir()
             os.replace(target, backup)
         else:
@@ -1378,12 +1466,21 @@ def materialize_repo(
     **kwargs: object,
 ) -> Path:
     """Materialize a :class:`RepoScope` through its host-native resolver."""
-    slug = f"~{scope.slug}" if host == "git.sr.ht" and not scope.slug.startswith("~") else scope.slug
+    slug = (
+        f"~{scope.slug}"
+        if host == "git.sr.ht" and not scope.slug.startswith("~")
+        else scope.slug
+    )
     owner, repo = slug.split("/", 1)
     owner, repo, _parts = _normalize_identity(owner, repo, scope.commit_sha, host)
     if host == "github.com":
         return materialize_github_repo(
-            root, spec, owner, repo, scope.commit_sha, **kwargs  # type: ignore[arg-type]
+            root,
+            spec,
+            owner,
+            repo,
+            scope.commit_sha,
+            **kwargs,  # type: ignore[arg-type]
         )
     if host not in ("gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"):
         raise ValueError(f"unsupported repository host {host!r}")

@@ -84,9 +84,7 @@ def _github_token() -> str | None:
 def _parse_predicate(raw: str) -> Predicate:
     parts = raw.split(":", 2)
     if len(parts) < 2:
-        raise argparse.ArgumentTypeError(
-            f"predicate must be kind:value, got {raw!r}"
-        )
+        raise argparse.ArgumentTypeError(f"predicate must be kind:value, got {raw!r}")
     kind_str, value = parts[0], parts[1]
     language = parts[2] if len(parts) == 3 else None
     try:
@@ -169,8 +167,12 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("--dry-run", action="store_true")
     upgrade_roots = upgrade.add_mutually_exclusive_group()
     upgrade_roots.add_argument("--root", default=None, help="corpus root directory")
-    upgrade_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
-    trust = commands.add_parser("trust", help="compute cached trust evidence for a source")
+    upgrade_roots.add_argument(
+        "--local", action="store_true", help="use ./.leitir-refs"
+    )
+    trust = commands.add_parser(
+        "trust", help="compute cached trust evidence for a source"
+    )
     trust.add_argument("spec")
     trust.add_argument("--json", action="store_true", dest="as_json")
     trust_roots = trust.add_mutually_exclusive_group()
@@ -180,12 +182,18 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("spec")
     clean = commands.add_parser("clean", help="empty the source corpus")
     clean.add_argument("--repos", action="store_true")
-    lock = commands.add_parser("lock", help="materialize the project's dependency closure")
-    lock.add_argument("--cwd", default=None, help="project directory containing lockfiles")
+    lock = commands.add_parser(
+        "lock", help="materialize the project's dependency closure"
+    )
+    lock.add_argument(
+        "--cwd", default=None, help="project directory containing lockfiles"
+    )
     lock_roots = lock.add_mutually_exclusive_group()
     lock_roots.add_argument("--root", default=None, help="corpus root directory")
     lock_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
-    lock.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
+    lock.add_argument(
+        "--no-verify", action="store_true", help="skip Git tree verification"
+    )
     lock.add_argument(
         "--best-effort",
         action="store_true",
@@ -193,7 +201,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sbom = commands.add_parser("sbom", help="emit an SBOM for the materialized corpus")
     sbom.add_argument("--format", choices=("spdx", "cyclonedx"), default="spdx")
-    sbom.add_argument("--cwd", default=None, help="project directory containing lockfiles")
+    sbom.add_argument(
+        "--cwd", default=None, help="project directory containing lockfiles"
+    )
     sbom_roots = sbom.add_mutually_exclusive_group()
     sbom_roots.add_argument("--root", default=None, help="corpus root directory")
     sbom_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
@@ -204,12 +214,16 @@ def build_parser() -> argparse.ArgumentParser:
     api_roots.add_argument("--root", default=None, help="corpus root directory")
     api_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     api.set_defaults(cwd=None, no_verify=False)
-    examples = commands.add_parser("examples", help="extract and cache materialized source examples")
+    examples = commands.add_parser(
+        "examples", help="extract and cache materialized source examples"
+    )
     examples.add_argument("spec")
     examples.add_argument("--json", action="store_true", dest="as_json")
     examples_roots = examples.add_mutually_exclusive_group()
     examples_roots.add_argument("--root", default=None, help="corpus root directory")
-    examples_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    examples_roots.add_argument(
+        "--local", action="store_true", help="use ./.leitir-refs"
+    )
     examples.set_defaults(cwd=None, no_verify=False)
     info = commands.add_parser("info", help="materialize and describe one dependency")
     info.add_argument("spec")
@@ -217,19 +231,27 @@ def build_parser() -> argparse.ArgumentParser:
     info_roots = info.add_mutually_exclusive_group()
     info_roots.add_argument("--root", default=None, help="corpus root directory")
     info_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
-    info.add_argument("--cwd", default=None, help="project directory used for lockfile resolution")
-    info.add_argument("--no-verify", action="store_true", help="skip Git tree verification")
+    info.add_argument(
+        "--cwd", default=None, help="project directory used for lockfile resolution"
+    )
+    info.add_argument(
+        "--no-verify", action="store_true", help="skip Git tree verification"
+    )
     diff = commands.add_parser("diff", help="diff two resolved source versions")
     diff.add_argument("spec_a")
     diff.add_argument("spec_b")
     diff.add_argument("--json", action="store_true", dest="as_json")
-    diff.add_argument("--cwd", default=None, help="project directory used for lockfile resolution")
+    diff.add_argument(
+        "--cwd", default=None, help="project directory used for lockfile resolution"
+    )
     diff_roots = diff.add_mutually_exclusive_group()
     diff_roots.add_argument("--root", default=None, help="corpus root directory")
     diff_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
-    import_command = commands.add_parser("import", help="import an immutable corpus snapshot")
+    import_command = commands.add_parser(
+        "import", help="import an immutable corpus snapshot"
+    )
     import_command.add_argument("lock")
     import_command.add_argument(
         "--lock-sha256",
@@ -238,9 +260,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for snapshot_command in (export, import_command):
         snapshot_roots = snapshot_command.add_mutually_exclusive_group()
-        snapshot_roots.add_argument("--root", default=None, help="corpus root directory")
-        snapshot_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
-    gc = commands.add_parser("gc", help="remove abandoned materialization staging directories")
+        snapshot_roots.add_argument(
+            "--root", default=None, help="corpus root directory"
+        )
+        snapshot_roots.add_argument(
+            "--local", action="store_true", help="use ./.leitir-refs"
+        )
+    gc = commands.add_parser(
+        "gc", help="remove abandoned materialization staging directories"
+    )
     gc_roots = gc.add_mutually_exclusive_group()
     gc_roots.add_argument("--root", default=None, help="corpus root directory")
     gc_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
@@ -306,7 +334,10 @@ def _configure_logging_from_env(
 ) -> None:
     """Route warnings to CLI stderr and enable diagnostics when requested."""
     debug_env = os.environ.get("LEITIR_DEBUG", "").casefold() in {
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     }
     level_value = os.environ.get("LEITIR_LOG_LEVEL", "")
     level_name = level_value.upper()
@@ -380,7 +411,8 @@ def _build_default_resolver(token: str | None) -> object:
         hostname = urlsplit(value).hostname
         return {
             "base_url": value,
-            "allow_insecure_http_for_tests": hostname in {"127.0.0.1", "localhost", "::1"},
+            "allow_insecure_http_for_tests": hostname
+            in {"127.0.0.1", "localhost", "::1"},
         }
 
     tag_options = {}
@@ -432,9 +464,7 @@ def _load_benchmark_manifest(path: str | None) -> object:
     return load_manifest(path)
 
 
-def _build_default_global_searcher(
-    code_search: object, tree_source: object
-) -> object:
+def _build_default_global_searcher(code_search: object, tree_source: object) -> object:
     from .adapters import GoAdapter, PythonAdapter, RustAdapter
     from .discovery_search import GlobalSearcher
 
@@ -464,8 +494,14 @@ def _ensure_local_gitignore(cwd: Path) -> str:
     except FileNotFoundError:
         gitignore.write_text(line + "\n", encoding="utf-8")
         return f"created {gitignore} with {line}"
-    rules = {item.strip() for item in existing.splitlines() if item.strip() and not item.lstrip().startswith("#")}
-    if rules.intersection({line, ".leitir-refs", "/.leitir-refs/", "/.leitir-refs", ".leitir-refs/**"}):
+    rules = {
+        item.strip()
+        for item in existing.splitlines()
+        if item.strip() and not item.lstrip().startswith("#")
+    }
+    if rules.intersection(
+        {line, ".leitir-refs", "/.leitir-refs/", "/.leitir-refs", ".leitir-refs/**"}
+    ):
         return f"{gitignore} already covers {line}"
     separator = "" if not existing or existing.endswith("\n") else "\n"
     with gitignore.open("a", encoding="utf-8") as handle:
@@ -544,7 +580,11 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
         elif manifest.get("verified") == "archive-only":
             verification = "archive-only"
         trust_score = manifest.get("trust_score")
-        if not isinstance(trust_score, int) or isinstance(trust_score, bool) or not 0 <= trust_score <= 100:
+        if (
+            not isinstance(trust_score, int)
+            or isinstance(trust_score, bool)
+            or not 0 <= trust_score <= 100
+        ):
             trust_score = None
         rendered.append((entry, version, verification, trust_score))
     if filtered:
@@ -621,8 +661,11 @@ def _gc_abandoned_staging(root: Path) -> int:
     """Remove writer staging/backup directories while holding their target lock."""
     from .materialize import (
         MaterializationError,
+        MANIFEST_NAME,
         _assert_target_confinement,
         _file_lock,
+        _fsync_directory,
+        read_valid_manifest,
     )
 
     root = root.expanduser().absolute()
@@ -656,18 +699,28 @@ def _gc_abandoned_staging(root: Path) -> int:
             if not is_repo_target_parent:
                 retained.append(name)
                 continue
-            marker = ".tmp-" if ".tmp-" in name else ".old-" if ".old-" in name else None
+            marker = (
+                ".tmp-" if ".tmp-" in name else ".old-" if ".old-" in name else None
+            )
             if marker is None or not name.startswith("."):
                 retained.append(name)
                 continue
             commit_sha = name[1:].split(marker, 1)[0]
-            if len(commit_sha) != 40 or any(ch not in "0123456789abcdef" for ch in commit_sha):
+            if len(commit_sha) != 40 or any(
+                ch not in "0123456789abcdef" for ch in commit_sha
+            ):
                 retained.append(name)
                 continue
             candidates.append((path, parent_path / commit_sha, marker))
         directories[:] = retained
 
-    for candidate, target, marker in sorted(candidates, key=lambda item: item[0].as_posix()):
+    generations: dict[Path, list[tuple[Path, str]]] = {}
+    for candidate, target, marker in candidates:
+        generations.setdefault(target, []).append((candidate, marker))
+
+    for candidate, target, marker in sorted(
+        candidates, key=lambda item: item[0].as_posix()
+    ):
         _assert_target_confinement(root, candidate)
         identity = target.absolute().relative_to(root).as_posix().encode("utf-8")
         lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
@@ -675,7 +728,43 @@ def _gc_abandoned_staging(root: Path) -> int:
             _assert_target_confinement(root, candidate)
             if marker == ".old-" and not target.exists():
                 # A crash after target -> backup but before staging -> target
-                # leaves this as the only valid cache generation.
+                # leaves this as the only valid cache generation. Restore only
+                # one intact, fully load-time-verified generation.
+                surviving = [
+                    path for path, _kind in generations[target] if path.exists()
+                ]
+                if surviving != [candidate]:
+                    continue
+                try:
+                    payload = json.loads(
+                        (candidate / MANIFEST_NAME).read_text(encoding="utf-8")
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                owner = payload.get("owner")
+                repo = payload.get("repo")
+                host = payload.get("host")
+                commit_sha = payload.get("commit_sha")
+                if not all(
+                    isinstance(value, str) for value in (owner, repo, host, commit_sha)
+                ):
+                    continue
+                if (
+                    commit_sha != target.name
+                    or read_valid_manifest(
+                        candidate,
+                        owner,
+                        repo,
+                        commit_sha,
+                        host=host,
+                    )
+                    is None
+                ):
+                    continue
+                os.replace(candidate, target)
+                _fsync_directory(target.parent)
                 continue
             try:
                 metadata = candidate.lstat()
@@ -716,7 +805,10 @@ def _run_corpus_command(
             return _upgrade_cache(root, dry_run=args.dry_run, out=out)
         if args.command == "gc":
             removed = _gc_abandoned_staging(root)
-            print(json.dumps({"removed": removed, "root": str(root)}, sort_keys=True), file=out)
+            print(
+                json.dumps({"removed": removed, "root": str(root)}, sort_keys=True),
+                file=out,
+            )
             return int(ExitCode.SUCCESS)
         if args.command == "trust":
             from .corpus import record_trust
@@ -742,6 +834,8 @@ def _run_corpus_command(
             return int(ExitCode.SUCCESS)
         if args.command == "diff":
             from .diff import GitHubReleaseNotes, diff_packages
+            from .corpus import materialize_source
+            from .materialize import _target_lock, read_valid_manifest
 
             token = _github_token()
             resolver = resolver_factory(token)
@@ -751,22 +845,110 @@ def _run_corpus_command(
             if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
-                fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+                fetch_options["tree_base_url"] = os.environ[
+                    "LEITIR_GITHUB_API_BASE_URL"
+                ]
             notes_options = {}
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                 notes_options["base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
-            report = diff_packages(
-                args.spec_a,
-                args.spec_b,
-                corpus_root=root,
-                resolver=resolver,
-                heads=heads,
-                cwd=cwd,
-                release_notes=GitHubReleaseNotes(token, **notes_options),
-                fetch_options=fetch_options,
-                on_resolve=lambda spec: print(f"leitir: resolving {spec} (cwd={cwd})", file=err),
-                on_materialize=lambda spec: print(f"leitir: materializing {spec}", file=err),
-            )
+            # An injected diff implementation is an explicit test/embedding
+            # seam and may not consume shelf bytes at all. Only the built-in
+            # implementation needs leitir's target-lock orchestration.
+            if diff_packages.__module__ != "leitir.diff":
+                report = diff_packages(
+                    args.spec_a,
+                    args.spec_b,
+                    corpus_root=root,
+                    resolver=resolver,
+                    heads=heads,
+                    cwd=cwd,
+                    release_notes=GitHubReleaseNotes(token, **notes_options),
+                    fetch_options=fetch_options,
+                )
+                if args.as_json:
+                    print(report.to_json(), file=out)
+                else:
+                    _write_diff_human(report, out)
+                return int(ExitCode.SUCCESS)
+            prepared: dict[str, tuple[Path, RepoScope, str]] = {}
+            for raw in (args.spec_a, args.spec_b):
+                parsed = parse_corpus_spec(raw)
+                resolved, tag, version_source, _detection = _resolve_corpus_spec(
+                    parsed, resolver, heads, cwd
+                )
+                scope = resolved.scope if hasattr(resolved, "scope") else resolved
+                materialize_host = (
+                    parsed.host or "github.com"
+                    if parsed.ecosystem is None
+                    else getattr(resolved, "host", "github.com")
+                )
+                path = materialize_source(
+                    raw,
+                    resolved,
+                    root=root,
+                    name=parsed.name,
+                    tag=tag,
+                    version_source=version_source,
+                    host=materialize_host,
+                    repository_resolver=(
+                        getattr(resolver, "_repository_resolvers", {}).get(
+                            materialize_host
+                        )
+                        if materialize_host != "github.com"
+                        else None
+                    ),
+                    on_fetch=lambda raw=raw: print(
+                        f"leitir: materializing {raw}", file=err
+                    ),
+                    **fetch_options,
+                )
+                prepared[raw] = (path, scope, materialize_host)
+
+            with ExitStack() as diff_locks:
+                unique = {
+                    path.absolute().as_posix(): (path, scope, materialize_host)
+                    for path, scope, materialize_host in prepared.values()
+                }
+                for _identity, (path, scope, materialize_host) in sorted(
+                    unique.items()
+                ):
+                    diff_locks.enter_context(_target_lock(root, path, scope.commit_sha))
+                    owner, repo = scope.slug.rsplit("/", 1)
+                    if materialize_host == "git.sr.ht" and not owner.startswith("~"):
+                        owner = f"~{owner}"
+                    if (
+                        read_valid_manifest(
+                            path,
+                            owner,
+                            repo,
+                            scope.commit_sha,
+                            host=materialize_host,
+                        )
+                        is None
+                    ):
+                        raise ValueError(
+                            f"materialized source failed load-time verification: {path}"
+                        )
+
+                def locked_materializer(
+                    raw: str, *_args: object, **_kwargs: object
+                ) -> Path:
+                    return prepared[raw][0]
+
+                report = diff_packages(
+                    args.spec_a,
+                    args.spec_b,
+                    corpus_root=root,
+                    resolver=resolver,
+                    heads=heads,
+                    cwd=cwd,
+                    materializer=locked_materializer,
+                    release_notes=GitHubReleaseNotes(token, **notes_options),
+                    fetch_options=fetch_options,
+                    on_resolve=lambda spec: print(
+                        f"leitir: resolving {spec} (cwd={cwd})", file=err
+                    ),
+                )
             if args.as_json:
                 print(report.to_json(), file=out)
             else:
@@ -781,14 +963,18 @@ def _run_corpus_command(
                 token = _github_token()
                 resolver = resolver_factory(token)
                 heads = code_search_factory(token)
-                resolved, _, _, _ = _resolve_corpus_spec(parsed, resolver, heads, Path.cwd())
+                resolved, _, _, _ = _resolve_corpus_spec(
+                    parsed, resolver, heads, Path.cwd()
+                )
                 scope = resolved.scope if hasattr(resolved, "scope") else resolved
                 owner, repo = scope.slug.split("/", 1)
                 sha = scope.commit_sha
             removed = remove_source(
                 root, owner, repo, sha, host=parsed.host or "github.com"
             )
-            print(f"leitir: {'removed' if removed else 'not found'} {args.spec}", file=err)
+            print(
+                f"leitir: {'removed' if removed else 'not found'} {args.spec}", file=err
+            )
             return int(ExitCode.SUCCESS)
         if args.command == "clean":
             shutil.rmtree(root / "repos", ignore_errors=True)
@@ -803,7 +989,17 @@ def _run_corpus_command(
 
             lock_path, tarball_path = export_corpus(args.output, root=root)
             lock_sha256 = hashlib.sha256(lock_path.read_bytes()).hexdigest()
-            print(json.dumps({"lock": str(lock_path), "lock_sha256": lock_sha256, "tarball": str(tarball_path)}, sort_keys=True), file=out)
+            print(
+                json.dumps(
+                    {
+                        "lock": str(lock_path),
+                        "lock_sha256": lock_sha256,
+                        "tarball": str(tarball_path),
+                    },
+                    sort_keys=True,
+                ),
+                file=out,
+            )
             print(f"leitir: exported {lock_path}", file=err)
             return int(ExitCode.SUCCESS)
         if args.command == "import":
@@ -814,14 +1010,45 @@ def _run_corpus_command(
                 root=root,
                 expected_lock_sha256=args.lock_sha256,
             )
-            print(json.dumps({"root": str(root), "sources": len(entries)}, sort_keys=True), file=out)
+            print(
+                json.dumps(
+                    {"root": str(root), "sources": len(entries)}, sort_keys=True
+                ),
+                file=out,
+            )
             print(f"leitir: imported {len(entries)} source(s) into {root}", file=err)
             return int(ExitCode.SUCCESS)
         if args.command == "sbom":
             from .sbom import generate_sbom
+            from .corpus import load_sources
+            from .materialize import (
+                _assert_target_confinement,
+                _file_lock,
+                _target_lock,
+            )
 
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
-            document = generate_sbom(root, cwd, args.format)
+            entries = load_sources(root)
+            targets: dict[str, tuple[Path, str]] = {}
+            for entry in entries:
+                relative = Path(entry["path"])
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError(f"invalid shelved source path: {entry['path']!r}")
+                target = root / relative
+                _assert_target_confinement(root, target)
+                targets[target.absolute().as_posix()] = (
+                    target,
+                    str(entry["commit_sha"]),
+                )
+            with ExitStack() as sbom_locks:
+                for _identity, (target, commit_sha) in sorted(targets.items()):
+                    sbom_locks.enter_context(_target_lock(root, target, commit_sha))
+                sbom_locks.enter_context(_file_lock(root / ".sources.lock"))
+                if load_sources(root) != entries:
+                    raise ValueError(
+                        "corpus index changed while acquiring SBOM read locks"
+                    )
+                document = generate_sbom(root, cwd, args.format)
             print(json.dumps(document, indent=2, sort_keys=True), file=out)
             print(f"leitir: generated {args.format} SBOM from {root}", file=err)
             return int(ExitCode.SUCCESS)
@@ -836,7 +1063,9 @@ def _run_corpus_command(
             if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
-                fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+                fetch_options["tree_base_url"] = os.environ[
+                    "LEITIR_GITHUB_API_BASE_URL"
+                ]
             failures: list[dict[str, str]] = []
             summary = lock_project(
                 cwd,
@@ -903,7 +1132,9 @@ def _run_corpus_command(
         ] = []
         materialized_targets: dict[tuple[str, str, str], Path] = {}
         for request in resolved_requests:
-            raw, parsed, resolved, tag, version_source, materialize_host, scope = request
+            raw, parsed, resolved, tag, version_source, materialize_host, scope = (
+                request
+            )
             target_identity = (materialize_host, scope.slug, scope.commit_sha)
             path = materialized_targets.get(target_identity)
             if path is None:
@@ -916,7 +1147,9 @@ def _run_corpus_command(
                     version_source=version_source,
                     host=materialize_host,
                     repository_resolver=(
-                        getattr(resolver, "_repository_resolvers", {}).get(materialize_host)
+                        getattr(resolver, "_repository_resolvers", {}).get(
+                            materialize_host
+                        )
                         if materialize_host != "github.com"
                         else None
                     ),
@@ -927,237 +1160,292 @@ def _run_corpus_command(
                 )
                 materialized_targets[target_identity] = path
             resolved_specs.append(
-                (raw, parsed, resolved, tag, version_source, materialize_host, scope, path)
+                (
+                    raw,
+                    parsed,
+                    resolved,
+                    tag,
+                    version_source,
+                    materialize_host,
+                    scope,
+                    path,
+                )
             )
 
         from .materialize import _target_lock, read_valid_manifest
 
         with ExitStack() as read_locks:
-          # Every process acquires each unique target lock in one global order.
-          # Materialization above holds at most one writer lock at a time.
-          locks = sorted(
-              (
-                  (path.absolute().as_posix(), target_identity[2], path)
-                  for target_identity, path in materialized_targets.items()
-              ),
-              key=lambda item: (item[0], item[1]),
-          )
-          for _lock_identity, commit_sha, path in locks:
-              read_locks.enter_context(_target_lock(root, path, commit_sha))
+            # Every process acquires each unique target lock in one global order.
+            # Materialization above holds at most one writer lock at a time.
+            locks = sorted(
+                (
+                    (path.absolute().as_posix(), target_identity[2], path)
+                    for target_identity, path in materialized_targets.items()
+                ),
+                key=lambda item: (item[0], item[1]),
+            )
+            for _lock_identity, commit_sha, path in locks:
+                read_locks.enter_context(_target_lock(root, path, commit_sha))
 
-          for raw, parsed, resolved, tag, version_source, materialize_host, scope, path in resolved_specs:
-            target_identity = (materialize_host, scope.slug, scope.commit_sha)
-            duplicate = seen_targets.get(target_identity)
-            if duplicate is not None:
-                duplicate_path, subpath, manifest, commit_sha = duplicate
-                paths.append((duplicate_path, subpath, manifest, raw, commit_sha))
-                continue
-            manifest_owner, manifest_repo = scope.slug.rsplit("/", 1)
-            if materialize_host == "git.sr.ht" and not manifest_owner.startswith("~"):
-                manifest_owner = f"~{manifest_owner}"
-            manifest = read_valid_manifest(
+            for (
+                raw,
+                parsed,
+                resolved,
+                tag,
+                version_source,
+                materialize_host,
+                scope,
                 path,
-                manifest_owner,
-                manifest_repo,
-                scope.commit_sha,
-                host=materialize_host,
-            )
-            if manifest is None:
-                raise ValueError(f"materialized source failed load-time verification: {path}")
-            recorded_subpath = manifest.get("subpath")
-            cached_subpath = recorded_subpath if isinstance(recorded_subpath, str) else None
-            seen_targets[target_identity] = (
-                path.absolute(), cached_subpath, manifest, scope.commit_sha
-            )
-            if args.command == "info":
-                from .info import build_info
+            ) in resolved_specs:
+                target_identity = (materialize_host, scope.slug, scope.commit_sha)
+                duplicate = seen_targets.get(target_identity)
+                if duplicate is not None:
+                    duplicate_path, subpath, manifest, commit_sha = duplicate
+                    paths.append((duplicate_path, subpath, manifest, raw, commit_sha))
+                    continue
+                manifest_owner, manifest_repo = scope.slug.rsplit("/", 1)
+                if materialize_host == "git.sr.ht" and not manifest_owner.startswith(
+                    "~"
+                ):
+                    manifest_owner = f"~{manifest_owner}"
+                manifest = read_valid_manifest(
+                    path,
+                    manifest_owner,
+                    manifest_repo,
+                    scope.commit_sha,
+                    host=materialize_host,
+                )
+                if manifest is None:
+                    raise ValueError(
+                        f"materialized source failed load-time verification: {path}"
+                    )
+                recorded_subpath = manifest.get("subpath")
+                cached_subpath = (
+                    recorded_subpath if isinstance(recorded_subpath, str) else None
+                )
+                seen_targets[target_identity] = (
+                    path.absolute(),
+                    cached_subpath,
+                    manifest,
+                    scope.commit_sha,
+                )
+                if args.command == "info":
+                    from .info import build_info
 
-                print(f"leitir: ensuring analysis indexes and trust for {raw}", file=err)
-                document = build_info(raw, corpus_root=root)
-                if args.as_json:
-                    print(json.dumps(document, indent=2, sort_keys=True), file=out)
-                else:
-                    provenance = document["provenance"]
-                    api = document["api"]
-                    examples = document["examples"]
-                    trust = document["trust"]
-                    license_info = document["license"]
-                    parity = document["parity"]
                     print(
-                        f"{raw} {provenance['owner']}/{provenance['repo']}@{provenance['commit_sha']}",
-                        file=out,
+                        f"leitir: ensuring analysis indexes and trust for {raw}",
+                        file=err,
                     )
-                    print(f"tree: {document['paths']['tree']}", file=out)
-                    print(
-                        f"version: {provenance['version'] or 'unknown'} "
-                        f"source: {provenance['source'] or 'unknown'} "
-                        f"verified: {provenance['verified'] if provenance['verified'] is not None else 'unknown'}",
-                        file=out,
-                    )
-                    print(
-                        f"license: {license_info['identifier'] or 'unknown'} "
-                        f"({license_info['method']}, {license_info['confidence']})",
-                        file=out,
-                    )
-                    print(f"parity: {parity['parity']}", file=out)
-                    print(
-                        f"api: {api['symbols']} symbols ({api['method'] or 'unknown'}) "
-                        f"{api['index_path']}",
-                        file=out,
-                    )
-                    for symbol in api["top_symbols"][:5]:
+                    document = build_info(raw, corpus_root=root)
+                    if args.as_json:
+                        print(json.dumps(document, indent=2, sort_keys=True), file=out)
+                    else:
+                        provenance = document["provenance"]
+                        api = document["api"]
+                        examples = document["examples"]
+                        trust = document["trust"]
+                        license_info = document["license"]
+                        parity = document["parity"]
                         print(
-                            f"  {symbol['kind']} {symbol['qualified_name']}"
-                            f"{symbol['signature'] or ''}",
+                            f"{raw} {provenance['owner']}/{provenance['repo']}@{provenance['commit_sha']}",
                             file=out,
                         )
-                    print(
-                        f"examples: {examples['count']} {examples['index_path']}", file=out
-                    )
-                    if examples["top"]:
-                        example = examples["top"][0]
-                        print(f"  example: {example['path']}:{example['line']}", file=out)
-                    print(f"trust: {trust['score']}/100", file=out)
-                continue
-            if args.command in {"api", "examples"}:
-                from .apisurface import extract_api_surface
-                from .corpus import load_sources, read_api_index, write_api_index
-
-                entry = next(
-                    entry
-                    for entry in load_sources(root)
-                    if (root / entry["path"]).absolute() == path.absolute()
-                )
-                recorded_subpath = manifest.get("subpath")
-                scan_path = path / recorded_subpath if isinstance(recorded_subpath, str) else path
-                language_hint = manifest.get("ecosystem")
-                index = read_api_index(root, entry, manifest)
-                if index is None or args.command == "api":
-                    print(f"leitir: extracting API surface for {raw}", file=err)
-                    index = extract_api_surface(
-                        scan_path,
-                        str(language_hint) if language_hint in {"pypi", "npm"} else None,
-                    )
-                    api_path = write_api_index(root, entry, manifest, index)
-                else:
-                    from .corpus import api_index_path
-
-                    api_path = api_index_path(root, entry, manifest).absolute()
-                if args.command == "api":
-                    from .info import _top_symbols
-
-                    index_paths.append(api_path)
-                    symbols = index.get("symbols")
-                    records = symbols if isinstance(symbols, list) else []
-                    by_kind = {
-                        kind: sum(
-                            1
-                            for symbol in records
-                            if isinstance(symbol, dict) and symbol.get("kind") == kind
+                        print(f"tree: {document['paths']['tree']}", file=out)
+                        print(
+                            f"version: {provenance['version'] or 'unknown'} "
+                            f"source: {provenance['source'] or 'unknown'} "
+                            f"verified: {provenance['verified'] if provenance['verified'] is not None else 'unknown'}",
+                            file=out,
                         )
-                        for kind in ("function", "class", "method", "constant")
-                    }
-                    methods = index.get("methods")
-                    known_methods = (
-                        sorted(item for item in methods if item in {"ast", "heuristic"})
-                        if isinstance(methods, list)
-                        else []
+                        print(
+                            f"license: {license_info['identifier'] or 'unknown'} "
+                            f"({license_info['method']}, {license_info['confidence']})",
+                            file=out,
+                        )
+                        print(f"parity: {parity['parity']}", file=out)
+                        print(
+                            f"api: {api['symbols']} symbols ({api['method'] or 'unknown'}) "
+                            f"{api['index_path']}",
+                            file=out,
+                        )
+                        for symbol in api["top_symbols"][:5]:
+                            print(
+                                f"  {symbol['kind']} {symbol['qualified_name']}"
+                                f"{symbol['signature'] or ''}",
+                                file=out,
+                            )
+                        print(
+                            f"examples: {examples['count']} {examples['index_path']}",
+                            file=out,
+                        )
+                        if examples["top"]:
+                            example = examples["top"][0]
+                            print(
+                                f"  example: {example['path']}:{example['line']}",
+                                file=out,
+                            )
+                        print(f"trust: {trust['score']}/100", file=out)
+                    continue
+                if args.command in {"api", "examples"}:
+                    from .apisurface import extract_api_surface
+                    from .corpus import load_sources, read_api_index, write_api_index
+
+                    entry = next(
+                        entry
+                        for entry in load_sources(root)
+                        if (root / entry["path"]).absolute() == path.absolute()
                     )
-                    index_payloads.append(
-                        {
-                            "schema_version": 1,
-                            "index_path": str(api_path.absolute()),
-                            "symbols": len(records),
-                            "by_kind": by_kind,
-                            "method": (
-                                "ast"
-                                if known_methods == ["ast"]
-                                else "heuristic"
-                                if known_methods
-                                else None
-                            ),
-                            "top_symbols": _top_symbols(index),
+                    recorded_subpath = manifest.get("subpath")
+                    scan_path = (
+                        path / recorded_subpath
+                        if isinstance(recorded_subpath, str)
+                        else path
+                    )
+                    language_hint = manifest.get("ecosystem")
+                    index = read_api_index(root, entry, manifest)
+                    if index is None or args.command == "api":
+                        print(f"leitir: extracting API surface for {raw}", file=err)
+                        index = extract_api_surface(
+                            scan_path,
+                            str(language_hint)
+                            if language_hint in {"pypi", "npm"}
+                            else None,
+                        )
+                        api_path = write_api_index(root, entry, manifest, index)
+                    else:
+                        from .corpus import api_index_path
+
+                        api_path = api_index_path(root, entry, manifest).absolute()
+                    if args.command == "api":
+                        from .info import _top_symbols
+
+                        index_paths.append(api_path)
+                        symbols = index.get("symbols")
+                        records = symbols if isinstance(symbols, list) else []
+                        by_kind = {
+                            kind: sum(
+                                1
+                                for symbol in records
+                                if isinstance(symbol, dict)
+                                and symbol.get("kind") == kind
+                            )
+                            for kind in ("function", "class", "method", "constant")
                         }
-                    )
-                else:
-                    from .corpus import write_examples_index
+                        methods = index.get("methods")
+                        known_methods = (
+                            sorted(
+                                item for item in methods if item in {"ast", "heuristic"}
+                            )
+                            if isinstance(methods, list)
+                            else []
+                        )
+                        index_payloads.append(
+                            {
+                                "schema_version": 1,
+                                "index_path": str(api_path.absolute()),
+                                "symbols": len(records),
+                                "by_kind": by_kind,
+                                "method": (
+                                    "ast"
+                                    if known_methods == ["ast"]
+                                    else "heuristic"
+                                    if known_methods
+                                    else None
+                                ),
+                                "top_symbols": _top_symbols(index),
+                            }
+                        )
+                    else:
+                        from .corpus import write_examples_index
+                        from .docpointers import regenerate_pointers
+                        from .examples import extract_examples
+
+                        print(f"leitir: extracting examples for {raw}", file=err)
+                        examples_index = extract_examples(path, index)
+                        examples_path = write_examples_index(
+                            root, entry, manifest, examples_index
+                        )
+                        index_paths.append(examples_path)
+                        snippets = examples_index.get("snippets")
+                        index_payloads.append(
+                            {
+                                "schema_version": 1,
+                                "index_path": str(examples_path.absolute()),
+                                "count": len(snippets)
+                                if isinstance(snippets, list)
+                                else 0,
+                                "snippets": snippets
+                                if isinstance(snippets, list)
+                                else [],
+                            }
+                        )
+                        regenerate_pointers(root)
+                    continue
+                recorded_subpath = manifest.get("subpath")
+                subpath = (
+                    recorded_subpath if isinstance(recorded_subpath, str) else None
+                )
+                paths.append(
+                    (path.absolute(), subpath, manifest, raw, scope.commit_sha)
+                )
+            if args.command in {"api", "examples"}:
+                if args.command == "api":
                     from .docpointers import regenerate_pointers
-                    from .examples import extract_examples
 
-                    print(f"leitir: extracting examples for {raw}", file=err)
-                    examples_index = extract_examples(path, index)
-                    examples_path = write_examples_index(root, entry, manifest, examples_index)
-                    index_paths.append(examples_path)
-                    snippets = examples_index.get("snippets")
-                    index_payloads.append(
+                    regenerate_pointers(root)
+                if args.as_json:
+                    for payload in index_payloads:
+                        print(json.dumps(payload, indent=2, sort_keys=True), file=out)
+                else:
+                    for index_path, payload in zip(index_paths, index_payloads):
+                        print(index_path, file=out)
+                        if args.command == "api":
+                            for symbol in payload["top_symbols"][:5]:
+                                print(
+                                    f"{symbol['kind']} {symbol['qualified_name']}"
+                                    f"{symbol['signature'] or ''}",
+                                    file=out,
+                                )
+            elif args.command == "get":
+                results = []
+                for path, subpath, manifest, raw, commit_sha in paths:
+                    selected = path
+                    if subpath is None:
+                        pass
+                    else:
+                        package_path = path / subpath
+                        inside_target = package_path.resolve().is_relative_to(
+                            path.resolve()
+                        )
+                        if inside_target and package_path.exists():
+                            selected = package_path
+                        else:
+                            print(
+                                f"leitir: warning: recorded subpath {subpath!r} does not exist "
+                                f"inside {path}; using repository root",
+                                file=err,
+                            )
+                    results.append(
                         {
-                            "schema_version": 1,
-                            "index_path": str(examples_path.absolute()),
-                            "count": len(snippets) if isinstance(snippets, list) else 0,
-                            "snippets": snippets if isinstance(snippets, list) else [],
+                            "spec": raw,
+                            "path": str(selected),
+                            "commit_sha": commit_sha,
+                            "source": manifest.get("source"),
+                            "verified": manifest.get("verified"),
                         }
                     )
-                    regenerate_pointers(root)
-                continue
-            recorded_subpath = manifest.get("subpath")
-            subpath = recorded_subpath if isinstance(recorded_subpath, str) else None
-            paths.append((path.absolute(), subpath, manifest, raw, scope.commit_sha))
-          if args.command in {"api", "examples"}:
-              if args.command == "api":
-                  from .docpointers import regenerate_pointers
-
-                  regenerate_pointers(root)
-              if args.as_json:
-                  for payload in index_payloads:
-                      print(json.dumps(payload, indent=2, sort_keys=True), file=out)
-              else:
-                  for index_path, payload in zip(index_paths, index_payloads):
-                      print(index_path, file=out)
-                      if args.command == "api":
-                          for symbol in payload["top_symbols"][:5]:
-                              print(
-                                  f"{symbol['kind']} {symbol['qualified_name']}"
-                                  f"{symbol['signature'] or ''}",
-                                  file=out,
-                              )
-          elif args.command == "get":
-              results = []
-              for path, subpath, manifest, raw, commit_sha in paths:
-                  selected = path
-                  if subpath is None:
-                      pass
-                  else:
-                      package_path = path / subpath
-                      inside_target = package_path.resolve().is_relative_to(path.resolve())
-                      if inside_target and package_path.exists():
-                          selected = package_path
-                      else:
-                          print(
-                              f"leitir: warning: recorded subpath {subpath!r} does not exist "
-                              f"inside {path}; using repository root",
-                              file=err,
-                          )
-                  results.append(
-                      {
-                          "spec": raw,
-                          "path": str(selected),
-                          "commit_sha": commit_sha,
-                          "source": manifest.get("source"),
-                          "verified": manifest.get("verified"),
-                      }
-                  )
-                  if not args.as_json:
-                      print(selected, file=out)
-              if args.as_json:
-                  print(
-                      json.dumps(
-                          {"schema_version": 1, "results": results},
-                          indent=2,
-                          sort_keys=True,
-                      ),
-                      file=out,
-                  )
-          return int(ExitCode.SUCCESS)
+                    if not args.as_json:
+                        print(selected, file=out)
+                if args.as_json:
+                    print(
+                        json.dumps(
+                            {"schema_version": 1, "results": results},
+                            indent=2,
+                            sort_keys=True,
+                        ),
+                        file=out,
+                    )
+            return int(ExitCode.SUCCESS)
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.MALFORMED_USAGE)
@@ -1213,8 +1501,12 @@ def main(
     resolver_factory: Callable[[str | None], object] = _build_default_resolver,
     searcher_factory: Callable[[object], object] = _build_default_searcher,
     code_search_factory: Callable[[str | None], object] = _build_default_code_search,
-    global_searcher_factory: Callable[[object, object], object] = _build_default_global_searcher,
-    benchmark_runner_factory: Callable[[object], object] = _build_default_benchmark_runner,
+    global_searcher_factory: Callable[
+        [object, object], object
+    ] = _build_default_global_searcher,
+    benchmark_runner_factory: Callable[
+        [object], object
+    ] = _build_default_benchmark_runner,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -1283,7 +1575,24 @@ def main(
         )
         return successful()
 
-    if args.command in {"get", "fetch", "list", "upgrade-cache", "gc", "trust", "remove", "clean", "lock", "export", "import", "sbom", "api", "examples", "info", "diff"}:
+    if args.command in {
+        "get",
+        "fetch",
+        "list",
+        "upgrade-cache",
+        "gc",
+        "trust",
+        "remove",
+        "clean",
+        "lock",
+        "export",
+        "import",
+        "sbom",
+        "api",
+        "examples",
+        "info",
+        "diff",
+    }:
         result = _run_corpus_command(
             args,
             resolver_factory=resolver_factory,

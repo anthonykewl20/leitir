@@ -76,6 +76,7 @@ References
 
 Stdlib-only, deterministic, PYTHONHASHSEED-independent, fails closed.
 """
+
 from __future__ import annotations
 
 import base64
@@ -84,7 +85,7 @@ import os
 import secrets
 import stat
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import BinaryIO, Iterable
 
 # Public algorithm identifier stored alongside the digest so future formats
 # (e.g. one that includes modes or empty directories) can coexist.
@@ -140,7 +141,7 @@ def compute_materialized_tree_hash(
             raise TreeHashStructureError(f"not a directory: {root}")
         entries: list[tuple[str, bytes, str, bytes | None, int]] = []
         total_bytes = 0
-        for relative, absolute, is_symlink in _sorted_regular_files(root):
+        for relative, absolute, is_symlink, metadata in _sorted_regular_files(root):
             relative_bytes = _strict_utf8(relative)
             entry_digest = hashlib.sha256()
             linkname_bytes: bytes | None = None
@@ -180,7 +181,7 @@ def compute_materialized_tree_hash(
             else:
                 size = 0
                 try:
-                    with absolute.open("rb") as handle:
+                    with _open_checked_regular_file(absolute, metadata) as handle:
                         while True:
                             chunk = handle.read(_CHUNK)
                             if not chunk:
@@ -232,7 +233,9 @@ def compute_materialized_tree_hash(
             summary.update(b"  ")
             summary.update(relative_bytes)
             summary.update(b"\n")
-        digest = TREE_HASH_PREFIX + base64.standard_b64encode(summary.digest()).decode("ascii")
+        digest = TREE_HASH_PREFIX + base64.standard_b64encode(summary.digest()).decode(
+            "ascii"
+        )
         return digest, scope
     except TreeHashError:
         raise
@@ -273,13 +276,15 @@ def verify_materialized_tree_hash(
         raise TreeHashFormatError(
             "materialized_tree_hash must be an 'h1:'-prefixed base64 string"
         )
-    encoded = expected[len(TREE_HASH_PREFIX):]
+    encoded = expected[len(TREE_HASH_PREFIX) :]
     try:
         # Strict round-trip: standard_b64encode(b64decode(x, validate=True)) == x
         # enforces canonical alphabet (+ and /) and rejects embedded whitespace.
         decoded = base64.b64decode(encoded, validate=True)
     except (ValueError, base64.binascii.Error) as exc:
-        raise TreeHashFormatError(f"materialized_tree_hash is not valid base64: {exc}") from exc
+        raise TreeHashFormatError(
+            f"materialized_tree_hash is not valid base64: {exc}"
+        ) from exc
     if base64.standard_b64encode(decoded) != encoded.encode("ascii"):
         raise TreeHashFormatError(
             "materialized_tree_hash is not in canonical base64 form"
@@ -321,13 +326,34 @@ def manifest_digest_fields(value: str, *, scope: str = FULL) -> dict[str, str]:
     }
 
 
-def _sorted_regular_files(root: Path) -> Iterable[tuple[str, Path, bool]]:
+def _open_checked_regular_file(path: Path, expected: os.stat_result) -> BinaryIO:
+    """Open the exact regular inode previously inspected, without following links."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+        actual = os.fstat(fd)
+        if (
+            not stat.S_ISREG(actual.st_mode)
+            or actual.st_dev != expected.st_dev
+            or actual.st_ino != expected.st_ino
+        ):
+            raise OSError("entry changed between lstat and open")
+        return os.fdopen(fd, "rb")
+    except Exception:
+        if "fd" in locals():
+            os.close(fd)
+        raise
+
+
+def _sorted_regular_files(
+    root: Path,
+) -> Iterable[tuple[str, Path, bool, os.stat_result]]:
     """Yield sorted path entries, with a flag identifying symbolic links.
 
     Excludes only the root-level manifest.  Sorting happens on the POSIX form
     so the digest is identical on POSIX and Windows for the same tree.
     """
-    entries: list[tuple[str, Path, bool]] = []
+    entries: list[tuple[str, Path, bool, os.stat_result]] = []
 
     def walk_error(exc: OSError) -> None:
         raise TreeHashStructureError(
@@ -347,7 +373,13 @@ def _sorted_regular_files(root: Path) -> Iterable[tuple[str, Path, bool]]:
             if full.is_symlink():
                 rel = _posix_relative(root, full)
                 _validate_relative(rel)
-                entries.append((rel, full, True))
+                try:
+                    metadata = full.lstat()
+                except OSError as exc:
+                    raise TreeHashStructureError(
+                        f"cannot stat entry in materialized tree: {rel} ({exc})"
+                    ) from exc
+                entries.append((rel, full, True, metadata))
                 dirnames.remove(dirname)
 
         for filename in filenames:
@@ -368,13 +400,13 @@ def _sorted_regular_files(root: Path) -> Iterable[tuple[str, Path, bool]]:
                 ) from exc
 
             if stat.S_ISLNK(st.st_mode):
-                entries.append((relative, full, True))
+                entries.append((relative, full, True, st))
             elif not stat.S_ISREG(st.st_mode):
                 raise TreeHashStructureError(
                     f"non-regular entry in materialized tree: {relative}"
                 )
             else:
-                entries.append((relative, full, False))
+                entries.append((relative, full, False, st))
 
     entries.sort(key=lambda item: item[0])
     return entries
@@ -390,8 +422,7 @@ def _strict_utf8(value: str) -> bytes:
         return value.encode("utf-8", errors="strict")
     except UnicodeEncodeError as exc:
         raise TreeHashStructureError(
-            "path or linkname contains non-UTF-8 bytes "
-            f"(unsupported): {value!r}"
+            f"path or linkname contains non-UTF-8 bytes (unsupported): {value!r}"
         ) from exc
 
 
@@ -405,6 +436,7 @@ def _validate_relative(relative: str) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI smoke
     import sys
+
     target = Path(sys.argv[1])
     digest, scope = compute_materialized_tree_hash(target)
     print(digest, scope)

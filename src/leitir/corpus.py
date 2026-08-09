@@ -15,6 +15,7 @@ from leitir.materialize import (
     _assert_target_confinement,
     _file_lock,
     _fsync_directory,
+    _target_lock,
     materialize_artifact,
     materialize_repo,
     read_valid_manifest,
@@ -178,9 +179,20 @@ def record_trust(
         raise ValueError(f"source is not materialized: {spec}")
     if len(matches) != 1:
         raise ValueError(f"source spec is ambiguous: {spec}")
-    entry, manifest, target = matches[0]
-    result = compute_trust(manifest, target)
-    update_manifest(target, result.as_dict())
+    entry, _manifest, target = matches[0]
+    corpus_root = resolve_root(root)
+    with _target_lock(corpus_root, target, str(entry["commit_sha"])):
+        manifest = read_valid_manifest(
+            target,
+            str(entry["owner"]),
+            str(entry["repo"]),
+            str(entry["commit_sha"]),
+            host=str(entry["host"]),
+        )
+        if manifest is None:
+            raise ValueError(f"source changed during trust verification: {spec}")
+        result = compute_trust(manifest, target)
+        update_manifest(target, result.as_dict())
     return entry, result, target
 
 
@@ -199,7 +211,12 @@ def api_index_path(
         ("version", version, False),
     ):
         candidate = Path(value)
-        if not value or candidate.is_absolute() or ".." in candidate.parts or (not allow_parts and len(candidate.parts) != 1):
+        if (
+            not value
+            or candidate.is_absolute()
+            or ".." in candidate.parts
+            or (not allow_parts and len(candidate.parts) != 1)
+        ):
             raise ValueError(f"invalid API cache {label}: {value!r}")
     return resolve_root(root) / "api" / registry / name / version / "index.json"
 
@@ -235,7 +252,9 @@ def read_api_index(
 ) -> dict[str, object] | None:
     """Read a valid cached API index, or return ``None``."""
     try:
-        payload = json.loads(api_index_path(root, entry, manifest).read_text(encoding="utf-8"))
+        payload = json.loads(
+            api_index_path(root, entry, manifest).read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -256,7 +275,12 @@ def examples_index_path(
         ("version", version, False),
     ):
         candidate = Path(value)
-        if not value or candidate.is_absolute() or ".." in candidate.parts or (not allow_parts and len(candidate.parts) != 1):
+        if (
+            not value
+            or candidate.is_absolute()
+            or ".." in candidate.parts
+            or (not allow_parts and len(candidate.parts) != 1)
+        ):
             raise ValueError(f"invalid examples cache {label}: {value!r}")
     return resolve_root(root) / "examples" / registry / name / version / "index.json"
 
@@ -292,7 +316,9 @@ def read_examples_index(
 ) -> dict[str, object] | None:
     """Read a valid cached examples index, or return ``None``."""
     try:
-        payload = json.loads(examples_index_path(root, entry, manifest).read_text(encoding="utf-8"))
+        payload = json.loads(
+            examples_index_path(root, entry, manifest).read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -311,8 +337,12 @@ def shelve_imported_sources(
     parent.mkdir(parents=True, exist_ok=True)
     lock_path = parent / f".{corpus_root.name}.snapshot-import.lock"
     with _file_lock(lock_path):
-        if corpus_root.is_symlink() or (corpus_root.exists() and not corpus_root.is_dir()):
-            raise FileExistsError(f"destination corpus is not an ordinary directory: {corpus_root}")
+        if corpus_root.is_symlink() or (
+            corpus_root.exists() and not corpus_root.is_dir()
+        ):
+            raise FileExistsError(
+                f"destination corpus is not an ordinary directory: {corpus_root}"
+            )
         if corpus_root.exists() and any(corpus_root.iterdir()):
             raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
         prefix = f".{corpus_root.name}.snapshot-import-"
@@ -335,18 +365,29 @@ def shelve_imported_sources(
             shutil.copyfile(source_pointers, install / pointers_name)
             write_sources(install, entries)
             if os.name != "nt":
-                for path in sorted(install.rglob("*"), key=lambda item: item.as_posix()):
+                for path in sorted(
+                    install.rglob("*"), key=lambda item: item.as_posix()
+                ):
                     if path.is_file() and not path.is_symlink():
                         fd = os.open(path, os.O_RDONLY)
                         try:
                             os.fsync(fd)
                         finally:
                             os.close(fd)
-                directories = [install, *(path for path in install.rglob("*") if path.is_dir())]
-                for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+                directories = [
+                    install,
+                    *(path for path in install.rglob("*") if path.is_dir()),
+                ]
+                for directory in sorted(
+                    directories, key=lambda item: len(item.parts), reverse=True
+                ):
                     _fsync_directory(directory)
-            if corpus_root.is_symlink() or (corpus_root.exists() and not corpus_root.is_dir()):
-                raise FileExistsError(f"destination corpus is not an ordinary directory: {corpus_root}")
+            if corpus_root.is_symlink() or (
+                corpus_root.exists() and not corpus_root.is_dir()
+            ):
+                raise FileExistsError(
+                    f"destination corpus is not an ordinary directory: {corpus_root}"
+                )
             if corpus_root.exists() and any(corpus_root.iterdir()):
                 raise FileExistsError(f"destination corpus is not empty: {corpus_root}")
             os.replace(install, corpus_root)
@@ -357,28 +398,34 @@ def shelve_imported_sources(
 
 
 def _key(entry: dict[str, Any]) -> tuple[object, object, object, object]:
-    return (entry.get("host"), entry.get("owner"), entry.get("repo"), entry.get("commit_sha"))
+    return (
+        entry.get("host"),
+        entry.get("owner"),
+        entry.get("repo"),
+        entry.get("commit_sha"),
+    )
 
 
 def _upsert(root: Path, entry: dict[str, Any]) -> None:
-    entries = load_sources(root)
-    wanted = _key(entry)
-    result: list[dict[str, Any]] = []
-    found = False
-    for existing in entries:
-        if _key(existing) == wanted:
-            if not found:
-                result.append(entry)
-                found = True
-        else:
-            result.append(existing)
-    if not found:
-        result.append(entry)
-    result.sort(key=lambda item: tuple(str(part) for part in _key(item)))
-    write_sources(root, result)
-    from leitir.docpointers import regenerate_pointers
+    with _file_lock(root / ".sources.lock"):
+        entries = load_sources(root)
+        wanted = _key(entry)
+        result: list[dict[str, Any]] = []
+        found = False
+        for existing in entries:
+            if _key(existing) == wanted:
+                if not found:
+                    result.append(entry)
+                    found = True
+            else:
+                result.append(existing)
+        if not found:
+            result.append(entry)
+        result.sort(key=lambda item: tuple(str(part) for part in _key(item)))
+        write_sources(root, result)
+        from leitir.docpointers import regenerate_pointers
 
-    regenerate_pointers(root, result)
+        regenerate_pointers(root, result)
 
 
 def materialize_source(
@@ -436,7 +483,9 @@ def materialize_source(
     if isinstance(resolved, ResolvedPackage):
         from leitir.parity import ArtifactInfo
 
-        artifact = resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
+        artifact = (
+            resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
+        )
     if artifact is not None:
         try:
             target = materialize_artifact(
@@ -476,99 +525,113 @@ def materialize_source(
             on_fetch=on_fetch,
             **fetch_options,  # type: ignore[arg-type]
         )
-    manifest_owner = f"~{owner}" if host == "git.sr.ht" and not owner.startswith("~") else owner
-    manifest = read_valid_manifest(
-        target, manifest_owner, repo, scope.commit_sha, host=host
-    )
-    if manifest is None:
-        raise RuntimeError("materializer returned a source without a valid manifest")
-    owner = str(manifest["owner"])
-    repo = str(manifest["repo"])
-    if isinstance(resolved, ResolvedPackage) and resolved.ref.ecosystem.value in {
-        "npm",
-        "pypi",
-        "crates",
-    }:
-        from leitir.materialize import has_top_level_tests
-        from leitir.parity import (
-            UNKNOWN_PARITY,
-            RegistryArtifactFetcher,
-            compare_trees,
-            package_parity,
+    # Reacquire the writer lock before reading or updating the published
+    # generation. A writer that won the release/reacquire race is therefore
+    # observed and updated rather than swallowing these metadata writes.
+    with _target_lock(corpus_root, target, scope.commit_sha):
+        manifest_owner = (
+            f"~{owner}" if host == "git.sr.ht" and not owner.startswith("~") else owner
         )
+        manifest = read_valid_manifest(
+            target, manifest_owner, repo, scope.commit_sha, host=host
+        )
+        if manifest is None:
+            raise RuntimeError(
+                "materializer returned a source without a valid manifest"
+            )
+        owner = str(manifest["owner"])
+        repo = str(manifest["repo"])
+        if isinstance(resolved, ResolvedPackage) and resolved.ref.ecosystem.value in {
+            "npm",
+            "pypi",
+            "crates",
+        }:
+            from leitir.materialize import has_top_level_tests
+            from leitir.parity import (
+                UNKNOWN_PARITY,
+                RegistryArtifactFetcher,
+                compare_trees,
+                package_parity,
+            )
 
-        if manifest.get("parity") not in {"exact", "drift"}:
-            has_tests: bool | None = None
-            if manifest.get("source") == "registry-artifact":
-                temporary_root = Path(tempfile.mkdtemp(prefix="leitir-git-parity-"))
-                try:
-                    git_target = materialize_repo(
-                        temporary_root,
-                        spec,
-                        scope,
-                        host=host,
-                        resolver=repository_resolver,
-                        tag=source_tag,
-                        subpath=subpath,
-                        verify=fetch_options.get("verify", True),
-                        **{
-                            key: value
-                            for key, value in fetch_options.items()
-                            if key != "verify"
-                        },
+            if manifest.get("parity") not in {"exact", "drift"}:
+                has_tests: bool | None = None
+                if manifest.get("source") == "registry-artifact":
+                    temporary_root = Path(tempfile.mkdtemp(prefix="leitir-git-parity-"))
+                    try:
+                        git_target = materialize_repo(
+                            temporary_root,
+                            spec,
+                            scope,
+                            host=host,
+                            resolver=repository_resolver,
+                            tag=source_tag,
+                            subpath=subpath,
+                            verify=fetch_options.get("verify", True),
+                            **{
+                                key: value
+                                for key, value in fetch_options.items()
+                                if key != "verify"
+                            },
+                        )
+                        git_tree = git_target / subpath if subpath else git_target
+                        has_tests = has_top_level_tests(git_target, subpath)
+                        parity = compare_trees(git_tree, target)
+                    except Exception:
+                        parity = UNKNOWN_PARITY
+                    finally:
+                        shutil.rmtree(temporary_root, ignore_errors=True)
+                else:
+                    parity = (
+                        package_parity(
+                            resolved.ref.ecosystem.value,
+                            resolved.ref.name,
+                            resolved.ref.version,
+                            target / subpath if subpath else target,
+                            artifact=artifact,
+                            fetcher=(
+                                parity_fetcher
+                                if isinstance(parity_fetcher, RegistryArtifactFetcher)
+                                else None
+                            ),
+                        )
+                        if artifact is not None
+                        else UNKNOWN_PARITY
                     )
-                    git_tree = git_target / subpath if subpath else git_target
-                    has_tests = has_top_level_tests(git_target, subpath)
-                    parity = compare_trees(git_tree, target)
-                except Exception:
-                    parity = UNKNOWN_PARITY
-                finally:
-                    shutil.rmtree(temporary_root, ignore_errors=True)
-            else:
-                parity = package_parity(
-                    resolved.ref.ecosystem.value,
-                    resolved.ref.name,
-                    resolved.ref.version,
-                    target / subpath if subpath else target,
-                    artifact=artifact,
-                    fetcher=(
-                        parity_fetcher
-                        if isinstance(parity_fetcher, RegistryArtifactFetcher)
-                        else None
-                    ),
-                ) if artifact is not None else UNKNOWN_PARITY
-            fields = parity.manifest_fields()
-            if manifest.get("source") == "registry-artifact":
-                fields["has_tests"] = (
-                    has_tests if has_tests is not None else manifest.get("has_tests")
-                )
-            manifest = update_manifest(target, fields)
-    if "entry_points" not in manifest:
-        from leitir.docpointers import discover_entry_points
+                fields = parity.manifest_fields()
+                if manifest.get("source") == "registry-artifact":
+                    fields["has_tests"] = (
+                        has_tests
+                        if has_tests is not None
+                        else manifest.get("has_tests")
+                    )
+                manifest = update_manifest(target, fields)
+        if "entry_points" not in manifest:
+            from leitir.docpointers import discover_entry_points
 
-        manifest = update_manifest(
-            target,
-            {
-                "entry_points": discover_entry_points(
-                    target,
-                    manifest.get("subpath")
-                    if isinstance(manifest.get("subpath"), str)
-                    else None,
-                )
-            },
-        )
+            manifest = update_manifest(
+                target,
+                {
+                    "entry_points": discover_entry_points(
+                        target,
+                        manifest.get("subpath")
+                        if isinstance(manifest.get("subpath"), str)
+                        else None,
+                    )
+                },
+            )
 
-    entry = {
-        "name": source_name,
-        "host": host,
-        "owner": owner,
-        "repo": repo,
-        "commit_sha": scope.commit_sha,
-        "path": target.relative_to(corpus_root).as_posix(),
-        "fetched_at": manifest["fetched_at"],
-        "verified": manifest.get("verified", False),
-    }
-    _upsert(corpus_root, entry)
+        entry = {
+            "name": source_name,
+            "host": host,
+            "owner": owner,
+            "repo": repo,
+            "commit_sha": scope.commit_sha,
+            "path": target.relative_to(corpus_root).as_posix(),
+            "fetched_at": manifest["fetched_at"],
+            "verified": manifest.get("verified", False),
+        }
+        _upsert(corpus_root, entry)
     return target
 
 
@@ -613,7 +676,9 @@ def lock_project(
                     ),
                     **fetch_options,
                 )
-                update_manifest(target, {"graph": closure.graph, "deps": deps})
+                scope = resolved.scope if hasattr(resolved, "scope") else resolved
+                with _target_lock(corpus_root, target, scope.commit_sha):
+                    update_manifest(target, {"graph": closure.graph, "deps": deps})
                 results.append(
                     {
                         "spec": edge.spec,
@@ -654,9 +719,7 @@ def remove_source(
     """Remove one commit or a repository, update the index, and prune parents."""
     corpus_root = resolve_root(root)
     probe_sha = commit_sha or ("0" * 40)
-    repo_path = target_path(
-        corpus_root, owner, repo, probe_sha, host=host
-    ).parent
+    repo_path = target_path(corpus_root, owner, repo, probe_sha, host=host).parent
     if host == "gitlab.com":
         parts = f"{owner}/{repo}".split("/")
         owner, repo = "/".join(parts[:-1]), parts[-1]

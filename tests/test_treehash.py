@@ -3,6 +3,7 @@
 Mirrors leitir's existing pytest style (plain functions, tmp_path fixture,
 monkeypatch).  No network; all fixtures are built in tmp_path.
 """
+
 from __future__ import annotations
 
 import base64
@@ -58,7 +59,9 @@ def test_empty_tree_has_stable_digest(tmp_path):
     assert scope == treehash.FULL
     assert h.startswith("h1:")
     # empty summary -> sha256("") base64
-    expected = "h1:" + base64.standard_b64encode(hashlib.sha256(b"").digest()).decode("ascii")
+    expected = "h1:" + base64.standard_b64encode(hashlib.sha256(b"").digest()).decode(
+        "ascii"
+    )
     assert h == expected
 
 
@@ -66,7 +69,8 @@ def test_single_file_matches_manual_spec(tmp_path):
     files = {"README.md": b"hello world\n"}
     root = _make_tree(tmp_path, files)
     assert treehash.compute_materialized_tree_hash(root) == (
-        _manual_h1(root, files), treehash.FULL
+        _manual_h1(root, files),
+        treehash.FULL,
     )
 
 
@@ -79,7 +83,8 @@ def test_nested_files_match_manual_spec(tmp_path):
     }
     root = _make_tree(tmp_path, files)
     assert treehash.compute_materialized_tree_hash(root) == (
-        _manual_h1(root, files), treehash.FULL
+        _manual_h1(root, files),
+        treehash.FULL,
     )
 
 
@@ -89,8 +94,9 @@ def test_sort_order_is_lexicographic_on_posix_paths(tmp_path):
     files_b = dict(reversed(list(files_a.items())))
     root_a = _make_tree(tmp_path / "a", files_a)
     root_b = _make_tree(tmp_path / "b", files_b)
-    assert treehash.compute_materialized_tree_hash(root_a) == \
-           treehash.compute_materialized_tree_hash(root_b)
+    assert treehash.compute_materialized_tree_hash(
+        root_a
+    ) == treehash.compute_materialized_tree_hash(root_b)
 
 
 def test_root_manifest_is_excluded(tmp_path):
@@ -100,7 +106,8 @@ def test_root_manifest_is_excluded(tmp_path):
     root.joinpath("leitir-manifest.json").write_bytes(b'{"verified": true}')
     files = {"file.txt": b"x"}
     assert treehash.compute_materialized_tree_hash(root) == (
-        _manual_h1(root, files), treehash.FULL
+        _manual_h1(root, files),
+        treehash.FULL,
     )
 
 
@@ -113,7 +120,8 @@ def test_subdir_named_manifest_is_included(tmp_path):
     root.joinpath("sub", "leitir-manifest.json").write_bytes(b"nested")
     files = {"file.txt": b"x", "sub/leitir-manifest.json": b"nested"}
     assert treehash.compute_materialized_tree_hash(root) == (
-        _manual_h1(root, files), treehash.FULL
+        _manual_h1(root, files),
+        treehash.FULL,
     )
 
 
@@ -232,6 +240,29 @@ def test_symlink_target_tampering_is_detected(tmp_path):
         treehash.verify_materialized_tree_hash(root, expected)
 
 
+def test_regular_file_swapped_to_symlink_between_lstat_and_open_is_rejected(
+    tmp_path, monkeypatch
+):
+    root = _make_tree(tmp_path, {"victim.txt": b"trusted"})
+    victim = root / "victim.txt"
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"attacker-controlled")
+    real_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777):
+        nonlocal swapped
+        if Path(path) == victim and not swapped:
+            swapped = True
+            victim.unlink()
+            victim.symlink_to(outside)
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", swapping_open)
+    with pytest.raises(TreeHashStructureError, match="cannot read entry"):
+        treehash.compute_materialized_tree_hash(root)
+
+
 def test_empty_symlink_target_is_supported_by_record_format(tmp_path, monkeypatch):
     root = _make_tree(tmp_path, {"a.txt": b"a"})
     link = root / "link.txt"
@@ -305,14 +336,14 @@ def test_missing_directory_raises(tmp_path):
 
 def test_unreadable_file_error_is_wrapped(tmp_path, monkeypatch):
     root = _make_tree(tmp_path, {"a.txt": b"a"})
-    real_open = Path.open
+    real_open = os.open
 
-    def denied(path, *args, **kwargs):
-        if path == root / "a.txt":
+    def denied(path, flags, mode=0o777):
+        if Path(path) == root / "a.txt":
             raise PermissionError("denied")
-        return real_open(path, *args, **kwargs)
+        return real_open(path, flags, mode)
 
-    monkeypatch.setattr(Path, "open", denied)
+    monkeypatch.setattr(os, "open", denied)
     with pytest.raises(TreeHashStructureError, match="cannot read entry"):
         treehash.compute_materialized_tree_hash(root)
 
@@ -401,8 +432,9 @@ def test_sampled_subset_is_deterministic_by_content(tmp_path, monkeypatch):
     files = {"z": b"same-z", "a": b"same-a", "m": b"same-m"}
     root_a = _make_tree(tmp_path / "one", files)
     root_b = _make_tree(tmp_path / "two", dict(reversed(list(files.items()))))
-    assert treehash.compute_materialized_tree_hash(root_a) == \
-        treehash.compute_materialized_tree_hash(root_b)
+    assert treehash.compute_materialized_tree_hash(
+        root_a
+    ) == treehash.compute_materialized_tree_hash(root_b)
 
 
 def test_sampled_rejects_full_verification(tmp_path, monkeypatch):

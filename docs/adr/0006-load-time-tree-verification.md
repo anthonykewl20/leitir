@@ -21,19 +21,29 @@ shelf and recomputes it whenever a verified shelf is loaded. A missing,
 malformed, unsupported, or mismatched digest makes the shelf a cache miss.
 Unverified shelves may omit the digest.
 
-The shared `get`/`info`/`api`/`examples` read-and-serve path reacquires the same
-per-target advisory lock used by materialization, repeats manifest and tree
-verification under that lock, and retains the lock through its subsequent
-reads. Writers publish by atomic rename while holding that lock. Thus a
-cooperating writer cannot replace a shelf during those command reads: the
-reader sees the verified generation, or verification fails cleanly.
+The `get`, `info`, `api`, `examples`, `trust`, `sbom`, and `diff` commands
+reacquire the same per-target advisory lock used by materialization, repeat
+manifest and tree verification under that lock, and retain the lock through
+their subsequent shelf-byte reads. `sbom` locks its deterministic index
+snapshot and every referenced target; `diff` materializes first, then locks and
+re-verifies both generations before comparing them. Writers publish by atomic
+rename while holding the same target lock. Thus a cooperating writer cannot
+replace a shelf during those command reads: the reader sees the verified
+generation, or verification fails cleanly.
 
-Other corpus operations do not currently share that lock lifetime. In
-particular, `trust`, `sbom`, `diff`, `lock`, `remove`, `clean`, `export`, and
-internal source enumeration may read or mutate shelf-related bytes without
-holding each target lock continuously from verification through consumption.
-They retain a residual cooperating-writer TOCTOU surface; this ADR does not
-claim issue #39's lock binding for those paths.
+The deliberate exceptions are precise. `remove` and `clean` are destructive
+mutation commands, not read-and-serve operations; taking read lifetimes while
+deleting the same targets would invert their operation. `export` needs a
+corpus-wide immutable snapshot spanning the source index, pointers, every
+target, and output construction; per-target read locks alone would overclaim
+snapshot consistency, so that larger protocol is deferred. The internal
+`enumerate_shelved_sources` helper returns paths to callers and cannot retain a
+context-managed lock after return; callers that consume shelf bytes must own
+the lock lifetime (as `sbom` now does). `lock` is a writer workflow rather than
+a shelf-byte read command; each materialization and subsequent graph-manifest
+update is protected by its target writer lock. `list` reads only the source
+index, while `gc` and `upgrade-cache` are maintenance paths with their own
+locking behavior.
 
 The digest uses Go's directory `Hash1` (`h1:`) construction: each regular file
 contributes a SHA-256 content digest, two spaces, its strict-UTF-8 POSIX path,
@@ -102,8 +112,12 @@ its own verified/locked read. Windows and POSIX use different stdlib locking
 primitives, so cross-platform interruption and network-filesystem semantics
 remain platform-dependent.
 
-Path confinement and pre-open `lstat()` checks reject known symlinks, but the
-tree hasher's path-based regular-file open can still race a non-cooperating
-attacker that swaps an entry after the check. Closing that final window needs
-an fd-relative `open`/`fstat` implementation in `treehash.py` (with
-`O_NOFOLLOW` where available); it is not provided by the CLI locking change.
+Regular-file hashing opens with `os.open(..., O_NOFOLLOW)` where the platform
+provides it, then verifies with `fstat()` that the descriptor is still the same
+regular inode observed by `lstat()` before reading. Archive regular-file
+creation likewise uses `O_EXCL`, `O_NOFOLLOW` where available, descriptor type
+checking, and a post-open confinement check. On Windows, where `O_NOFOLLOW` is
+not available, the existing lexical/realpath confinement checks and same-inode
+`lstat`/`fstat` comparison remain; a hostile non-cooperating process can still
+race path components around opens, so that platform residual is explicitly
+accepted.

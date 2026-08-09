@@ -9,6 +9,7 @@ from leitir.search import (
     CoverageStatus,
     Predicate,
     PredicateKind,
+    QueryTranslation,
     Resolution,
     ResolutionStrategy,
     RepoScope,
@@ -178,3 +179,20 @@ def test_report_round_trip_holds():
         Resolution(ResolutionStrategy.DECLARED_SCOPE, "2026-08-06T12:00:00Z"),
     )
     assert report.matches[0].source is ref
+
+
+def test_query_translation_serializes_machine_readable_disposition():
+    translation = QueryTranslation(
+        clause="must",
+        predicate_index=0,
+        kind=PredicateKind.IDENTIFIER,
+        strategy="github_query",
+        emitted_syntax="urlencode",
+    )
+    assert translation.to_dict() == {
+        "clause": "must",
+        "predicate_index": 0,
+        "kind": "identifier",
+        "strategy": "github_query",
+        "emitted_syntax": "urlencode",
+    }

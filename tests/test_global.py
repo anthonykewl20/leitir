@@ -27,6 +27,9 @@ from leitir.search import (
     ResolutionStrategy,
     SearchMode,
     SearchSpec,
+    SearchSpecError,
+    SourceMatch,
+    SourceRef,
 )
 from leitir.tree import BlobEntry
 
@@ -168,8 +171,122 @@ class TestBuildQuery:
         assert "urlencode" in q
         assert "doseq" in q
 
+    def test_regex_predicate_is_rejected(self) -> None:
+        kind = PredicateKind.REGEX
+        spec = _spec(must=(Predicate(kind, "urlencode.*"),))
+        with pytest.raises(
+            SearchSpecError,
+            match=rf"REJECT_SEMANTIC_DEGRADATION.*{kind.value}",
+        ):
+            build_query(spec)
+
+    @pytest.mark.parametrize(
+        "kind",
+        (
+            PredicateKind.SYMBOL_DEFINITION,
+            PredicateKind.SYMBOL_REFERENCE,
+            PredicateKind.SIGNATURE,
+            PredicateKind.CALL,
+            PredicateKind.IMPORT,
+        ),
+    )
+    def test_structural_predicates_use_bare_superset_term(self, kind: PredicateKind) -> None:
+        assert build_query(_spec(must=(Predicate(kind, "urlencode"),))) == "urlencode"
+
+    def test_supported_predicate_translations_are_recorded(self) -> None:
+        page = CodeSearchPage(hits=(), total_count=0, incomplete_results=False)
+        report = _searcher(page=page)[0].search(
+            _spec(
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                    Predicate(PredicateKind.PATH, "Lib/urllib"),
+                ),
+                should=(Predicate(PredicateKind.IDENTIFIER, "doseq"),),
+            )
+        )
+        assert [item.to_dict() for item in report.query_translation] == [
+            {
+                "clause": "must",
+                "predicate_index": 0,
+                "kind": "identifier",
+                "strategy": "github_query",
+                "emitted_syntax": "urlencode",
+            },
+            {
+                "clause": "must",
+                "predicate_index": 1,
+                "kind": "path",
+                "strategy": "github_superset_local_filter",
+                "emitted_syntax": "path:Lib/urllib",
+            },
+            {
+                "clause": "should",
+                "predicate_index": 0,
+                "kind": "identifier",
+                "strategy": "local_filter",
+                "emitted_syntax": None,
+            },
+        ]
+
 
 class TestGlobalSearcher:
+    def test_path_superset_hits_are_locally_filtered(self):
+        matching = _hit(path="Lib/urllib/parse.py")
+        nonmatching = _hit(path="Lib/http/client.py")
+        page = CodeSearchPage(
+            hits=(matching, nonmatching), total_count=2, incomplete_results=False
+        )
+        report = _searcher(page=page)[0].search(
+            _spec(
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                    Predicate(PredicateKind.PATH, r"Lib/urllib"),
+                )
+            )
+        )
+
+        assert [match.source.path for match in report.matches] == [matching.path]
+        assert report.coverage.exclusions == {"path_mismatch": 1}
+        assert report.query_translation[1].strategy == "github_superset_local_filter"
+
+    def test_symbol_definition_superset_is_locally_reverified(self):
+        contents = {
+            "definition.py": b"def urlencode(value):\n    return value\n",
+            "reference.py": b"print(urlencode)\n",
+        }
+
+        def blob(path: str) -> str:
+            data = contents[path]
+            return hashlib.sha1(
+                b"blob " + str(len(data)).encode("ascii") + b"\x00" + data
+            ).hexdigest()
+
+        hits = tuple(
+            _hit(path=path, blob_sha=blob(path)) for path in sorted(contents)
+        )
+        page = CodeSearchPage(hits=hits, total_count=2, incomplete_results=False)
+        code_search = FakeCodeSearch(page=page)
+        searcher = GlobalSearcher(
+            code_search=code_search,
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=lambda _slug, _sha, path: contents[path],
+            clock=lambda: "2026-08-06T12:00:00Z",
+        )
+        report = searcher.search(
+            _spec(must=(Predicate(PredicateKind.SYMBOL_DEFINITION, "urlencode"),))
+        )
+
+        assert code_search.queries == ["urlencode"]
+        assert [match.source.path for match in report.matches] == ["definition.py"]
+        assert report.query_translation[0].to_dict() == {
+            "clause": "must",
+            "predicate_index": 0,
+            "kind": "symbol_definition",
+            "strategy": "github_superset_local_filter",
+            "emitted_syntax": "urlencode",
+        }
+
     def test_coverage_is_always_indeterminate_global(self):
         page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
         searcher, _ = _searcher(page=page)
@@ -874,6 +991,41 @@ def test_validate_report_rejects_missing_global_resolution():
     object.__setattr__(report, "resolution", None)
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
         validate_report(report, page.hits)
+
+
+def test_validate_report_accepts_report_pinned_to_indexed_hit():
+    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    validate_report(report, page.hits)
+
+
+def test_global_search_return_boundary_rejects_foreign_commit(monkeypatch):
+    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    foreign = "b" * 40
+
+    def inject_foreign_commit(matches):
+        match = matches[0]
+        source = match.source
+        return (
+            SourceMatch(
+                SourceRef(
+                    source.slug,
+                    foreign,
+                    source.path,
+                    source.blob_sha,
+                    source.start_line,
+                    source.end_line,
+                ),
+                match.score,
+                match.matched_kinds,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "leitir.discovery_search.order_source_matches", inject_foreign_commit
+    )
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
 
 
 def test_transport_cross_checks_both_index_commit_fields():

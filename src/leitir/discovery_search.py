@@ -19,18 +19,20 @@ from typing import Protocol, runtime_checkable
 from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.credentials import validate_secret
-from leitir.engine import score_content
+from leitir.engine import path_matches, score_content
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches
 from leitir.search import (
     Coverage,
     CoverageStatus,
     PredicateKind,
+    QueryTranslation,
     Resolution,
     ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
+    SearchSpecError,
     SourceMatch,
 )
 from leitir.tree import TreeReadError, TreeSource, TreeTruncatedError
@@ -334,32 +336,88 @@ class CodeSearchError(Exception):
     """The code search API call failed."""
 
 
-def build_query(spec: SearchSpec) -> str:
-    """Translate must predicates into a GitHub Code Search query string."""
+_LOSSLESS_QUERY_KINDS = frozenset(
+    {
+        PredicateKind.EXACT_TEXT,
+        PredicateKind.IDENTIFIER,
+        PredicateKind.TOKEN_SEQUENCE,
+        PredicateKind.PATH,
+        PredicateKind.SYMBOL_DEFINITION,
+        PredicateKind.SYMBOL_REFERENCE,
+        PredicateKind.SIGNATURE,
+        PredicateKind.CALL,
+        PredicateKind.IMPORT,
+    }
+)
+
+
+def _compile_query(
+    spec: SearchSpec,
+) -> tuple[str, tuple[QueryTranslation, ...]]:
+    """Translate predicates without silently weakening their semantics."""
     terms: list[str] = []
     language: str | None = None
+    translations: list[QueryTranslation] = []
 
-    for pred in spec.must:
+    for index, pred in enumerate(spec.must):
+        if pred.kind not in _LOSSLESS_QUERY_KINDS:
+            raise SearchSpecError(
+                "REJECT_SEMANTIC_DEGRADATION: GitHub legacy code search cannot "
+                f"express must predicate {pred.kind.value}"
+            )
         if pred.kind is PredicateKind.PATH:
-            terms.append(f"path:{pred.value}")
-        elif pred.kind in (
-            PredicateKind.EXACT_TEXT,
-            PredicateKind.IDENTIFIER,
-            PredicateKind.TOKEN_SEQUENCE,
-            PredicateKind.SYMBOL_DEFINITION,
-            PredicateKind.SYMBOL_REFERENCE,
-            PredicateKind.SIGNATURE,
-            PredicateKind.CALL,
-            PredicateKind.IMPORT,
-        ) or pred.kind is PredicateKind.REGEX:
-            terms.append(pred.value)
-        if pred.language and language is None:
+            emitted = f"path:{pred.value}"
+        else:
+            emitted = pred.value
+        terms.append(emitted)
+        translations.append(
+            QueryTranslation(
+                clause="must",
+                predicate_index=index,
+                kind=pred.kind,
+                strategy=(
+                    "github_superset_local_filter"
+                    if pred.kind
+                    in {
+                        PredicateKind.PATH,
+                        PredicateKind.SYMBOL_DEFINITION,
+                        PredicateKind.SYMBOL_REFERENCE,
+                        PredicateKind.SIGNATURE,
+                        PredicateKind.CALL,
+                        PredicateKind.IMPORT,
+                    }
+                    else "github_query"
+                ),
+                emitted_syntax=emitted,
+            )
+        )
+        if pred.language and language is not None and pred.language != language:
+            raise SearchSpecError(
+                "REJECT_SEMANTIC_DEGRADATION: conflicting predicate languages"
+            )
+        if pred.language:
             language = pred.language
+
+    for clause in ("should", "must_not"):
+        for index, pred in enumerate(getattr(spec, clause)):
+            translations.append(
+                QueryTranslation(
+                    clause=clause,
+                    predicate_index=index,
+                    kind=pred.kind,
+                    strategy="local_filter",
+                )
+            )
 
     if language:
         terms.append(f"language:{language}")
 
-    return " ".join(terms)
+    return " ".join(terms), tuple(translations)
+
+
+def build_query(spec: SearchSpec) -> str:
+    """Translate must predicates into a GitHub Code Search query string."""
+    return _compile_query(spec)[0]
 
 
 class GlobalSearcher:
@@ -391,7 +449,7 @@ class GlobalSearcher:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
             raise ValueError("GlobalSearcher only handles global_discovery")
 
-        query = build_query(spec)
+        query, query_translation = _compile_query(spec)
         matches: list[SourceMatch] = []
         exclusions: dict[str, int] = {}
         files_indexed = 0
@@ -401,6 +459,9 @@ class GlobalSearcher:
         per_page = min(self._max_results, 100)
         content_preds = tuple(
             predicate for predicate in spec.must if predicate.kind is not PredicateKind.PATH
+        )
+        path_preds = tuple(
+            predicate for predicate in spec.must if predicate.kind is PredicateKind.PATH
         )
 
         # Phase A: collect a deterministic candidate set without blob I/O.
@@ -457,6 +518,9 @@ class GlobalSearcher:
                 if group_index >= 1:
                     promoted_attempted += 1
                 attempts += 1
+                if path_preds and not path_matches(hit.path, path_preds):
+                    exclusions["path_mismatch"] = exclusions.get("path_mismatch", 0) + 1
+                    continue
                 adapter = self._adapter_for(hit.path)
                 if adapter is None:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
@@ -524,7 +588,7 @@ class GlobalSearcher:
             incomplete_results=incomplete_results,
             exclusions=exclusions,
         )
-        return SearchReport(
+        report = SearchReport(
             spec_digest=spec.digest(),
             coverage=coverage,
             matches=order_source_matches(tuple(matches)),
@@ -532,7 +596,10 @@ class GlobalSearcher:
                 strategy=ResolutionStrategy.INDEXED_COMMIT,
                 as_of=self._clock(),
             ),
+            query_translation=query_translation,
         )
+        validate_report(report, tuple(collected))
+        return report
 
     def _read_content(
         self, slug: str, commit_sha: str, path: str, blob_sha: str
@@ -561,11 +628,14 @@ class GlobalSearcher:
 def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> None:
     """Reject global reports whose provenance is not derived from indexed hits."""
     resolution = getattr(report, "resolution", None)
-    if (
-        report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
-        and resolution is None
+    is_global = report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
+    if is_global and (
+        resolution is None
+        or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT
     ):
         raise ValueError("REJECT_MOVING_REFERENCE")
+    if is_global and not report.query_translation:
+        raise SearchSpecError("REJECT_SEMANTIC_DEGRADATION: missing query translation")
     if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
         return
     indexed = {(hit.slug, hit.commit_sha) for hit in hits}

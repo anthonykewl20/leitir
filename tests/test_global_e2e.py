@@ -120,7 +120,7 @@ class TestGlobalHappyPath:
     def test_finds_urlencode_with_real_provenance(self):
         code, out, _, _ = _invoke([
             "search", "--global",
-            "--must", "symbol_definition:urlencode:python",
+            "--must", "identifier:urlencode:python",
         ])
         assert code == ExitCode.SUCCESS
         payload = json.loads(out)
@@ -142,7 +142,7 @@ class TestGlobalHappyPath:
     def test_permalink_in_output(self):
         _, out, _, _ = _invoke([
             "search", "--global",
-            "--must", "symbol_definition:urlencode:python",
+            "--must", "identifier:urlencode:python",
         ])
         payload = json.loads(out)
         permalink = payload["matches"][0]["source"]["permalink"]
@@ -167,6 +167,15 @@ class TestGlobalHappyPath:
 
 
 class TestGlobalSadPaths:
+    def test_unsupported_global_regex_is_malformed_usage(self):
+        code, out, err, code_search = _invoke(
+            ["search", "--global", "--must", "regex:urlencode.*"]
+        )
+        assert code == ExitCode.MALFORMED_USAGE
+        assert out == ""
+        assert "REJECT_SEMANTIC_DEGRADATION" in err
+        assert code_search.queries == []
+
     def test_no_hits_yields_empty_report(self):
         code, out, err, _ = _invoke(
             ["search", "--global", "--must", "identifier:zzz_absent"],

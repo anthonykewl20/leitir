@@ -26,6 +26,7 @@ _EXCLUSION_REASONS = frozenset(
         "fetch_failed",
         "head_unresolved",
         "no_adapter",
+        "path_mismatch",
         "provenance_mismatch",
         "pin_disagreement",
         "unpinned_hit",
@@ -53,6 +54,10 @@ class ResolutionStrategy(str, Enum):
 
     INDEXED_COMMIT = "indexed_commit"
     DECLARED_SCOPE = "declared_scope"
+
+
+class SearchSpecError(ValueError):
+    """A typed search specification cannot be executed as requested."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +127,51 @@ class Predicate:
         if self.language is not None:
             result["language"] = self.language
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class QueryTranslation:
+    """Machine-readable disposition of one predicate during query planning."""
+
+    clause: str
+    predicate_index: int
+    kind: PredicateKind
+    strategy: str
+    emitted_syntax: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.clause not in {"must", "should", "must_not"}:
+            raise ValueError("clause must be must, should, or must_not")
+        if (
+            isinstance(self.predicate_index, bool)
+            or not isinstance(self.predicate_index, int)
+            or self.predicate_index < 0
+        ):
+            raise ValueError("predicate_index must be a non-negative integer")
+        if not isinstance(self.kind, PredicateKind):
+            raise TypeError("kind must be a PredicateKind")
+        if self.strategy not in {
+            "github_query",
+            "github_superset_local_filter",
+            "local_filter",
+        }:
+            raise ValueError(
+                "strategy must be github_query, github_superset_local_filter, or local_filter"
+            )
+        if self.strategy in {"github_query", "github_superset_local_filter"}:
+            if not isinstance(self.emitted_syntax, str) or not self.emitted_syntax:
+                raise ValueError("GitHub query translations require emitted syntax")
+        elif self.emitted_syntax is not None:
+            raise ValueError("local_filter translations cannot emit query syntax")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "clause": self.clause,
+            "predicate_index": self.predicate_index,
+            "kind": self.kind.value,
+            "strategy": self.strategy,
+            "emitted_syntax": self.emitted_syntax,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,6 +401,7 @@ class SearchReport:
     coverage: Coverage
     matches: tuple[SourceMatch, ...]
     resolution: Resolution
+    query_translation: tuple[QueryTranslation, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.spec_digest, str) or not _SHA256.fullmatch(
@@ -367,6 +418,14 @@ class SearchReport:
             raise TypeError("matches must contain only SourceMatch values")
         if not isinstance(self.resolution, Resolution):
             raise TypeError("resolution must be a Resolution")
+        if isinstance(self.query_translation, (str, bytes)) or not isinstance(
+            self.query_translation, tuple
+        ):
+            raise TypeError("query_translation must be a tuple")
+        if any(
+            not isinstance(item, QueryTranslation) for item in self.query_translation
+        ):
+            raise TypeError("query_translation must contain only QueryTranslation values")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -374,6 +433,7 @@ class SearchReport:
             "coverage": self.coverage.to_dict(),
             "matches": [m.to_dict() for m in self.matches],
             "resolution": self.resolution.to_dict(),
+            "query_translation": [item.to_dict() for item in self.query_translation],
         }
 
     def identity_digest(self) -> str:
@@ -382,6 +442,7 @@ class SearchReport:
             "spec_digest": self.spec_digest,
             "coverage": self.coverage.to_dict(),
             "matches": [match.to_dict() for match in self.matches],
+            "query_translation": [item.to_dict() for item in self.query_translation],
         }
         encoded = json.dumps(
             identity,

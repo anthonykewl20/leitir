@@ -8,6 +8,9 @@ coverage accounting.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches
@@ -27,6 +30,21 @@ from leitir.search import (
 from leitir.tree import BlobEntry, TreeSource
 
 MAX_BLOB_SIZE = 2 * 1024 * 1024
+
+
+def path_matches(path: str, predicates: Sequence[Predicate]) -> bool:
+    """Return whether ``path`` satisfies any local PATH predicate."""
+    for predicate in predicates:
+        if predicate.kind is not PredicateKind.PATH:
+            continue
+        if predicate.value in path:
+            return True
+        try:
+            if re.search(predicate.value, path):
+                return True
+        except re.error:
+            pass
+    return False
 
 
 def _span_excluded(
@@ -175,7 +193,7 @@ class ScopedSearcher:
             eligible_blobs = [
                 b
                 for b in eligible_blobs
-                if self._path_matches(b.path, path_preds)
+                if path_matches(b.path, path_preds)
             ]
 
         files_eligible = len(eligible_blobs)
@@ -225,20 +243,6 @@ class ScopedSearcher:
             if adapter.eligible(path):
                 return adapter
         return None
-
-    def _path_matches(self, path: str, preds: list[Predicate]) -> bool:
-        import re
-
-        for pred in preds:
-            if pred.kind is PredicateKind.PATH:
-                if pred.value in path:
-                    return True
-                try:
-                    if re.search(pred.value, path):
-                        return True
-                except re.error:
-                    pass
-        return False
 
     def _excluded(
         self,

@@ -1,0 +1,89 @@
+# Live-provider canary credentials:
+# - Required repository secret: GH_TOKEN (the opt-in gate and GitHub credential).
+# - Optional repository secrets: GITLAB_TOKEN, BITBUCKET_TOKEN,
+#   BITBUCKET_USERNAME, CODEBERG_TOKEN, SRHT_TOKEN, NPM_TOKEN, PYPI_TOKEN,
+#   PIP_TOKEN, and CARGO_TOKEN.
+# The required GH_TOKEN is also exported as GITHUB_TOKEN because leitir's live
+# tests and credential resolver support both names.
+name: Live provider canary
+
+on:
+  workflow_dispatch:
+  # Uncomment to run nightly after the required secret has been configured.
+  # schedule:
+  #   - cron: '0 3 * * *'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check live canary opt-in
+    runs-on: ubuntu-latest
+    env:
+      LIVE_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+    outputs:
+      enabled: ${{ steps.opt-in.outputs.enabled }}
+    steps:
+      - name: Check required secret
+        id: opt-in
+        shell: bash
+        run: |
+          if [[ -n "$LIVE_GITHUB_TOKEN" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Live canary enabled: required GH_TOKEN secret is configured." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Live canary skipped: configure the GH_TOKEN repository secret to opt in." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  live-tests:
+    name: Live E2E tests (non-blocking)
+    needs: gate
+    if: ${{ needs.gate.outputs.enabled == 'true' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      LEITIR_ENABLE_SCORE_LIVE: '1'
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      BITBUCKET_TOKEN: ${{ secrets.BITBUCKET_TOKEN }}
+      BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
+      CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+      SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      PIP_TOKEN: ${{ secrets.PIP_TOKEN }}
+      CARGO_TOKEN: ${{ secrets.CARGO_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Run live E2E suite
+        id: live-tests
+        shell: bash
+        run: >-
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt
+          python -m pytest -q --tb=short
+      - name: Report live canary result
+        if: ${{ always() }}
+        env:
+          TEST_OUTCOME: ${{ steps.live-tests.outcome }}
+        shell: bash
+        run: |
+          echo "Live provider canary result: $TEST_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$TEST_OUTCOME" != "success" ]]; then
+            exit 1
+          fi

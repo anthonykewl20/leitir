@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 from contextlib import nullcontext
@@ -14,6 +15,37 @@ import pytest
 from leitir import doctor
 from leitir.cli import main
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
+
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _doctor_subprocess(
+    home: Path,
+    *,
+    seed: str = "0",
+    leitir_home: Path | None = None,
+    source_date_epoch: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    environment = {
+        "CI": "true",
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONHASHSEED": seed,
+        "PYTHONPATH": str(_REPOSITORY_ROOT / "src"),
+    }
+    if leitir_home is not None:
+        environment["LEITIR_HOME"] = str(leitir_home)
+    if source_date_epoch is not None:
+        environment["SOURCE_DATE_EPOCH"] = source_date_epoch
+    return subprocess.run(
+        [sys.executable, "-m", "leitir.cli", "doctor", "--json", "--no-network"],
+        cwd=_REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _invoke(tmp_path: Path, *arguments: str) -> tuple[int, str, str]:
@@ -62,6 +94,71 @@ def test_doctor_clean_environment_passes(tmp_path: Path, monkeypatch: pytest.Mon
     assert code == 0
     assert "0 warnings, 0 errors" in output
     assert error == ""
+
+
+def test_doctor_clean_ci_subprocess_without_leitir_home_passes(tmp_path: Path) -> None:
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    result = _doctor_subprocess(home)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert payload["summary"]["error"] == 0
+    assert payload["summary"]["warn"] == 0
+
+
+def test_doctor_unwritable_cache_root_subprocess_exits_broken(tmp_path: Path) -> None:
+    home = tmp_path / "isolated-home"
+    root = tmp_path / "unwritable-cache"
+    home.mkdir()
+    root.mkdir()
+    root.chmod(0o500)
+    try:
+        result = _doctor_subprocess(home, leitir_home=root)
+    finally:
+        root.chmod(0o700)
+    payload = json.loads(result.stdout)
+    writable = next(check for check in payload["checks"] if check["name"] == "corpus.writable")
+    assert result.returncode == 2
+    assert writable["status"] == "error"
+
+
+def test_doctor_json_is_hash_seed_deterministic(tmp_path: Path) -> None:
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    results = [
+        _doctor_subprocess(home, seed=seed, source_date_epoch="0")
+        for seed in ("0", "1", "42")
+    ]
+    assert [result.returncode for result in results] == [0, 0, 0]
+    assert [result.stderr for result in results] == ["", "", ""]
+    assert results[0].stdout == results[1].stdout == results[2].stdout
+
+
+def test_doctor_closed_stdout_pipe_does_not_crash(tmp_path: Path) -> None:
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    environment = {
+        "CI": "true",
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(_REPOSITORY_ROOT / "src"),
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-m", "leitir.cli", "doctor", "--no-network"],
+        cwd=_REPOSITORY_ROOT,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    process.stdout.close()
+    assert process.stderr is not None
+    stderr = process.stderr.read()
+    returncode = process.wait()
+    assert returncode == 0
+    assert "BrokenPipeError" not in stderr
 
 
 def test_doctor_json_output_shape(tmp_path: Path) -> None:
@@ -174,13 +271,13 @@ def test_doctor_update_check_handles_404_for_github_releases(
 
 
 def test_doctor_update_check_strips_release_tag_v(monkeypatch: pytest.MonkeyPatch) -> None:
-    response = BytesIO(b'{"tag_name":"v0.2.0"}')
+    response = BytesIO(b'{"tag_name":"v0.1.1"}')
     monkeypatch.setattr(
         doctor.urllib.request, "urlopen", lambda *args, **kwargs: nullcontext(response)
     )
     result = doctor.check_update_availability("0.1.0")
     assert result.status == "warn"
-    assert result.json_data == {"installed": "0.1.0", "latest": "0.2.0"}
+    assert result.json_data == {"installed": "0.1.0", "latest": "0.1.1"}
 
 
 def test_doctor_update_check_network_error_warns(monkeypatch: pytest.MonkeyPatch) -> None:

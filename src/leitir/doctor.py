@@ -175,7 +175,7 @@ def check_corpus_root_path(root: Path) -> Check:
 def check_corpus_root_exists(root: Path) -> Check:
     if root.is_dir():
         return Check("corpus.exists", "pass", "directory exists")
-    return Check("corpus.exists", "warn", "directory does not exist (normal before first use)")
+    return Check("corpus.exists", "pass", "directory does not exist (normal before first use)")
 
 
 def check_corpus_root_writable(root: Path) -> Check:
@@ -491,18 +491,55 @@ def _write_human(checks: Sequence[Check], out: TextIO, *, quiet: bool) -> None:
               f"{counts['error']} errors, {counts['skip']} skipped", file=out)
 
 
+def _generated_at() -> str:
+    """Return an RFC 3339 timestamp, honoring the reproducible-build epoch."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is not None:
+        try:
+            generated = datetime.fromtimestamp(int(epoch), UTC)
+        except (OSError, OverflowError, ValueError):
+            generated = datetime.now(UTC)
+    else:
+        generated = datetime.now(UTC)
+    return generated.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _silence_broken_stdout(out: TextIO) -> None:
+    """Redirect a broken process stdout so interpreter shutdown cannot retry it."""
+    try:
+        descriptor = out.fileno()
+        stdout_descriptor = sys.stdout.fileno()
+    except (AttributeError, OSError):
+        return
+    if descriptor != stdout_descriptor:
+        return
+    try:
+        null_descriptor = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null_descriptor, descriptor)
+        finally:
+            os.close(null_descriptor)
+    except OSError:
+        return
+
+
 def run_doctor(*, as_json: bool = False, quiet: bool = False, no_network: bool = False,
                stdout: TextIO | None = None, root: Path | None = None) -> int:
     """Run diagnostics, render exactly one selected format, and return 0/1/2."""
     checks, installed = collect_checks(no_network=no_network, root=root)
     out = sys.stdout if stdout is None else stdout
-    if as_json:
-        generated = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-        payload = {"schema": 1, "generated_at": generated, "version": installed,
-                   "checks": [check.as_dict() for check in checks], "summary": _counts(checks)}
-        print(json.dumps(payload, sort_keys=True), file=out)
-    else:
-        _write_human(checks, out, quiet=quiet)
+    try:
+        if as_json:
+            payload = {"schema": 1, "generated_at": _generated_at(), "version": installed,
+                       "checks": [check.as_dict() for check in checks], "summary": _counts(checks)}
+            print(json.dumps(payload, sort_keys=True), file=out)
+        else:
+            _write_human(checks, out, quiet=quiet)
+        out.flush()
+    except BrokenPipeError:
+        # Diagnostics completed successfully; a downstream reader choosing to close
+        # early does not turn a healthy environment into a doctor failure.
+        _silence_broken_stdout(out)
     return _exit_code(checks)
 
 

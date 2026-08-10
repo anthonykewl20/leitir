@@ -182,6 +182,33 @@ class TestBuildQuery:
         spec = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "foo", "python"),))
         assert build_query(spec) == "foo language:python"
 
+    def test_language_alias_is_canonicalized(self):
+        spec = _spec(
+            must=(
+                Predicate(PredicateKind.IDENTIFIER, "foo", "py"),
+                Predicate(PredicateKind.IDENTIFIER, "bar", "python"),
+            )
+        )
+        assert build_query(spec) == "foo bar language:python"
+
+    def test_unsupported_required_language_rejects_before_search(self):
+        searcher, code_search = _searcher()
+        with pytest.raises(
+            SearchSpecError, match="unsupported required predicate language"
+        ):
+            searcher.search(
+                _spec(
+                    must=(
+                        Predicate(PredicateKind.IDENTIFIER, "foo", "js"),
+                    )
+                )
+            )
+        assert code_search.queries == []
+
+    def test_python_requirement_cannot_route_rust_path(self):
+        searcher, _ = _searcher()
+        assert searcher._adapter_for("source.rs", "python") is None
+
     def test_multiple_must_terms_joined(self):
         spec = _spec(must=(
             Predicate(PredicateKind.IDENTIFIER, "urlencode"),

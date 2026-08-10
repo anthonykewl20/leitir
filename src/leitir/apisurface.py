@@ -310,15 +310,9 @@ _EXTRACTORS: dict[str, Extractor] = {
 
 
 def _language(language: str) -> str:
-    normalized = language.casefold()
-    return {
-        "py": "python",
-        "pypi": "python",
-        "js": "javascript",
-        "jsx": "javascript",
-        "ts": "typescript",
-        "tsx": "typescript",
-    }.get(normalized, normalized)
+    from leitir.adapters.languages import canonicalize_language
+
+    return canonicalize_language(language)
 
 
 def register_extractor(language: str, extractor: Extractor) -> Extractor | None:

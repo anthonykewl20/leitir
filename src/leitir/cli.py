@@ -1791,7 +1791,14 @@ def main(
 
     must = tuple(args.must)
     if args.language is not None:
-        if any(p.language not in (None, args.language) for p in must):
+        from .adapters.languages import canonicalize_language
+
+        requested = canonicalize_language(args.language)
+        if any(
+            p.language is not None
+            and canonicalize_language(p.language) != requested
+            for p in must
+        ):
             print(
                 "leitir: error: --language conflicts with a required predicate language",
                 file=err,

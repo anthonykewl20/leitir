@@ -8,11 +8,16 @@ adapter protocol.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import subprocess
+import sys
+import textwrap
 from itertools import permutations
 
 import pytest
 
-from leitir.adapters import PythonAdapter, SpanMatch
+from leitir.adapters import PythonAdapter, RustAdapter, SpanMatch
 from leitir.engine import ScopedSearcher
 from leitir.search import (
     CoverageStatus,
@@ -21,6 +26,7 @@ from leitir.search import (
     RepoScope,
     SearchMode,
     SearchSpec,
+    SearchSpecError,
 )
 from leitir.tree import BlobEntry, TreeSource
 
@@ -59,11 +65,15 @@ class FakeTreeSource:
     ) -> None:
         self._blobs = blobs or {}
         self._fail_reads = fail_reads or set()
+        self.list_calls = 0
+        self.read_calls: list[str] = []
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
+        self.list_calls += 1
         return tuple(entry for entry, _ in self._blobs.values())
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        self.read_calls.append(blob_sha)
         if blob_sha in self._fail_reads:
             raise OSError("simulated read failure")
         for entry, data in self._blobs.values():
@@ -293,6 +303,101 @@ class TestSadPaths:
             report.coverage.status
             is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
         )
+
+    def test_required_language_shrinks_eligible_universe(self):
+        rust = b"fn urlencode() {}\n"
+        rust_sha = _blob_sha(rust)
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("parse.py", PY_BLOB_SHA, len(SAMPLE_PY)),
+                    SAMPLE_PY.encode(),
+                ),
+                "parse.rs": (BlobEntry("parse.rs", rust_sha, len(rust)), rust),
+            }
+        )
+        searcher = ScopedSearcher(source, (PythonAdapter(), RustAdapter()))
+        report = searcher.search(
+            _spec(
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                )
+            )
+        )
+        assert report.coverage.files_eligible == 1
+        assert report.coverage.files_indexed == 1
+        assert report.coverage.files_excluded == 0
+        assert {match.source.path for match in report.matches} == {"parse.py"}
+        assert source.read_calls == [PY_BLOB_SHA]
+
+    def test_unsupported_required_language_rejects_before_blob_reads(self):
+        source = _fake_source()
+        with pytest.raises(
+            SearchSpecError, match="unsupported required predicate language"
+        ):
+            _searcher(source).search(
+                _spec(
+                    must=(
+                        Predicate(
+                            PredicateKind.IDENTIFIER, "urlencode", "brainfuck"
+                        ),
+                    )
+                )
+            )
+        assert source.list_calls == 0
+        assert source.read_calls == []
+
+    def test_python_requirement_cannot_route_rust_path(self):
+        searcher = ScopedSearcher(_fake_source(), (PythonAdapter(), RustAdapter()))
+        assert searcher._adapter_for("source.rs", "python") is None
+
+
+def test_required_language_report_is_hash_seed_independent():
+    script = textwrap.dedent(
+        """
+        import hashlib
+        import json
+        import leitir.engine
+        from leitir.adapters import PythonAdapter, RustAdapter
+        from leitir.engine import ScopedSearcher
+        from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
+        from leitir.tree import BlobEntry
+
+        class Tree:
+            def __init__(self):
+                self.data = {"b.rs": b"fn target() {}\\n", "c.py": b"def target():\\n    return\\n", "a.py": b"def target():\\n    pass\\n"}
+            def list_blobs(self, slug, commit_sha):
+                return tuple(BlobEntry(path, self.sha(data), len(data)) for path, data in self.data.items())
+            def read_blob(self, slug, blob_sha):
+                return next(data for data in self.data.values() if self.sha(data) == blob_sha)
+            @staticmethod
+            def sha(data):
+                return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\x00" + data).hexdigest()
+
+        leitir.engine._utc_now = lambda: "2026-08-10T00:00:00Z"
+        spec = SearchSpec(
+            mode=SearchMode.SCOPED_EXHAUSTIVE,
+            must=(Predicate(PredicateKind.IDENTIFIER, "target", "py"),),
+            scopes=(RepoScope("owner/repo", "a" * 40),),
+        )
+        report = ScopedSearcher(Tree(), (RustAdapter(), PythonAdapter())).search(spec)
+        print(json.dumps({"report": report.to_dict(), "coverage": report.coverage.to_dict()}, sort_keys=True))
+        """
+    )
+    outputs = []
+    for seed in ("0", "1", "42"):
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = "src"
+        outputs.append(
+            subprocess.check_output([sys.executable, "-c", script], env=env)
+        )
+    assert outputs[0] == outputs[1] == outputs[2]
+    payload = json.loads(outputs[0])
+    assert payload["coverage"]["files_eligible"] == 2
+    assert [match["source"]["path"] for match in payload["report"]["matches"]] == [
+        "a.py", "c.py"
+    ]
 
 
 class TestPathPredicate:

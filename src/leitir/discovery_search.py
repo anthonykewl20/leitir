@@ -19,8 +19,9 @@ from typing import Protocol, runtime_checkable
 
 from leitir import _http
 from leitir.adapters import LanguageAdapter
+from leitir.adapters.languages import canonicalize_language
 from leitir.credentials import validate_secret
-from leitir.engine import path_matches, score_content
+from leitir.engine import _required_language, path_matches, score_content
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches, source_identity
 from leitir.search import (
@@ -400,12 +401,15 @@ def _compile_query(
                 emitted_syntax=emitted,
             )
         )
-        if pred.language and language is not None and pred.language != language:
+        pred_language = (
+            canonicalize_language(pred.language) if pred.language else None
+        )
+        if pred_language is not None and language is not None and pred_language != language:
             raise SearchSpecError(
                 "REJECT_SEMANTIC_DEGRADATION: conflicting predicate languages"
             )
-        if pred.language:
-            language = pred.language
+        if pred_language is not None:
+            language = pred_language
 
     for clause in ("should", "must_not"):
         for index, pred in enumerate(getattr(spec, clause)):
@@ -463,6 +467,15 @@ class GlobalSearcher:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
             raise ValueError("GlobalSearcher only handles global_discovery")
 
+        required_language = _required_language(spec)
+        supported_languages = {
+            canonicalize_language(adapter.language) for adapter in self._adapters
+        }
+        if (
+            required_language is not None
+            and required_language not in supported_languages
+        ):
+            raise SearchSpecError("unsupported required predicate language")
         query, query_translation = _compile_query(spec)
         matches: list[SourceMatch] = []
         exclusions: dict[str, int] = {}
@@ -493,7 +506,7 @@ class GlobalSearcher:
             collected.extend(page.hits)
             provisional = dedup_hits(collected)
             adapter_eligible = sum(
-                self._adapter_for(hit.path) is not None
+                self._adapter_for(hit.path, required_language) is not None
                 for hit in provisional.candidates
             )
             if adapter_eligible >= self._max_results:
@@ -511,7 +524,7 @@ class GlobalSearcher:
             exclusions["pin_disagreement"] = outcome.pin_disagreements
         eligible_groups: list[tuple[CodeSearchHit, ...]] = []
         for candidate, group in zip(outcome.candidates, outcome.groups, strict=True):
-            if self._adapter_for(candidate.path) is None:
+            if self._adapter_for(candidate.path, required_language) is None:
                 exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
             else:
                 eligible_groups.append(group)
@@ -537,7 +550,7 @@ class GlobalSearcher:
                 if path_preds and not path_matches(hit.path, path_preds):
                     exclusions["path_mismatch"] = exclusions.get("path_mismatch", 0) + 1
                     continue
-                adapter = self._adapter_for(hit.path)
+                adapter = self._adapter_for(hit.path, required_language)
                 if adapter is None:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
                     continue
@@ -638,9 +651,14 @@ class GlobalSearcher:
             return None
         return data.decode("utf-8"), digest
 
-    def _adapter_for(self, path: str) -> LanguageAdapter | None:
+    def _adapter_for(
+        self, path: str, required_language: str | None = None
+    ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            if adapter.eligible(path):
+            language = canonicalize_language(adapter.language)
+            if (
+                required_language is None or language == required_language
+            ) and adapter.eligible(path):
                 return adapter
         return None
 

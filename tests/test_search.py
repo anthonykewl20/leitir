@@ -16,6 +16,7 @@ from leitir.search import (
     SearchMode,
     SearchReport,
     SearchSpec,
+    SearchSpecError,
     SourceMatch,
     SourceRef,
 )
@@ -47,6 +48,46 @@ def test_scoped_exhaustive_requires_a_scope():
 def test_global_discovery_allows_no_scope():
     spec = _spec(mode=SearchMode.GLOBAL_DISCOVERY, scopes=())
     assert spec.mode is SearchMode.GLOBAL_DISCOVERY
+
+
+@pytest.mark.parametrize(
+    ("mode", "scopes"),
+    (
+        (SearchMode.GLOBAL_DISCOVERY, ()),
+        (SearchMode.SCOPED_EXHAUSTIVE, (RepoScope("python/cpython", SHA),)),
+    ),
+)
+def test_spec_rejects_conflicting_canonical_required_languages(mode, scopes):
+    with pytest.raises(
+        SearchSpecError, match="conflicting required predicate languages"
+    ):
+        SearchSpec(
+            mode=mode,
+            must=(
+                Predicate(PredicateKind.IDENTIFIER, "first", "js"),
+                Predicate(PredicateKind.IDENTIFIER, "second", "python"),
+            ),
+            scopes=scopes,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mode", "scopes"),
+    (
+        (SearchMode.GLOBAL_DISCOVERY, ()),
+        (SearchMode.SCOPED_EXHAUSTIVE, (RepoScope("python/cpython", SHA),)),
+    ),
+)
+def test_spec_accepts_alias_equivalent_required_languages(mode, scopes):
+    spec = SearchSpec(
+        mode=mode,
+        must=(
+            Predicate(PredicateKind.IDENTIFIER, "first", "js"),
+            Predicate(PredicateKind.IDENTIFIER, "second", "javascript"),
+        ),
+        scopes=scopes,
+    )
+    assert len(spec.must) == 2
 
 
 def test_invalid_commit_sha_is_rejected():

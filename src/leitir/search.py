@@ -221,6 +221,15 @@ class SearchSpec:
             raise ValueError("a search requires at least one must predicate")
         if self.mode is SearchMode.SCOPED_EXHAUSTIVE and not self.scopes:
             raise ValueError("scoped_exhaustive requires at least one scope")
+        from leitir.adapters.languages import canonicalize_language
+
+        required_languages = {
+            canonicalize_language(pred.language)
+            for pred in self.must
+            if pred.language is not None
+        }
+        if len(required_languages) > 1:
+            raise SearchSpecError("conflicting required predicate languages")
 
     def digest(self) -> str:
         """Canonical identity of the spec; equal specs share a digest."""

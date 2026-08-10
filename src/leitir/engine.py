@@ -12,6 +12,7 @@ import re
 from collections.abc import Sequence
 
 from leitir.adapters import LanguageAdapter, SpanMatch
+from leitir.adapters.languages import canonicalize_language
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches
 from leitir.search import (
@@ -24,12 +25,26 @@ from leitir.search import (
     SearchMode,
     SearchReport,
     SearchSpec,
+    SearchSpecError,
     SourceMatch,
     SourceRef,
 )
 from leitir.tree import BlobEntry, TreeSource
 
 MAX_BLOB_SIZE = 2 * 1024 * 1024
+
+
+def _required_language(spec: SearchSpec) -> str | None:
+    values = sorted(
+        {
+            canonicalize_language(predicate.language)
+            for predicate in spec.must
+            if predicate.language is not None
+        }
+    )
+    if len(values) > 1:
+        raise SearchSpecError("conflicting required predicate languages")
+    return values[0] if values else None
 
 
 def path_matches(path: str, predicates: Sequence[Predicate]) -> bool:
@@ -130,6 +145,15 @@ class ScopedSearcher:
         if spec.mode is not SearchMode.SCOPED_EXHAUSTIVE:
             raise ValueError("ScopedSearcher only handles scoped_exhaustive")
 
+        required_language = _required_language(spec)
+        supported_languages = {
+            canonicalize_language(adapter.language) for adapter in self._adapters
+        }
+        if (
+            required_language is not None
+            and required_language not in supported_languages
+        ):
+            raise SearchSpecError("unsupported required predicate language")
         all_matches: list[SourceMatch] = []
         total_eligible = 0
         total_indexed = 0
@@ -139,7 +163,7 @@ class ScopedSearcher:
         for scope in spec.scopes:
             blobs = self._tree.list_blobs(scope.slug, scope.commit_sha)
             eligible, indexed, excluded, matches, partial = self._search_scope(
-                scope.slug, scope.commit_sha, blobs, spec
+                scope.slug, scope.commit_sha, blobs, spec, required_language
             )
             total_eligible += eligible
             total_indexed += indexed
@@ -176,6 +200,7 @@ class ScopedSearcher:
         commit_sha: str,
         blobs: tuple[BlobEntry, ...],
         spec: SearchSpec,
+        required_language: str | None,
     ) -> tuple[int, int, int, list[SourceMatch], bool]:
         path_preds = [
             p for p in spec.must if p.kind is PredicateKind.PATH
@@ -186,9 +211,14 @@ class ScopedSearcher:
         must_not = spec.must_not
         should = spec.should
 
-        eligible_blobs = [
-            b for b in blobs if self._adapter_for(b.path) is not None
-        ]
+        eligible_blobs = sorted(
+            (
+                blob
+                for blob in blobs
+                if self._adapter_for(blob.path, required_language) is not None
+            ),
+            key=lambda blob: (blob.path, blob.blob_sha),
+        )
         if path_preds:
             eligible_blobs = [
                 b
@@ -216,7 +246,7 @@ class ScopedSearcher:
                 continue
 
             files_indexed += 1
-            adapter = self._adapter_for(blob.path)
+            adapter = self._adapter_for(blob.path, required_language)
             if adapter is None:
                 continue
 
@@ -238,9 +268,14 @@ class ScopedSearcher:
 
         return files_eligible, files_indexed, files_excluded, matches, partial
 
-    def _adapter_for(self, path: str) -> LanguageAdapter | None:
+    def _adapter_for(
+        self, path: str, required_language: str | None = None
+    ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            if adapter.eligible(path):
+            language = canonicalize_language(adapter.language)
+            if (
+                required_language is None or language == required_language
+            ) and adapter.eligible(path):
                 return adapter
         return None
 

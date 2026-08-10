@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from leitir.adapters import GoAdapter, PythonAdapter, RustAdapter
+from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.adapters.registry import build_adapters
 
 
@@ -50,9 +51,12 @@ def test_build_adapters_rejects_unknown_language() -> None:
         build_adapters(("python", "brainfuck"))
 
 
-def test_build_adapters_rejects_ast_python_before_s5() -> None:
-    with pytest.raises(ValueError, match="ast_python"):
-        build_adapters(ast_python=True)
+def test_build_adapters_enables_ast_python() -> None:
+    assert tuple(type(adapter) for adapter in build_adapters(ast_python=True)) == (
+        PythonAstAdapter,
+        RustAdapter,
+        GoAdapter,
+    )
 
 
 def test_build_adapters_is_deterministic_across_pythonhashseed() -> None:

@@ -62,23 +62,25 @@ def path_matches(path: str, predicates: Sequence[Predicate]) -> bool:
     return False
 
 
-def _span_excluded(
+def _span_excluded_ex(
     content: str,
     adapter: LanguageAdapter,
     span: SpanMatch,
     must_not: tuple[Predicate, ...],
     whole_file: bool = False,
-) -> bool:
+) -> tuple[bool, bool]:
+    parser_unavailable = False
     for pred in must_not:
         if pred.kind is PredicateKind.PATH:
             continue
-        hits = adapter.find_matches(content, (pred,))
-        if whole_file and hits:
-            return True
-        for hit in hits:
+        result = adapter.find_matches_ex(content, (pred,))
+        parser_unavailable = parser_unavailable or result.parser_unavailable
+        if whole_file and result.spans:
+            return True, parser_unavailable
+        for hit in result.spans:
             if hit.start_line == span.start_line:
-                return True
-    return False
+                return True, parser_unavailable
+    return False, parser_unavailable
 
 
 def score_content(
@@ -94,37 +96,82 @@ def score_content(
     whole_file: bool = False,
 ) -> list[SourceMatch]:
     """Score one blob's content against predicates and return ranked matches."""
-    spans = (
-        adapter.find_matches(content, content_must, whole_file=whole_file)
-        if content_must
-        else ()
+    matches, _parser_unavailable = _score_content_ex(
+        content,
+        adapter,
+        slug,
+        commit_sha,
+        path,
+        blob_sha,
+        content_must,
+        should,
+        must_not,
+        whole_file,
     )
+    return matches
+
+
+def _score_content_ex(
+    content: str,
+    adapter: LanguageAdapter,
+    slug: str,
+    commit_sha: str,
+    path: str,
+    blob_sha: str,
+    content_must: tuple[Predicate, ...],
+    should: tuple[Predicate, ...],
+    must_not: tuple[Predicate, ...],
+    whole_file: bool = False,
+) -> tuple[list[SourceMatch], bool]:
+    result = adapter.find_matches_ex(
+        content, content_must, whole_file=whole_file
+    )
+    spans = result.spans
+    parser_unavailable = result.parser_unavailable
     if not spans and content_must:
-        return []
+        return [], parser_unavailable
     if not spans and not content_must:
-        spans = adapter.find_matches(content, should) if should else ()
+        should_result = adapter.find_matches_ex(content, should) if should else None
+        if should_result is not None:
+            spans = should_result.spans
+            parser_unavailable = (
+                parser_unavailable or should_result.parser_unavailable
+            )
 
     whole_file_should_kinds: set[PredicateKind] = set()
     whole_file_should_boost = 0
     if whole_file:
         for pred in should:
-            if adapter.find_matches(content, (pred,)):
+            should_result = adapter.find_matches_ex(content, (pred,))
+            parser_unavailable = (
+                parser_unavailable or should_result.parser_unavailable
+            )
+            if should_result.spans:
                 whole_file_should_kinds.add(pred.kind)
                 whole_file_should_boost += 1
 
     matches: list[SourceMatch] = []
     for span in spans:
-        if must_not and _span_excluded(
-            content, adapter, span, must_not, whole_file=whole_file
-        ):
-            continue
+        if must_not:
+            excluded, exclusion_parser_unavailable = _span_excluded_ex(
+                content, adapter, span, must_not, whole_file=whole_file
+            )
+            parser_unavailable = (
+                parser_unavailable or exclusion_parser_unavailable
+            )
+            if excluded:
+                continue
 
         matched_kinds = set(span.matched_kinds)
         should_boost = whole_file_should_boost
         if whole_file:
             matched_kinds.update(whole_file_should_kinds)
         elif should:
-            for ss in adapter.find_matches(content, should):
+            should_result = adapter.find_matches_ex(content, should)
+            parser_unavailable = (
+                parser_unavailable or should_result.parser_unavailable
+            )
+            for ss in should_result.spans:
                 if ss.start_line == span.start_line:
                     matched_kinds.update(ss.matched_kinds)
                     should_boost += len(ss.matched_kinds)
@@ -145,7 +192,7 @@ def score_content(
                 matched_kinds=tuple(sorted(matched_kinds, key=lambda k: k.value)),
             )
         )
-    return matches
+    return matches, parser_unavailable
 
 
 class ScopedSearcher:
@@ -284,17 +331,33 @@ class ScopedSearcher:
             except Exception:
                 continue
 
-            if must_not and self._excluded(content, adapter, must_not):
-                continue
-
-            matches.extend(
-                score_content(
-                    content, adapter, slug, commit_sha,
-                    blob.path, blob.blob_sha,
-                    content_must, should, must_not,
-                    whole_file=spec.whole_file_must,
+            parser_unavailable = False
+            if must_not:
+                excluded, parser_unavailable = self._excluded_ex(
+                    content, adapter, must_not
                 )
+                if parser_unavailable:
+                    files_excluded += 1
+                    partial = True
+                if excluded:
+                    continue
+
+            blob_matches, score_parser_unavailable = _score_content_ex(
+                content,
+                adapter,
+                slug,
+                commit_sha,
+                blob.path,
+                blob.blob_sha,
+                content_must,
+                should,
+                must_not,
+                whole_file=spec.whole_file_must,
             )
+            if score_parser_unavailable and not parser_unavailable:
+                files_excluded += 1
+                partial = True
+            matches.extend(blob_matches)
 
         return files_eligible, files_indexed, files_excluded, matches, partial
 
@@ -309,16 +372,20 @@ class ScopedSearcher:
                 return adapter
         return None
 
-    def _excluded(
+    def _excluded_ex(
         self,
         content: str,
         adapter: LanguageAdapter,
         must_not: tuple[Predicate, ...],
-    ) -> bool:
+    ) -> tuple[bool, bool]:
+        parser_unavailable = False
         for pred in must_not:
             if pred.kind is PredicateKind.PATH:
                 continue
-            hits = adapter.find_matches(content, (pred,))
-            if hits:
-                return True
-        return False
+            result = adapter.find_matches_ex(content, (pred,))
+            parser_unavailable = (
+                parser_unavailable or result.parser_unavailable
+            )
+            if result.spans:
+                return True, parser_unavailable
+        return False, parser_unavailable

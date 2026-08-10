@@ -21,7 +21,7 @@ from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.adapters.languages import canonicalize_language
 from leitir.credentials import validate_secret
-from leitir.engine import _required_language, path_matches, score_content
+from leitir.engine import _required_language, _score_content_ex, path_matches
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches, source_identity
 from leitir.search import (
@@ -596,14 +596,18 @@ class GlobalSearcher:
                 verified_line_counts[
                     (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
                 ] = _line_count(content)
-                matches.extend(
-                    score_content(
-                        content, adapter, hit.slug, commit_sha,
-                        hit.path, blob_sha,
-                        content_preds, spec.should, spec.must_not,
-                        whole_file=spec.whole_file_must,
-                    )
+                blob_matches, parser_unavailable = _score_content_ex(
+                    content, adapter, hit.slug, commit_sha,
+                    hit.path, blob_sha,
+                    content_preds, spec.should, spec.must_not,
+                    whole_file=spec.whole_file_must,
                 )
+                matches.extend(blob_matches)
+                if parser_unavailable:
+                    incomplete_results = True
+                    exclusions["parser_unavailable"] = (
+                        exclusions.get("parser_unavailable", 0) + 1
+                    )
                 files_indexed += 1
                 break
 

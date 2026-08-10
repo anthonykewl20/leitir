@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import textwrap
+
+from leitir.adapters import (
+    GoAdapter,
+    MatchMethod,
+    PythonAdapter,
+    RustAdapter,
+)
+from leitir.adapters.python_ast import PythonAstAdapter
+from leitir.adapters.registry import build_adapters
+from leitir.engine import ScopedSearcher
+from leitir.search import (
+    CoverageStatus,
+    Predicate,
+    PredicateKind,
+    RepoScope,
+    SearchMode,
+    SearchSpec,
+)
+from leitir.tree import BlobEntry
+
+SHA = "a" * 40
+
+
+def _predicate(kind: PredicateKind, value: str) -> Predicate:
+    return Predicate(kind, value)
+
+
+class _Tree:
+    def __init__(self, content: str) -> None:
+        self._data = content.encode()
+        self._blob_sha = hashlib.sha1(
+            b"blob %d\x00" % len(self._data) + self._data
+        ).hexdigest()
+
+    def list_blobs_ex(
+        self, slug: str, commit_sha: str
+    ) -> tuple[tuple[BlobEntry, ...], bool]:
+        return (
+            (BlobEntry("sample.py", self._blob_sha, len(self._data)),),
+            False,
+        )
+
+    def read_blob(self, slug: str, blob_sha: str) -> bytes:
+        return self._data
+
+
+def _ast_adapter() -> PythonAstAdapter:
+    return PythonAstAdapter(PythonAdapter())
+
+
+def _search(content: str, predicate: Predicate) -> object:
+    searcher = ScopedSearcher(_Tree(content), (_ast_adapter(),))
+    return searcher.search(
+        SearchSpec(
+            mode=SearchMode.SCOPED_EXHAUSTIVE,
+            must=(predicate,),
+            scopes=(RepoScope("owner/repo", SHA),),
+        )
+    )
+
+
+def test_structural_matches_have_ast_provenance_and_stable_positions() -> None:
+    content = textwrap.dedent(
+        """\
+        import pathlib
+        from os import path
+
+        def build(value: str = "x") -> str:
+            result = path.join(value, "y")
+            return result
+
+        build("z")
+        """
+    )
+    cases = (
+        (PredicateKind.IMPORT, "pathlib", 1),
+        (PredicateKind.SIGNATURE, '(value: str = \'x\') -> str', 4),
+        (PredicateKind.SYMBOL_DEFINITION, "build", 4),
+        (PredicateKind.SYMBOL_REFERENCE, "result", 6),
+        (PredicateKind.CALL, "build", 8),
+    )
+    observed: list[tuple[int, int | None, str]] = []
+    for kind, value, line in cases:
+        result = _ast_adapter().find_matches_ex(
+            content, (_predicate(kind, value),)
+        )
+        assert result.parser_unavailable is False
+        assert result.spans
+        assert all(span.method is MatchMethod.AST for span in result.spans)
+        assert all(span.start_line == span.end_line for span in result.spans)
+        assert result.spans[0].start_line == line
+        observed.extend(
+            (span.start_line, span.start_col, span.matched_kinds[0].value)
+            for span in result.spans
+        )
+    assert observed == sorted(
+        observed, key=lambda item: (item[0], item[1] or -1, item[2])
+    )
+
+
+def test_syntax_error_falls_back_with_hits_and_marks_scope_partial() -> None:
+    content = "target()\nif (\n"
+    predicate = _predicate(PredicateKind.CALL, "target")
+    result = _ast_adapter().find_matches_ex(content, (predicate,))
+    assert result.parser_unavailable is True
+    assert result.spans
+    assert all(span.method is MatchMethod.HEURISTIC for span in result.spans)
+    report = _search(content, predicate)
+    assert report.coverage.status is CoverageStatus.PARTIAL
+    assert report.coverage.incomplete_results is True
+    assert report.coverage.files_excluded >= 1
+    assert report.matches
+
+
+def test_syntax_error_without_fallback_hits_marks_scope_partial() -> None:
+    content = "if (\n"
+    predicate = _predicate(PredicateKind.CALL, "missing")
+    result = _ast_adapter().find_matches_ex(content, (predicate,))
+    assert result.parser_unavailable is True
+    assert result.spans == ()
+    report = _search(content, predicate)
+    assert report.coverage.status is CoverageStatus.PARTIAL
+    assert report.coverage.incomplete_results is True
+    assert report.coverage.files_excluded >= 1
+    assert report.matches == ()
+
+
+def test_same_line_ast_nodes_merge_without_duplicate_source_identity() -> None:
+    predicates = (
+        _predicate(PredicateKind.SYMBOL_DEFINITION, "result"),
+        _predicate(PredicateKind.CALL, "build"),
+    )
+    result = _ast_adapter().find_matches_ex("result = build()\n", predicates)
+    assert len(result.spans) == 1
+    assert result.spans[0].matched_kinds == (
+        PredicateKind.CALL,
+        PredicateKind.SYMBOL_DEFINITION,
+    )
+    searcher = ScopedSearcher(_Tree("result = build()\n"), (_ast_adapter(),))
+    report = searcher.search(
+        SearchSpec(
+            mode=SearchMode.SCOPED_EXHAUSTIVE,
+            must=predicates,
+            scopes=(RepoScope("owner/repo", SHA),),
+        )
+    )
+    assert len(report.matches) == 1
+
+
+def test_text_and_structural_predicates_use_per_predicate_matching() -> None:
+    content = "def handler():\n    handler()\n"
+    identifier = _predicate(PredicateKind.IDENTIFIER, "handler")
+    call = _predicate(PredicateKind.CALL, "handler")
+
+    text_result = _ast_adapter().find_matches_ex(content, (identifier,))
+    assert text_result.parser_unavailable is False
+    assert text_result.spans
+    assert all(span.method is MatchMethod.HEURISTIC for span in text_result.spans)
+    text_report = _search(content, identifier)
+    assert text_report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+    assert text_report.matches
+
+    call_result = _ast_adapter().find_matches_ex(content, (call,))
+    assert call_result.spans[0].start_line == 2
+    assert call_result.spans[0].method is MatchMethod.AST
+
+    mixed = _ast_adapter().find_matches_ex(content, (identifier, call))
+    assert len(mixed.spans) == 1
+    assert mixed.spans[0].start_line == 2
+    assert mixed.spans[0].matched_kinds == (
+        PredicateKind.CALL,
+        PredicateKind.IDENTIFIER,
+    )
+    assert mixed.spans[0].method is MatchMethod.HEURISTIC
+
+
+def test_imports_are_symbol_definitions() -> None:
+    result = _ast_adapter().find_matches_ex(
+        "import os\nfrom module import value\n",
+        (_predicate(PredicateKind.SYMBOL_DEFINITION, "os"),),
+    )
+    assert len(result.spans) == 1
+    assert result.spans[0].start_line == 1
+    assert result.spans[0].method is MatchMethod.AST
+
+
+def test_multiline_ast_node_does_not_mix_end_column_lines() -> None:
+    result = _ast_adapter().find_matches_ex(
+        "result = build(\n    value,\n)\n",
+        (_predicate(PredicateKind.CALL, "build"),),
+    )
+    assert len(result.spans) == 1
+    assert result.spans[0].start_col == 9
+    assert result.spans[0].end_col is None
+
+
+def test_registry_selects_ast_adapter_without_changing_default_order() -> None:
+    assert tuple(type(adapter) for adapter in build_adapters()) == (
+        PythonAdapter,
+        RustAdapter,
+        GoAdapter,
+    )
+    assert tuple(
+        type(adapter) for adapter in build_adapters(ast_python=True)
+    ) == (PythonAstAdapter, RustAdapter, GoAdapter)
+
+
+def test_scoped_ast_json_is_hash_seed_independent() -> None:
+    script = textwrap.dedent(
+        """\
+        import hashlib
+        from leitir.adapters import PythonAdapter
+        from leitir.adapters.python_ast import PythonAstAdapter
+        from leitir.engine import ScopedSearcher
+        import leitir.engine
+        from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
+        from leitir.tree import BlobEntry
+
+        content = b"def build():\\n    return 1\\nbuild()\\n"
+        blob = hashlib.sha1(b"blob %d\\x00" % len(content) + content).hexdigest()
+        class Tree:
+            def list_blobs_ex(self, slug, commit_sha):
+                return ((BlobEntry("x.py", blob, len(content)),), False)
+            def read_blob(self, slug, blob_sha):
+                return content
+        leitir.engine._utc_now = lambda: "2026-08-10T00:00:00Z"
+        report = ScopedSearcher(Tree(), (PythonAstAdapter(PythonAdapter()),)).search(
+            SearchSpec(
+                mode=SearchMode.SCOPED_EXHAUSTIVE,
+                must=(Predicate(PredicateKind.CALL, "build"),),
+                scopes=(RepoScope("owner/repo", "a" * 40),),
+            )
+        )
+        print(report.to_json(indent=None))
+        """
+    )
+    outputs = []
+    for seed in ("0", "1", "42"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        outputs.append(json.loads(completed.stdout))
+    assert outputs[1:] == outputs[:-1]

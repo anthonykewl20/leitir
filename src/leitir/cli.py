@@ -381,6 +381,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="match required predicates anywhere in the same file (not just the same line)",
     )
     search.add_argument(
+        "--ast",
+        action="store_true",
+        default=False,
+        dest="ast",
+        help="use the Python AST adapter (opt-in structural matching)",
+    )
+    search.add_argument(
         "--max-results",
         type=_positive_search_budget,
         default=None,
@@ -512,14 +519,16 @@ def _build_default_resolver(token: str | None) -> object:
     )
 
 
-def _build_default_searcher(tree_source: object) -> object:
+def _build_default_searcher(
+    tree_source: object, ast_python: bool = False
+) -> object:
     from .adapters.registry import build_adapters
     from .engine import ScopedSearcher
     from .tree import TreeSource
 
     return ScopedSearcher(
         tree_source=cast(TreeSource, tree_source),
-        adapters=build_adapters(),
+        adapters=build_adapters(ast_python=ast_python),
     )
 
 
@@ -536,7 +545,11 @@ def _load_benchmark_manifest(path: str | None) -> object:
 
 
 def _build_default_global_searcher(
-    code_search: object, tree_source: object, max_results: int, max_pages: int
+    code_search: object,
+    tree_source: object,
+    max_results: int,
+    max_pages: int,
+    ast_python: bool = False,
 ) -> object:
     from .adapters.registry import build_adapters
     from .discovery_search import CodeSearchPort, GlobalSearcher
@@ -547,7 +560,7 @@ def _build_default_global_searcher(
     return GlobalSearcher(
         code_search=typed_code_search,
         tree_source=cast(TreeSource, tree_source),
-        adapters=build_adapters(),
+        adapters=build_adapters(ast_python=ast_python),
         blob_reader=cast(Any, code_search).read_blob_by_path,
         max_results=max_results,
         max_pages=max_pages,
@@ -1670,11 +1683,9 @@ def main(
     *,
     tree_source_factory: Callable[[str | None], object] = _build_default_tree_source,
     resolver_factory: Callable[[str | None], object] = _build_default_resolver,
-    searcher_factory: Callable[[object], object] = _build_default_searcher,
+    searcher_factory: Callable[..., object] = _build_default_searcher,
     code_search_factory: Callable[[str | None], object] = _build_default_code_search,
-    global_searcher_factory: Callable[
-        [object, object, int, int], object
-    ] = _build_default_global_searcher,
+    global_searcher_factory: Callable[..., object] = _build_default_global_searcher,
     benchmark_runner_factory: Callable[
         [object], object
     ] = _build_default_benchmark_runner,
@@ -1828,10 +1839,24 @@ def main(
             tree_source = tree_source_factory(token)
             max_results = args.max_results if args.max_results is not None else 30
             max_pages = args.max_pages if args.max_pages is not None else 10
-            searcher = cast(
-                _Searcher,
-                global_searcher_factory(code_search, tree_source, max_results, max_pages),
-            )
+            if args.ast:
+                searcher = cast(
+                    _Searcher,
+                    global_searcher_factory(
+                        code_search,
+                        tree_source,
+                        max_results,
+                        max_pages,
+                        ast_python=True,
+                    ),
+                )
+            else:
+                searcher = cast(
+                    _Searcher,
+                    global_searcher_factory(
+                        code_search, tree_source, max_results, max_pages
+                    ),
+                )
             report = searcher.search(spec)
         else:
             if args.repo is not None:
@@ -1852,7 +1877,12 @@ def main(
             )
 
             tree_source = tree_source_factory(token)
-            searcher = cast(_Searcher, searcher_factory(tree_source))
+            searcher = cast(
+                _Searcher,
+                searcher_factory(tree_source, ast_python=True)
+                if args.ast
+                else searcher_factory(tree_source),
+            )
             report = searcher.search(spec)
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)

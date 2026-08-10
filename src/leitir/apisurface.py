@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
 
+from leitir._python_ast import parse_python, python_signature
+
 ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
 logger = logging.getLogger(__name__)
@@ -82,40 +84,6 @@ def _module_name(relative: Path) -> str:
     return ".".join(parts) or "__init__"
 
 
-def _unparse(node: ast.AST | None) -> str | None:
-    return ast.unparse(node) if node is not None else None
-
-
-def _argument(argument: ast.arg, default: ast.expr | None = None) -> str:
-    rendered = argument.arg
-    annotation = _unparse(argument.annotation)
-    if annotation is not None:
-        rendered += f": {annotation}"
-    if default is not None:
-        rendered += f" = {ast.unparse(default)}"
-    return rendered
-
-
-def _python_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    arguments = node.args
-    positional = list(arguments.posonlyargs) + list(arguments.args)
-    defaults: list[ast.expr | None] = [None] * (len(positional) - len(arguments.defaults)) + list(arguments.defaults)
-    parts = [_argument(argument, default) for argument, default in zip(positional, defaults, strict=False)]
-    if arguments.posonlyargs:
-        parts.insert(len(arguments.posonlyargs), "/")
-    if arguments.vararg is not None:
-        parts.append("*" + _argument(arguments.vararg))
-    elif arguments.kwonlyargs:
-        parts.append("*")
-    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=False):
-        parts.append(_argument(argument, default))
-    if arguments.kwarg is not None:
-        parts.append("**" + _argument(arguments.kwarg))
-    signature = f"({', '.join(parts)})"
-    returns = _unparse(node.returns)
-    return signature + (f" -> {returns}" if returns is not None else "")
-
-
 def _symbol(
     *,
     kind: str,
@@ -155,7 +123,7 @@ def _python_extractor(target_path: Path, language: str) -> ApiIndex:
         relative = path.relative_to(target_path).as_posix()
         try:
             with tokenize.open(path) as source_file:
-                tree = ast.parse(source_file.read(), filename=relative)
+                tree = parse_python(source_file.read(), filename=relative)
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
             continue
         module = _module_name(Path(relative))
@@ -179,7 +147,7 @@ def _python_extractor(target_path: Path, language: str) -> ApiIndex:
                             module=module,
                             path=relative,
                             line=node.lineno,
-                            signature=_python_signature(node),
+                            signature=python_signature(node),
                             docstring=ast.get_docstring(node),
                             method="ast",
                         )
@@ -211,7 +179,7 @@ def _python_extractor(target_path: Path, language: str) -> ApiIndex:
                                     module=module,
                                     path=relative,
                                     line=child.lineno,
-                                    signature=_python_signature(child),
+                                    signature=python_signature(child),
                                     docstring=ast.get_docstring(child),
                                     method="ast",
                                 )

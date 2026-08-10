@@ -27,6 +27,7 @@ _EXCLUSION_REASONS = frozenset(
         "head_unresolved",
         "no_adapter",
         "path_mismatch",
+        "parser_unavailable",
         "provenance_mismatch",
         "pin_disagreement",
         "unpinned_hit",

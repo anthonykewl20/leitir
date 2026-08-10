@@ -529,6 +529,8 @@ class TestAdapterProtocol:
             SpanMatch(5, 2, (PredicateKind.IDENTIFIER,))
         with pytest.raises(ValueError):
             SpanMatch(1, 1, ())
+        with pytest.raises(ValueError):
+            SpanMatch(1, 1, (PredicateKind.IDENTIFIER,), 5, 4)
 
 
 class TestTreeSourceProtocol:

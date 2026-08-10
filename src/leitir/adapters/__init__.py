@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from leitir.search import Predicate, PredicateKind
+
+
+class MatchMethod(StrEnum):
+    AST = "ast"
+    HEURISTIC = "heuristic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +27,9 @@ class SpanMatch:
     start_line: int
     end_line: int
     matched_kinds: tuple[PredicateKind, ...]
+    start_col: int | None = None
+    end_col: int | None = None
+    method: MatchMethod = MatchMethod.HEURISTIC
 
     def __post_init__(self) -> None:
         if self.start_line < 1:
@@ -29,6 +38,19 @@ class SpanMatch:
             raise ValueError("end_line must be >= start_line")
         if not self.matched_kinds:
             raise ValueError("must record at least one matched kind")
+        if (
+            self.start_line == self.end_line
+            and self.start_col is not None
+            and self.end_col is not None
+            and self.end_col < self.start_col
+        ):
+            raise ValueError("end_col must be >= start_col for a single-line span")
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterMatchResult:
+    spans: tuple[SpanMatch, ...]
+    parser_unavailable: bool = False
 
 
 @runtime_checkable
@@ -50,6 +72,15 @@ class LanguageAdapter(Protocol):
         whole_file: bool = False,
     ) -> tuple[SpanMatch, ...]:
         """Return all spans satisfying every must-predicate."""
+        ...
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
         ...
 
 
@@ -128,6 +159,17 @@ class PythonAdapter:
                     )
                 )
         return tuple(spans)
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -287,6 +329,17 @@ class RustAdapter:
                 )
         return tuple(spans)
 
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
+
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
     ) -> set[int]:
@@ -435,6 +488,17 @@ class GoAdapter:
                     )
                 )
         return tuple(spans)
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate

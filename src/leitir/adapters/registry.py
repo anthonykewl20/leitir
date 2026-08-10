@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from leitir.adapters import GoAdapter, LanguageAdapter, PythonAdapter, RustAdapter
+from leitir.adapters.python_ast import PythonAstAdapter
 
 _ORDERED_FACTORIES: tuple[tuple[str, Callable[[], LanguageAdapter]], ...] = (
     ("python", PythonAdapter),
@@ -19,8 +20,6 @@ def build_adapters(
     languages: tuple[str, ...] = _DEFAULT_LANGUAGES,
     ast_python: bool = False,
 ) -> tuple[LanguageAdapter, ...]:
-    if ast_python:
-        raise ValueError("ast_python requires the S5 AST adapter")
     if len(set(languages)) != len(languages):
         raise ValueError("adapter languages must be unique")
     supported = frozenset(name for name, _factory in _ORDERED_FACTORIES)
@@ -28,6 +27,12 @@ def build_adapters(
     if unknown:
         raise ValueError(f"unsupported adapter languages: {', '.join(unknown)}")
     selected = frozenset(languages)
-    return tuple(
-        factory() for name, factory in _ORDERED_FACTORIES if name in selected
-    )
+    adapters: list[LanguageAdapter] = []
+    for name, factory in _ORDERED_FACTORIES:
+        if name not in selected:
+            continue
+        if name == "python" and ast_python:
+            adapters.append(PythonAstAdapter(PythonAdapter()))
+        else:
+            adapters.append(factory())
+    return tuple(adapters)

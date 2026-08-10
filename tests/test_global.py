@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from leitir.adapters import PythonAdapter
+from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.discovery_search import (
     CodeSearchError,
     CodeSearchHit,
@@ -277,6 +278,34 @@ class TestBuildQuery:
 
 
 class TestGlobalSearcher:
+    def test_ast_parse_failure_is_incomplete_and_counted(self) -> None:
+        content = b"urlencode = 1\nif (\n"
+        blob = hashlib.sha1(
+            b"blob " + str(len(content)).encode("ascii") + b"\x00" + content
+        ).hexdigest()
+        hit = _hit(blob_sha=blob)
+        page = CodeSearchPage(hits=(hit,), total_count=1, incomplete_results=False)
+
+        ast_report = GlobalSearcher(
+            code_search=FakeCodeSearch(page=page),
+            tree_source=FakeTree(),
+            adapters=(PythonAstAdapter(PythonAdapter()),),
+            blob_reader=lambda _slug, _sha, _path: content,
+            clock=lambda: "2026-08-06T12:00:00Z",
+        ).search(_spec(must=(Predicate(PredicateKind.CALL, "urlencode"),)))
+        assert ast_report.coverage.incomplete_results is True
+        assert ast_report.coverage.exclusions["parser_unavailable"] == 1
+
+        default_report = GlobalSearcher(
+            code_search=FakeCodeSearch(page=page),
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=lambda _slug, _sha, _path: content,
+            clock=lambda: "2026-08-06T12:00:00Z",
+        ).search(_spec())
+        assert default_report.coverage.incomplete_results is False
+        assert default_report.coverage.exclusions == {}
+
     def test_path_superset_hits_are_locally_filtered(self):
         matching = _hit(path="Lib/urllib/parse.py")
         nonmatching = _hit(path="Lib/http/client.py")

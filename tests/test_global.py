@@ -21,6 +21,7 @@ from leitir.discovery_search import (
     CodeSearchPage,
     GlobalSearcher,
     _cross_checked_commit_sha,
+    _line_count,
     build_query,
     dedup_hits,
     hit_identity,
@@ -1092,6 +1093,115 @@ def test_validate_report_rejects_blob_copied_from_another_hit():
         validate_report(tampered, (indexed, other))
 
 
+def test_validate_report_rejects_non_finite_or_negative_score():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    for bad_score in (float("nan"), float("inf"), float("-inf"), -0.5):
+        tampered = replace(report, matches=(replace(match, score=bad_score),))
+        with pytest.raises(ValueError, match="REJECT_INVALID_SCORE"):
+            validate_report(tampered, (indexed,))
+
+
+def test_validate_report_rejects_span_beyond_verified_content():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
+    line_count = _line_count(_content_for(indexed.path).decode())
+    tampered = replace(
+        report,
+        matches=(
+            replace(match, source=replace(match.source, end_line=line_count + 1000)),
+        ),
+    )
+    with pytest.raises(ValueError, match="REJECT_INVALID_SPAN"):
+        validate_report(tampered, (indexed,), {identity: line_count})
+
+
+def test_validate_report_accepts_valid_report_with_line_counts():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
+    line_count = _line_count(_content_for(indexed.path).decode())
+    validate_report(report, (indexed,), {identity: line_count})
+
+
+def test_validate_report_rejects_exact_duplicate_match():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(report, matches=(match, match))
+    with pytest.raises(ValueError, match="REJECT_DUPLICATE_MATCH"):
+        validate_report(tampered, (indexed,))
+
+
+def test_validate_report_rejects_duplicate_match_with_nudged_score():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    nudged = replace(match, score=match.score + 1.0)
+    tampered = replace(report, matches=(match, nudged))
+    with pytest.raises(ValueError, match="REJECT_DUPLICATE_MATCH"):
+        validate_report(tampered, (indexed,))
+
+
+def test_validate_report_accepts_zero_score():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(report, matches=(replace(match, score=0.0),))
+    validate_report(tampered, (indexed,))
+
+
+def test_validate_report_enforces_span_boundary_at_verified_line_count():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
+    line_count = _line_count(_content_for(indexed.path).decode())
+    at_limit = replace(
+        report,
+        matches=(
+            replace(match, source=replace(match.source, end_line=line_count)),
+        ),
+    )
+    validate_report(at_limit, (indexed,), {identity: line_count})
+    over_limit = replace(
+        report,
+        matches=(
+            replace(match, source=replace(match.source, end_line=line_count + 1)),
+        ),
+    )
+    with pytest.raises(ValueError, match="REJECT_INVALID_SPAN"):
+        validate_report(over_limit, (indexed,), {identity: line_count})
+
+
+def test_validate_report_rejects_span_when_line_count_missing_for_identity():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    with pytest.raises(ValueError, match="REJECT_INVALID_SPAN"):
+        validate_report(report, (indexed,), {})
+
+
+def test_line_count_matches_real_source_line_model():
+    assert _line_count("") == 0
+    assert _line_count("\n") == 1
+    assert _line_count("a") == 1
+    assert _line_count("a\n") == 1
+    assert _line_count("a\nb") == 2
+    assert _line_count("a\nb\n") == 2
+    assert _line_count("a\n\n\n") == 3
+
+
 def test_validate_report_is_deterministic_across_pythonhashseed_values():
     script = textwrap.dedent(
         """
@@ -1128,6 +1238,17 @@ def test_validate_report_is_deterministic_across_pythonhashseed_values():
                 outcomes.append([field, str(exc)])
         validate_report(report, hits)
         outcomes.append(["valid", "ACCEPT"])
+        dup_match = replace(match, score=match.score + 0.5)
+        dup_report = replace(report, matches=(match, dup_match))
+        try:
+            validate_report(dup_report, hits)
+        except ValueError as exc:
+            outcomes.append(["duplicate", str(exc)])
+        nan_report = replace(report, matches=(replace(match, score=float("nan")),))
+        try:
+            validate_report(nan_report, hits)
+        except ValueError as exc:
+            outcomes.append(["nan_score", str(exc)])
         print(json.dumps(outcomes, separators=(",", ":")))
         """
     )
@@ -1155,6 +1276,8 @@ def test_validate_report_is_deterministic_across_pythonhashseed_values():
                 ["path", "REJECT_MOVING_REFERENCE"],
                 ["blob_sha", "REJECT_MOVING_REFERENCE"],
                 ["valid", "ACCEPT"],
+                ["duplicate", "REJECT_DUPLICATE_MATCH"],
+                ["nan_score", "REJECT_INVALID_SCORE"],
             ],
             separators=(",", ":"),
         ).encode()
@@ -1280,6 +1403,20 @@ def test_validate_report_rejects_match_whose_identity_was_never_byte_verified(mo
         inject_never_verified_identity,
     )
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
+
+
+def test_global_search_rejects_match_span_beyond_verified_content(monkeypatch):
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    line_count = _line_count(_content_for(indexed.path).decode())
+
+    def inflate_span(matches):
+        match = matches[0]
+        return (replace(match, source=replace(match.source, end_line=line_count + 1)),)
+
+    monkeypatch.setattr("leitir.discovery_search.order_source_matches", inflate_span)
+    with pytest.raises(ValueError, match="REJECT_INVALID_SPAN"):
         _searcher(page=page)[0].search(_spec())
 
 

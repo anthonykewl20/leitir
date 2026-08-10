@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from leitir.adapters import GoAdapter, RustAdapter
+from leitir.adapters import GoAdapter, PythonAdapter, RustAdapter
+from leitir.discovery_search import _line_count
 from leitir.search import Predicate, PredicateKind
 
 RUST_SAMPLE = """\
@@ -260,3 +261,56 @@ class TestMultiAdapterEngine:
         assert "src/main.rs" in paths
         assert "cmd/main.go" in paths
         assert report.coverage.files_eligible == 2
+
+
+def test_adapter_never_emits_phantom_line_and_preserves_real_lines():
+    cases = [
+        (PythonAdapter(), "def foo():\n    pass\n", 2),
+        (RustAdapter(), "pub fn foo() {}\nimpl Foo for Bar {}\n", 2),
+        (GoAdapter(), "func foo() {}\nfunc bar() {}\n", 2),
+    ]
+    for adapter, content, real_lines in cases:
+        star = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r".*"),)
+        )
+        assert {s.end_line for s in star} == set(range(1, real_lines + 1))
+        empty_anchor = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r"^$"),)
+        )
+        assert all(s.end_line <= real_lines for s in empty_anchor)
+
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        assert adapter.find_matches(
+            "", (Predicate(PredicateKind.REGEX, r".*"),)
+        ) == ()
+        assert adapter.find_matches(
+            "", (Predicate(PredicateKind.REGEX, r"^$"),)
+        ) == ()
+
+    for adapter, content, real_lines in [
+        (PythonAdapter(), "def foo():\n    pass", 2),
+        (RustAdapter(), "pub fn foo() {}\nimpl Foo for Bar {}", 2),
+        (GoAdapter(), "func foo() {}\nfunc bar() {}", 2),
+    ]:
+        star = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r".*"),)
+        )
+        assert {s.end_line for s in star} == set(range(1, real_lines + 1))
+
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        spans = adapter.find_matches(
+            "a\n\n\n", (Predicate(PredicateKind.REGEX, r"^$"),)
+        )
+        assert {s.end_line for s in spans} == {2, 3}
+
+
+def test_adapter_max_end_line_matches_validator_line_count():
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        for content in ("a\n", "a\nb\n", "a\nb", "x\n\n\n", "only"):
+            spans = adapter.find_matches(
+                content, (Predicate(PredicateKind.REGEX, r".*"),)
+            )
+            if spans:
+                assert max(s.end_line for s in spans) == _line_count(content)
+            else:
+                assert _line_count(content) == 0

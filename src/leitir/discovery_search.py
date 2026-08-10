@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
@@ -21,7 +22,7 @@ from leitir.adapters import LanguageAdapter
 from leitir.credentials import validate_secret
 from leitir.engine import path_matches, score_content
 from leitir.materialize import _utc_now
-from leitir.ranking import order_source_matches
+from leitir.ranking import order_source_matches, source_identity
 from leitir.search import (
     Coverage,
     CoverageStatus,
@@ -46,6 +47,14 @@ logger = logging.getLogger(__name__)
 def _git_blob_sha(content: bytes) -> str:
     header = b"blob " + str(len(content)).encode("ascii") + b"\x00"
     return hashlib.sha1(header + content).hexdigest()
+
+
+def _line_count(content: str) -> int:
+    if not content:
+        return 0
+    if content.endswith("\n"):
+        return content.count("\n")
+    return content.count("\n") + 1
 
 
 def _cross_checked_commit_sha(item_url: object, html_url: object) -> str | None:
@@ -513,6 +522,7 @@ class GlobalSearcher:
         promoted_attempted = 0
         verification_failed = False
         verified: list[CodeSearchHit] = []
+        verified_line_counts: dict[tuple[str, str, str, str], int] = {}
         for group in eligible_groups:
             if attempts >= self._max_results:
                 incomplete_results = True
@@ -570,6 +580,9 @@ class GlobalSearcher:
 
                 content, blob_sha = verified_content
                 verified.append(hit)
+                verified_line_counts[
+                    (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
+                ] = _line_count(content)
                 matches.extend(
                     score_content(
                         content, adapter, hit.slug, commit_sha,
@@ -605,7 +618,7 @@ class GlobalSearcher:
             ),
             query_translation=query_translation,
         )
-        validate_report(report, tuple(verified))
+        validate_report(report, tuple(verified), verified_line_counts)
         return report
 
     def _read_content(
@@ -632,9 +645,13 @@ class GlobalSearcher:
         return None
 
 
-def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> None:
-    """Reject global reports whose provenance is not derived from indexed hits."""
-    resolution = getattr(report, "resolution", None)
+def validate_report(
+    report: SearchReport,
+    hits: tuple[CodeSearchHit, ...],
+    line_counts: dict[tuple[str, str, str, str], int] | None = None,
+) -> None:
+    """Reject global reports with untrusted provenance or malformed matches."""
+    resolution = report.resolution
     is_global = report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
     if is_global and (
         resolution is None
@@ -649,8 +666,19 @@ def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> No
         (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
         for hit in hits
     }
+    seen: set[tuple[str, str, str, str, int, int]] = set()
     for match in report.matches:
         source = match.source
         identity = (source.slug, source.commit_sha, source.path, source.blob_sha)
         if identity not in accepted:
             raise ValueError("REJECT_MOVING_REFERENCE")
+        if not math.isfinite(match.score) or match.score < 0:
+            raise ValueError("REJECT_INVALID_SCORE")
+        if line_counts is not None:
+            limit = line_counts.get(identity)
+            if limit is None or source.end_line > limit:
+                raise ValueError("REJECT_INVALID_SPAN")
+        signature = source_identity(source)
+        if signature in seen:
+            raise ValueError("REJECT_DUPLICATE_MATCH")
+        seen.add(signature)

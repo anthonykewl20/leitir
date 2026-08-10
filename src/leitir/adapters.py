@@ -77,6 +77,8 @@ class PythonAdapter:
         self, content: str, predicates: tuple[Predicate, ...]
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]
@@ -220,6 +222,8 @@ class RustAdapter:
         self, content: str, predicates: tuple[Predicate, ...]
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]
@@ -352,6 +356,8 @@ class GoAdapter:
         self, content: str, predicates: tuple[Predicate, ...]
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]

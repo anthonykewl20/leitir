@@ -123,10 +123,15 @@ def test_published_assessment_matches_fresh_clean_pinned_run(tmp_path):
     assert assessment["aggregate"]["decision"] == "pass"
     assert assessment["aggregate"]["complete"] is True
     assert assessment["aggregate"]["score_bps"] is None
-    assert assessment["aggregate"]["observed_score_bps"] == 8371
-    assert assessment["aggregate"]["lower_bound_bps"] == 5581
+    assert assessment["aggregate"]["observed_score_bps"] == 8697
+    assert assessment["aggregate"]["lower_bound_bps"] == 7247
     assert assessment["aggregate"]["upper_bound_bps"] == 8914
     assert assessment["aggregate"]["blockers"] == []
+    performance = next(
+        item for item in assessment["checks"]
+        if item["id"] == "performance.controlled_baseline"
+    )
+    assert performance["status"] == "pass"
     assert "release_readiness=not_claimed" in stdout.getvalue()
 
     consumed_paths = {item["path"] for item in assessment["evidence"]}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "project": "leitir",
+  "repo": ".",
+  "dvcs": "git",
+  "branches": ["main"],
+  "environment_type": "existing",
+  "pythons": ["same"],
+  "benchmark_dir": "benchmarks",
+  "env_dir": ".asv/env",
+  "results_dir": ".asv/results",
+  "html_dir": ".asv/html",
+  "build_command": [],
+  "install_command": [],
+  "uninstall_command": [],
+  "matrix": {
+    "env_nobuild": {
+      "PYTHONHASHSEED": ["0"]
+    }
+  }
+}

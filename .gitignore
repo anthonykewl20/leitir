@@ -9,6 +9,7 @@ venv/
 *.log
 .DS_Store
 .pytest_cache/
+.asv/
 .coverage
 # Local score outputs and volatile evidence remain ignored. The deterministic
 # dogfood evidence is tracked so a clean checkout can reproduce the published
@@ -26,3 +27,6 @@ venv/
 !.leitir-score/evidence/radon-cc.json
 !.leitir-score/evidence/radon-mi.json
 !.leitir-score/evidence/score-tool-versions.json
+!.leitir-score/evidence/performance-runner.json
+!.leitir-score/evidence/baseline-asv.json
+!.leitir-score/evidence/candidate-asv.json

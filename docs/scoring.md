@@ -123,6 +123,46 @@ SHA-256-bound into the assessment. Missing, partial, malformed, mismatched, or
 unapproved evidence remains unresolved or becomes a known policy failure as
 defined by its adapter.
 
+### Controlled performance evidence
+
+The ASV 0.6.6 suite is configured by `asv.conf.json` and runs in ASV's
+existing-environment mode. It imports the local `src` tree, creates only small
+synthetic fixtures, sets `PYTHONHASHSEED=0`, and performs no network access or
+package installation. Run it from the repository root with the pinned tool:
+
+```bash
+UV_OFFLINE=1 PYTHONHASHSEED=0 \
+  uv run --no-project --with asv==0.6.6 asv run \
+  --set-commit-hash "$(git rev-parse HEAD)" --record-samples
+```
+
+Each benchmark records at least eight repeats (the policy floor is six). To
+establish a controlled same-commit baseline, run the command once for the
+baseline and once for the candidate under the same machine conditions, retain
+the native ASV v2 result JSON, and inspect the comparison:
+
+```bash
+UV_OFFLINE=1 uv run --no-project --with asv==0.6.6 \
+  asv compare BASELINE_COMMIT CANDIDATE_COMMIT --machine MACHINE
+PYTHONHASHSEED=0 python tools/export_asv_evidence.py \
+  path/to/baseline-result.json path/to/candidate-result.json
+```
+
+For same-commit calibration, the same selected native result may be exported
+as both sides after both real runs have completed; this binds the initial
+controlled baseline without inventing timing values. For a code-change
+comparison, preserve and export the independently measured baseline and
+candidate files. The stdlib-only exporter validates native ASV v2 columns,
+benchmark sets, environment identity, and sample counts before writing the
+three committed artifacts in `.leitir-score/evidence`: `baseline-asv.json`,
+`candidate-asv.json`, and `performance-runner.json`. ASV's local `.asv/` cache
+is ignored. Replacing a baseline is an explicit evidence update and must be
+reviewed with its ASV output; never hand-edit timing samples.
+
+`performance.live_network_latency` is separate from this offline suite. It
+remains a live, non-thresholded advisory check and may remain uncollected in an
+offline assessment.
+
 The current self-assessment evidence was collected with Radon 6.0.1 and
 coverage.py 7.15.2. The declared production scope is every Python module under
 `src/leitir`; Radon's JSON was normalized to the adapter contract by retaining
@@ -154,7 +194,7 @@ The canonical dogfood result is
 generated view is
 [`scorecard/leitir-assessment.html`](../scorecard/leitir-assessment.html). The
 published clean pinned run reports `decision=pass`, `complete=true`, an unknown
-exact score, `observed_score_bps=8371`, and bounds `5581..8914`. It has no
+exact score, `observed_score_bps=8697`, and bounds `7247..8914`. It has no
 missing required checks and no blockers. The fixed offline collector
 explicitly deselects the live-gated Go resolver test rather than counting its
 intentional offline skip as a failure; the live test remains independently
@@ -168,13 +208,15 @@ manifest identity are identical. A local-server global search report preserves
 `indeterminate_global`; the scorer accepts the current `SearchReport` schema's
 `query_translation` field as well as the legacy report shape. Controlled mutmut
 evidence makes the existing coverage artifact consumable and resolves all five
-required `test.*` checks.
+required `test.*` checks. The controlled performance dimension now resolves to
+`10000`; uncollected live latency remains advisory and keeps the aggregate exact
+score unknown.
 
-The public OpenSSF API returned HTTP 404 again for this repository. OpenSSF,
-ASV controlled performance, and live latency are advisory in the offline
-profile and do not block the offline pass. ASV 0.6.6 is installable, but this
-repository has no ASV configuration or benchmark suite and no approved
-baseline from which honest performance artifacts could be produced.
+The public OpenSSF API returned HTTP 404 again for this repository. OpenSSF and
+live latency are advisory in the offline profile and do not block the offline
+pass. Controlled ASV 0.6.6 evidence now covers scoped search, ranking, trust
+scoring, and materialized-tree hashing; the offline scorer consumes its
+committed baseline, candidate, and runner artifacts.
 
 The collected required evidence therefore reaches an offline-only pass. The
 unknown advisory checks keep the exact diagnostic score unknown and prevent any

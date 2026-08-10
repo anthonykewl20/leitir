@@ -68,6 +68,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)
+- recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
 - tolerate .gitattributes EOL normalization in tree verification (`corpus`)
 - treat source checkout as healthy in install checks (#43) (`doctor`)

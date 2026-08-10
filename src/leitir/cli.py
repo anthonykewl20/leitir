@@ -478,13 +478,13 @@ def _build_default_resolver(token: str | None) -> object:
 
 
 def _build_default_searcher(tree_source: object) -> object:
-    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+    from .adapters.registry import build_adapters
     from .engine import ScopedSearcher
     from .tree import TreeSource
 
     return ScopedSearcher(
         tree_source=cast(TreeSource, tree_source),
-        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+        adapters=build_adapters(),
     )
 
 
@@ -501,7 +501,7 @@ def _load_benchmark_manifest(path: str | None) -> object:
 
 
 def _build_default_global_searcher(code_search: object, tree_source: object) -> object:
-    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+    from .adapters.registry import build_adapters
     from .discovery_search import CodeSearchPort, GlobalSearcher
     from .tree import TreeSource
 
@@ -510,7 +510,7 @@ def _build_default_global_searcher(code_search: object, tree_source: object) -> 
     return GlobalSearcher(
         code_search=typed_code_search,
         tree_source=cast(TreeSource, tree_source),
-        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+        adapters=build_adapters(),
         blob_reader=cast(Any, code_search).read_blob_by_path,
     )
 

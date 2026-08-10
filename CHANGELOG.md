@@ -57,6 +57,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - P4+P5 deterministic CLI shell + global discovery (ADR-001) (`search`)
 - P6 deterministic ranking + pinned search-v1 benchmark (`bench`)
 - publish reproducible offline decision=pass (#41) (`scorecard`)
+- stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - unified credentials + private repo/registry auth (`corpus`)
 
 ### Fixed

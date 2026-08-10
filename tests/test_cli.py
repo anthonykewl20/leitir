@@ -262,6 +262,9 @@ def test_whole_file_flag_changes_scoped_matching_and_digest():
         def list_blobs(self, slug, commit_sha):
             return (BlobEntry("x.py", blob_sha, len(data)),)
 
+        def list_blobs_ex(self, slug, commit_sha):
+            return self.list_blobs(slug, commit_sha), False
+
         def read_blob(self, slug, requested_blob_sha):
             return data
 

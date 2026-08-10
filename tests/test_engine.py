@@ -72,6 +72,11 @@ class FakeTreeSource:
         self.list_calls += 1
         return tuple(entry for entry, _ in self._blobs.values())
 
+    def list_blobs_ex(
+        self, slug: str, commit_sha: str
+    ) -> tuple[tuple[BlobEntry, ...], bool]:
+        return self.list_blobs(slug, commit_sha), False
+
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         self.read_calls.append(blob_sha)
         if blob_sha in self._fail_reads:
@@ -410,6 +415,8 @@ def test_required_language_report_is_hash_seed_independent():
                 self.data = {"b.rs": b"fn target() {}\\n", "c.py": b"def target():\\n    return\\n", "a.py": b"def target():\\n    pass\\n"}
             def list_blobs(self, slug, commit_sha):
                 return tuple(BlobEntry(path, self.sha(data), len(data)) for path, data in self.data.items())
+            def list_blobs_ex(self, slug, commit_sha):
+                return self.list_blobs(slug, commit_sha), False
             def read_blob(self, slug, blob_sha):
                 return next(data for data in self.data.values() if self.sha(data) == blob_sha)
             @staticmethod
@@ -457,6 +464,8 @@ def test_whole_file_report_is_hash_seed_independent():
         class Tree:
             def list_blobs(self, slug, commit_sha):
                 return (BlobEntry("x.py", blob_sha, len(data)),)
+            def list_blobs_ex(self, slug, commit_sha):
+                return self.list_blobs(slug, commit_sha), False
             def read_blob(self, slug, requested_blob_sha):
                 return data
 

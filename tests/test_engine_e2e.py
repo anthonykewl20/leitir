@@ -52,6 +52,11 @@ class _RealFixtureTree:
             BlobEntry("README.rst", "c" * 40, 100),
         )
 
+    def list_blobs_ex(
+        self, slug: str, commit_sha: str
+    ) -> tuple[tuple[BlobEntry, ...], bool]:
+        return self.list_blobs(slug, commit_sha), False
+
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         if blob_sha == fx.BLOB_SHA:
             return REPRESENTATIVE_CONTENT.encode()

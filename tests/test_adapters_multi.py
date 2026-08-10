@@ -244,6 +244,9 @@ class TestMultiAdapterEngine:
                     BlobEntry("cmd/main.go", go_sha, len(go_code)),
                 )
 
+            def list_blobs_ex(self, slug, commit_sha):
+                return self.list_blobs(slug, commit_sha), False
+
             def read_blob(self, slug, blob_sha):
                 if blob_sha == rust_sha:
                     return rust_code.encode()

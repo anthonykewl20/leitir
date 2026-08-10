@@ -29,7 +29,7 @@ from leitir.search import (
     SourceMatch,
     SourceRef,
 )
-from leitir.tree import BlobEntry, TreeSource
+from leitir.tree import BlobEntry, TreeEnumerationError, TreeSource
 
 MAX_BLOB_SIZE = 2 * 1024 * 1024
 
@@ -181,15 +181,24 @@ class ScopedSearcher:
         incomplete = False
 
         for scope in spec.scopes:
-            blobs = self._tree.list_blobs(scope.slug, scope.commit_sha)
+            enumeration_excluded = 0
+            try:
+                blobs, recovered = self._tree.list_blobs_ex(
+                    scope.slug, scope.commit_sha
+                )
+                enumeration_excluded = int(recovered)
+            except TreeEnumerationError as exc:
+                blobs = exc.partial_blobs
+                recovered = False
+                enumeration_excluded = 1
             eligible, indexed, excluded, matches, partial = self._search_scope(
                 scope.slug, scope.commit_sha, blobs, spec, required_language
             )
             total_eligible += eligible
             total_indexed += indexed
-            total_excluded += excluded
+            total_excluded += excluded + enumeration_excluded
             all_matches.extend(matches)
-            if partial:
+            if partial or recovered or enumeration_excluded:
                 incomplete = True
 
         if total_indexed == total_eligible and not incomplete:

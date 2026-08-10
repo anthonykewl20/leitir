@@ -76,6 +76,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)
 - cross-platform bugs caught by first Windows CI run (`ci`)
 - final-state review hardening (B1 B2 B3, C1-C7) (`integrity`)
+- harden global search match integrity and adapter line model (`security`)
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)

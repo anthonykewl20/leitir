@@ -19,6 +19,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add --max-results, --max-pages, and --language global controls (`search`)
 - add --whole-file required-predicate mode with deduplicated file-wide evidence (`search`)
 - add leitir agent skill for the corpus workflow (`corpus`)
+- add opt-in Python AST adapter with heuristic fallback (`search`)
 - ADR-002 S1 assessment contracts, policy schema, gate algebra (`score`)
 - ADR-002 S2 canonical evidence and subject provenance (`score`)
 - ADR-002 S3 offline engine-correctness collectors (`score`)

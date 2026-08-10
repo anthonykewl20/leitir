@@ -8,63 +8,75 @@ within the 0.x series, patch releases (0.1.1, 0.1.2, ...) ship audit fixes and
 incremental work, while a minor bump (0.2.0) marks a feature or behavior milestone.
 Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 
+<!-- leitir-sync-changelog start -->
+
 ## [Unreleased]
 
-### Added
-- Added `leitir gc`, which removes abandoned repository staging and obsolete
-  backup generations while holding each target lock (#30).
+### ⚠ BREAKING CHANGES
+- retire the v1 Hy3 synthesis pipeline (`kernel`)
 
-### Changed
-- **Breaking:** snapshot format v2 binds the archive bytes with mandatory
-  `tarball_sha256`; v1 snapshots are no longer importable and must be re-exported.
-- **Breaking:** `leitir import` now requires a trusted `--lock-sha256`; `export`
-  emits `lock_sha256`. The `import_corpus` API likewise requires a trusted lock
-  digest unless callers explicitly opt out (#31).
-- **Breaking:** global search rejects predicates that GitHub search cannot
-  preserve (including REGEX), rather than silently degrading them. Structural
-  and PATH predicates are locally re-verified after server-side filtering (#49).
-- Trust scoring treats missing evidence as unknown (50), not zero. Age is only
-  populated from real source timestamps, license no-evidence is 50 rather than
-  25, and legacy manifests without `has_tests` no longer scan the offline tree;
-  run `upgrade-cache` or re-materialize to refresh that evidence (#23, #24).
-- Credentialled resolution now rejects plaintext HTTP endpoints (#26).
-- Versioning policy: 0.x incremental releases now use patch bumps (next release
-  is 0.1.1); a minor bump is reserved for a feature/behavior milestone. See
-  ROADMAP. The v0.2.0 milestone was renamed to v0.1.1 accordingly.
-- Distribution model is GitHub-only (not PyPI). Install with
-  `pip install git+https://github.com/anthonykewl20/leitir.git`.
-- Update notifications now poll the GitHub Releases API instead of PyPI.
+### Added
+- add leitir agent skill for the corpus workflow (`corpus`)
+- ADR-002 S1 assessment contracts, policy schema, gate algebra (`score`)
+- ADR-002 S2 canonical evidence and subject provenance (`score`)
+- ADR-002 S3 offline engine-correctness collectors (`score`)
+- ADR-002 S4 ranked-output effectiveness adapter (`score`)
+- ADR-002 S5 code-health and test-adequacy adapters (`score`)
+- ADR-002 S6 process and supply-chain adapter (`score`)
+- ADR-002 S7 controlled performance adapter (`score`)
+- ADR-002 S8 deterministic renderer and release profile (`score`)
+- ADR-002 S9 dogfood on Leitir, retire the manual scorecards (`score`)
+- ADR-003 categorized retry layer for transport and resolver sites (`http`)
+- ADR-004 local source materialization layer (`corpus`)
+- ADR-005 C1 GitLab/Bitbucket host-aware resolvers and materialization (`corpus`)
+- ADR-005 C10 trust scoring (`corpus`)
+- ADR-005 C2 registry-artifact parity (`corpus`)
+- ADR-005 C3 byte-exact artifact-first resolution (`corpus`)
+- ADR-005 C4 transitive dependency closure (`corpus`)
+- ADR-005 C5 immutable snapshot export/import (`corpus`)
+- ADR-005 C6 SBOM generation (SPDX/CycloneDX) (`corpus`)
+- ADR-005 C7 API surface extraction (`corpus`)
+- ADR-005 C8 usage-example extraction (`corpus`)
+- ADR-005 C9 version diffing (`corpus`)
+- ASV performance benchmark suite + scorecard performance dimension (`perf`)
+- changesets-style tag inference and subpath-aware get (`corpus`)
+- Codeberg + Sourcehut git hosts (`corpus`)
+- deduplicate global hits by content digest and repo path (#50) (`search`)
+- generate CHANGELOG from conventional commits + drift gate (`changelog`)
+- GitHub-only release pipeline + PyPI deferred path (`distribution`)
+- Go module multi-host (gitlab/bitbucket/golang.org/x) (`corpus`)
+- leitir doctor, version-aware update check, easy install, skill rewrite
+- leitir info one-shot context + --json for get/trust/api/examples (`corpus`)
+- load-time tree verification + bounded sampling (`materialize`)
+- P1 deterministic search contracts + real-data e2e gate (`search`)
+- P2-P4 engine, resolvers, adapters + ADR slice revision (`search`)
+- P4+P5 deterministic CLI shell + global discovery (ADR-001) (`search`)
+- P6 deterministic ranking + pinned search-v1 benchmark (`bench`)
+- publish reproducible offline decision=pass (#41) (`scorecard`)
+- unified credentials + private repo/registry auth (`corpus`)
 
 ### Fixed
-- Corpus commands acquire deduplicated target locks in canonical path order,
-  preventing duplicate-target and reversed-order cross-process deadlocks.
+- address review findings (qwen) (`corpus`)
+- apply deterministic P6 ordering to normal search output (#48) (`search`)
+- certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
+- forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
+- GitLab subgroup (nested group) project support (`corpus`)
+- honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
+- last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
+- pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
+- prune orphan empty parent dirs on failed materialization (`corpus`)
+- reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
+- tolerate .gitattributes EOL normalization in tree verification (`corpus`)
+- treat source checkout as healthy in install checks (#43) (`doctor`)
+- trust tests fairness, Bitbucket live tolerance, lock best-effort (`corpus`)
+- verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security
-- Snapshot import now binds both the trusted lock digest and exact archive bytes,
-  closing coordinated lock/archive tampering (#31).
+- close integrity residuals (#28 #39) (`materialize`)
+- corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)
+- cross-platform bugs caught by first Windows CI run (`ci`)
+- final-state review hardening (B1 B2 B3, C1-C7) (`integrity`)
+- redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
+- reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
-## [0.1.0] - 2026-08-05
-
-### Added
-- Load-time tree verification for materialized source trees (`materialized_tree_hash`,
-  Go dirhash H1 algorithm with symlink records and bounded sampling). Closes #17.
-- `leitir upgrade-cache` command for migrating legacy verified shelves.
-- `ROADMAP.md` and `AGENTS.md` wiring the v0.2.0 milestone
-  into the AI agent workflow.
-- Mandatory `materialized_tree_hash` field for verified shelves; legacy
-  shelves without it are rejected until `leitir upgrade-cache` is run. Closes #18, #19.
-
-### Changed
-- `_corpus_list` now routes through `read_valid_manifest` so load-time
-  verification covers `leitir list`.
-- `update_manifest` raises `ManifestIntegrityError` on tamper (was: returned None).
-
-### Fixed
-- Tampered shelved bytes are no longer served as `verified: true` (was the
-  original load-time integrity defect; see ADR-006).
-- Removed nonexistent `leitir get --force` references from ADR-006 and CLI help.
-- README/STATUS test counts and scorer result updated to match current HEAD.
-- README §Honesty guarantees scoped precisely (load-time verify applies to
-  verified corpus shelves, not "every visible item").
-
-<!-- Next release: add Unreleased entries under appropriate Added/Changed/Deprecated/Removed/Fixed/Security headings. Consider a dedicated Security category for tamper-rejection changes. -->
+[Unreleased]: https://github.com/anthonykewl20/leitir/commits/HEAD

@@ -358,7 +358,25 @@ transitive files must be recorded before distributing adapted code.
 
 Source matrix: `docs/research/search-upgrade-research.md:406-434`.
 
-## 12. Verification Gates
+## 12. Changelog & testing policy
+
+The changelog is deterministic and generated from Conventional Commits by
+`tools/sync_changelog.py`. A CI drift gate, `tests/test_changelog_sync.py`,
+fails when `CHANGELOG.md` is out of sync. Therefore every slice or PR must use
+a proper Conventional Commit message such as `feat(scope): ...` or
+`fix(scope): ...`: the commit is the changelog source. Internal refactors,
+documentation, and chore commits are intentionally omitted from the
+user-facing changelog. Breaking changes use `!` in the type/scope or a
+`BREAKING CHANGE:` footer.
+
+Every slice follows the iterational user-level-intent loop in
+`docs/testing.md`: probe -> red intent test -> green -> refine. Acceptance
+criteria are phrased as observable user-level outcomes. Security and integrity
+slices add tamper/reject tests, and deterministic behavior is asserted under
+`PYTHONHASHSEED=0`, `1`, and `42`. `docs/testing.md` is the authoritative
+testing method; this section states the Search v2 application of that method.
+
+## 13. Verification Gates
 
 Every implementation slice runs:
 
@@ -375,7 +393,7 @@ benchmark digest equality and runs under multiple `PYTHONHASHSEED` values.
 ASV is relevant for performance measurement, but its seed pin does not replace
 the multi-seed gate.
 
-## 13. References
+## 14. References
 
 * Research: `docs/research/search-upgrade-research.md:8-39,121-197,219-265,289-387,389-434`.
 * Current capabilities: `docs/search-capabilities.md:5-18,158-264,291-360`.

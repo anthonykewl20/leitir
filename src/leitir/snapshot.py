@@ -21,7 +21,7 @@ from leitir.corpus import (
     shelve_imported_sources,
 )
 from leitir.docpointers import POINTERS_NAME
-from leitir.materialize import MANIFEST_NAME, _extract_tarball, read_valid_manifest
+from leitir.materialize import _extract_tarball, read_valid_manifest
 from leitir.tree import GitHubTreeSource
 
 FORMAT_VERSION = 2
@@ -66,7 +66,7 @@ def tree_sha(root: str | os.PathLike[str]) -> str:
             mode = "100755" if executable else "100644"
             data = path.read_bytes()
         blob_sha = GitHubTreeSource.git_blob_sha(data)
-        digest.update(f"{mode} {relative}\0{blob_sha}\n".encode("utf-8"))
+        digest.update(f"{mode} {relative}\0{blob_sha}\n".encode())
     return digest.hexdigest()
 
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
 import tomllib
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,6 +475,7 @@ def detect_installed_version_with_source(
     """Return an exact project-selected version and its source, or ``None``."""
 
     root = Path(directory)
+    readers: tuple[tuple[str, Callable[[Path, str], str | None]], ...]
     if ecosystem == "npm":
         if not _NPM_PACKAGE.fullmatch(package_name):
             return None

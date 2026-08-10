@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping
-
+from typing import cast
 
 _WEIGHTS = {
     "age": 15,
@@ -158,12 +158,12 @@ def _parse_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     if parsed.tzinfo is None:
         return None
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _age(manifest: Mapping[str, object]) -> dict[str, object]:
@@ -195,7 +195,9 @@ def compute_trust(manifest: Mapping[str, object], target_path: str | Path) -> Tr
         _age(manifest),
     ]
     factors.sort(key=lambda item: str(item["factor"]))
-    weighted = sum(int(item["score"]) * int(item["weight"]) for item in factors)
+    weighted = sum(
+        cast(int, item["score"]) * cast(int, item["weight"]) for item in factors
+    )
     score = max(0, min(100, (weighted + 50) // 100))
     logger.debug("trust score=%d factors=%s", score, factors)
     return TrustScore(score, tuple(factors))

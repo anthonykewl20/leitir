@@ -11,8 +11,8 @@ import pytest
 from leitir.resolver import (
     CratesResolver,
     Ecosystem,
-    GoResolver,
     GitHubTagResolver,
+    GoResolver,
     MultiResolver,
     NpmResolver,
     PackageRef,
@@ -427,7 +427,7 @@ class TestCandidateTagFailures:
     ):
         failure = ResolutionError("HTTP 503 after retries")
         tags = ScriptedTagResolver(
-            {candidates[0]: failure, **{tag: SHA for tag in candidates[1:]}}
+            {candidates[0]: failure, **dict.fromkeys(candidates[1:], SHA)}
         )
 
         with pytest.raises(ResolutionError) as error:

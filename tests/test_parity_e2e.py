@@ -8,14 +8,12 @@ import os
 import tarfile
 
 import pytest
+from _http_server import scripted_server
 
 from leitir.corpus import materialize_source
 from leitir.parity import RegistryArtifactFetcher, artifact_from_metadata
-from leitir.resolver import Ecosystem, PackageRef, ResolvedPackage
-from leitir.resolver import GitHubTagResolver, NpmResolver
+from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
-
-from _http_server import scripted_server
 
 SHA = "d" * 40
 

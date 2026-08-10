@@ -1,28 +1,26 @@
 from __future__ import annotations
 
-import json
 import io
-from pathlib import Path
+import json
 import tarfile
+from pathlib import Path
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.bench import load_manifest
 from leitir.cli import ExitCode, main
 from leitir.corpus_bench import (
     CorpusBenchmarkManifest,
     CorpusBenchmarkRun,
+    CorpusBenchmarkRunner,
     CorpusBenchmarkTask,
     CorpusBenchmarkTaskRun,
-    CorpusBenchmarkRunner,
     CorpusExpectedFile,
     manifest_from_dict,
 )
 from leitir.materialize import MANIFEST_NAME
 from leitir.tree import GitHubTreeSource
-
-from _http_server import json_body, routed_server
-
 
 SHA = "d" * 40
 

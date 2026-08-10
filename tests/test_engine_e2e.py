@@ -8,6 +8,7 @@ correctly and reports honest coverage.
 
 from __future__ import annotations
 
+import fixtures_real as fx
 import pytest
 
 from leitir.adapters import PythonAdapter
@@ -21,8 +22,6 @@ from leitir.search import (
     SearchSpec,
 )
 from leitir.tree import BlobEntry
-
-import fixtures_real as fx
 
 REPRESENTATIVE_CONTENT = """\
 def urlencode(query, doseq=False, safe='', encoding=None, errors=None,

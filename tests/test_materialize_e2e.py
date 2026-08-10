@@ -6,10 +6,10 @@ import io
 import json
 import tarfile
 
+from _http_server import scripted_server
+
 from leitir.corpus import load_sources, materialize_source, remove_source, resolve_root
 from leitir.search import RepoScope
-
-from _http_server import scripted_server
 
 SHA = "b" * 40
 

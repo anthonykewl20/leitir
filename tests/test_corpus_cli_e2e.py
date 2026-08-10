@@ -5,14 +5,14 @@ from __future__ import annotations
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tarfile
+from pathlib import Path
+
+from _http_server import json_body, routed_server, scripted_server
 
 from leitir.cli import ExitCode, main
-
-from _http_server import routed_server, scripted_server, json_body
 
 SHA = "b" * 40
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, cast
 
 from leitir.ranking import RankedMatch, rank_matches, source_identity
 from leitir.search import (
@@ -20,12 +21,15 @@ from leitir.search import (
     SourceRef,
 )
 
-
 _TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LANGUAGES = frozenset({"python", "rust", "go"})
 _MANIFEST_SCHEMA = "leitir-benchmark-manifest-v1"
 _RUN_SCHEMA = "leitir-benchmark-run-v1"
+
+
+class _Searcher(Protocol):
+    def search(self, spec: SearchSpec) -> SearchReport: ...
 
 
 def _canonical_json(value: object) -> str:
@@ -58,9 +62,7 @@ class BenchmarkTask:
             raise ValueError("benchmark tasks must use scoped_exhaustive mode")
         if len(self.spec.scopes) != 1:
             raise ValueError("benchmark tasks must declare exactly one scope")
-        if isinstance(self.expected_results, (str, bytes)) or not isinstance(
-            self.expected_results, tuple
-        ):
+        if not isinstance(self.expected_results, tuple):
             raise TypeError("expected_results must be a tuple of SourceRef")
         if not self.expected_results:
             raise ValueError("a benchmark task requires an expected-result pin")
@@ -114,7 +116,7 @@ class BenchmarkManifest:
             self.benchmark_id
         ):
             raise ValueError("benchmark_id must be lowercase kebab-case")
-        if isinstance(self.tasks, (str, bytes)) or not isinstance(self.tasks, tuple):
+        if not isinstance(self.tasks, tuple):
             raise TypeError("tasks must be a tuple of BenchmarkTask")
         if any(not isinstance(task, BenchmarkTask) for task in self.tasks):
             raise TypeError("tasks must contain only BenchmarkTask values")
@@ -171,9 +173,7 @@ class BenchmarkTaskRun:
             raise ValueError("spec_digest must be a 64-char sha256 hex string")
         if not isinstance(self.coverage, Coverage):
             raise TypeError("coverage must be a Coverage")
-        if isinstance(self.results, (str, bytes)) or not isinstance(
-            self.results, tuple
-        ):
+        if not isinstance(self.results, tuple):
             raise TypeError("results must be a tuple of RankedMatch")
         if any(not isinstance(item, RankedMatch) for item in self.results):
             raise TypeError("results must contain only RankedMatch values")
@@ -214,7 +214,7 @@ class BenchmarkRun:
             self.manifest_sha256
         ):
             raise ValueError("manifest_sha256 must be a 64-char sha256 hex string")
-        if isinstance(self.tasks, (str, bytes)) or not isinstance(self.tasks, tuple):
+        if not isinstance(self.tasks, tuple):
             raise TypeError("tasks must be a tuple of BenchmarkTaskRun")
         if any(not isinstance(task, BenchmarkTaskRun) for task in self.tasks):
             raise TypeError("tasks must contain only BenchmarkTaskRun values")
@@ -245,7 +245,7 @@ class BenchmarkRunner:
     def __init__(self, searcher: object) -> None:
         if not callable(getattr(searcher, "search", None)):
             raise TypeError("searcher must provide a callable search method")
-        self._searcher = searcher
+        self._searcher = cast(_Searcher, searcher)
 
     def run(self, manifest: BenchmarkManifest) -> BenchmarkRun:
         if not isinstance(manifest, BenchmarkManifest):

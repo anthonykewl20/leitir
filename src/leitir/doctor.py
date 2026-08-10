@@ -99,7 +99,7 @@ def _leitir_source_root() -> Path | None:
     """
     try:
         module = importlib.import_module("leitir")
-    except Exception:  # noqa: BLE001 - probe must never raise
+    except Exception:
         return None
     file = getattr(module, "__file__", None)
     if not file:
@@ -143,7 +143,7 @@ def check_entry_point_resolves() -> Check:
         module = importlib.import_module("leitir.cli")
         if not callable(getattr(module, "main", None)):
             raise TypeError("leitir.cli:main is not callable")
-    except Exception as exc:  # noqa: BLE001 - diagnostics must contain check failures
+    except Exception as exc:
         return Check("install.entry_point", "error", "leitir.cli:main does not resolve",
                      "".join(traceback.format_exception(exc)))
     return Check("install.entry_point", "pass", "leitir.cli:main resolves")
@@ -159,7 +159,7 @@ def check_internal_imports() -> Check:
     for name in modules:
         try:
             importlib.import_module(f"leitir.{name}")
-        except Exception as exc:  # noqa: BLE001 - one broken module must not stop the scan
+        except Exception as exc:
             failures.append(f"leitir.{name}:\n{''.join(traceback.format_exception(exc))}")
     if failures:
         return Check("imports", "error", f"{len(failures)} of {len(modules)} modules failed to import",
@@ -320,7 +320,7 @@ def check_network_endpoint(name: str, url: str, version: str | None) -> Check:
         if isinstance(exc.reason, TimeoutError):
             return Check(f"network.{name}", "warn", f"{url} timed out", str(exc), {"url": url})
         return Check(f"network.{name}", "warn", f"{url} network error", str(exc), {"url": url})
-    except Exception as exc:  # noqa: BLE001 - network diagnostics are warning-only
+    except Exception as exc:
         return Check(f"network.{name}", "warn", f"{url} network error", str(exc), {"url": url})
     if 200 <= code < 400:
         return Check(f"network.{name}", "pass", f"{url} reachable",
@@ -359,7 +359,7 @@ def check_integrity_selftest() -> Check:
                 pass
             else:
                 raise AssertionError("byte tamper was not detected")
-    except Exception as exc:  # noqa: BLE001 - the self-test reports every regression
+    except Exception as exc:
         return Check("selftest.integrity", "error", "synthetic integrity roundtrip failed",
                      "".join(traceback.format_exception(exc)))
     return Check("selftest.integrity", "pass", "byte-tamper detected by materialized_tree_hash")
@@ -397,7 +397,7 @@ def check_update_availability(installed_version: str | None) -> Check:
     except (TimeoutError, OSError, urllib.error.URLError, KeyError,
             TypeError, ValueError, json.JSONDecodeError) as exc:
         return Check("update.available", "warn", "could not check GitHub Releases for updates", str(exc))
-    except Exception as exc:  # noqa: BLE001 - update diagnosis must never be an error
+    except Exception as exc:
         return Check("update.available", "warn", "could not check GitHub Releases for updates", str(exc))
     if newer:
         return Check("update.available", "warn", f"update available: {installed_version} -> {latest}",
@@ -409,7 +409,7 @@ def check_update_availability(installed_version: str | None) -> Check:
 def _safe(name: str, function: Callable[[], Check]) -> Check:
     try:
         return function()
-    except Exception as exc:  # noqa: BLE001 - doctor checks are isolated by contract
+    except Exception as exc:
         return Check(name, "error", "check raised unexpectedly",
                      "".join(traceback.format_exception(exc)))
 
@@ -433,7 +433,7 @@ def collect_checks(*, no_network: bool = False, root: Path | None = None) -> tup
     try:
         cache_checks, manifests = check_cache_state(corpus_root)
         checks.extend(cache_checks)
-    except Exception as exc:  # noqa: BLE001 - retain results from all other categories
+    except Exception as exc:
         checks.append(Check("cache.shelves", "error", "cache inspection failed",
                             "".join(traceback.format_exception(exc))))
         manifests = []

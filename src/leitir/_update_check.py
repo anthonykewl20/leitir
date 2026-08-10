@@ -207,7 +207,7 @@ def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:
         json.JSONDecodeError,
     ):
         return None
-    except Exception:  # noqa: BLE001 -- optional network boundary is fail-silent
+    except Exception:
         # Third-party response wrappers and platform URL handlers may raise
         # additional exception types.  The optional probe remains fail-silent.
         return None
@@ -275,7 +275,7 @@ def _run_update_check(installed: str) -> None:
         )
         _write_cache(path, updated)
         _set_result(installed, latest, release_url)
-    except Exception:  # noqa: BLE001 -- daemon must never affect the command
+    except Exception:
         # This feature must never affect command execution, including for
         # unusual platform, clock, mocked-I/O, or interpreter edge cases.
         return
@@ -291,13 +291,13 @@ def maybe_start_update_check(*, json_mode: bool, quiet: bool) -> None:
         _result = None
     try:
         eligible = should_check(json_mode=json_mode, quiet=quiet)
-    except Exception:  # noqa: BLE001 -- eligibility failures disable the feature
+    except Exception:
         return
     if not eligible:
         return
     try:
         installed = _installed_version()
-    except Exception:  # noqa: BLE001 -- metadata failures disable the feature
+    except Exception:
         return
     if installed is None:
         return
@@ -327,7 +327,7 @@ def maybe_emit_update_notice() -> None:
             installed = _installed_version()
             path = _cache_path()
             cache = _read_cache(path) if path is not None else None
-        except Exception:  # noqa: BLE001 -- post-command hook is fail-silent
+        except Exception:
             return
         if installed is not None and cache is not None:
             candidate = cache.get("latest_version")

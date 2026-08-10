@@ -32,7 +32,7 @@ def normalize_scores(matches: tuple[SourceMatch, ...]) -> tuple[float, ...]:
     twelve decimal places. A constant score population normalizes to ``1.0``
     because every result has the population's maximum score.
     """
-    if isinstance(matches, (str, bytes)) or not isinstance(matches, tuple):
+    if not isinstance(matches, tuple):
         raise TypeError("matches must be a tuple of SourceMatch")
     if any(not isinstance(match, SourceMatch) for match in matches):
         raise TypeError("matches must contain only SourceMatch values")
@@ -107,9 +107,7 @@ class RankedMatch:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
-        if isinstance(self.matched_kinds, (str, bytes)) or not isinstance(
-            self.matched_kinds, tuple
-        ):
+        if not isinstance(self.matched_kinds, tuple):
             raise TypeError("matched_kinds must be a tuple")
         if any(not isinstance(kind, PredicateKind) for kind in self.matched_kinds):
             raise TypeError("matched_kinds must contain only PredicateKind")

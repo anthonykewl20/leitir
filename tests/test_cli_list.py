@@ -8,7 +8,6 @@ from leitir.corpus import write_sources
 from leitir.materialize import MANIFEST_NAME
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
-
 SHA = "b" * 40
 
 

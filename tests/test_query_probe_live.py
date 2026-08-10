@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 import pytest
 
-
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub query probes",

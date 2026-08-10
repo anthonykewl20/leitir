@@ -13,10 +13,8 @@ import os
 import urllib.error
 import urllib.request
 
-import pytest
-
 import fixtures_real as fx
-
+import pytest
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",

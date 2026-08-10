@@ -10,9 +10,9 @@ Covers two requirements:
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
-import json
 from pathlib import Path
 
 import pytest

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+import fixtures_resolver as fx
 import pytest
 
 from leitir.resolver import (
@@ -19,8 +20,6 @@ from leitir.resolver import (
     PackageRef,
     PyPIResolver,
 )
-
-import fixtures_resolver as fx
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",

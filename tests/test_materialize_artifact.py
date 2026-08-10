@@ -8,14 +8,13 @@ import os
 import tarfile
 
 import pytest
+from _http_server import scripted_server
 
 from leitir.corpus import materialize_source
 from leitir.materialize import MANIFEST_NAME, materialize_artifact, materialize_github_repo
 from leitir.parity import ArtifactInfo, ChecksumMismatchError, RegistryArtifactFetcher
 from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
-
-from _http_server import scripted_server
 
 SHA = "e" * 40
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
-import sys
 from types import ModuleType
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import pytest
 
@@ -24,6 +25,8 @@ from leitir.corpus_bench import (
     CorpusBenchmarkRunner,
     CorpusBenchmarkTask,
     CorpusExpectedFile,
+)
+from leitir.corpus_bench import (
     manifest_from_dict as corpus_manifest_from_dict,
 )
 from leitir.ranking import RankedMatch

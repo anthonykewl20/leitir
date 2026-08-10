@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import threading
 from contextlib import contextmanager
@@ -693,6 +693,7 @@ def test_gc_does_not_sweep_matching_user_directory(tmp_path):
 
 def test_gc_ignores_candidate_removed_while_waiting_for_lock(tmp_path, monkeypatch):
     import contextlib
+
     import leitir.materialize
 
     parent = tmp_path / "repos" / "github.com" / "acme" / "demo"
@@ -1164,7 +1165,7 @@ def test_api_materializes_extracts_and_prints_cache_path(tmp_path, monkeypatch):
     monkeypatch.setattr(leitir.corpus, "materialize_source", fake_materialize)
     code, out, err = _invoke(["api", f"acme/demo@{SHA}", "--root", str(corpus)])
 
-    expected = corpus / f"api/github.com/acme/demo/1.0.0/index.json"
+    expected = corpus / "api/github.com/acme/demo/1.0.0/index.json"
     assert code == ExitCode.SUCCESS
     assert out.strip().splitlines() == [
         str(expected),

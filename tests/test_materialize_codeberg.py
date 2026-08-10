@@ -4,13 +4,12 @@ import io
 import json
 import tarfile
 
+import _http_server as hs
 import pytest
 
-import _http_server as hs
 from leitir.materialize import MaterializationError, materialize_repo
 from leitir.resolver import CodebergResolver
 from leitir.search import RepoScope
-
 
 SHA = "b" * 40
 CONTENT = b"host-native proof\n"

@@ -6,13 +6,13 @@ import io
 import json
 import tarfile
 
+from _http_server import scripted_server
+
 from leitir.corpus import materialize_source
 from leitir.materialize import MANIFEST_NAME
 from leitir.parity import ArtifactInfo, RegistryArtifactFetcher
 from leitir.resolver import Ecosystem, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
-
-from _http_server import scripted_server
 
 SHA = "f" * 40
 

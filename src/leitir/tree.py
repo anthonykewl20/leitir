@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from leitir import _http
 
@@ -87,8 +88,9 @@ class GitHubTreeSource:
         )
 
     def _headers(self) -> dict[str, str]:
-        from leitir.credentials import validate_secret
         from urllib.parse import urlsplit
+
+        from leitir.credentials import validate_secret
 
         headers = {
             "Accept": "application/vnd.github+json",

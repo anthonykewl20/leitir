@@ -6,10 +6,10 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -31,7 +31,6 @@ from leitir.search import (
     SourceMatch,
     SourceRef,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -292,14 +291,13 @@ def test_artifact_digest_is_identical_across_python_hash_seeds():
 
 def test_importing_new_modules_does_not_load_effect_modules(tmp_path):
     script = textwrap.dedent(
-        """
+        f"""
         import json, sys
-        sys.path.insert(0, %r)
+        sys.path.insert(0, {str(SRC)!r})
         import leitir.bench, leitir.ranking
         forbidden = ["urllib.request", "http.client", "subprocess"]
         print(json.dumps([name for name in forbidden if name in sys.modules]))
         """
-        % str(SRC)
     )
     completed = subprocess.run(
         [sys.executable, "-c", script],

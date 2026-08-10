@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import stat
 import warnings
 import zipfile
 from collections.abc import Callable
-import io
 from pathlib import Path
 
 import pytest

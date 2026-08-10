@@ -6,10 +6,9 @@ uses the same normalization and exact-host security checks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
-
 
 _SHA1 = re.compile(r"^[0-9a-fA-F]{40}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -77,8 +76,7 @@ def _repo_result(
     host: str = "github.com",
 ) -> CorpusSpec:
     parts = [owner, *repo.split("/")]
-    if parts[-1].endswith(".git"):
-        parts[-1] = parts[-1][:-4]
+    parts[-1] = parts[-1].removesuffix(".git")
     if host != "gitlab.com" and len(parts) != 2:
         raise _fail(raw, "invalid repository owner or repository name")
     valid_parts = parts
@@ -130,7 +128,7 @@ def _parse_repository_url(raw: str) -> CorpusSpec:
     if parsed.scheme.lower() != "https":
         raise _fail(raw, "repository URLs must use HTTPS")
     host = parsed.hostname.lower() if parsed.hostname is not None else None
-    if host not in _REPOSITORY_HOSTS.values():
+    if host is None or host not in _REPOSITORY_HOSTS.values():
         raise _fail(raw, "repository URL host is not supported")
     try:
         port = parsed.port

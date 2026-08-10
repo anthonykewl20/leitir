@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from leitir import _http
 from leitir.credentials import Credentials
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Ecosystem(str, Enum):
+class Ecosystem(StrEnum):
     NPM = "npm"
     PYPI = "pypi"
     CRATES = "crates"
@@ -104,14 +105,21 @@ def _valid_published_at(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return False
     return parsed.tzinfo is not None
 
 
 def _first_valid_timestamp(*values: object) -> str | None:
-    return next((value for value in values if _valid_published_at(value)), None)
+    return next(
+        (
+            value
+            for value in values
+            if isinstance(value, str) and _valid_published_at(value)
+        ),
+        None,
+    )
 
 
 @runtime_checkable
@@ -119,6 +127,30 @@ class PackageResolver(Protocol):
     """Port: resolve a pinned package to an immutable RepoScope."""
 
     def resolve(self, ref: PackageRef) -> ResolvedPackage: ...
+
+
+class _CorpusResolver(Protocol):
+    def resolve(self, ref: PackageRef) -> ResolvedPackage: ...
+
+    def latest_version(self, ecosystem: Ecosystem, name: str) -> str: ...
+
+    def resolve_tag_to_sha(
+        self, slug: str, tag: str, host: str = "github.com"
+    ) -> str: ...
+
+
+class _HeadResolver(Protocol):
+    def resolve_head_sha(self, slug: str, branch: str | None = None) -> str: ...
+
+
+class _RepositoryResolver(Protocol):
+    def resolve_tag_to_sha(self, slug: str, tag: str) -> str: ...
+
+
+class _EcosystemResolver(Protocol):
+    def resolve(self, ref: PackageRef) -> ResolvedPackage: ...
+
+    def latest_version(self, name: str) -> str: ...
 
 
 class ResolutionError(Exception):
@@ -148,7 +180,7 @@ def _validate_network_base_url(
 
     try:
         endpoint = urlsplit(base_url)
-        port = endpoint.port
+        _port = endpoint.port
     except (TypeError, ValueError) as exc:
         raise ValueError("network base URL is malformed") from exc
     scheme = endpoint.scheme.lower()
@@ -192,13 +224,15 @@ def _base_url_is_credentialled(
 
 def resolve_corpus_spec(
     parsed: object, resolver: object, heads: object, cwd: Path
-) -> tuple[object, str | None, str | None, str | None]:
+) -> tuple[ResolvedPackage | RepoScope, str | None, str | None, str | None]:
     """Resolve a parsed corpus spec using lockfile/latest and repository rules."""
     from leitir.lockfiles import detect_installed_version_with_source
     from leitir.spec import CorpusSpec
 
     if not isinstance(parsed, CorpusSpec):
         raise TypeError("parsed must be a CorpusSpec")
+    corpus_resolver = cast(_CorpusResolver, resolver)
+    head_resolver = cast(_HeadResolver, heads)
     logger.debug("resolving corpus spec name=%s ecosystem=%s ref=%s", parsed.name, parsed.ecosystem, parsed.ref)
     if parsed.ecosystem is not None:
         ecosystem = Ecosystem(parsed.ecosystem)
@@ -212,10 +246,10 @@ def resolve_corpus_spec(
                 version_source = "lockfile"
                 detection_source = detected.source
             else:
-                version = resolver.latest_version(ecosystem, parsed.name)
+                version = corpus_resolver.latest_version(ecosystem, parsed.name)
                 version_source = "latest"
         return (
-            resolver.resolve(PackageRef(ecosystem, parsed.name, version)),
+            corpus_resolver.resolve(PackageRef(ecosystem, parsed.name, version)),
             None,
             version_source,
             detection_source,
@@ -224,12 +258,13 @@ def resolve_corpus_spec(
     if parsed.ref is not None and re.fullmatch(r"[0-9a-fA-F]{40}", parsed.ref):
         return RepoScope(scope_name, parsed.ref.lower()), None, None, None
     if parsed.ref_kind == "tag":
-        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref, host=parsed.host) if parsed.host not in (None, "github.com") else resolver.resolve_tag_to_sha(parsed.name, parsed.ref)
-        return RepoScope(scope_name, sha), parsed.ref, None, None
+        tag = cast(str, parsed.ref)
+        sha = corpus_resolver.resolve_tag_to_sha(parsed.name, tag, host=parsed.host) if parsed.host not in (None, "github.com") else corpus_resolver.resolve_tag_to_sha(parsed.name, tag)
+        return RepoScope(scope_name, sha), tag, None, None
     if parsed.host not in (None, "github.com"):
-        sha = resolver.resolve_tag_to_sha(parsed.name, parsed.ref or "HEAD", host=parsed.host)
+        sha = corpus_resolver.resolve_tag_to_sha(parsed.name, parsed.ref or "HEAD", host=parsed.host)
         return RepoScope(scope_name, sha), None, None, None
-    sha = heads.resolve_head_sha(parsed.name, parsed.ref) if parsed.ref_kind == "branch" else heads.resolve_head_sha(parsed.name)
+    sha = head_resolver.resolve_head_sha(parsed.name, parsed.ref) if parsed.ref_kind == "branch" else head_resolver.resolve_head_sha(parsed.name)
     return RepoScope(parsed.name, sha), None, None, None
 
 
@@ -361,7 +396,7 @@ class GitHubTagResolver:
         commit = payload.get("commit") if isinstance(payload, dict) else None
         committer = commit.get("committer") if isinstance(commit, dict) else None
         published_at = committer.get("date") if isinstance(committer, dict) else None
-        if not _valid_published_at(published_at):
+        if not isinstance(published_at, str) or not _valid_published_at(published_at):
             raise ResolutionError(f"GitHub returned malformed commit timestamp for {slug}")
         return published_at
 
@@ -712,7 +747,9 @@ class BitbucketResolver(_HostedRepoResolver):
             )
             while url:
                 payload = self._get_json(url)
-                values = payload.get("values") if isinstance(payload, dict) else None
+                if not isinstance(payload, dict):
+                    raise ResolutionError("bitbucket.org returned malformed tree metadata")
+                values = payload.get("values")
                 if not isinstance(values, list):
                     raise ResolutionError("bitbucket.org returned malformed tree metadata")
                 for item in values:
@@ -810,7 +847,9 @@ class CodebergResolver(_HostedRepoResolver):
             f"{self._base_url}/repos/{self._slug(slug)}/git/trees/{sha}?"
             f"{urlencode({'recursive': 'true'})}"
         )
-        tree = payload.get("tree") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            raise ResolutionError("codeberg.org returned incomplete tree metadata")
+        tree = payload.get("tree")
         if not isinstance(tree, list) or payload.get("truncated") is True:
             raise ResolutionError("codeberg.org returned incomplete tree metadata")
         entries: list[BlobEntry] = []
@@ -832,7 +871,9 @@ class CodebergResolver(_HostedRepoResolver):
         payload = self._get_json(
             f"{self._base_url}/repos/{self._slug(slug)}/git/blobs/{sha}"
         )
-        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            raise ResolutionError("codeberg.org returned malformed blob metadata")
+        content = payload.get("content")
         if not isinstance(content, str) or payload.get("encoding") not in (None, "base64"):
             raise ResolutionError("codeberg.org returned malformed blob metadata")
         try:
@@ -849,7 +890,9 @@ class CodebergResolver(_HostedRepoResolver):
             f"{self._base_url}/repos/{self._slug(slug)}/contents/{quote(path, safe='/')}?"
             f"{urlencode({'ref': sha})}"
         )
-        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            raise ResolutionError("codeberg.org returned malformed content metadata")
+        content = payload.get("content")
         if not isinstance(content, str) or payload.get("encoding") != "base64":
             raise ResolutionError("codeberg.org returned malformed content metadata")
         try:
@@ -1342,8 +1385,7 @@ class PyPIResolver:
             m = _GITHUB_URL_RE.search(candidate)
             if m:
                 slug = m.group(1).rstrip("/")
-                if slug.endswith(".git"):
-                    slug = slug[:-4]
+                slug = slug.removesuffix(".git")
                 return slug
         return None
 
@@ -1430,8 +1472,7 @@ class CratesResolver:
                 f"no GitHub repository for {ref.name}=={ref.version}"
             )
         slug = m.group(1).rstrip("/")
-        if slug.endswith(".git"):
-            slug = slug[:-4]
+        slug = slug.removesuffix(".git")
 
         tag, commit_sha = self._resolve_first_tag(slug, ref.name, ref.version)
         scope = RepoScope(slug=slug, commit_sha=commit_sha)
@@ -1534,11 +1575,11 @@ class GoResolver:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
-        repository_resolvers: dict[str, object] | None = None,
+        repository_resolvers: dict[str, _RepositoryResolver] | None = None,
         allow_insecure_http_for_tests: bool = False,
     ) -> None:
         self._tag_resolver = tag_resolver
-        self._repository_resolvers = {
+        self._repository_resolvers: dict[str, _RepositoryResolver] = {
             "github.com": tag_resolver,
             "gitlab.com": GitLabResolver(),
             "bitbucket.org": BitbucketResolver(),
@@ -1804,8 +1845,7 @@ class NpmResolver:
                     value = "https://" + value[len(prefix):]
                     break
         value = value.rstrip("/")
-        if value.endswith(".git"):
-            value = value[:-4]
+        value = value.removesuffix(".git")
         try:
             parsed = urlsplit(value)
         except ValueError as exc:
@@ -1925,13 +1965,13 @@ class MultiResolver:
         sourcehut: SourcehutResolver | None = None,
     ) -> None:
         self._tag_resolver = pypi._tag_resolver
-        self._resolvers = {
+        self._resolvers: dict[Ecosystem, _EcosystemResolver] = {
             Ecosystem.PYPI: pypi,
             Ecosystem.CRATES: crates,
             Ecosystem.GO: go,
             Ecosystem.NPM: npm or NpmResolver(self._tag_resolver),
         }
-        self._repository_resolvers = {
+        self._repository_resolvers: dict[str, _RepositoryResolver] = {
             "github.com": self._tag_resolver,
             "gitlab.com": gitlab or GitLabResolver(),
             "bitbucket.org": bitbucket or BitbucketResolver(),

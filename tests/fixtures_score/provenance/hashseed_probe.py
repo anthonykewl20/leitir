@@ -23,7 +23,6 @@ from tools.score_engine import (
     evaluate,
 )
 
-
 dimensions = (
     "engine_correctness",
     "output_effectiveness",

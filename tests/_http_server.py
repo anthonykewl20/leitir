@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import json as _json
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Iterator, NamedTuple
+from typing import NamedTuple
 
 # A scripted response: HTTP status code, header dict, bytes body, optional
 # pre-response delay in seconds (to force client read timeouts).

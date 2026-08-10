@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
 import hashlib
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -122,11 +122,7 @@ def _spdx_expression(value: object) -> str | None:
             balance -= 1
             if balance < 0:
                 return None
-        elif word.upper() in {"AND", "OR"}:
-            if expect_operand:
-                return None
-            expect_operand = True
-        elif word.upper() == "WITH":
+        elif word.upper() in {"AND", "OR"} or word.upper() == "WITH":
             if expect_operand:
                 return None
             expect_operand = True
@@ -233,7 +229,12 @@ def _purl(ecosystem: object, name: str, version: str) -> str | None:
         else:
             path = quote(name, safe="")
         return f"pkg:npm/{path}@{quote(version, safe='.-_~')}"
-    purl_type = {"pypi": "pypi", "crates": "cargo", "go": "golang"}.get(ecosystem)
+    purl_types: dict[object, str] = {
+        "pypi": "pypi",
+        "crates": "cargo",
+        "go": "golang",
+    }
+    purl_type = purl_types.get(ecosystem)
     if purl_type is None:
         return None
     safe = "/" if ecosystem == "go" else ""

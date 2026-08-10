@@ -6,11 +6,12 @@ import hashlib
 import io
 import json
 import os
+import sys
 import tarfile
 from pathlib import Path
-import sys
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.cli import ExitCode, main
 from leitir.materialize import (
@@ -21,8 +22,6 @@ from leitir.materialize import (
     read_valid_manifest,
 )
 from leitir.tree import BlobEntry, GitHubTreeSource
-
-from _http_server import json_body, routed_server
 
 SHA = "d" * 40
 

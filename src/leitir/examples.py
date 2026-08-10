@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 import re
-from typing import TypeAlias
+from pathlib import Path
+from typing import TypeAlias, cast
 
 ExamplesIndex: TypeAlias = dict[str, object]
 logger = logging.getLogger(__name__)
@@ -164,9 +164,9 @@ def extract_examples(
             ranked.append(dict(snippet, symbols=matched))
     ranked.sort(
         key=lambda item: (
-            -len(item["symbols"]),
+            -len(cast(list[str], item["symbols"])),
             str(item["path"]),
-            int(item["line"]),
+            int(cast(str | bytes | bytearray | int, item["line"])),
             -len(str(item["code"])),
         )
     )

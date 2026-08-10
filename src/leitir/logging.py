@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import logging
 import re
 import threading
 import traceback
+from collections.abc import Mapping
 from typing import Any
 
 REDACTED = "[REDACTED]"

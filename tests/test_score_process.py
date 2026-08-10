@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 from tools.score_engine import (
+    OPENSSF_SELECTED_CHECKS,
+    PINNED_OPENSSF_SCORECARD_COMMIT,
+    PINNED_OPENSSF_SCORECARD_VERSION,
     CheckStatus,
     Decision,
     EvidenceArtifact,
     GitHubCapabilities,
     OpenSSFApplicability,
     OpenSSFCollectionState,
-    OPENSSF_SELECTED_CHECKS,
-    PINNED_OPENSSF_SCORECARD_COMMIT,
-    PINNED_OPENSSF_SCORECARD_VERSION,
     Producer,
     Profile,
     Subject,
@@ -30,7 +30,6 @@ from tools.score_engine import (
     evaluate_process_supply_chain_evidence,
     load_policy,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "openssf"

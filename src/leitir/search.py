@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -34,14 +34,14 @@ _EXCLUSION_REASONS = frozenset(
 )
 
 
-class SearchMode(str, Enum):
+class SearchMode(StrEnum):
     """The two completeness regimes Leitir is allowed to claim."""
 
     SCOPED_EXHAUSTIVE = "scoped_exhaustive"
     GLOBAL_DISCOVERY = "global_discovery"
 
 
-class CoverageStatus(str, Enum):
+class CoverageStatus(StrEnum):
     """Honest, machine-checkable completeness states."""
 
     COMPLETE_FOR_DECLARED_UNIVERSE = "complete_for_declared_universe"
@@ -49,7 +49,7 @@ class CoverageStatus(str, Enum):
     INDETERMINATE_GLOBAL = "indeterminate_global"
 
 
-class ResolutionStrategy(str, Enum):
+class ResolutionStrategy(StrEnum):
     """How immutable commit provenance was obtained for a search report."""
 
     INDEXED_COMMIT = "indexed_commit"
@@ -83,7 +83,7 @@ class Resolution:
         return {"strategy": self.strategy.value, "as_of": self.as_of}
 
 
-class PredicateKind(str, Enum):
+class PredicateKind(StrEnum):
     """Typed search predicates; the harness chooses these, never prose."""
 
     EXACT_TEXT = "exact_text"
@@ -322,9 +322,7 @@ class SourceMatch:
             raise TypeError("source must be a SourceRef")
         if isinstance(self.score, bool) or not isinstance(self.score, (int, float)):
             raise TypeError("score must be a number")
-        if isinstance(self.matched_kinds, (str, bytes)) or not isinstance(
-            self.matched_kinds, tuple
-        ):
+        if not isinstance(self.matched_kinds, tuple):
             raise TypeError("matched_kinds must be a tuple")
         if any(not isinstance(item, PredicateKind) for item in self.matched_kinds):
             raise TypeError("matched_kinds must contain only PredicateKind")
@@ -410,17 +408,13 @@ class SearchReport:
             raise ValueError("spec_digest must be a 64-char sha256 hex string")
         if not isinstance(self.coverage, Coverage):
             raise TypeError("coverage must be a Coverage")
-        if isinstance(self.matches, (str, bytes)) or not isinstance(
-            self.matches, tuple
-        ):
+        if not isinstance(self.matches, tuple):
             raise TypeError("matches must be a tuple")
         if any(not isinstance(item, SourceMatch) for item in self.matches):
             raise TypeError("matches must contain only SourceMatch values")
         if not isinstance(self.resolution, Resolution):
             raise TypeError("resolution must be a Resolution")
-        if isinstance(self.query_translation, (str, bytes)) or not isinstance(
-            self.query_translation, tuple
-        ):
+        if not isinstance(self.query_translation, tuple):
             raise TypeError("query_translation must be a tuple")
         if any(
             not isinstance(item, QueryTranslation) for item in self.query_translation

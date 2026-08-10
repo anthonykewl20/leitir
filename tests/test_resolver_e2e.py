@@ -7,12 +7,12 @@ produces correct, immutable provenance for all three ecosystems.
 
 from __future__ import annotations
 
+import fixtures_resolver as fx
 import pytest
 
 from leitir.resolver import (
     CratesResolver,
     Ecosystem,
-    GitHubTagResolver,
     GoResolver,
     PackageRef,
     PyPIResolver,
@@ -21,8 +21,6 @@ from leitir.resolver import (
     TagAbsentError,
 )
 from leitir.search import RepoScope
-
-import fixtures_resolver as fx
 
 
 class FakeTagResolver:

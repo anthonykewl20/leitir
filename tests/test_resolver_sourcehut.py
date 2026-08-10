@@ -4,11 +4,10 @@ import io
 import os
 from urllib.error import HTTPError
 
+import _http_server as hs
 import pytest
 
-import _http_server as hs
 from leitir.resolver import ResolutionError, SourcehutResolver, TagAbsentError
-
 
 SHA = "a" * 40
 HEAD_SHA = "1" * 40

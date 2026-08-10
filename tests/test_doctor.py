@@ -16,7 +16,6 @@ from leitir import doctor
 from leitir.cli import main
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
-
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 

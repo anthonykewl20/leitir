@@ -3,10 +3,10 @@ from __future__ import annotations
 import io
 import os
 
-import pytest
-
 import _http_server as hs
 import fixtures_resolver as fx
+import pytest
+
 from leitir.resolver import (
     Ecosystem,
     GitLabResolver,
@@ -15,7 +15,6 @@ from leitir.resolver import (
     ResolutionError,
     TagAbsentError,
 )
-
 
 SHA = "a" * 40
 

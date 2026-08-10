@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from leitir.adapters import GoAdapter, RustAdapter, SpanMatch
+from leitir.adapters import GoAdapter, RustAdapter
 from leitir.search import Predicate, PredicateKind
 
 RUST_SAMPLE = """\
@@ -217,6 +215,8 @@ class TestGoAdapter:
 
 class TestMultiAdapterEngine:
     def test_engine_dispatches_to_correct_adapter(self):
+        import hashlib
+
         from leitir.engine import ScopedSearcher
         from leitir.search import (
             RepoScope,
@@ -224,7 +224,6 @@ class TestMultiAdapterEngine:
             SearchSpec,
         )
         from leitir.tree import BlobEntry
-        import hashlib
 
         rust_code = "pub fn main() {}\n"
         go_code = "func main() {}\n"

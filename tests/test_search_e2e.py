@@ -7,6 +7,7 @@ contracts represent reality, not just themselves.
 
 from __future__ import annotations
 
+import fixtures_real as fx
 import pytest
 
 from leitir.search import (
@@ -23,8 +24,6 @@ from leitir.search import (
     SourceMatch,
     SourceRef,
 )
-
-import fixtures_real as fx
 
 
 def _real_spec() -> SearchSpec:

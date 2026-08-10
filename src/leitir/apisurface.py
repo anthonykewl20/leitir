@@ -9,13 +9,13 @@ returning the same ``ApiIndex`` dictionary contract.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import re
 import tokenize
-from typing import TypeAlias
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TypeAlias, cast
 
 ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
@@ -100,14 +100,14 @@ def _python_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     arguments = node.args
     positional = list(arguments.posonlyargs) + list(arguments.args)
     defaults: list[ast.expr | None] = [None] * (len(positional) - len(arguments.defaults)) + list(arguments.defaults)
-    parts = [_argument(argument, default) for argument, default in zip(positional, defaults)]
+    parts = [_argument(argument, default) for argument, default in zip(positional, defaults, strict=False)]
     if arguments.posonlyargs:
         parts.insert(len(arguments.posonlyargs), "/")
     if arguments.vararg is not None:
         parts.append("*" + _argument(arguments.vararg))
     elif arguments.kwonlyargs:
         parts.append("*")
-    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
+    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=False):
         parts.append(_argument(argument, default))
     if arguments.kwarg is not None:
         parts.append("**" + _argument(arguments.kwarg))
@@ -291,7 +291,13 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
 
 def _finish(modules: list[dict[str, object]], symbols: list[dict[str, object]]) -> ApiIndex:
     modules.sort(key=lambda item: (str(item["path"]), str(item["name"])))
-    symbols.sort(key=lambda item: (str(item["qualified_name"]), str(item["kind"]), int(item["line"])))
+    symbols.sort(
+        key=lambda item: (
+            str(item["qualified_name"]),
+            str(item["kind"]),
+            int(cast(str | bytes | bytearray | int, item["line"])),
+        )
+    )
     methods = sorted({str(item["method"]) for item in modules + symbols})
     return {"schema_version": 1, "methods": methods, "modules": modules, "symbols": symbols}
 
@@ -333,7 +339,7 @@ def extract_api_surface(target_path: str | Path, language_hint: str | None = Non
         return _empty_index()
     if language_hint is not None:
         language = _language(language_hint)
-        languages = ("javascript", "typescript") if language == "npm" else (language,)
+        languages: tuple[str, ...] = ("javascript", "typescript") if language == "npm" else (language,)
     else:
         languages = ("python", "javascript", "typescript")
     indexes = []

@@ -30,8 +30,10 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
+from datetime import UTC
 from enum import Enum
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -56,7 +58,7 @@ def __getattr__(name: str):
 # (``http.client.HTTPException``: ``IncompleteRead``, ``RemoteDisconnected`` —
 # mid-stream failures that are transient). Call sites catch this tuple to wrap
 # into their domain errors.
-RETRIABLE_EXCEPTIONS: tuple[type[BaseException], ...]  # type: ignore[assignment]
+RETRIABLE_EXCEPTIONS: tuple[type[BaseException], ...]
 
 
 class HttpErrorKind(Enum):
@@ -141,11 +143,10 @@ def retry_after_seconds(exc: BaseException, *, now: float | None = None) -> floa
         except ValueError:
             pass
         try:
-            from datetime import timezone
 
             dt = _parsedate_to_datetime(retry_after)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
             return max(0.0, dt.timestamp() - clock)
         except (TypeError, ValueError, OverflowError):
             pass

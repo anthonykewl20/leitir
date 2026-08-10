@@ -80,12 +80,14 @@ Stdlib-only, deterministic, PYTHONHASHSEED-independent, fails closed.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import os
 import secrets
 import stat
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterable
+from typing import BinaryIO
 
 # Public algorithm identifier stored alongside the digest so future formats
 # (e.g. one that includes modes or empty directories) can coexist.
@@ -150,11 +152,7 @@ def compute_materialized_tree_hash(
                     # A bytes path makes os.readlink return the exact on-disk
                     # bytes instead of decoding first with platform rules.
                     raw_linkname = os.readlink(os.fsencode(absolute))
-                    linkname_bytes = (
-                        raw_linkname.encode("utf-8", errors="strict")
-                        if isinstance(raw_linkname, str)
-                        else raw_linkname
-                    )
+                    linkname_bytes = _linkname_bytes(raw_linkname)
                     if os.name == "nt":
                         # Windows exposes the NT substitution path for absolute
                         # links; hash the user-visible target used to create it.
@@ -223,7 +221,7 @@ def compute_materialized_tree_hash(
                 selected.append(ordered[0])
 
         summary = hashlib.sha256()
-        for relative, relative_bytes, digest_hex, linkname_bytes, _size in sorted(
+        for _relative, relative_bytes, digest_hex, linkname_bytes, _size in sorted(
             selected, key=lambda entry: entry[0]
         ):
             summary.update(digest_hex.encode("ascii"))
@@ -281,7 +279,7 @@ def verify_materialized_tree_hash(
         # Strict round-trip: standard_b64encode(b64decode(x, validate=True)) == x
         # enforces canonical alphabet (+ and /) and rejects embedded whitespace.
         decoded = base64.b64decode(encoded, validate=True)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise TreeHashFormatError(
             f"materialized_tree_hash is not valid base64: {exc}"
         ) from exc
@@ -427,6 +425,11 @@ def _strict_utf8(value: str) -> bytes:
         raise TreeHashStructureError(
             f"path or linkname contains non-UTF-8 bytes (unsupported): {value!r}"
         ) from exc
+
+
+def _linkname_bytes(value: str | bytes) -> bytes:
+    """Preserve bytes-path readlink output and support injected test doubles."""
+    return value.encode("utf-8", errors="strict") if isinstance(value, str) else value
 
 
 def _validate_relative(relative: str) -> None:

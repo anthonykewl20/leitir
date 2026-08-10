@@ -33,6 +33,51 @@ leitir = [
     "benchmarks/**/*.md",
 ]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [".leitir-score", "scorecard"]
+
+[tool.ruff.lint]
+# A production-oriented, conservative set. E501 is excluded (the codebase uses
+# long lines by convention); BLE001/TRY004/S110/S112/PLW1510 are ignored because
+# broad-except and silent-except are intentional fail-closed patterns in this
+# integrity tool, and subprocess-run-without-check is handled explicitly at
+# call sites.
+select = ["F", "I", "UP", "B", "RUF", "FURB"]
+ignore = [
+    "E501",      # line too long (project convention)
+    "BLE001",    # blind-except: intentional fail-closed
+    "TRY004",    # type-check-without-type-error: exact-type checks are deliberate
+    "S110",      # try-except-pass: intentional in cleanup paths
+    "S112",      # try-except-continue: intentional in cleanup paths
+    "PLW1510",   # subprocess-run-without-check: handled explicitly per call site
+    "S101",      # assert in tests
+    "PLR2004",   # magic-value: tests use literals
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S", "B", "TRY", "RUF", "SIM", "FURB"]
+"tools/score_engine.py" = ["FURB", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["leitir"]
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+check_untyped_defs = true
+# treat the stdlib-only runtime as the source of truth
+files = ["src/leitir"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]

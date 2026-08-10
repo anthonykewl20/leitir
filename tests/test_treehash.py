@@ -9,14 +9,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
 from leitir import treehash
 from leitir.treehash import (
-    TreeHashError,
     TreeHashFormatError,
     TreeHashMismatchError,
     TreeHashStructureError,

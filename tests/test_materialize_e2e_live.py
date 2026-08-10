@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 import os
 
+import fixtures_resolver as fx
 import pytest
 
-import fixtures_resolver as fx
 from leitir.materialize import materialize_github_repo, materialize_repo
 from leitir.resolver import BitbucketResolver, GitLabResolver
 from leitir.search import RepoScope

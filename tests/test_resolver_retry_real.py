@@ -8,6 +8,7 @@ scenario is looped to prove determinism under sustained use.
 
 from __future__ import annotations
 
+import _http_server as hs
 import pytest
 
 from leitir.resolver import (
@@ -20,8 +21,6 @@ from leitir.resolver import (
     ResolutionError,
     TagAbsentError,
 )
-
-import _http_server as hs
 
 SHA = "c" * 40
 TAG_SHA = "d" * 40

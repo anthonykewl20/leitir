@@ -17,7 +17,6 @@ from tools.score_engine import (
     policy_from_dict,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "code_health"
 

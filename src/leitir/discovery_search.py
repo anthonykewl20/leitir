@@ -48,7 +48,7 @@ def _git_blob_sha(content: bytes) -> str:
     return hashlib.sha1(header + content).hexdigest()
 
 
-def _cross_checked_commit_sha(item_url: str, html_url: str) -> str | None:
+def _cross_checked_commit_sha(item_url: object, html_url: object) -> str | None:
     from urllib.parse import parse_qs, urlsplit
 
     if not isinstance(item_url, str) or not isinstance(html_url, str):
@@ -117,7 +117,7 @@ def _collapse(
         grouped.setdefault(key(hit), []).append(hit)
     groups = [tuple(group) for group in grouped.values()]
     survivors = [group[0] for group in groups]
-    return survivors, sum(len(group) - 1 for group in groups), dict(zip(survivors, groups))
+    return survivors, sum(len(group) - 1 for group in groups), dict(zip(survivors, groups, strict=False))
 
 
 def dedup_hits(hits: Iterable[CodeSearchHit]) -> DedupOutcome:

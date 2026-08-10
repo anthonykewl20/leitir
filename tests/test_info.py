@@ -14,7 +14,6 @@ from leitir.info import (
 from leitir.materialize import MANIFEST_NAME
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
-
 SHA = "c" * 40
 SPEC = f"acme/context@{SHA}"
 

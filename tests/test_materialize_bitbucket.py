@@ -4,9 +4,9 @@ import io
 import json
 import tarfile
 
+import _http_server as hs
 import pytest
 
-import _http_server as hs
 from leitir.cli import ExitCode, main
 from leitir.materialize import MaterializationError, materialize_repo
 from leitir.resolver import BitbucketResolver, Ecosystem, PackageRef, ResolvedPackage

@@ -11,9 +11,9 @@ import logging
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable
 
 from leitir import _http
 from leitir.credentials import Credentials
@@ -107,15 +107,15 @@ def artifact_from_metadata(
         for item in candidates:
             url = item.get("url")
             digests = item.get("digests")
-            digest = digests.get("sha256") if isinstance(digests, dict) else None
-            if isinstance(url, str) and isinstance(digest, str):
+            pypi_digest = digests.get("sha256") if isinstance(digests, dict) else None
+            if isinstance(url, str) and isinstance(pypi_digest, str):
                 try:
                     return ArtifactInfo(
                         "sdist",
                         url,
                         "sha256",
-                        digest.lower(),
-                        f"sha256:{digest.lower()}",
+                        pypi_digest.lower(),
+                        f"sha256:{pypi_digest.lower()}",
                     )
                 except ValueError:
                     continue
@@ -359,11 +359,11 @@ def package_parity(
 
 
 __all__ = [
+    "UNKNOWN_PARITY",
     "ArtifactInfo",
     "ChecksumMismatchError",
     "ParityResult",
     "RegistryArtifactFetcher",
-    "UNKNOWN_PARITY",
     "artifact_from_metadata",
     "compare_trees",
     "extract_artifact",

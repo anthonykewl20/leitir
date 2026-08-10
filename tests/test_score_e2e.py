@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import io
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 from test_score_render import DIMENSIONS, render_assessment
+
 from tools.score_engine import (
     ADR001_OFFLINE_GATE_ARGV,
     POLICY_SCHEMA_VERSION,
@@ -31,7 +31,6 @@ from tools.score_engine import (
     load_policy,
     main,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTEST_PASS = REPO_ROOT / "tests" / "fixtures_score" / "engine" / "pytest-pass.xml"

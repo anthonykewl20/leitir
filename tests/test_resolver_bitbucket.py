@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import base64
 import io
 import os
-import base64
-
-import pytest
 
 import _http_server as hs
 import fixtures_resolver as fx
+import pytest
+
 from leitir.resolver import (
     BitbucketResolver,
     Ecosystem,
@@ -16,7 +16,6 @@ from leitir.resolver import (
     ResolutionError,
     TagAbsentError,
 )
-
 
 SHA = "a" * 40
 

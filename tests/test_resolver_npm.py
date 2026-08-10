@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.resolver import (
     Ecosystem,
@@ -13,8 +14,6 @@ from leitir.resolver import (
     ResolutionError,
     TagAbsentError,
 )
-
-from _http_server import json_body, routed_server
 
 SHA = "c" * 40
 

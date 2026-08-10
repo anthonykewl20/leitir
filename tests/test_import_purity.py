@@ -53,17 +53,16 @@ def _run_isolated(script: str, cwd: Path) -> tuple[int, str, str]:
 
 def test_import_leitir_does_not_load_external_effect_modules(tmp_path):
     script = textwrap.dedent(
-        """
+        f"""
         import json, sys
-        sys.path.insert(0, %r)
+        sys.path.insert(0, {str(SRC)!r})
         import leitir
         import leitir.adapters, leitir.cli, leitir.credentials, leitir.discovery_search
         import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree, leitir.lockfiles, leitir.corpus, leitir.materialize, leitir.snapshot, leitir.sbom, leitir.apisurface, leitir.examples, leitir.diff, leitir.trust, leitir.info
-        present = [m for m in %r if m in sys.modules]
-        print(json.dumps({"present": present}))
+        present = [m for m in {FORBIDDEN_MODULES!r} if m in sys.modules]
+        print(json.dumps({{"present": present}}))
         """
-        % (str(SRC), FORBIDDEN_MODULES)
     )
     code, out, err = _run_isolated(script, tmp_path)
     assert code == 0, f"import failed: {err}"
@@ -77,15 +76,14 @@ def test_import_writes_no_filesystem_artifact(tmp_path):
     workdir = tmp_path / "sandbox"
     workdir.mkdir()
     script = textwrap.dedent(
-        """
+        f"""
         import sys
-        sys.path.insert(0, %r)
+        sys.path.insert(0, {str(SRC)!r})
         import leitir
         import leitir.adapters, leitir.cli, leitir.credentials, leitir.discovery_search
         import leitir.engine, leitir.logging, leitir.parity, leitir.resolver, leitir.search
         import leitir.tree, leitir.lockfiles, leitir.corpus, leitir.materialize, leitir.snapshot, leitir.sbom, leitir.apisurface, leitir.examples, leitir.diff, leitir.trust, leitir.info
         """
-        % str(SRC)
     )
     code, _out, err = _run_isolated(script, workdir)
     assert code == 0, f"import failed: {err}"

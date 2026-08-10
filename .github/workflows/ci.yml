@@ -176,7 +176,12 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: requirements.txt
-      # Ruff and mypy can land after the maintainer chooses the project's tools.
+      # Ruff and mypy are now configured (pyproject [tool.ruff]/[tool.mypy])
+      # and the tree is clean; enforce them to prevent regression.
+      - name: Ruff
+        run: uv run --no-project --with ruff ruff check .
+      - name: Mypy
+        run: uv run --no-project --with mypy --with-requirements requirements.txt python -m mypy src/leitir
       - name: Byte-compile source
         run: python -m compileall -q src
       - name: Smoke-import key modules

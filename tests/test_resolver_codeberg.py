@@ -3,11 +3,10 @@ from __future__ import annotations
 import io
 import os
 
+import _http_server as hs
 import pytest
 
-import _http_server as hs
 from leitir.resolver import CodebergResolver, ResolutionError
-
 
 SHA = "a" * 40
 

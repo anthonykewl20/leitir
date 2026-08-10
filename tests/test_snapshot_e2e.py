@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import io
+import json
 import tarfile
+
+from test_snapshot import make_corpus
 
 from leitir.corpus import (
     enumerate_shelved_sources,
@@ -14,7 +16,6 @@ from leitir.corpus import (
 from leitir.search import RepoScope
 from leitir.snapshot import export_corpus, import_corpus, tree_sha
 from leitir.tree import BlobEntry, GitHubTreeSource
-from test_snapshot import make_corpus
 
 
 def test_offline_snapshot_restores_complete_corpus(tmp_path):

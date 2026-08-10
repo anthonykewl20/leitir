@@ -4,14 +4,13 @@ import io
 import json
 import tarfile
 
+import _http_server as hs
 import pytest
 
-import _http_server as hs
 from leitir.materialize import MaterializationError, materialize_repo
 from leitir.resolver import SourcehutResolver
 from leitir.search import RepoScope
 from leitir.tree import GitHubTreeSource
-
 
 SHA = "b" * 40
 CONTENT = b"sourcehut proof\n"

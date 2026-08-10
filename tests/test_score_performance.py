@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-from fractions import Fraction
 import hashlib
 import json
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 from tools.score_engine import (
     CheckMode,
     CheckStatus,
     EvidenceArtifact,
+    _local_evidence_artifact,
     canonical_json_bytes,
     evaluate_live_network_latency,
     evaluate_performance_evidence,
     load_policy,
     mann_whitney_u_two_sided,
-    _local_evidence_artifact,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "performance"

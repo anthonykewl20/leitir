@@ -22,7 +22,7 @@ from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from enum import IntEnum
 from pathlib import Path
-from typing import Protocol, TextIO
+from typing import TYPE_CHECKING, Any, Protocol, TextIO, TypedDict, cast
 
 from .credentials import github_token_from_env
 from .logging import redact
@@ -36,6 +36,11 @@ from .search import (
     SearchSpecError,
 )
 from .spec import CorpusSpec, parse_corpus_spec
+
+if TYPE_CHECKING:
+    from .diff import DiffReport
+    from .resolver import ResolvedPackage, _CorpusResolver, _HeadResolver
+    from .trust import TrustScore
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,38 @@ class ResolverFactory(Protocol):
 
 class SearcherFactory(Protocol):
     def __call__(self, tree_source: object) -> object: ...
+
+
+class _EndpointOptions(TypedDict, total=False):
+    base_url: str
+    allow_insecure_http_for_tests: bool
+
+
+class _BaseUrlOptions(TypedDict, total=False):
+    base_url: str
+
+
+class _FetchOptions(TypedDict, total=False):
+    base_url: str
+    tree_base_url: str
+    verify: bool
+
+
+class _Searcher(Protocol):
+    def search(self, spec: SearchSpec) -> SearchReport: ...
+
+
+class _BenchmarkRun(Protocol):
+    benchmark_id: str
+    tasks: Sequence[Any]
+
+    def to_json(self) -> str: ...
+
+    def digest(self) -> str: ...
+
+
+class _BenchmarkRunner(Protocol):
+    def run(self, manifest: object) -> _BenchmarkRun: ...
 
 
 def _github_token() -> str | None:
@@ -345,14 +382,13 @@ def _configure_logging_from_env(
         level_name = "DEBUG"
     import logging
 
-    level = (
+    configured_level = (
         logging.WARNING
         if not level_name
         else logging.getLevelNamesMapping().get(level_name)
     )
-    invalid_level = level is None
-    if invalid_level:
-        level = logging.WARNING
+    invalid_level = configured_level is None
+    level = logging.WARNING if configured_level is None else configured_level
     from .logging import configure_logging
 
     namespace_logger = logging.getLogger("leitir")
@@ -394,8 +430,8 @@ def _build_default_tree_source(token: str | None) -> object:
 
 def _build_default_resolver(token: str | None) -> object:
     from .resolver import (
-        CratesResolver,
         BitbucketResolver,
+        CratesResolver,
         GitHubTagResolver,
         GitLabResolver,
         GoResolver,
@@ -404,7 +440,7 @@ def _build_default_resolver(token: str | None) -> object:
         PyPIResolver,
     )
 
-    def endpoint_options(value: str) -> dict[str, object]:
+    def endpoint_options(value: str) -> _EndpointOptions:
         from urllib.parse import urlsplit
 
         hostname = urlsplit(value).hostname
@@ -414,15 +450,15 @@ def _build_default_resolver(token: str | None) -> object:
             in {"127.0.0.1", "localhost", "::1"},
         }
 
-    tag_options = {}
+    tag_options: _EndpointOptions = {}
     github_api = os.environ.get("LEITIR_GITHUB_API_BASE_URL")
     if github_api:
         tag_options.update(endpoint_options(github_api))
     tag_resolver = GitHubTagResolver(token=token, **tag_options)
-    pypi_options = {}
-    npm_options = {}
-    crates_options = {}
-    go_options = {}
+    pypi_options: _EndpointOptions = {}
+    npm_options: _EndpointOptions = {}
+    crates_options: _EndpointOptions = {}
+    go_options: _EndpointOptions = {}
     if os.environ.get("LEITIR_PYPI_BASE_URL"):
         pypi_options.update(endpoint_options(os.environ["LEITIR_PYPI_BASE_URL"]))
     if os.environ.get("LEITIR_NPM_BASE_URL"):
@@ -444,9 +480,10 @@ def _build_default_resolver(token: str | None) -> object:
 def _build_default_searcher(tree_source: object) -> object:
     from .adapters import GoAdapter, PythonAdapter, RustAdapter
     from .engine import ScopedSearcher
+    from .tree import TreeSource
 
     return ScopedSearcher(
-        tree_source=tree_source,
+        tree_source=cast(TreeSource, tree_source),
         adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
     )
 
@@ -454,7 +491,7 @@ def _build_default_searcher(tree_source: object) -> object:
 def _build_default_benchmark_runner(searcher: object) -> object:
     from .bench import BenchmarkRunner
 
-    return BenchmarkRunner(searcher)
+    return BenchmarkRunner(cast(_Searcher, searcher))
 
 
 def _load_benchmark_manifest(path: str | None) -> object:
@@ -465,20 +502,23 @@ def _load_benchmark_manifest(path: str | None) -> object:
 
 def _build_default_global_searcher(code_search: object, tree_source: object) -> object:
     from .adapters import GoAdapter, PythonAdapter, RustAdapter
-    from .discovery_search import GlobalSearcher
+    from .discovery_search import CodeSearchPort, GlobalSearcher
+    from .tree import TreeSource
+
+    typed_code_search = cast(CodeSearchPort, code_search)
 
     return GlobalSearcher(
-        code_search=code_search,
-        tree_source=tree_source,
+        code_search=typed_code_search,
+        tree_source=cast(TreeSource, tree_source),
         adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
-        blob_reader=code_search.read_blob_by_path,
+        blob_reader=cast(Any, code_search).read_blob_by_path,
     )
 
 
 def _build_default_code_search(token: str | None) -> object:
     from .discovery_search import GitHubCodeSearchTransport
 
-    options = {}
+    options: _BaseUrlOptions = {}
     github_api = os.environ.get("LEITIR_GITHUB_API_BASE_URL")
     if github_api:
         options["base_url"] = github_api
@@ -520,31 +560,38 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
 
 def _resolve_corpus_spec(
     parsed: CorpusSpec, resolver: object, heads: object, cwd: Path
-) -> tuple[object, str | None, str | None, str | None]:
+) -> tuple[RepoScope | ResolvedPackage, str | None, str | None, str | None]:
     from .resolver import resolve_corpus_spec
 
-    return resolve_corpus_spec(parsed, resolver, heads, cwd)
+    return resolve_corpus_spec(
+        parsed,
+        cast("_CorpusResolver", resolver),
+        cast("_HeadResolver", heads),
+        cwd,
+    )
 
 
-def _write_diff_human(report: object, out: TextIO) -> None:
-    for heading, values in (
+def _write_diff_human(report: DiffReport, out: TextIO) -> None:
+    for heading, file_values in (
         ("Added files", report.files.added),
         ("Removed files", report.files.removed),
         ("Modified files", report.files.modified),
     ):
-        print(f"{heading} ({len(values)}):", file=out)
-        for value in values:
-            print(f"  {value}", file=out)
-    for heading, values in (
+        print(f"{heading} ({len(file_values)}):", file=out)
+        for path in file_values:
+            print(f"  {path}", file=out)
+    for heading, symbol_values in (
         ("Added symbols", report.api.added),
         ("Removed symbols", report.api.removed),
     ):
-        print(f"{heading} ({len(values)}):", file=out)
-        for value in values:
-            print(f"  {value['qualified_name']}", file=out)
+        print(f"{heading} ({len(symbol_values)}):", file=out)
+        for symbol in symbol_values:
+            print(f"  {symbol['qualified_name']}", file=out)
     print(f"Changed signatures ({len(report.api.changed)}):", file=out)
-    for value in report.api.changed:
-        print(f"  {value.qualified_name}: {value.before} -> {value.after}", file=out)
+    for change in report.api.changed:
+        print(
+            f"  {change.qualified_name}: {change.before} -> {change.after}", file=out
+        )
     if report.release_notes:
         print(f"Release notes ({len(report.release_notes)}):", file=out)
         for note in report.release_notes:
@@ -659,8 +706,8 @@ def _upgrade_cache(root: Path, *, dry_run: bool, out: TextIO) -> int:
 def _gc_abandoned_staging(root: Path) -> int:
     """Remove writer staging/backup directories while holding their target lock."""
     from .materialize import (
-        MaterializationError,
         MANIFEST_NAME,
+        MaterializationError,
         _assert_target_confinement,
         _file_lock,
         _fsync_directory,
@@ -752,11 +799,15 @@ def _gc_abandoned_staging(root: Path) -> int:
                 owner = payload.get("owner")
                 repo = payload.get("repo")
                 host = payload.get("host")
-                commit_sha = payload.get("commit_sha")
-                if not all(
-                    isinstance(value, str) for value in (owner, repo, host, commit_sha)
+                commit_sha_value = payload.get("commit_sha")
+                if not (
+                    isinstance(owner, str)
+                    and isinstance(repo, str)
+                    and isinstance(host, str)
+                    and isinstance(commit_sha_value, str)
                 ):
                     continue
+                commit_sha = commit_sha_value
                 if (
                     commit_sha != target.name
                     or read_valid_manifest(
@@ -800,7 +851,6 @@ def _run_corpus_command(
 ) -> int:
     from .corpus import INDEX_NAME, materialize_source, remove_source
     from .docpointers import POINTERS_NAME
-    from .materialize import MANIFEST_NAME
 
     try:
         root = _corpus_root(args, err)
@@ -819,7 +869,8 @@ def _run_corpus_command(
         if args.command == "trust":
             from .corpus import record_trust
 
-            entry, result, target = record_trust(args.spec, root)
+            entry, untyped_result, target = record_trust(args.spec, root)
+            result = cast("TrustScore", untyped_result)
             payload = dict(
                 result.as_dict(),
                 schema_version=1,
@@ -839,22 +890,22 @@ def _run_corpus_command(
                     )
             return int(ExitCode.SUCCESS)
         if args.command == "diff":
-            from .diff import GitHubReleaseNotes, diff_packages
             from .corpus import materialize_source
+            from .diff import GitHubReleaseNotes, diff_packages
             from .materialize import _target_lock, read_valid_manifest
 
             token = _github_token()
             resolver = resolver_factory(token)
             heads = code_search_factory(token)
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
-            fetch_options: dict[str, object] = {}
+            fetch_options: _FetchOptions = {}
             if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                 fetch_options["tree_base_url"] = os.environ[
                     "LEITIR_GITHUB_API_BASE_URL"
                 ]
-            notes_options = {}
+            notes_options: _BaseUrlOptions = {}
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                 notes_options["base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
             # An injected diff implementation is an explicit test/embedding
@@ -882,12 +933,15 @@ def _run_corpus_command(
                 resolved, tag, version_source, _detection = _resolve_corpus_spec(
                     parsed, resolver, heads, cwd
                 )
-                scope = resolved.scope if hasattr(resolved, "scope") else resolved
+                scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 materialize_host = (
                     parsed.host or "github.com"
                     if parsed.ecosystem is None
                     else getattr(resolved, "host", "github.com")
                 )
+                def announce_fetch(raw_spec: str = raw) -> None:
+                    print(f"leitir: materializing {raw_spec}", file=err)
+
                 path = materialize_source(
                     raw,
                     resolved,
@@ -903,9 +957,7 @@ def _run_corpus_command(
                         if materialize_host != "github.com"
                         else None
                     ),
-                    on_fetch=lambda raw=raw: print(
-                        f"leitir: materializing {raw}", file=err
-                    ),
+                    on_fetch=announce_fetch,
                     **fetch_options,
                 )
                 prepared[raw] = (path, scope, materialize_host)
@@ -972,9 +1024,9 @@ def _run_corpus_command(
                 resolved, _, _, _ = _resolve_corpus_spec(
                     parsed, resolver, heads, Path.cwd()
                 )
-                scope = resolved.scope if hasattr(resolved, "scope") else resolved
-                owner, repo = scope.slug.split("/", 1)
-                sha = scope.commit_sha
+                typed_scope = cast(RepoScope, getattr(resolved, "scope", resolved))
+                owner, repo = typed_scope.slug.split("/", 1)
+                sha = typed_scope.commit_sha
             removed = remove_source(
                 root, owner, repo, sha, host=parsed.host or "github.com"
             )
@@ -1025,13 +1077,13 @@ def _run_corpus_command(
             print(f"leitir: imported {len(entries)} source(s) into {root}", file=err)
             return int(ExitCode.SUCCESS)
         if args.command == "sbom":
-            from .sbom import generate_sbom
             from .corpus import load_sources
             from .materialize import (
                 _assert_target_confinement,
                 _file_lock,
                 _target_lock,
             )
+            from .sbom import generate_sbom
 
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
             entries = load_sources(root)
@@ -1065,7 +1117,7 @@ def _run_corpus_command(
             from .corpus import lock_project
 
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
-            fetch_options = {"verify": not args.no_verify}
+            fetch_options = cast(_FetchOptions, {"verify": not args.no_verify})
             if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
@@ -1086,17 +1138,20 @@ def _run_corpus_command(
                 failures=failures,
                 **fetch_options,
             )
-            payload: dict[str, object] = {"cwd": str(cwd), "dependencies": summary}
+            lock_payload: dict[str, object] = {
+                "cwd": str(cwd),
+                "dependencies": summary,
+            }
             if args.best_effort:
-                payload["failures"] = failures
-            print(json.dumps(payload, sort_keys=True), file=out)
+                lock_payload["failures"] = failures
+            print(json.dumps(lock_payload, sort_keys=True), file=out)
             if args.best_effort and not summary and failures:
                 return int(ExitCode.CORPUS_FAILURE)
             return int(ExitCode.SUCCESS)
         heads = code_search_factory(token)
         cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
         paths: list[tuple[Path, str | None, dict[str, object], str, str]] = []
-        fetch_options = {}
+        fetch_options = cast(_FetchOptions, {})
         if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
             fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
         fetch_options["verify"] = not args.no_verify
@@ -1109,7 +1164,15 @@ def _run_corpus_command(
             str, tuple[Path, str | None, dict[str, object], str]
         ] = {}
         resolved_requests: list[
-            tuple[str, CorpusSpec, object, str | None, str | None, str, RepoScope]
+            tuple[
+                str,
+                CorpusSpec,
+                RepoScope | ResolvedPackage,
+                str | None,
+                str | None,
+                str,
+                RepoScope,
+            ]
         ] = []
         for raw in raw_specs:
             print(f"leitir: resolving {raw} (cwd={cwd})", file=err)
@@ -1118,8 +1181,9 @@ def _run_corpus_command(
                 parsed, resolver, heads, cwd
             )
             if version_source == "lockfile":
+                resolved_package = cast(Any, resolved)
                 print(
-                    f"leitir: {parsed.name}: version {resolved.ref.version} from {detection_source}",
+                    f"leitir: {parsed.name}: version {resolved_package.ref.version} from {detection_source}",
                     file=err,
                 )
             materialize_host = (
@@ -1127,13 +1191,30 @@ def _run_corpus_command(
                 if parsed.ecosystem is None
                 else getattr(resolved, "host", "github.com")
             )
-            scope = resolved.scope if hasattr(resolved, "scope") else resolved
+            scope = cast(RepoScope, getattr(resolved, "scope", resolved))
             resolved_requests.append(
-                (raw, parsed, resolved, tag, version_source, materialize_host, scope)
+                (
+                    raw,
+                    parsed,
+                    resolved,
+                    tag,
+                    version_source,
+                    materialize_host,
+                    scope,
+                )
             )
 
         resolved_specs: list[
-            tuple[str, CorpusSpec, object, str | None, str | None, str, RepoScope, Path]
+            tuple[
+                str,
+                CorpusSpec,
+                RepoScope | ResolvedPackage,
+                str | None,
+                str | None,
+                str,
+                RepoScope,
+                Path,
+            ]
         ] = []
         materialized_targets: dict[str, Path] = {}
         for request in resolved_requests:
@@ -1155,8 +1236,8 @@ def _run_corpus_command(
             # Hosted repository identities are case-insensitive even when the
             # local filesystem is not. Collapse aliases before any writer runs.
             target_identity = os.path.normcase(str(expected_path)).casefold()
-            path = materialized_targets.get(target_identity)
-            if path is None:
+            materialized_path = materialized_targets.get(target_identity)
+            if materialized_path is None:
                 commit_published_at = None
                 timestamp_resolver = getattr(
                     resolver, "published_at_for_commit", None
@@ -1180,7 +1261,10 @@ def _run_corpus_command(
                             scope.commit_sha,
                             exc,
                         )
-                path = materialize_source(
+                def announce_fetch(raw_spec: str = raw) -> None:
+                    print(f"leitir: materializing {raw_spec}", file=err)
+
+                materialized_path = materialize_source(
                     raw,
                     resolved,
                     root=root,
@@ -1196,12 +1280,10 @@ def _run_corpus_command(
                         if materialize_host != "github.com"
                         else None
                     ),
-                    on_fetch=lambda raw=raw: print(
-                        f"leitir: materializing {raw}", file=err
-                    ),
+                    on_fetch=announce_fetch,
                     **fetch_options,
                 )
-                materialized_targets[target_identity] = path
+                materialized_targets[target_identity] = materialized_path
             resolved_specs.append(
                 (
                     raw,
@@ -1211,7 +1293,7 @@ def _run_corpus_command(
                     version_source,
                     materialize_host,
                     scope,
-                    path,
+                    materialized_path,
                 )
             )
 
@@ -1232,10 +1314,10 @@ def _run_corpus_command(
 
             for (
                 raw,
-                parsed,
-                resolved,
-                tag,
-                version_source,
+                _parsed,
+                _resolved,
+                _tag,
+                _version_source,
                 materialize_host,
                 scope,
                 path,
@@ -1251,17 +1333,18 @@ def _run_corpus_command(
                     "~"
                 ):
                     manifest_owner = f"~{manifest_owner}"
-                manifest = read_valid_manifest(
+                valid_manifest = read_valid_manifest(
                     path,
                     manifest_owner,
                     manifest_repo,
                     scope.commit_sha,
                     host=materialize_host,
                 )
-                if manifest is None:
+                if valid_manifest is None:
                     raise ValueError(
                         f"materialized source failed load-time verification: {path}"
                     )
+                manifest = valid_manifest
                 recorded_subpath = manifest.get("subpath")
                 cached_subpath = (
                     recorded_subpath if isinstance(recorded_subpath, str) else None
@@ -1283,17 +1366,18 @@ def _run_corpus_command(
                     if args.as_json:
                         print(json.dumps(document, indent=2, sort_keys=True), file=out)
                     else:
-                        provenance = document["provenance"]
-                        api = document["api"]
-                        examples = document["examples"]
-                        trust = document["trust"]
-                        license_info = document["license"]
-                        parity = document["parity"]
+                        provenance = cast(dict[str, Any], document["provenance"])
+                        api = cast(dict[str, Any], document["api"])
+                        examples = cast(dict[str, Any], document["examples"])
+                        trust = cast(dict[str, Any], document["trust"])
+                        license_info = cast(dict[str, Any], document["license"])
+                        parity = cast(dict[str, Any], document["parity"])
+                        document_paths = cast(dict[str, Any], document["paths"])
                         print(
                             f"{raw} {provenance['owner']}/{provenance['repo']}@{provenance['commit_sha']}",
                             file=out,
                         )
-                        print(f"tree: {document['paths']['tree']}", file=out)
+                        print(f"tree: {document_paths['tree']}", file=out)
                         print(
                             f"version: {provenance['version'] or 'unknown'} "
                             f"source: {provenance['source'] or 'unknown'} "
@@ -1440,10 +1524,15 @@ def _run_corpus_command(
                     for payload in index_payloads:
                         print(json.dumps(payload, indent=2, sort_keys=True), file=out)
                 else:
-                    for index_path, payload in zip(index_paths, index_payloads):
+                    for index_path, payload in zip(
+                        index_paths, index_payloads, strict=False
+                    ):
                         print(index_path, file=out)
                         if args.command == "api":
-                            for symbol in payload["top_symbols"][:5]:
+                            top_symbols = cast(
+                                list[dict[str, Any]], payload["top_symbols"]
+                            )
+                            for symbol in top_symbols[:5]:
                                 print(
                                     f"{symbol['kind']} {symbol['qualified_name']}"
                                     f"{symbol['signature'] or ''}",
@@ -1503,14 +1592,14 @@ def _resolve_scope_via_package(
     version: str,
     ecosystem: str,
 ) -> RepoScope:
-    from .resolver import Ecosystem, PackageRef
+    from .resolver import Ecosystem, PackageRef, PackageResolver
 
     ref = PackageRef(
         ecosystem=Ecosystem(ecosystem),
         name=package,
         version=version,
     )
-    resolved = resolver.resolve(ref)
+    resolved = cast(PackageResolver, resolver).resolve(ref)
     return resolved.scope
 
 
@@ -1561,7 +1650,7 @@ def main(
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
-        return int(exc.code)
+        return int(cast(int, exc.code))
 
     _configure_logging_from_env(args, err)
 
@@ -1596,14 +1685,15 @@ def main(
             from .corpus_bench import CorpusBenchmarkManifest, CorpusBenchmarkRunner
 
             if isinstance(manifest, CorpusBenchmarkManifest):
-                runner = CorpusBenchmarkRunner(
+                corpus_runner = CorpusBenchmarkRunner(
                     resolver_factory(token), code_search_factory(token), token
                 )
+                run = cast(_BenchmarkRun, corpus_runner.run(manifest))
             else:
                 tree_source = tree_source_factory(token)
                 searcher = searcher_factory(tree_source)
-                runner = benchmark_runner_factory(searcher)
-            run = runner.run(manifest)
+                runner = cast(_BenchmarkRunner, benchmark_runner_factory(searcher))
+                run = runner.run(manifest)
         except Exception as exc:
             print(f"leitir: error: {redact(str(exc))}", file=err)
             return int(ExitCode.INFRASTRUCTURE_FAILURE)
@@ -1668,7 +1758,9 @@ def main(
             )
             code_search = code_search_factory(token)
             tree_source = tree_source_factory(token)
-            searcher = global_searcher_factory(code_search, tree_source)
+            searcher = cast(
+                _Searcher, global_searcher_factory(code_search, tree_source)
+            )
             report = searcher.search(spec)
         else:
             if args.repo is not None:
@@ -1688,7 +1780,7 @@ def main(
             )
 
             tree_source = tree_source_factory(token)
-            searcher = searcher_factory(tree_source)
+            searcher = cast(_Searcher, searcher_factory(tree_source))
             report = searcher.search(spec)
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)

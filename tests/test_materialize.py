@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _http_server import scripted_server
 
 import leitir.materialize as materialize_module
 from leitir.materialize import (
@@ -21,8 +22,6 @@ from leitir.materialize import (
     read_valid_manifest,
 )
 from leitir.trust import compute_trust
-
-from _http_server import scripted_server
 
 SHA = "a" * 40
 

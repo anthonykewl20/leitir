@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from .apisurface import extract_api_surface
 from .corpus import (
@@ -22,7 +22,6 @@ from .materialize import update_manifest
 from .sbom import infer_license
 from .trust import compute_trust
 
-
 TOP_SYMBOLS_LIMIT = 50
 _KIND_PRIORITY = {"class": 0, "function": 1, "method": 2, "constant": 3}
 logger = logging.getLogger(__name__)
@@ -37,7 +36,7 @@ def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, obj
     return matches[0]
 
 
-def _valid_api(index: object) -> bool:
+def _valid_api(index: object) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(index, dict)
         and index.get("schema_version") == 1
@@ -58,7 +57,7 @@ def _valid_api(index: object) -> bool:
     )
 
 
-def _valid_examples(index: object) -> bool:
+def _valid_examples(index: object) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(index, dict)
         and index.get("schema_version") == 1
@@ -120,7 +119,12 @@ def _line_sort_key(value: object) -> tuple[int, int, str]:
 
 
 def _top_symbols(index: dict[str, object]) -> list[dict[str, object]]:
-    symbols = [item for item in index["symbols"] if isinstance(item, dict)]
+    raw_symbols = index.get("symbols")
+    symbols = (
+        [item for item in raw_symbols if isinstance(item, dict)]
+        if isinstance(raw_symbols, list)
+        else []
+    )
     symbols.sort(
         key=lambda item: (
             _KIND_PRIORITY.get(str(item.get("kind")), len(_KIND_PRIORITY)),
@@ -148,16 +152,23 @@ def _top_symbols(index: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _api_summary(index: dict[str, object], path: Path) -> dict[str, object]:
-    symbols = [item for item in index["symbols"] if isinstance(item, dict)]
-    by_kind = {kind: 0 for kind in ("function", "class", "method", "constant")}
+    raw_symbols = index.get("symbols")
+    symbols = (
+        [item for item in raw_symbols if isinstance(item, dict)]
+        if isinstance(raw_symbols, list)
+        else []
+    )
+    by_kind = dict.fromkeys(("function", "class", "method", "constant"), 0)
     for symbol in symbols:
         kind = symbol.get("kind")
         if isinstance(kind, str) and kind in by_kind:
             by_kind[kind] += 1
+    raw_methods = index.get("methods")
+    methods_source = raw_methods if isinstance(raw_methods, list) else []
     methods = sorted(
         {
             item
-            for item in index["methods"]
+            for item in methods_source
             if isinstance(item, str) and item in {"ast", "heuristic"}
         }
     )
@@ -183,7 +194,8 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
     logger.debug("building info spec=%s corpus_root=%s", spec, corpus_root)
     root = resolve_root(corpus_root)
     entry, manifest, target = _source(spec, root)
-    subpath = manifest.get("subpath") if isinstance(manifest.get("subpath"), str) else None
+    raw_subpath = manifest.get("subpath")
+    subpath = raw_subpath if isinstance(raw_subpath, str) else None
     scan_path = target / subpath if subpath else target
 
     api_index = read_api_index(root, entry, manifest)
@@ -221,7 +233,12 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
         trust_score, trust_breakdown = cached_trust
 
     license_result = infer_license(manifest, target)
-    snippets = [dict(item) for item in examples_index["snippets"] if isinstance(item, dict)]
+    raw_snippets = examples_index.get("snippets")
+    snippets = (
+        [dict(item) for item in raw_snippets if isinstance(item, dict)]
+        if isinstance(raw_snippets, list)
+        else []
+    )
     snippets.sort(
         key=lambda item: (
             -len(item.get("symbols", [])) if isinstance(item.get("symbols"), list) else 0,

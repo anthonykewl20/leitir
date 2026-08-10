@@ -12,7 +12,6 @@ from leitir.cli import ExitCode, main
 from leitir.search import (
     Coverage,
     CoverageStatus,
-    Predicate,
     PredicateKind,
     RepoScope,
     Resolution,
@@ -30,6 +29,7 @@ BLOB = "b" * 40
 
 def test_invalid_log_level_keeps_redaction_installed(monkeypatch):
     from argparse import Namespace
+
     from leitir.cli import _configure_logging_from_env
     from leitir.logging import RedactingFilter, register_secret
 

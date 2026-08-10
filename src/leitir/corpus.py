@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import json
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from leitir.materialize import (
-    ArtifactRetrievalError,
     MANIFEST_NAME,
+    ArtifactRetrievalError,
     _assert_target_confinement,
     _file_lock,
     _fsync_directory,
@@ -453,6 +453,7 @@ def materialize_source(
         "only_in_git": 0,
         "only_in_artifact": 0,
     }
+    source_tag: str | None
     if isinstance(resolved, ResolvedPackage):
         scope = resolved.scope
         host = resolved.host
@@ -516,7 +517,7 @@ def materialize_source(
                 subpath=subpath,
                 manifest_fields=manifest_fields,
                 on_fetch=on_fetch,
-                **fetch_options,  # type: ignore[arg-type]
+                **fetch_options,
             )
     else:
         target = materialize_repo(
@@ -529,7 +530,7 @@ def materialize_source(
             subpath=subpath,
             manifest_fields=manifest_fields,
             on_fetch=on_fetch,
-            **fetch_options,  # type: ignore[arg-type]
+            **fetch_options,
         )
     # Reacquire the writer lock before reading or updating the published
     # generation. A writer that won the release/reacquire race is therefore
@@ -615,13 +616,14 @@ def materialize_source(
         if "entry_points" not in manifest:
             from leitir.docpointers import discover_entry_points
 
+            manifest_subpath = manifest.get("subpath")
             manifest = update_manifest(
                 target,
                 {
                     "entry_points": discover_entry_points(
                         target,
-                        manifest.get("subpath")
-                        if isinstance(manifest.get("subpath"), str)
+                        manifest_subpath
+                        if isinstance(manifest_subpath, str)
                         else None,
                     )
                 },
@@ -662,13 +664,13 @@ def lock_project(
 
     corpus_root = resolve_root(root)
     results: list[dict[str, object]] = []
-    for closure in dependency_closures(directory):
+    for closure in dependency_closures(Path(directory)):
         deps = [edge.as_dict() for edge in closure.deps]
         for edge in closure.deps:
             try:
                 if on_resolve is not None:
                     on_resolve(edge.spec)
-                resolved = resolver.resolve(
+                resolved = cast(Any, resolver).resolve(
                     PackageRef(Ecosystem(closure.ecosystem), edge.name, edge.version)
                 )
                 target = materializer(

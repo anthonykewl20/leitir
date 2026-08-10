@@ -9,13 +9,12 @@ from pathlib import Path
 from tools.score_engine import (
     CheckStatus,
     EvidenceArtifact,
+    _local_evidence_artifact,
     canonical_json_bytes,
     evaluate_code_health_evidence,
     load_policy,
     policy_from_dict,
-    _local_evidence_artifact,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "code_health"

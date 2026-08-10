@@ -10,23 +10,23 @@ assessment dimensions.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP, localcontext
-from enum import Enum, IntEnum
-from fractions import Fraction
 import hashlib
-from html import escape as _html_escape
-from importlib import machinery
-from importlib import metadata as importlib_metadata
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath
 import re
 import sys
-from typing import Iterable, Iterator, Mapping, Sequence, TextIO
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, localcontext
+from enum import Enum, IntEnum, StrEnum
+from fractions import Fraction
+from html import escape as _html_escape
+from importlib import machinery
+from importlib import metadata as importlib_metadata
+from pathlib import Path, PurePosixPath
+from typing import TextIO
 from xml.etree import ElementTree
-
 
 ASSESSMENT_SCHEMA_VERSION = "leitir-assessment-v1"
 POLICY_SCHEMA_VERSION = "leitir-score-policy-v1"
@@ -206,7 +206,7 @@ _RETIRED_V1_MODULES = (
 )
 
 
-class CheckStatus(str, Enum):
+class CheckStatus(StrEnum):
     """The complete result vocabulary defined by ADR-002 section 3."""
 
     PASS = "pass"
@@ -217,21 +217,21 @@ class CheckStatus(str, Enum):
     SKIPPED = "skipped"
 
 
-class CheckMode(str, Enum):
+class CheckMode(StrEnum):
     """Whether a check participates in the non-compensating gate."""
 
     REQUIRED = "required"
     ADVISORY = "advisory"
 
 
-class Profile(str, Enum):
+class Profile(StrEnum):
     """The two assessment profiles defined by ADR-002 section 12."""
 
     OFFLINE = "offline"
     RELEASE = "release"
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     """A policy decision, independent of the diagnostic scalar score."""
 
     PASS = "pass"
@@ -248,7 +248,7 @@ class ExitCode(IntEnum):
     INDETERMINATE = 3
 
 
-class BlockerKind(str, Enum):
+class BlockerKind(StrEnum):
     """Why a required check prevents an unqualified pass."""
 
     KNOWN_FAILURE = "known_failure"
@@ -256,7 +256,7 @@ class BlockerKind(str, Enum):
     MISSING_RESULT = "missing_result"
 
 
-class StandardReason(str, Enum):
+class StandardReason(StrEnum):
     """Engine-owned reason codes; adapters may supply domain reason codes."""
 
     POLICY_CHECK_MISSING = "POLICY_CHECK_MISSING"
@@ -2807,7 +2807,7 @@ def evaluate_code_health_evidence(
         scope = _declared_code_scope(scope_artifact)
     except (TypeError, ValueError):
         placeholder = DeclaredCodeScope(
-            scopes={kind: () for kind in _SCOPE_KINDS},
+            scopes=dict.fromkeys(_SCOPE_KINDS, ()),
             applicability={
                 kind: ScopeApplicability("expected", "malformed scope evidence")
                 for kind in _APPLICABILITY_KINDS
@@ -3191,7 +3191,7 @@ def evaluate_test_adequacy_evidence(
         scope = _declared_code_scope(scope_artifact)
     except (TypeError, ValueError):
         scope = DeclaredCodeScope(
-            scopes={kind: () for kind in _SCOPE_KINDS},
+            scopes=dict.fromkeys(_SCOPE_KINDS, ()),
             applicability={
                 kind: ScopeApplicability("expected", "malformed scope evidence")
                 for kind in _APPLICABILITY_KINDS
@@ -3398,7 +3398,7 @@ def evaluate_test_adequacy_evidence(
         sentinel_exit = sentinel["exit_code"]
         if not _is_int(clean_exit) or not _is_int(sentinel_exit) or not isinstance(sentinel["expected_failure_observed"], bool):
             raise ValueError("mutmut control exits are malformed")
-        counts = {name: 0 for name in _MUTMUT_OUTCOMES}
+        counts = dict.fromkeys(_MUTMUT_OUTCOMES, 0)
         mutant_ids: list[str] = []
         for item in _list_value(raw_mutmut["mutants"], "mutmut mutants"):
             mutant = _object_keys(item, {"id", "exit_code", "exclusion"}, "mutmut mutant")
@@ -3524,7 +3524,7 @@ def evaluate_test_adequacy_evidence(
     )
 
 
-class OpenSSFCollectionState(str, Enum):
+class OpenSSFCollectionState(StrEnum):
     """Typed outcome of an OpenSSF Scorecard REST collection attempt."""
 
     AVAILABLE = "available"
@@ -4443,7 +4443,7 @@ def _asv_run(artifact: EvidenceArtifact, name: str) -> _ASVRun:
                 "PERFORMANCE_ASV_SCHEMA_MISMATCH", f"{name} benchmark row is invalid"
             )
         # ASV's compact v2 writer may omit trailing null columns from a row.
-        values = dict(zip(columns, raw_values))
+        values = dict(zip(columns, raw_values, strict=False))
         if values["params"] != []:
             raise PerformanceEvaluationError(
                 "PERFORMANCE_ASV_SCHEMA_MISMATCH",
@@ -4538,7 +4538,7 @@ def _controlled_runner(
             for item in order
         )
         or order.count("baseline") != order.count("candidate")
-        or any(left == right for left, right in zip(order, order[1:]))
+        or any(left == right for left, right in zip(order, order[1:], strict=False))
     ):
         raise PerformanceEvaluationError(
             "PERFORMANCE_NOT_INTERLEAVED",
@@ -5277,7 +5277,7 @@ def _manifest_contract(
     tasks_raw = _list_value(raw["tasks"], "manifest tasks", nonempty=True)
     normalized_tasks: list[dict[str, object]] = []
     tasks: dict[str, tuple[str, tuple[str, ...], frozenset[SourceIdentity]]] = {}
-    language_counts = {language: 0 for language in _RETRIEVAL_LANGUAGES}
+    language_counts = dict.fromkeys(_RETRIEVAL_LANGUAGES, 0)
     for task in tasks_raw:
         task_raw = _object_keys(
             task,
@@ -5488,7 +5488,7 @@ def _run_contract(
         if ordering_keys != sorted(ordering_keys) or ranks != list(range(1, len(ranks) + 1)):
             raise RetrievalEvaluationError("RANKED_RUN_TOTAL_ORDER_INVALID", "run is not in P6 total order")
         if len(set(rank_scores)) != len(rank_scores) or any(
-            left <= right for left, right in zip(rank_scores, rank_scores[1:])
+            left <= right for left, right in zip(rank_scores, rank_scores[1:], strict=False)
         ):
             raise RetrievalEvaluationError("RANKED_RUN_TOTAL_ORDER_INVALID", "rank_score must be unique and strictly descending")
         tasks[task_id] = (tuple(identities), tuple(rank_scores))

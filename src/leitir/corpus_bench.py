@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TypedDict
 
+from leitir.resolver import ResolvedPackage
+from leitir.search import RepoScope
 
 _TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SCHEMA = "leitir-corpus-benchmark-manifest-v1"
 _RUN_SCHEMA = "leitir-corpus-benchmark-run-v1"
+
+
+class _MaterializeOptions(TypedDict, total=False):
+    verify: bool
+    token: str
+    base_url: str
+    tree_base_url: str
 
 
 def _canonical_json(value: object) -> str:
@@ -197,20 +207,26 @@ def manifest_from_dict(raw: object) -> CorpusBenchmarkManifest:
 class CorpusBenchmarkRunner:
     """Resolve and verify every task in a disposable corpus root."""
 
-    def __init__(self, resolver: object, heads: object, token: str | None = None) -> None:
+    def __init__(
+        self,
+        resolver: object,
+        heads: object,
+        token: str | None = None,
+    ) -> None:
         self._resolver = resolver
         self._heads = heads
         self._token = token
 
-    def _resolve(self, spec: str) -> tuple[object, str, str]:
+    def _resolve(self, spec: str) -> tuple[ResolvedPackage | RepoScope, str, str]:
         from leitir.cli import _resolve_corpus_spec
         from leitir.spec import parse_corpus_spec
 
         parsed = parse_corpus_spec(spec)
-        resolved, _tag, _source, _detection = _resolve_corpus_spec(
+        resolved_raw, _tag, _source, _detection = _resolve_corpus_spec(
             parsed, self._resolver, self._heads, Path.cwd()
         )
-        scope = resolved.scope if hasattr(resolved, "scope") else resolved
+        resolved = resolved_raw
+        scope = resolved.scope if isinstance(resolved, ResolvedPackage) else resolved
         return resolved, parsed.name, scope.slug
 
     def run(self, manifest: CorpusBenchmarkManifest) -> CorpusBenchmarkRun:
@@ -224,13 +240,13 @@ class CorpusBenchmarkRunner:
             root = Path(temporary)
             for task in sorted(manifest.tasks, key=lambda item: item.task_id):
                 resolved, name, slug = self._resolve(task.spec)
-                scope = resolved.scope if hasattr(resolved, "scope") else resolved
+                scope = resolved.scope if isinstance(resolved, ResolvedPackage) else resolved
                 owner, repo = slug.split("/", 1)
                 actual = (owner, repo, scope.commit_sha)
                 expected = (task.expected_owner, task.expected_repo, task.expected_commit_sha)
                 if actual != expected:
                     raise ValueError(f"{task.task_id}: resolved {actual!r}, expected {expected!r}")
-                options: dict[str, object] = {"verify": True}
+                options = _MaterializeOptions(verify=True)
                 if self._token is not None:
                     options["token"] = self._token
                 if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
@@ -238,7 +254,12 @@ class CorpusBenchmarkRunner:
                 if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                     options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
                 target = materialize_source(
-                    task.spec, resolved, root=root, name=name, version_source="explicit", **options
+                    task.spec,
+                    resolved,
+                    root=root,
+                    name=name,
+                    version_source="explicit",
+                    **options,
                 )
                 source_manifest = json.loads((target / MANIFEST_NAME).read_text(encoding="utf-8"))
                 if source_manifest.get("verified") not in (True, "sampled"):

@@ -8,7 +8,7 @@ import pytest
 
 from leitir.corpus import write_sources
 from leitir.diff import diff_packages
-from leitir.resolver import Ecosystem, PackageRef, ResolvedPackage
+from leitir.resolver import ResolvedPackage
 from leitir.search import RepoScope
 
 

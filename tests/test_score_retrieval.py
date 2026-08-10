@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -20,7 +20,6 @@ from tools.score_engine import (
     evaluate_retrieval,
     load_policy,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "retrieval"
@@ -231,7 +230,7 @@ def test_shipped_qrels_are_exactly_the_twelve_manifest_pins():
 def test_hand_calculated_vectors_match_pinned_trec_golden(vector_name):
     golden = json.loads((FIXTURES / "trec-golden.json").read_text(encoding="utf-8"))
     vector = golden["vectors"][vector_name]
-    identities = {name: _identity(name) for name in {"exact", "support", "wrong", "unjudged"}}
+    identities = {name: _identity(name) for name in ("exact", "support", "wrong", "unjudged")}
     metrics = compute_retrieval_metrics(
         tuple(identities[name] for name in vector["ranking"]),
         {identities[name]: grade for name, grade in golden["qrels"].items()},

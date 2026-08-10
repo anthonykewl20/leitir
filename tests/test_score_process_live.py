@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from tools.score_engine import (
+    PINNED_OPENSSF_SCORECARD_VERSION,
     CheckStatus,
     OpenSSFCollectionState,
-    PINNED_OPENSSF_SCORECARD_VERSION,
     collect_openssf_scorecard,
     evaluate_process_supply_chain_collection,
     load_policy,
 )
-
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",

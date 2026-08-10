@@ -5,9 +5,9 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +34,6 @@ from tools.score_engine import (
     evaluate_total_ordering,
     load_policy,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "engine"

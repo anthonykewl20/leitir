@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import io
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tools.score_engine import ExitCode, main
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PINNED_SUBJECT_COMMIT = "45c028b69fdbab65e6288f82f9f4d0ecbc7e95d4"

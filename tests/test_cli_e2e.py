@@ -11,25 +11,22 @@ from __future__ import annotations
 import io
 import json
 
-from leitir.adapters import PythonAdapter, RustAdapter, GoAdapter
+import fixtures_real as fx
+import fixtures_resolver as rfx
+
+from leitir.adapters import GoAdapter, PythonAdapter, RustAdapter
 from leitir.cli import ExitCode, main
 from leitir.engine import ScopedSearcher
 from leitir.resolver import (
-    CratesResolver,
     Ecosystem,
-    GoResolver,
-    MultiResolver,
     PackageRef,
     PyPIResolver,
     ResolutionError,
-    TagAbsentError,
     ResolvedPackage,
+    TagAbsentError,
 )
 from leitir.search import RepoScope
 from leitir.tree import BlobEntry
-
-import fixtures_real as fx
-import fixtures_resolver as rfx
 
 REPRESENTATIVE_CONTENT = """\
 def urlencode(query, doseq=False, safe='', encoding=None, errors=None,

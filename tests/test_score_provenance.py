@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -37,7 +37,6 @@ from tools.score_engine import (
     subject_from_repository,
     untracked_inputs_sha256,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures_score" / "provenance"

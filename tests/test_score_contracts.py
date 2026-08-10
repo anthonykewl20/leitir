@@ -33,7 +33,6 @@ from tools.score_engine import (
     weighted_score_bps,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIMENSIONS = (
     "engine_correctness",

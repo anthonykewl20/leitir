@@ -29,7 +29,6 @@ from tools.score_engine import (
     render_terminal_summary,
 )
 
-
 DIMENSIONS = (
     "engine_correctness",
     "output_effectiveness",

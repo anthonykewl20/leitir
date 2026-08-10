@@ -10,8 +10,8 @@ recorded distinctly so partial verification is never represented as complete.
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import logging
 import os
@@ -21,10 +21,11 @@ import stat
 import tarfile
 import tempfile
 import threading
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Callable, Iterator, Mapping
+from typing import BinaryIO
 
 from leitir import _http
 from leitir.search import RepoScope
@@ -78,14 +79,14 @@ class ArtifactRetrievalError(MaterializationError):
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _valid_timestamp(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return False
     return parsed.tzinfo is not None
@@ -141,7 +142,7 @@ def _file_lock(path: Path) -> Iterator[None]:
             if os.fstat(fd).st_size == 0:
                 os.write(fd, b"\0")
             os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
         else:
             import fcntl
 
@@ -153,7 +154,7 @@ def _file_lock(path: Path) -> Iterator[None]:
                 import msvcrt
 
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
             else:
                 import fcntl
 
@@ -771,6 +772,8 @@ def _extract_tarball(
 
         if not planned:
             raise UnsafeArchiveError("archive is empty")
+        if expected_root is None:
+            raise UnsafeArchiveError("archive has no top-level directory")
 
         _validate_planned_symlinks(planned)
 
@@ -890,7 +893,7 @@ def _verify_extracted_tree(
         unsupported = set(expected) - set(candidates) - set(expected_symlinks)
         if unsupported:
             raise VerificationError(
-                f"unsupported Git blob mode: {sorted(unsupported)[0]}"
+                f"unsupported Git blob mode: {min(unsupported)}"
             )
         symlink_universe_partial = set(extracted_symlinks) != set(expected_symlinks)
         sizes = {path: entry.size for path, entry in candidates.items()}  # type: ignore[attr-defined]
@@ -953,7 +956,7 @@ def _verify_extracted_tree(
             if read_at_commit is not None:
                 blob_bytes = read_at_commit(f"{owner}/{repo}", commit_sha, relative)
             else:
-                blob_bytes = tree_source.read_blob(  # type: ignore[attr-defined]
+                blob_bytes = tree_source.read_blob(
                     f"{owner}/{repo}",
                     entry.blob_sha,  # type: ignore[attr-defined]
                 )
@@ -962,15 +965,15 @@ def _verify_extracted_tree(
                     f"Git symbolic-link blob digest mismatch: {relative}"
                 )
     for relative in selected:
-        path = extracted.get(relative)
+        extracted_path = extracted.get(relative)
         entry = expected.get(relative)
-        if path is None:
+        if extracted_path is None:
             raise VerificationError(f"missing extracted regular file: {relative}")
         if entry is None:
             raise VerificationError(
                 f"extracted file is absent from Git tree: {relative}"
             )
-        extracted_bytes = path.read_bytes()
+        extracted_bytes = extracted_path.read_bytes()
         actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
             read_at_commit = getattr(tree_source, "read_blob_at_commit", None)

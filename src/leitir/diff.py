@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 import json
 import logging
 import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from leitir import _http
 from leitir.apisurface import ApiDiff, diff_api_indexes, extract_api_surface
@@ -219,12 +219,14 @@ def _prepare(
     on_materialize: Callable[[str], None] | None,
 ) -> _PreparedSource:
     from leitir.corpus import read_api_index, write_api_index
-    from leitir.resolver import resolve_corpus_spec
+    from leitir.resolver import ResolvedPackage, resolve_corpus_spec
 
     if on_resolve is not None:
         on_resolve(raw)
     parsed: CorpusSpec = parse_corpus_spec(raw)
-    resolved, tag, version_source, _ = resolve_corpus_spec(parsed, resolver, heads, cwd)
+    resolved, tag, version_source, _ = resolve_corpus_spec(
+        parsed, cast(Any, resolver), cast(Any, heads), cwd
+    )
     target = materializer(
         raw,
         resolved,
@@ -251,7 +253,10 @@ def _prepare(
         index = extract_api_surface(tree, str(hint) if hint in {"pypi", "npm"} else None)
         if entry is not None and manifest:
             write_api_index(root, entry, manifest, index)
-    scope = resolved.scope if hasattr(resolved, "scope") else resolved
+    if isinstance(resolved, ResolvedPackage):
+        scope = resolved.scope
+    else:
+        scope = resolved
     resolved_version = getattr(getattr(resolved, "ref", None), "version", None)
     identity = VersionIdentity(
         spec=raw,

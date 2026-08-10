@@ -5,15 +5,36 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from leitir.adapters import GoAdapter, LanguageAdapter, PythonAdapter, RustAdapter
+from leitir.adapters._tier2 import (
+    CAdapter,
+    CppAdapter,
+    JavaAdapter,
+    JavaScriptAdapter,
+    TypeScriptAdapter,
+)
 from leitir.adapters.python_ast import PythonAstAdapter
 
 _ORDERED_FACTORIES: tuple[tuple[str, Callable[[], LanguageAdapter]], ...] = (
     ("python", PythonAdapter),
     ("rust", RustAdapter),
     ("go", GoAdapter),
+    ("javascript", JavaScriptAdapter),
+    ("typescript", TypeScriptAdapter),
+    ("java", JavaAdapter),
+    ("c", CAdapter),
+    ("cpp", CppAdapter),
 )
 
-_DEFAULT_LANGUAGES: tuple[str, ...] = ("python", "rust", "go")
+_DEFAULT_LANGUAGES: tuple[str, ...] = (
+    "python",
+    "rust",
+    "go",
+    "javascript",
+    "typescript",
+    "java",
+    "c",
+    "cpp",
+)
 
 
 def build_adapters(

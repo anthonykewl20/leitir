@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import logging
-import re
 import tokenize
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +17,14 @@ from pathlib import Path
 from typing import TypeAlias, cast
 
 from leitir._python_ast import parse_python, python_signature
+from leitir.adapters._tier2_patterns import (
+    ARROW,
+    CLASS_METHOD,
+    EXPORT_CLASS,
+    EXPORT_FUNCTION,
+    EXPORT_VALUE,
+    FUNCTION_VALUE,
+)
 
 ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
@@ -54,25 +61,6 @@ class ApiDiff:
 _PYTHON_EXTENSIONS = {".py"}
 _JAVASCRIPT_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs"}
 _TYPESCRIPT_EXTENSIONS = {".ts", ".tsx", ".mts", ".cts"}
-_EXPORT_FUNCTION = re.compile(
-    r"^\s*export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(\([^\r\n{};]*\)(?:\s*:\s*[^={;]+)?)"
-)
-_EXPORT_CLASS = re.compile(
-    r"^\s*export\s+(?:default\s+)?class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([^\r\n{]+))?\s*\{?"
-)
-_EXPORT_VALUE = re.compile(
-    r"^\s*export\s+(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*([^=;]+))?\s*=\s*(.*)$"
-)
-_ARROW = re.compile(
-    r"^(?:async\s+)?(\([^\r\n{};]*\)|[A-Za-z_$][\w$]*)(?:\s*:\s*[^=]+)?\s*=>"
-)
-_FUNCTION_VALUE = re.compile(r"^(?:async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*(\([^\r\n{};]*\))")
-_CLASS_METHOD = re.compile(
-    r"^\s*(?:(?:public|protected|private|static|abstract|override|readonly|async|get|set)\s+)*"
-    r"([A-Za-z_$][\w$]*|constructor)\s*(\([^\r\n{};]*\)(?:\s*:\s*[^={;]+)?)\s*(?:\{|;)?\s*$"
-)
-
-
 def _empty_index() -> ApiIndex:
     return {"schema_version": 1, "methods": [], "modules": [], "symbols": []}
 
@@ -217,9 +205,9 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
         class_depth = 0
         for number, line in enumerate(lines, 1):
             stripped = line.strip()
-            function_match = _EXPORT_FUNCTION.match(line)
-            class_match = _EXPORT_CLASS.match(line)
-            value_match = _EXPORT_VALUE.match(line)
+            function_match = EXPORT_FUNCTION.match(line)
+            class_match = EXPORT_CLASS.match(line)
+            value_match = EXPORT_VALUE.match(line)
             if function_match:
                 name, signature = function_match.groups()
                 symbols.append(_symbol(kind="function", name=name, qualified_name=f"{module}.{name}", module=module, path=relative, line=number, signature=signature.strip(), docstring=None, method="heuristic"))
@@ -231,8 +219,8 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
                 symbols.append(_symbol(kind="class", name=name, qualified_name=f"{module}.{name}", module=module, path=relative, line=number, signature=signature, docstring=None, method="heuristic"))
             elif value_match:
                 name, annotation, value = value_match.groups()
-                arrow = _ARROW.match(value.strip())
-                function_value = _FUNCTION_VALUE.match(value.strip())
+                arrow = ARROW.match(value.strip())
+                function_value = FUNCTION_VALUE.match(value.strip())
                 if arrow:
                     raw = arrow.group(1)
                     signature = raw if raw.startswith("(") else f"({raw})"
@@ -245,7 +233,7 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
                     kind = "constant"
                 symbols.append(_symbol(kind=kind, name=name, qualified_name=f"{module}.{name}", module=module, path=relative, line=number, signature=signature, docstring=None, method="heuristic"))
             elif class_name is not None and class_depth == 1 and stripped and not stripped.startswith(("//", "/*", "*", "@")):
-                method_match = _CLASS_METHOD.match(line)
+                method_match = CLASS_METHOD.match(line)
                 if method_match:
                     name, signature = method_match.groups()
                     symbols.append(_symbol(kind="method", name=name, qualified_name=f"{module}.{class_name}.{name}", module=module, path=relative, line=number, signature=signature.strip(), docstring=None, method="heuristic"))

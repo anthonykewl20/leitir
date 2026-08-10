@@ -7,6 +7,13 @@ import sys
 import pytest
 
 from leitir.adapters import GoAdapter, PythonAdapter, RustAdapter
+from leitir.adapters._tier2 import (
+    CAdapter,
+    CppAdapter,
+    JavaAdapter,
+    JavaScriptAdapter,
+    TypeScriptAdapter,
+)
 from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.adapters.registry import build_adapters
 
@@ -19,6 +26,11 @@ def test_build_adapters_default_order() -> None:
         PythonAdapter,
         RustAdapter,
         GoAdapter,
+        JavaScriptAdapter,
+        TypeScriptAdapter,
+        JavaAdapter,
+        CAdapter,
+        CppAdapter,
     )
 
 
@@ -56,6 +68,11 @@ def test_build_adapters_enables_ast_python() -> None:
         PythonAstAdapter,
         RustAdapter,
         GoAdapter,
+        JavaScriptAdapter,
+        TypeScriptAdapter,
+        JavaAdapter,
+        CAdapter,
+        CppAdapter,
     )
 
 
@@ -75,4 +92,7 @@ def test_build_adapters_is_deterministic_across_pythonhashseed() -> None:
         outputs.append(subprocess.check_output(command, env=environment))
 
     assert outputs[0] == outputs[1] == outputs[2]
-    assert outputs[0] == b'["PythonAdapter", "RustAdapter", "GoAdapter"]\n'
+    assert outputs[0] == (
+        b'["PythonAdapter", "RustAdapter", "GoAdapter", "JavaScriptAdapter", '
+        b'"TypeScriptAdapter", "JavaAdapter", "CAdapter", "CppAdapter"]\n'
+    )

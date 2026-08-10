@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from leitir.adapters import MatchMethod
+from leitir.adapters._tier2 import (
+    CAdapter,
+    CppAdapter,
+    JavaAdapter,
+    JavaScriptAdapter,
+    Tier2RegexAdapter,
+    TypeScriptAdapter,
+)
+from leitir.adapters.registry import build_adapters
+from leitir.search import Predicate, PredicateKind
+
+
+def _predicate(kind: PredicateKind, value: str) -> tuple[Predicate, ...]:
+    return (Predicate(kind, value),)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "source", "import_value"),
+    (
+        (
+            JavaScriptAdapter(),
+            'import { helper } from "./dep";\nexport function build() {}\nbuild();\nconst text = "function ghost() {}";\n// function ghost() {}\n',
+            "helper",
+        ),
+        (
+            TypeScriptAdapter(),
+            'import { helper } from "./dep";\nexport function build(): void {}\nbuild();\nconst text: string = "function ghost() {}";\n// function ghost() {}\n',
+            "helper",
+        ),
+        (
+            JavaAdapter(),
+            'import java.util.List;\nclass Service {\n  int build() { return 1; }\n  void run() { build(); }\n  String text = "int ghost() {";\n  // int ghost() {\n}\n',
+            "java.util",
+        ),
+        (
+            CAdapter(),
+            '#include <stdio.h>\nint build(void) { return 1; }\nint main(void) { return build(); }\nconst char *text = "int ghost(void) {";\n// int ghost(void) {\n',
+            "stdio",
+        ),
+        (
+            CppAdapter(),
+            '#include <vector>\nint build() { return 1; }\nint main() { return build(); }\nconst char *text = "int ghost() {";\n// int ghost() {\n',
+            "vector",
+        ),
+    ),
+    ids=("javascript", "typescript", "java", "c", "cpp"),
+)
+def test_tier2_predicates_are_masked_heuristic_and_deterministic(
+    adapter: Tier2RegexAdapter,
+    source: str,
+    import_value: str,
+) -> None:
+    results = {
+        kind: adapter.find_matches(source, _predicate(kind, value))
+        for kind, value in (
+            (PredicateKind.SYMBOL_DEFINITION, "build"),
+            (PredicateKind.CALL, "build"),
+            (PredicateKind.IMPORT, import_value),
+            (PredicateKind.SYMBOL_REFERENCE, "build"),
+        )
+    }
+
+    assert all(results.values())
+    assert all(
+        span.method is MatchMethod.HEURISTIC
+        for spans in results.values()
+        for span in spans
+    )
+    assert all(
+        tuple(span.start_line for span in spans)
+        == tuple(sorted(span.start_line for span in spans))
+        for spans in results.values()
+    )
+    assert adapter.find_matches(
+        source, _predicate(PredicateKind.SYMBOL_DEFINITION, "ghost")
+    ) == ()
+    assert adapter.find_matches_ex(
+        source, _predicate(PredicateKind.SYMBOL_DEFINITION, "build")
+    ).parser_unavailable is False
+
+
+def test_tier2_default_registry_and_extension_routing() -> None:
+    adapters = build_adapters()
+
+    assert tuple(adapter.language for adapter in adapters) == (
+        "python",
+        "rust",
+        "go",
+        "javascript",
+        "typescript",
+        "java",
+        "c",
+        "cpp",
+    )
+    assert next(adapter.language for adapter in adapters if adapter.eligible("src/a.c")) == "c"
+    assert next(adapter.language for adapter in adapters if adapter.eligible("src/a.cpp")) == "cpp"
+
+
+def test_javascript_dollar_identifier_definition_call_and_reference() -> None:
+    source = "function $build() {}\n$build();\n"
+    adapter = JavaScriptAdapter()
+
+    assert adapter.find_matches(
+        source, _predicate(PredicateKind.SYMBOL_DEFINITION, "$build")
+    )
+    assert adapter.find_matches(source, _predicate(PredicateKind.CALL, "$build"))
+    assert adapter.find_matches(
+        source, _predicate(PredicateKind.SYMBOL_REFERENCE, "$build")
+    )
+
+
+def test_tier2_search_is_hash_seed_independent() -> None:
+    script = (
+        "import json; "
+        "from leitir.adapters._tier2 import TypeScriptAdapter; "
+        "from leitir.search import Predicate, PredicateKind; "
+        "spans=TypeScriptAdapter().find_matches("
+        "'export function build(): void {}\\nbuild();\\n', "
+        "(Predicate(PredicateKind.CALL, 'build'),), whole_file=True); "
+        "print(json.dumps([(s.start_line, [k.value for k in s.matched_kinds], s.method.value) for s in spans]))"
+    )
+    outputs: list[bytes] = []
+    for seed in ("0", "1", "42"):
+        environment = os.environ.copy()
+        environment["PYTHONHASHSEED"] = seed
+        environment["PYTHONPATH"] = "src"
+        outputs.append(subprocess.check_output([sys.executable, "-c", script], env=environment))
+
+    assert outputs[0] == outputs[1] == outputs[2]
+    assert json.loads(outputs[0]) == [[1, ["call"], "heuristic"], [2, ["call"], "heuristic"]]

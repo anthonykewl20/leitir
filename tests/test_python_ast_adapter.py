@@ -7,12 +7,7 @@ import subprocess
 import sys
 import textwrap
 
-from leitir.adapters import (
-    GoAdapter,
-    MatchMethod,
-    PythonAdapter,
-    RustAdapter,
-)
+from leitir.adapters import MatchMethod, PythonAdapter
 from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.adapters.registry import build_adapters
 from leitir.engine import ScopedSearcher
@@ -203,14 +198,21 @@ def test_multiline_ast_node_does_not_mix_end_column_lines() -> None:
 
 
 def test_registry_selects_ast_adapter_without_changing_default_order() -> None:
-    assert tuple(type(adapter) for adapter in build_adapters()) == (
-        PythonAdapter,
-        RustAdapter,
-        GoAdapter,
+    default_languages = tuple(adapter.language for adapter in build_adapters())
+    ast_adapters = build_adapters(ast_python=True)
+
+    assert default_languages == (
+        "python",
+        "rust",
+        "go",
+        "javascript",
+        "typescript",
+        "java",
+        "c",
+        "cpp",
     )
-    assert tuple(
-        type(adapter) for adapter in build_adapters(ast_python=True)
-    ) == (PythonAstAdapter, RustAdapter, GoAdapter)
+    assert isinstance(ast_adapters[0], PythonAstAdapter)
+    assert tuple(adapter.language for adapter in ast_adapters) == default_languages
 
 
 def test_scoped_ast_json_is_hash_seed_independent() -> None:

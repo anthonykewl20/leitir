@@ -10,6 +10,7 @@ services.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import importlib.metadata
 import json
@@ -132,6 +133,16 @@ def _parse_predicate(raw: str) -> Predicate:
             f"unknown predicate kind {kind_str!r}; valid kinds: {valid}"
         ) from None
     return Predicate(kind=kind, value=value, language=language)
+
+
+def _positive_search_budget(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -362,6 +373,23 @@ def build_parser() -> argparse.ArgumentParser:
         dest="must_not",
         help="exclusion predicate (kind:value[:language])",
     )
+    search.add_argument(
+        "--max-results",
+        type=_positive_search_budget,
+        default=None,
+        help="global search result/candidate budget (requires --global)",
+    )
+    search.add_argument(
+        "--max-pages",
+        type=_positive_search_budget,
+        default=None,
+        help="global search page budget (requires --global)",
+    )
+    search.add_argument(
+        "--language",
+        default=None,
+        help="global search language filter, copied into every required predicate (requires --global)",
+    )
 
     return parser
 
@@ -500,7 +528,9 @@ def _load_benchmark_manifest(path: str | None) -> object:
     return load_manifest(path)
 
 
-def _build_default_global_searcher(code_search: object, tree_source: object) -> object:
+def _build_default_global_searcher(
+    code_search: object, tree_source: object, max_results: int, max_pages: int
+) -> object:
     from .adapters.registry import build_adapters
     from .discovery_search import CodeSearchPort, GlobalSearcher
     from .tree import TreeSource
@@ -512,6 +542,8 @@ def _build_default_global_searcher(code_search: object, tree_source: object) -> 
         tree_source=cast(TreeSource, tree_source),
         adapters=build_adapters(),
         blob_reader=cast(Any, code_search).read_blob_by_path,
+        max_results=max_results,
+        max_pages=max_pages,
     )
 
 
@@ -1634,7 +1666,7 @@ def main(
     searcher_factory: Callable[[object], object] = _build_default_searcher,
     code_search_factory: Callable[[str | None], object] = _build_default_code_search,
     global_searcher_factory: Callable[
-        [object, object], object
+        [object, object, int, int], object
     ] = _build_default_global_searcher,
     benchmark_runner_factory: Callable[
         [object], object
@@ -1746,20 +1778,44 @@ def main(
         print("leitir: error: at least one --must predicate is required", file=err)
         return int(ExitCode.MALFORMED_USAGE)
 
+    global_only_used = any(
+        value is not None
+        for value in (args.max_results, args.max_pages, args.language)
+    )
+    if not args.global_search and global_only_used:
+        print(
+            "leitir: error: --max-results, --max-pages, and --language require --global",
+            file=err,
+        )
+        return int(ExitCode.MALFORMED_USAGE)
+
+    must = tuple(args.must)
+    if args.language is not None:
+        if any(p.language not in (None, args.language) for p in must):
+            print(
+                "leitir: error: --language conflicts with a required predicate language",
+                file=err,
+            )
+            return int(ExitCode.MALFORMED_USAGE)
+        must = tuple(dataclasses.replace(p, language=args.language) for p in must)
+
     token = _github_token()
 
     try:
         if args.global_search:
             spec = SearchSpec(
                 mode=SearchMode.GLOBAL_DISCOVERY,
-                must=tuple(args.must),
+                must=must,
                 should=tuple(args.should),
                 must_not=tuple(args.must_not),
             )
             code_search = code_search_factory(token)
             tree_source = tree_source_factory(token)
+            max_results = args.max_results if args.max_results is not None else 30
+            max_pages = args.max_pages if args.max_pages is not None else 10
             searcher = cast(
-                _Searcher, global_searcher_factory(code_search, tree_source)
+                _Searcher,
+                global_searcher_factory(code_search, tree_source, max_results, max_pages),
             )
             report = searcher.search(spec)
         else:

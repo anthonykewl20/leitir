@@ -5,6 +5,11 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -340,7 +345,7 @@ def test_global_flag_wires_global_searcher():
     code = main(
         ["search", "--global", "--must", "identifier:urlencode:python"],
         code_search_factory=lambda _token: object(),
-        global_searcher_factory=lambda cs, ts: gs,
+        global_searcher_factory=lambda cs, ts, mr, mp: gs,
         stdout=out,
         stderr=err,
     )
@@ -350,6 +355,146 @@ def test_global_flag_wires_global_searcher():
     assert gs.specs[0].scopes == ()
     payload = json.loads(out.getvalue())
     assert payload["coverage"]["status"] == "indeterminate_global"
+
+
+def test_global_budgets_are_passed_to_factory():
+    gs = FakeGlobalSearcher()
+    received: list[tuple[int, int]] = []
+
+    def factory(cs, ts, max_results, max_pages):
+        received.append((max_results, max_pages))
+        return gs
+
+    code = main(
+        [
+            "search", "--global", "--max-results", "5", "--max-pages", "1",
+            "--must", "identifier:x",
+        ],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=factory,
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert received == [(5, 1)]
+
+
+def test_global_language_is_copied_to_must_predicates_and_changes_digest():
+    js = FakeGlobalSearcher()
+    python = FakeGlobalSearcher()
+
+    def run(language, searcher):
+        code = main(
+            [
+                "search", "--global", "--language", language,
+                "--must", "identifier:foo", "--must", "path:src",
+            ],
+            code_search_factory=lambda _token: object(),
+            global_searcher_factory=lambda cs, ts, mr, mp: searcher,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+        assert code == ExitCode.SUCCESS
+        return searcher.specs[0]
+
+    js_spec = run("js", js)
+    python_spec = run("python", python)
+
+    assert all(predicate.language == "js" for predicate in js_spec.must)
+    assert js_spec.digest() != python_spec.digest()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["search", "--global", "--max-results", "0", "--must", "identifier:x"],
+        ["search", "--global", "--max-results", "-3", "--must", "identifier:x"],
+        [
+            "search", "--global", "--max-results", "5", "--repo", "owner/repo",
+            "--commit", SHA, "--must", "identifier:x",
+        ],
+        [
+            "search", "--global", "--language", "js",
+            "--must", "identifier:x:python",
+        ],
+        [
+            "search", "--language", "js", "--repo", "owner/repo",
+            "--commit", SHA, "--must", "identifier:x",
+        ],
+    ],
+)
+def test_global_only_options_reject_malformed_usage_before_transport(argv):
+    def unexpected_transport(_token):
+        raise AssertionError("transport must not be constructed")
+
+    code = main(
+        argv,
+        tree_source_factory=unexpected_transport,
+        code_search_factory=unexpected_transport,
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert code == ExitCode.MALFORMED_USAGE
+
+
+def test_global_options_are_deterministic_across_pythonhashseed_values():
+    script = textwrap.dedent(
+        """
+        import io
+        from leitir.cli import main
+        from leitir.search import Coverage, CoverageStatus, Resolution, ResolutionStrategy, SearchReport
+
+        class Searcher:
+            def search(self, spec):
+                return SearchReport(
+                    spec_digest=spec.digest(),
+                    coverage=Coverage(
+                        status=CoverageStatus.INDETERMINATE_GLOBAL,
+                        files_eligible=0,
+                        files_indexed=0,
+                        files_excluded=0,
+                    ),
+                    matches=(),
+                    resolution=Resolution(
+                        ResolutionStrategy.INDEXED_COMMIT,
+                        "2026-08-06T12:00:00Z",
+                    ),
+                )
+
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(
+            ["search", "--global", "--language", "js", "--max-results", "3", "--max-pages", "1", "--must", "identifier:foo"],
+            tree_source_factory=lambda token: object(),
+            code_search_factory=lambda token: object(),
+            global_searcher_factory=lambda cs, ts, mr, mp: Searcher(),
+            stdout=out,
+            stderr=err,
+        )
+        print(code)
+        print(out.getvalue(), end="")
+        print(err.getvalue(), end="")
+        """
+    )
+    results = []
+    for seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+        env["LEITIR_NO_UPDATE_CHECK"] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).parents[1],
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        results.append((completed.returncode, completed.stdout, completed.stderr))
+
+    assert results[0] == results[1] == results[2]
+    assert results[0][0] == 0
 
 
 def test_global_and_repo_mutually_exclusive():
@@ -385,7 +530,7 @@ def test_global_searcher_error_is_infrastructure_failure():
     code = main(
         ["search", "--global", "--must", "identifier:x"],
         code_search_factory=lambda _token: object(),
-        global_searcher_factory=lambda cs, ts: gs,
+        global_searcher_factory=lambda cs, ts, mr, mp: gs,
         stdout=out,
         stderr=err,
     )

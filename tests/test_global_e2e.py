@@ -52,9 +52,11 @@ class _FakeCodeSearch:
     def __init__(self, page: CodeSearchPage):
         self._page = page
         self.queries: list[str] = []
+        self.calls: list[tuple[str, int, int]] = []
 
     def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
         self.queries.append(query)
+        self.calls.append((query, per_page, page))
         return self._page
 
     def resolve_head_sha(self, slug: str) -> str:
@@ -104,11 +106,13 @@ def _invoke(argv, page=None):
         argv,
         tree_source_factory=lambda _token: _FakeTree(),
         code_search_factory=lambda _token: cs,
-        global_searcher_factory=lambda code_search, tree_source: GlobalSearcher(
+        global_searcher_factory=lambda code_search, tree_source, max_results, max_pages: GlobalSearcher(
             code_search=code_search,
             tree_source=tree_source,
             adapters=(PythonAdapter(),),
             blob_reader=code_search.read_blob_by_path,
+            max_results=max_results,
+            max_pages=max_pages,
         ),
         stdout=out,
         stderr=err,
@@ -164,6 +168,20 @@ class TestGlobalHappyPath:
         assert len(cs.queries) == 1
         assert "urlencode" in cs.queries[0]
         assert "language:python" in cs.queries[0]
+
+    def test_global_options_bound_pagination_and_add_language(self):
+        code, out, _, cs = _invoke([
+            "search", "--global", "--max-results", "5", "--max-pages", "1",
+            "--language", "python", "--must", "identifier:urlencode",
+        ])
+        payload = json.loads(out)
+
+        assert code == ExitCode.SUCCESS
+        assert len(cs.calls) == 1
+        assert cs.calls[0][1:] == (5, 1)
+        assert "language:python" in cs.calls[0][0]
+        assert payload["coverage"]["files_indexed"] <= 5
+        assert len(payload["matches"]) <= 5
 
 
 class TestGlobalSadPaths:
@@ -221,8 +239,9 @@ class TestGlobalSadPaths:
         code = main(
             ["search", "--global", "--must", "identifier:x"],
             code_search_factory=lambda _token: FailSearch(),
-            global_searcher_factory=lambda cs, ts: GlobalSearcher(
+            global_searcher_factory=lambda cs, ts, mr, mp: GlobalSearcher(
                 code_search=cs, tree_source=ts, adapters=(PythonAdapter(),),
+                max_results=mr, max_pages=mp,
             ),
             stdout=out,
             stderr=err,

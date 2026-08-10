@@ -128,18 +128,16 @@ pinned commit and checks the bytes against the Git blob SHA-1 calculation.
 (`src/leitir/discovery_search.py:609-624`.)
 
 The report records `ResolutionStrategy.INDEXED_COMMIT` and
-`INDETERMINATE_GLOBAL`, and every returned source must derive from an indexed
-hit at the same `(slug, commit_sha)`. (`src/leitir/discovery_search.py:588-606`,
-`src/leitir/discovery_search.py:633-648`.) This is strong provenance for the
+`INDETERMINATE_GLOBAL`, and every returned source must derive from a
+byte-verified hit at the exact `(slug, commit_sha, path, blob_sha)`.
+(`src/leitir/discovery_search.py:588-607`,
+`src/leitir/discovery_search.py:633-654`.) The searcher verifies fetched bytes
+against the indexed Git blob SHA before building the report, and the validator
+authorizes only against those byte-verified hits, so a source can never be
+authorized by a hit the pipeline collected but excluded.
+(`src/leitir/discovery_search.py:609-624`.) This is strong provenance for the
 accepted bytes, but it does not turn the remote index into a pinned or
 exhaustive input.
-
-There is a precision limitation worth preserving in future changes:
-`validate_report` checks membership using `(slug, commit_sha)`, not the full
-`(slug, commit_sha, path, blob_sha)` tuple. The searcher performs the stronger
-path/blob byte verification before building the report, but the validator by
-itself is weaker. (`src/leitir/discovery_search.py:609-624`,
-`src/leitir/discovery_search.py:633-648`.)
 
 ### Deduplication and coverage
 
@@ -307,10 +305,11 @@ the path. (`src/leitir/adapters.py:73-75`, `src/leitir/adapters.py:216-217`,
 - Global `REGEX` is rejected. Structural predicates use a GitHub superset and
   local filtering rather than a lossless remote structural query.
   (`src/leitir/discovery_search.py:362-390`.)
-- `validate_report` checks `(slug, commit_sha)` membership rather than the full
-  source tuple, although the searcher pre-verifies the returned bytes against
-  the indexed blob SHA. (`src/leitir/discovery_search.py:609-624`,
-  `src/leitir/discovery_search.py:644-648`.)
+- `validate_report` requires exact `(slug, commit_sha, path, blob_sha)`
+  membership against the byte-verified hit set, not merely the collected index
+  claims, so an excluded (never-fetched or mismatched) hit cannot authorize a
+  source. (`src/leitir/discovery_search.py:609-624`,
+  `src/leitir/discovery_search.py:644-654`.)
 
 ### Deep path
 
@@ -355,7 +354,6 @@ stdlib-only runtime constraint unless explicitly changed later.
 | Stream or index large blobs | Avoid converting every blob over 2 MiB into an automatic exclusion. (`src/leitir/engine.py:205-209`) | M | Medium | Yes |
 | Add whole-file `must` mode | Permit required predicates to co-occur anywhere in one file, while retaining current same-line behavior by default. (`src/leitir/adapters.py:103-115`) | S-M | Low | Yes |
 | Enforce `pred.language` in adapters | Reject or route mismatched predicates instead of relying only on extensions. (`src/leitir/cli.py:120-134`, `src/leitir/engine.py:241-245`) | S | Low | Yes |
-| Strengthen `validate_report` | Check `(slug, commit, path, blob)` rather than only `(slug, commit)`. (`src/leitir/discovery_search.py:644-648`) | S | Low | Yes |
 | Support global `REGEX` through a bounded superset | Usually not feasible without a remote regex-capable index or a potentially huge, lossy term expansion; fail-closed rejection is safer than pretending a term is a regex. (`src/leitir/discovery_search.py:362-367`) | L / hard | High | Possible in theory, but not a generally sound stdlib-only solution |
 | Add a live-search canary | Exercise real GitHub search in the existing opt-in live-canary workflow and detect API/index drift. (`.github/workflows/live-canary.yml:45-52`, `tests/test_global_e2e_live.py:1-22`) | S | Low | Yes |
 

@@ -512,6 +512,7 @@ class GlobalSearcher:
         attempts = 0
         promoted_attempted = 0
         verification_failed = False
+        verified: list[CodeSearchHit] = []
         for group in eligible_groups:
             if attempts >= self._max_results:
                 incomplete_results = True
@@ -568,6 +569,7 @@ class GlobalSearcher:
                     continue
 
                 content, blob_sha = verified_content
+                verified.append(hit)
                 matches.extend(
                     score_content(
                         content, adapter, hit.slug, commit_sha,
@@ -603,7 +605,7 @@ class GlobalSearcher:
             ),
             query_translation=query_translation,
         )
-        validate_report(report, tuple(collected))
+        validate_report(report, tuple(verified))
         return report
 
     def _read_content(
@@ -643,6 +645,12 @@ def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> No
         raise SearchSpecError("REJECT_SEMANTIC_DEGRADATION: missing query translation")
     if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
         return
-    indexed = {(hit.slug, hit.commit_sha) for hit in hits}
-    if any((match.source.slug, match.source.commit_sha) not in indexed for match in report.matches):
-        raise ValueError("REJECT_MOVING_REFERENCE")
+    accepted = {
+        (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
+        for hit in hits
+    }
+    for match in report.matches:
+        source = match.source
+        identity = (source.slug, source.commit_sha, source.path, source.blob_sha)
+        if identity not in accepted:
+            raise ValueError("REJECT_MOVING_REFERENCE")

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import subprocess
+import sys
+import textwrap
+from dataclasses import replace
 from itertools import permutations
+from pathlib import Path
 
 import pytest
 
@@ -1015,12 +1022,157 @@ def test_validate_report_accepts_report_pinned_to_indexed_hit():
     validate_report(report, page.hits)
 
 
+def test_validate_report_accepts_report_with_no_matches():
+    page = CodeSearchPage(hits=(), total_count=0, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    validate_report(report, page.hits)
+
+
+def test_validate_report_rejects_slug_copied_from_another_hit():
+    indexed = _hit()
+    other = _hit(slug="other/repo", path="Lib/urllib/other.py")
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(
+        report,
+        matches=(replace(match, source=replace(match.source, slug=other.slug)),),
+    )
+
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(tampered, (indexed, other))
+
+
+def test_validate_report_rejects_commit_copied_from_another_hit():
+    indexed = _hit()
+    other = _hit(commit_sha="b" * 40, path="Lib/urllib/other.py")
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(
+        report,
+        matches=(
+            replace(match, source=replace(match.source, commit_sha=other.commit_sha)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(tampered, (indexed, other))
+
+
+def test_validate_report_rejects_path_copied_from_another_hit():
+    indexed = _hit()
+    other = _hit(slug="other/repo", path="Lib/urllib/other.py")
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(
+        report,
+        matches=(replace(match, source=replace(match.source, path=other.path)),),
+    )
+
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(tampered, (indexed, other))
+
+
+def test_validate_report_rejects_blob_copied_from_another_hit():
+    indexed = _hit()
+    other = _hit(slug="other/repo", path="Lib/urllib/other.py")
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(
+        report,
+        matches=(
+            replace(match, source=replace(match.source, blob_sha=other.blob_sha)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        validate_report(tampered, (indexed, other))
+
+
+def test_validate_report_is_deterministic_across_pythonhashseed_values():
+    script = textwrap.dedent(
+        """
+        import json
+        from dataclasses import replace
+
+        from leitir.discovery_search import CodeSearchHit, validate_report
+        from leitir.search import Coverage, CoverageStatus, PredicateKind, Resolution, ResolutionStrategy, SearchReport, SourceMatch, SourceRef
+
+        sha = "a" * 40
+        blob = "b" * 40
+        indexed = CodeSearchHit("owner/repo", "a.py", blob, "", sha)
+        other = CodeSearchHit("other/repo", "b.py", "c" * 40, "", "d" * 40)
+        source = SourceRef(indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha, 1, 1)
+        match = SourceMatch(source, 1.0, (PredicateKind.IDENTIFIER,))
+        report = SearchReport(
+            "e" * 64,
+            Coverage(CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE, 1, 1, 0),
+            (match,),
+            Resolution(ResolutionStrategy.INDEXED_COMMIT, "2026-08-06T12:00:00Z"),
+        )
+        hits = (indexed, other)
+        outcomes = []
+        for field, value in (
+            ("slug", other.slug),
+            ("commit_sha", other.commit_sha),
+            ("path", other.path),
+            ("blob_sha", other.blob_sha),
+        ):
+            candidate = replace(report, matches=(replace(match, source=replace(source, **{field: value})),))
+            try:
+                validate_report(candidate, hits)
+            except ValueError as exc:
+                outcomes.append([field, str(exc)])
+        validate_report(report, hits)
+        outcomes.append(["valid", "ACCEPT"])
+        print(json.dumps(outcomes, separators=(",", ":")))
+        """
+    )
+    results = []
+    for seed in ("0", "1", "42"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).parents[1],
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        results.append((completed.returncode, completed.stdout, completed.stderr))
+
+    assert results[0] == results[1] == results[2]
+    assert results[0] == (
+        0,
+        json.dumps(
+            [
+                ["slug", "REJECT_MOVING_REFERENCE"],
+                ["commit_sha", "REJECT_MOVING_REFERENCE"],
+                ["path", "REJECT_MOVING_REFERENCE"],
+                ["blob_sha", "REJECT_MOVING_REFERENCE"],
+                ["valid", "ACCEPT"],
+            ],
+            separators=(",", ":"),
+        ).encode()
+        + b"\n",
+        b"",
+    )
+
+
 def test_global_search_return_boundary_rejects_foreign_commit(monkeypatch):
-    page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
+    indexed = _hit()
     foreign = "b" * 40
+    other = _hit(commit_sha=foreign, path="Lib/urllib/other.py")
+    page = CodeSearchPage(
+        hits=(indexed, other), total_count=2, incomplete_results=False
+    )
 
     def inject_foreign_commit(matches):
-        match = matches[0]
+        match = next(item for item in matches if item.source.path == indexed.path)
         source = match.source
         return (
             SourceMatch(
@@ -1039,6 +1191,93 @@ def test_global_search_return_boundary_rejects_foreign_commit(monkeypatch):
 
     monkeypatch.setattr(
         "leitir.discovery_search.order_source_matches", inject_foreign_commit
+    )
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
+
+
+def test_global_search_return_boundary_rejects_slug_from_another_hit(monkeypatch):
+    indexed = _hit()
+    other = _hit(slug="other/repo", path="Lib/urllib/other.py")
+    page = CodeSearchPage(
+        hits=(indexed, other), total_count=2, incomplete_results=False
+    )
+
+    def inject_foreign_slug(matches):
+        match = next(item for item in matches if item.source.path == indexed.path)
+        return (replace(match, source=replace(match.source, slug=other.slug)),)
+
+    monkeypatch.setattr(
+        "leitir.discovery_search.order_source_matches", inject_foreign_slug
+    )
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
+
+
+def test_global_search_return_boundary_rejects_path_from_another_hit(monkeypatch):
+    indexed = _hit()
+    other = _hit(path="Lib/urllib/other.py")
+    page = CodeSearchPage(
+        hits=(indexed, other), total_count=2, incomplete_results=False
+    )
+
+    def inject_foreign_path(matches):
+        match = next(item for item in matches if item.source.path == indexed.path)
+        return (replace(match, source=replace(match.source, path=other.path)),)
+
+    monkeypatch.setattr(
+        "leitir.discovery_search.order_source_matches", inject_foreign_path
+    )
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
+
+
+def test_global_search_return_boundary_rejects_blob_from_another_hit(monkeypatch):
+    indexed = _hit()
+    other = _hit(path="Lib/urllib/other.py")
+    page = CodeSearchPage(
+        hits=(indexed, other), total_count=2, incomplete_results=False
+    )
+
+    def inject_foreign_blob(matches):
+        match = next(item for item in matches if item.source.path == indexed.path)
+        return (replace(match, source=replace(match.source, blob_sha=other.blob_sha)),)
+
+    monkeypatch.setattr(
+        "leitir.discovery_search.order_source_matches", inject_foreign_blob
+    )
+    with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
+        _searcher(page=page)[0].search(_spec())
+
+
+def test_validate_report_rejects_match_whose_identity_was_never_byte_verified(monkeypatch):
+    indexed = _hit()
+    # Collected into the page but excluded by the pipeline: this blob_sha can
+    # never match the bytes returned by the blob reader, so the hit is recorded
+    # as provenance_mismatch and never byte-verified.
+    never_verified = _hit(path="Lib/urllib/excluded.py", blob_sha="0" * 40)
+    page = CodeSearchPage(
+        hits=(indexed, never_verified), total_count=2, incomplete_results=False
+    )
+
+    def inject_never_verified_identity(matches):
+        match = next(item for item in matches if item.source.path == indexed.path)
+        return (
+            replace(
+                match,
+                source=replace(
+                    match.source,
+                    slug=never_verified.slug,
+                    commit_sha=never_verified.commit_sha,
+                    path=never_verified.path,
+                    blob_sha=never_verified.blob_sha,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "leitir.discovery_search.order_source_matches",
+        inject_never_verified_identity,
     )
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
         _searcher(page=page)[0].search(_spec())

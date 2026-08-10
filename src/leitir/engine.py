@@ -67,11 +67,14 @@ def _span_excluded(
     adapter: LanguageAdapter,
     span: SpanMatch,
     must_not: tuple[Predicate, ...],
+    whole_file: bool = False,
 ) -> bool:
     for pred in must_not:
         if pred.kind is PredicateKind.PATH:
             continue
         hits = adapter.find_matches(content, (pred,))
+        if whole_file and hits:
+            return True
         for hit in hits:
             if hit.start_line == span.start_line:
                 return True
@@ -88,22 +91,39 @@ def score_content(
     content_must: tuple[Predicate, ...],
     should: tuple[Predicate, ...],
     must_not: tuple[Predicate, ...],
+    whole_file: bool = False,
 ) -> list[SourceMatch]:
     """Score one blob's content against predicates and return ranked matches."""
-    spans = adapter.find_matches(content, content_must) if content_must else ()
+    spans = (
+        adapter.find_matches(content, content_must, whole_file=whole_file)
+        if content_must
+        else ()
+    )
     if not spans and content_must:
         return []
     if not spans and not content_must:
         spans = adapter.find_matches(content, should) if should else ()
 
+    whole_file_should_kinds: set[PredicateKind] = set()
+    whole_file_should_boost = 0
+    if whole_file:
+        for pred in should:
+            if adapter.find_matches(content, (pred,)):
+                whole_file_should_kinds.add(pred.kind)
+                whole_file_should_boost += 1
+
     matches: list[SourceMatch] = []
     for span in spans:
-        if must_not and _span_excluded(content, adapter, span, must_not):
+        if must_not and _span_excluded(
+            content, adapter, span, must_not, whole_file=whole_file
+        ):
             continue
 
         matched_kinds = set(span.matched_kinds)
-        should_boost = 0
-        if should:
+        should_boost = whole_file_should_boost
+        if whole_file:
+            matched_kinds.update(whole_file_should_kinds)
+        elif should:
             for ss in adapter.find_matches(content, should):
                 if ss.start_line == span.start_line:
                     matched_kinds.update(ss.matched_kinds)
@@ -263,6 +283,7 @@ class ScopedSearcher:
                     content, adapter, slug, commit_sha,
                     blob.path, blob.blob_sha,
                     content_must, should, must_not,
+                    whole_file=spec.whole_file_must,
                 )
             )
 

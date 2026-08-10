@@ -374,6 +374,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="exclusion predicate (kind:value[:language])",
     )
     search.add_argument(
+        "--whole-file",
+        action="store_true",
+        default=False,
+        dest="whole_file",
+        help="match required predicates anywhere in the same file (not just the same line)",
+    )
+    search.add_argument(
         "--max-results",
         type=_positive_search_budget,
         default=None,
@@ -1815,6 +1822,7 @@ def main(
                 must=must,
                 should=tuple(args.should),
                 must_not=tuple(args.must_not),
+                whole_file_must=args.whole_file,
             )
             code_search = code_search_factory(token)
             tree_source = tree_source_factory(token)
@@ -1840,6 +1848,7 @@ def main(
                 should=tuple(args.should),
                 must_not=tuple(args.must_not),
                 scopes=(scope,),
+                whole_file_must=args.whole_file,
             )
 
             tree_source = tree_source_factory(token)

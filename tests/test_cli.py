@@ -248,6 +248,58 @@ def test_should_and_must_not_predicates_threaded():
     assert spec.must_not[0].value == "deprecated"
 
 
+def test_whole_file_flag_changes_scoped_matching_and_digest():
+    import hashlib
+
+    from leitir.adapters import PythonAdapter
+    from leitir.engine import ScopedSearcher
+    from leitir.tree import BlobEntry
+
+    data = b"def build():\n    pass\nrun()\n"
+    blob_sha = hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+    class Tree:
+        def list_blobs(self, slug, commit_sha):
+            return (BlobEntry("x.py", blob_sha, len(data)),)
+
+        def read_blob(self, slug, requested_blob_sha):
+            return data
+
+    argv = [
+        "search", "--repo", "owner/repo", "--commit", SHA,
+        "--must", "symbol_definition:build", "--must", "call:run",
+    ]
+
+    default_searcher = ScopedSearcher(Tree(), (PythonAdapter(),))
+    default_code, default_out, _, _, _ = invoke(argv, searcher=default_searcher)
+    whole_searcher = ScopedSearcher(Tree(), (PythonAdapter(),))
+    whole_code, whole_out, _, _, _ = invoke(
+        [*argv, "--whole-file"], searcher=whole_searcher
+    )
+
+    default_report = json.loads(default_out)
+    whole_report = json.loads(whole_out)
+    assert default_code == whole_code == ExitCode.SUCCESS
+    assert default_report["matches"] == []
+    assert [match["source"]["start_line"] for match in whole_report["matches"]] == [
+        1, 3
+    ]
+    assert default_report["spec_digest"] != whole_report["spec_digest"]
+
+
+def test_whole_file_flag_threads_to_global_spec():
+    gs = FakeGlobalSearcher()
+    code = main(
+        ["search", "--global", "--whole-file", "--must", "identifier:x"],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=lambda cs, ts, mr, mp: gs,
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    assert code == ExitCode.SUCCESS
+    assert gs.specs[0].whole_file_must is True
+
+
 def test_infrastructure_error_on_searcher_failure():
     searcher = FakeSearcher(error=RuntimeError("network down"))
     code, out, err, _, _ = invoke(

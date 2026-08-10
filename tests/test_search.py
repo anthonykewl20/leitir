@@ -120,6 +120,12 @@ def test_spec_digest_is_stable_and_order_sensitive():
     assert _spec().digest() != other.digest()
 
 
+def test_whole_file_must_is_validated_and_changes_digest():
+    assert _spec().digest() != _spec(whole_file_must=True).digest()
+    with pytest.raises(TypeError, match="whole_file_must must be bool"):
+        _spec(whole_file_must=1)
+
+
 def test_source_ref_permalink_uses_commit_not_branch():
     ref = SourceRef("python/cpython", SHA, "Lib/urllib/parse.py", BLOB, 10, 20)
     assert f"/blob/{SHA}/" in ref.permalink

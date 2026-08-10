@@ -203,6 +203,7 @@ class SearchSpec:
     should: tuple[Predicate, ...] = ()
     must_not: tuple[Predicate, ...] = ()
     scopes: tuple[RepoScope, ...] = ()
+    whole_file_must: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, SearchMode):
@@ -217,6 +218,8 @@ class SearchSpec:
             not isinstance(item, RepoScope) for item in self.scopes
         ):
             raise TypeError("scopes must be a tuple of RepoScope")
+        if not isinstance(self.whole_file_must, bool):
+            raise TypeError("whole_file_must must be bool")
         if not self.must:
             raise ValueError("a search requires at least one must predicate")
         if self.mode is SearchMode.SCOPED_EXHAUSTIVE and not self.scopes:
@@ -257,6 +260,7 @@ class SearchSpec:
                 {"slug": scope.slug, "commit_sha": scope.commit_sha}
                 for scope in self.scopes
             ],
+            "whole_file_must": self.whole_file_must,
         }
 
 

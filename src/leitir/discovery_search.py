@@ -601,6 +601,7 @@ class GlobalSearcher:
                         content, adapter, hit.slug, commit_sha,
                         hit.path, blob_sha,
                         content_preds, spec.should, spec.must_not,
+                        whole_file=spec.whole_file_must,
                     )
                 )
                 files_indexed += 1

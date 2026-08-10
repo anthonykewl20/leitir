@@ -18,7 +18,7 @@ from itertools import permutations
 import pytest
 
 from leitir.adapters import PythonAdapter, RustAdapter, SpanMatch
-from leitir.engine import ScopedSearcher
+from leitir.engine import ScopedSearcher, score_content
 from leitir.search import (
     CoverageStatus,
     Predicate,
@@ -265,6 +265,48 @@ class TestShould:
         assert max2 > max1
 
 
+def test_score_content_whole_file_uses_file_bound_should_and_must_not():
+    content = "def build():\n    boost = True\nrun()\n"
+    required = (
+        Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+        Predicate(PredicateKind.CALL, "run"),
+    )
+    should = (Predicate(PredicateKind.IDENTIFIER, "boost"),)
+    args = (content, PythonAdapter(), "owner/repo", SHA, "x.py", "b" * 40)
+
+    assert score_content(*args, required, should, (), whole_file=False) == []
+    matches = score_content(*args, required, should, (), whole_file=True)
+    assert [match.source.start_line for match in matches] == [1, 3]
+    assert [match.score for match in matches] == [3.0, 3.0]
+    assert all(PredicateKind.IDENTIFIER in match.matched_kinds for match in matches)
+
+    excluded = score_content(
+        *args,
+        required,
+        should,
+        (Predicate(PredicateKind.EXACT_TEXT, "boost = True"),),
+        whole_file=True,
+    )
+    assert excluded == []
+
+
+def test_score_content_default_should_and_must_not_remain_line_bound():
+    content = "target\nboost forbidden\ntarget\n"
+    matches = score_content(
+        content,
+        PythonAdapter(),
+        "owner/repo",
+        SHA,
+        "x.py",
+        "b" * 40,
+        (Predicate(PredicateKind.IDENTIFIER, "target"),),
+        (Predicate(PredicateKind.IDENTIFIER, "boost"),),
+        (Predicate(PredicateKind.IDENTIFIER, "forbidden"),),
+    )
+    assert [match.source.start_line for match in matches] == [1, 3]
+    assert [match.score for match in matches] == [1.0, 1.0]
+
+
 class TestSadPaths:
     def test_rejects_global_discovery_mode(self):
         spec = SearchSpec(
@@ -398,6 +440,43 @@ def test_required_language_report_is_hash_seed_independent():
     assert [match["source"]["path"] for match in payload["report"]["matches"]] == [
         "a.py", "c.py"
     ]
+
+
+def test_whole_file_report_is_hash_seed_independent():
+    script = textwrap.dedent(
+        """
+        import hashlib
+        import leitir.engine
+        from leitir.adapters import PythonAdapter
+        from leitir.engine import ScopedSearcher
+        from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
+        from leitir.tree import BlobEntry
+
+        data = b"def build():\\n    pass\\nrun()\\nrun()\\n"
+        blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\x00" + data).hexdigest()
+        class Tree:
+            def list_blobs(self, slug, commit_sha):
+                return (BlobEntry("x.py", blob_sha, len(data)),)
+            def read_blob(self, slug, requested_blob_sha):
+                return data
+
+        leitir.engine._utc_now = lambda: "2026-08-10T00:00:00Z"
+        spec = SearchSpec(
+            mode=SearchMode.SCOPED_EXHAUSTIVE,
+            must=(Predicate(PredicateKind.SYMBOL_DEFINITION, "build"), Predicate(PredicateKind.CALL, "run")),
+            scopes=(RepoScope("owner/repo", "a" * 40),),
+            whole_file_must=True,
+        )
+        print(ScopedSearcher(Tree(), (PythonAdapter(),)).search(spec).to_json(indent=None))
+        """
+    )
+    outputs = []
+    for seed in ("0", "1", "42"):
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = "src"
+        outputs.append(subprocess.check_output([sys.executable, "-c", script], env=env))
+    assert outputs[0] == outputs[1] == outputs[2]
 
 
 class TestPathPredicate:

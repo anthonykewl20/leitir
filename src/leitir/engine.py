@@ -9,7 +9,7 @@ coverage accounting.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.adapters.languages import canonicalize_language
@@ -29,6 +29,7 @@ from leitir.search import (
     SourceMatch,
     SourceRef,
 )
+from leitir.streaming import score_blob_stream
 from leitir.tree import BlobEntry, TreeEnumerationError, TreeSource
 
 MAX_BLOB_SIZE = 2 * 1024 * 1024
@@ -207,6 +208,11 @@ class ScopedSearcher:
         self._tree = tree_source
         self._adapters = adapters
         self._max_blob_size = max_blob_size
+        retry = getattr(tree_source, "_retry", None)
+        self._retry: Callable[
+            [Callable[[], tuple[list[SourceMatch], bool]]],
+            tuple[list[SourceMatch], bool],
+        ] = retry if callable(retry) else lambda operation: operation()
 
     def search(self, spec: SearchSpec) -> SearchReport:
         if spec.mode is not SearchMode.SCOPED_EXHAUSTIVE:
@@ -310,8 +316,37 @@ class ScopedSearcher:
 
         for blob in eligible_blobs:
             if blob.size > self._max_blob_size:
-                files_excluded += 1
-                partial = True
+                adapter = self._adapter_for(blob.path, required_language)
+                if adapter is None:
+                    continue
+                try:
+                    (
+                        blob_matches,
+                        was_excluded,
+                        parser_unavailable,
+                    ) = score_blob_stream(
+                        self._tree,
+                        blob,
+                        slug=slug,
+                        commit_sha=commit_sha,
+                        path=blob.path,
+                        adapter=adapter,
+                        spec=spec,
+                        retry=self._retry,
+                    )
+                except Exception:
+                    was_excluded = True
+                    parser_unavailable = False
+                    blob_matches = []
+                if was_excluded:
+                    files_excluded += 1
+                    partial = True
+                    continue
+                files_indexed += 1
+                if parser_unavailable:
+                    files_excluded += 1
+                    partial = True
+                matches.extend(blob_matches)
                 continue
 
             try:

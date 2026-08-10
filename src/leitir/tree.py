@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 import string
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_TREE_DEPTH = 64
 MAX_TREE_REQUESTS = 256
 MAX_TREE_ENTRIES = 600_000
+STREAM_CHUNK_SIZE = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,8 @@ class TreeSource(Protocol):
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         """Return the raw bytes of one blob."""
         ...
+
+    def read_blob_stream(self, slug: str, blob_sha: str) -> Iterator[bytes]: ...
 
 
 class GitHubTreeSource:
@@ -232,6 +235,21 @@ class GitHubTreeSource:
             raise TreeReadError(
                 f"cannot read blob {slug}/{blob_sha}: {_http.describe_failure(exc)}"
             ) from exc
+
+    def read_blob_stream(self, slug: str, blob_sha: str) -> Iterator[bytes]:
+        from urllib.request import Request
+
+        url = f"{self._base_url}/repos/{slug}/git/blobs/{blob_sha}"
+        headers = self._headers()
+        headers["Accept"] = "application/vnd.github.raw"
+        with _http.safe_urlopen(
+            Request(url, headers=headers), timeout=self._timeout
+        ) as response:
+            while True:
+                chunk = response.read(STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
 
     def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
         """Read a path's exact bytes through the contents API at a commit."""

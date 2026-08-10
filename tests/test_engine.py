@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from collections.abc import Iterator
 from itertools import permutations
 
 import pytest
@@ -85,6 +86,9 @@ class FakeTreeSource:
             if entry.blob_sha == blob_sha:
                 return data
         raise KeyError(blob_sha)
+
+    def read_blob_stream(self, slug: str, blob_sha: str) -> Iterator[bytes]:
+        yield self.read_blob(slug, blob_sha)
 
 
 def _fake_source(**kwargs) -> FakeTreeSource:
@@ -329,16 +333,19 @@ class TestSadPaths:
         assert report.coverage.files_excluded == 1
         assert len(report.matches) == 0
 
-    def test_oversized_blob_is_excluded(self):
+    def test_oversized_blob_is_streamed(self):
         searcher = ScopedSearcher(
             tree_source=_fake_source(),
             adapters=(PythonAdapter(),),
             max_blob_size=10,
         )
         report = searcher.search(_spec())
-        assert report.coverage.status is CoverageStatus.PARTIAL
-        assert report.coverage.files_excluded == 1
-        assert report.coverage.files_indexed == 0
+        assert (
+            report.coverage.status
+            is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+        )
+        assert report.coverage.files_excluded == 0
+        assert report.coverage.files_indexed == 1
 
     def test_no_matches_returns_empty_with_complete_coverage(self):
         spec = _spec(

@@ -77,6 +77,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - cross-platform bugs caught by first Windows CI run (`ci`)
 - final-state review hardening (B1 B2 B3, C1-C7) (`integrity`)
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
+- reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
 [Unreleased]: https://github.com/anthonykewl20/leitir/commits/HEAD

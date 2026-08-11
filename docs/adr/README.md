@@ -14,6 +14,8 @@ please use [`template.md`](template.md) as the basis.
 | [0007](0007-environment-integrity-doctor.md) | Environment and integrity doctor | Accepted | 2026-08 |
 | [0008](0008-behavioral-transplant-set.md) | Behavioral Transplant Set foundation | Accepted | 2026-08 |
 | [0009](0009-transplant-validation.md) | Transplant validation | Accepted | 2026-08 |
+| [0010](0010-capability-and-suitability.md) | Capability and suitability | Accepted | 2026-08 |
+| [0011](0011-reuse-packet-and-attribution.md) | Reuse packet and attribution | Accepted | 2026-08 |
 
 ## Status vocabulary
 

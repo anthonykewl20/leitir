@@ -96,6 +96,12 @@ native **nsjail** binary and policy; missing or unverifiable containment rejects
 with no portable or unsandboxed fallback. NsJail is not a Python dependency.
 See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
 
+Relocated contract tests are rerun with the donor excluded by the read-only
+filesystem mount plan, not by Python import hooks. The rerun report requires the
+exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;
+the runtime import recorder remains diagnostic-only. The contained interpreter
+uses a sanitized environment with `PYTHONHASHSEED=0` and never uses `-I`.
+
 From a source checkout:
 
 ```bash

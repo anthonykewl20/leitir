@@ -23,7 +23,10 @@ from leitir.search import (
 
 _TASK_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_LANGUAGES = frozenset({"python", "rust", "go"})
+_LANGUAGES = frozenset(
+    {"python", "rust", "go", "javascript", "typescript", "java", "c", "cpp"}
+)
+_LANGUAGE_NAMES = ", ".join(sorted(_LANGUAGES))
 _MANIFEST_SCHEMA = "leitir-benchmark-manifest-v1"
 _RUN_SCHEMA = "leitir-benchmark-run-v1"
 
@@ -55,7 +58,7 @@ class BenchmarkTask:
         if not isinstance(self.task_id, str) or not _TASK_ID.fullmatch(self.task_id):
             raise ValueError("task_id must be lowercase kebab-case")
         if self.language not in _LANGUAGES:
-            raise ValueError("language must be one of: python, rust, go")
+            raise ValueError(f"language must be one of: {_LANGUAGE_NAMES}")
         if not isinstance(self.spec, SearchSpec):
             raise TypeError("spec must be a SearchSpec")
         if self.spec.mode is not SearchMode.SCOPED_EXHAUSTIVE:
@@ -166,7 +169,7 @@ class BenchmarkTaskRun:
         if not isinstance(self.task_id, str) or not _TASK_ID.fullmatch(self.task_id):
             raise ValueError("task_id must be lowercase kebab-case")
         if self.language not in _LANGUAGES:
-            raise ValueError("language must be one of: python, rust, go")
+            raise ValueError(f"language must be one of: {_LANGUAGE_NAMES}")
         if not isinstance(self.spec_digest, str) or not _SHA256.fullmatch(
             self.spec_digest
         ):

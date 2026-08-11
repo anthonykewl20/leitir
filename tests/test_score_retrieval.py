@@ -41,7 +41,7 @@ SEARCH_V1 = REPO_ROOT / "src" / "leitir" / "benchmarks" / "search-v1"
 #
 # Update these only when the underlying change is itself intended and reviewed.
 # Never edit one to make a failing test green — that inverts what it is for.
-MANIFEST_SHA256 = "58e23654abc2d999548b7b36e9ca014637f1268503e8456c175c50d626a042bc"
+MANIFEST_SHA256 = "fa4eb88f183f4df984762df1ccabcf92ee8797e51c6209ce132100011e38618c"
 
 
 def _identity(name: str) -> tuple[str, str, str, str, int, int]:
@@ -202,7 +202,7 @@ def _metric_dict(metrics):
     }
 
 
-def test_shipped_qrels_are_exactly_the_twelve_manifest_pins():
+def test_shipped_qrels_are_exactly_the_thirty_two_manifest_pins():
     manifest = json.loads((SEARCH_V1 / "manifest.json").read_text(encoding="utf-8"))
     qrels = json.loads((SEARCH_V1 / "qrels.json").read_text(encoding="utf-8"))
 
@@ -214,16 +214,22 @@ def test_shipped_qrels_are_exactly_the_twelve_manifest_pins():
     assert {task["task_id"] for task in qrels["tasks"]} == {
         task["id"] for task in manifest["tasks"]
     }
-    assert len(qrels["tasks"]) == 12
+    assert len(qrels["tasks"]) == 32
     by_id = {task["id"]: task for task in manifest["tasks"]}
-    counts = {"python": 0, "rust": 0, "go": 0}
+    counts = {
+        "python": 0, "rust": 0, "go": 0, "javascript": 0,
+        "typescript": 0, "java": 0, "c": 0, "cpp": 0,
+    }
     for task in qrels["tasks"]:
         judgments = task["judgments"]
         assert task["judgments_complete"] is False
         assert [item["grade"] for item in judgments] == [2]
         assert [item["source"] for item in judgments] == by_id[task["task_id"]]["expected_results"]
         counts[by_id[task["task_id"]]["language"]] += 1
-    assert counts == {"python": 4, "rust": 4, "go": 4}
+    assert counts == {
+        "python": 4, "rust": 4, "go": 4, "javascript": 4,
+        "typescript": 4, "java": 4, "c": 4, "cpp": 4,
+    }
 
 
 @pytest.mark.parametrize("vector_name", ["rank1", "rank3", "missing", "unjudged_first"])

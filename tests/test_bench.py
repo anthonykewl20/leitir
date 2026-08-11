@@ -90,11 +90,29 @@ def _run(*, reverse: bool = False):
 def test_shipped_manifest_has_four_tasks_per_language():
     manifest = load_manifest()
     assert manifest.benchmark_id == "search-v1"
-    assert len(manifest.tasks) == 12
+    assert len(manifest.tasks) == 32
     assert {
         language: sum(task.language == language for task in manifest.tasks)
-        for language in ("python", "rust", "go")
-    } == {"python": 4, "rust": 4, "go": 4}
+        for language in (
+            "python",
+            "rust",
+            "go",
+            "javascript",
+            "typescript",
+            "java",
+            "c",
+            "cpp",
+        )
+    } == {
+        "python": 4,
+        "rust": 4,
+        "go": 4,
+        "javascript": 4,
+        "typescript": 4,
+        "java": 4,
+        "c": 4,
+        "cpp": 4,
+    }
 
 
 def test_every_task_has_immutable_scope_and_expected_source_ref():
@@ -129,6 +147,31 @@ def test_manifest_reuses_existing_fixture_commit_pins():
             "stretchr/testify",
             "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
         ),
+        (
+            "javascript",
+            "tj/commander.js",
+            "ba6d13ddb4243e5913367734f8c159089ffe7834",
+        ),
+        (
+            "typescript",
+            "microsoft/TypeScript",
+            "b465fdbfe175304d9b977da137b2c178ae1091d3",
+        ),
+        (
+            "java",
+            "google/gson",
+            "310ac341f2f92a454b229bf21f70d2d18b2b6db7",
+        ),
+        (
+            "c",
+            "redis/redis",
+            "4f20cb48934463db5970bd476461b2d57af3f38d",
+        ),
+        (
+            "cpp",
+            "fmtlib/fmt",
+            "6c285ba88a22e287f8d33a4e15b43c0095160181",
+        ),
     }
 
 
@@ -153,9 +196,13 @@ def test_manifest_rejects_duplicate_ids():
         )
 
 
-def test_manifest_requires_all_three_language_strata():
+@pytest.mark.parametrize(
+    "language",
+    ("python", "rust", "go", "javascript", "typescript", "java", "c", "cpp"),
+)
+def test_manifest_requires_all_eight_language_strata(language):
     raw = load_manifest().to_dict()
-    raw["tasks"] = [task for task in raw["tasks"] if task["language"] != "go"]
+    raw["tasks"] = [task for task in raw["tasks"] if task["language"] != language]
     with pytest.raises(ValueError, match="four tasks per language"):
         manifest_from_dict(raw)
 
@@ -244,7 +291,7 @@ def test_cli_bench_emits_ranked_artifact_and_summary():
     assert code == ExitCode.SUCCESS
     payload = json.loads(out.getvalue())
     assert payload["benchmark"]["id"] == "search-v1"
-    assert len(payload["tasks"]) == 12
+    assert len(payload["tasks"]) == 32
     assert "artifact_sha256=" in err.getvalue()
 
 

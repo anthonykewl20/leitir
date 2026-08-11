@@ -1,3 +1,11 @@
+"""Shared tier-2 patterns informed by nvim-treesitter node inventories.
+
+These patterns are hand-adapted approximations, not copied query files, based
+on https://github.com/nvim-treesitter/nvim-treesitter at revision
+c9f9ed6c1892f629ea399f4ee7905f2686fa13f2 (Apache-2.0). There is no
+tree-sitter runtime dependency.
+"""
+
 from __future__ import annotations
 
 import re

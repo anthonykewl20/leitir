@@ -65,7 +65,7 @@ def _task_run(*results: RankedMatch) -> BenchmarkTaskRun:
     ("factory", "exception", "message"),
     [
         (lambda: replace(_search_task(), task_id="Not Valid"), ValueError, "lowercase kebab-case"),
-        (lambda: replace(_search_task(), language="java"), ValueError, "language must be"),
+        (lambda: replace(_search_task(), language="cobol"), ValueError, "language must be"),
         (
             lambda: replace(_search_task(), spec=cast(SearchSpec, object())),
             TypeError,
@@ -221,7 +221,7 @@ def test_search_benchmark_containers_reject_malformed_contracts(
     ("changes", "exception", "message"),
     [
         ({"task_id": "INVALID"}, ValueError, "task_id"),
-        ({"language": "java"}, ValueError, "language"),
+        ({"language": "cobol"}, ValueError, "language"),
         ({"spec_digest": "bad"}, ValueError, "spec_digest"),
         ({"coverage": object()}, TypeError, "coverage must"),
         ({"results": []}, TypeError, "tuple of RankedMatch"),

@@ -488,6 +488,7 @@ def test_pytest_collector_uses_fixed_adr001_argv_shell_false_and_sanitized_env(
     (tmp_path / "src").mkdir()
     monkeypatch.setenv("OPENROUTER_API_KEY", "must-not-leak")
     monkeypatch.setenv("GH_TOKEN", "must-not-leak")
+    monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "windows"))
     calls = []
 
     def fake_run(argv, **kwargs):
@@ -511,6 +512,9 @@ def test_pytest_collector_uses_fixed_adr001_argv_shell_false_and_sanitized_env(
     assert kwargs["env"]["PYTHONHASHSEED"] == "0"
     assert kwargs["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
     assert kwargs["env"]["PYTHONPATH"] == str(tmp_path / "src")
+    assert kwargs["env"]["HOME"] == str(tmp_path)
+    assert kwargs["env"]["USERPROFILE"] == str(tmp_path)
+    assert kwargs["env"]["SYSTEMROOT"] == str(tmp_path / "windows")
     assert "OPENROUTER_API_KEY" not in kwargs["env"]
     assert "GH_TOKEN" not in kwargs["env"]
 

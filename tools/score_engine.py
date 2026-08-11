@@ -1551,7 +1551,8 @@ def subject_from_repository(
 
 def _sanitized_collector_environment(root: Path) -> dict[str, str]:
     """Return the fixed, credential-free environment for offline collectors."""
-    return {
+    environment = {
+        "HOME": str(root),
         "LANG": "C",
         "LC_ALL": "C",
         "PATH": os.environ.get("PATH", os.defpath),
@@ -1562,7 +1563,14 @@ def _sanitized_collector_environment(root: Path) -> dict[str, str]:
         "PYTHONUTF8": "1",
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         "TZ": "UTC",
+        # pathlib.expanduser() ignores HOME on Windows.
+        "USERPROFILE": str(root),
     }
+    # CreateProcess replacement environments must retain this Windows system
+    # variable.  It is not a credential and does not affect scored evidence.
+    if system_root := os.environ.get("SYSTEMROOT"):
+        environment["SYSTEMROOT"] = system_root
+    return environment
 
 
 _JUNIT_VOLATILE_ATTRIBUTES = frozenset(

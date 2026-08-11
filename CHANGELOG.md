@@ -29,6 +29,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add Linux-only nsjail donor-execution containment (S2, #62) (`bts`)
 - add maintainer-pinned behavioral probes over TESTED_BY edges (E3, #64) (`bts`)
 - add N-donor empty-project exit gate (E4b, #73) (`bts`)
+- add manifest-bound recipient project profiling (C4, #66) (`bts`)
 - add name-resolving CALL and complete READS passes (B4, #57) (`bts`)
 - add opt-in Python AST adapter with heuristic fallback (`search`)
 - add static IMPORTS/INHERITS/RAISES extraction (B3, #56) (`bts`)

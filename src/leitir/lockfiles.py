@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from enum import StrEnum
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+from leitir.bts_errors import BTSError, BTSRejectReason
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,68 @@ class DependencyClosure:
     graph: str
     source: str
     deps: tuple[DependencyEdge, ...]
+
+
+class ManifestDiagnosticKind(StrEnum):
+    """Closed outcomes which cannot be hidden by manifest-backed parsing."""
+
+    ABSENT = "absent"
+    MALFORMED = "malformed"
+    SKIPPED = "skipped"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedManifestBytes:
+    """Bytes and content identity already authorized by a recipient manifest."""
+
+    path: str
+    role: str
+    byte_length: int
+    sha256: str
+    content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyManifestPolicy:
+    """The exact supported dependency sources expected by a profile."""
+
+    required_sources: tuple[str, ...]
+    optional_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class ManifestDependencyDiagnostic:
+    """A source or record that was not successfully parsed."""
+
+    path: str
+    kind: ManifestDiagnosticKind
+    record: str
+    detail_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestDependencySource:
+    """One manifest source's dependency result and parser provenance."""
+
+    path: str
+    source_digest: str
+    ecosystem: str
+    parser_id: str
+    parser_version: str
+    graph: str
+    deps: tuple[DependencyEdge, ...]
+    attempted_records: int
+    parsed_records: int
+    diagnostics: tuple[ManifestDependencyDiagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestDependencyResult:
+    """Deterministically ordered results for all policy-declared sources."""
+
+    sources: tuple[ManifestDependencySource, ...]
+    diagnostics: tuple[ManifestDependencyDiagnostic, ...]
 
 
 _NPM_VERSION = re.compile(
@@ -330,34 +396,127 @@ def _npm_name_from_path(path: str) -> str | None:
     return remainder.split("/", 1)[0]
 
 
-def _npm_dependency_tree(dependencies: object, edges: list[DependencyEdge]) -> None:
+def _npm_dependency_tree(
+    dependencies: object,
+    edges: list[DependencyEdge],
+    diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None,
+    record_prefix: str = "dependencies",
+) -> tuple[int, int]:
     if not isinstance(dependencies, dict):
-        return
+        if dependencies is not None and diagnostics is not None:
+            diagnostics.append((record_prefix, ManifestDiagnosticKind.MALFORMED))
+            return (1, 0)
+        return (0, 0)
+    attempted = 0
+    parsed = 0
     for name, package in dependencies.items():
+        attempted += 1
+        record = f"{record_prefix}.{name}"
         if not isinstance(package, dict):
+            if diagnostics is not None:
+                diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
             continue
         edge = _edge("npm", name, package.get("version"), _identity(package))
         if edge is not None:
             edges.append(edge)
-        _npm_dependency_tree(package.get("dependencies"), edges)
+            parsed += 1
+        elif diagnostics is not None:
+            diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+        nested_attempted, nested_parsed = _npm_dependency_tree(
+            package.get("dependencies"), edges, diagnostics, f"{record}.dependencies"
+        )
+        attempted += nested_attempted
+        parsed += nested_parsed
+    return attempted, parsed
+
+
+def _npm_closure_from_payload(
+    payload: object,
+    *,
+    source: str,
+    diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None,
+) -> tuple[DependencyClosure | None, int, int]:
+    if not isinstance(payload, dict) or payload.get("lockfileVersion") not in (2, 3):
+        return None, 0, 0
+    edges: list[DependencyEdge] = []
+    attempted = 0
+    parsed = 0
+    packages = payload.get("packages")
+    if isinstance(packages, dict):
+        for path, package in packages.items():
+            # The empty package path is project metadata, not a dependency record.
+            if path == "":
+                continue
+            attempted += 1
+            record = f"packages.{path}"
+            if not isinstance(path, str) or not isinstance(package, dict):
+                if diagnostics is not None:
+                    diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+                continue
+            name = _npm_name_from_path(path)
+            edge = _edge("npm", name, package.get("version"), _identity(package))
+            if edge is None:
+                if diagnostics is not None:
+                    diagnostics.append((record, ManifestDiagnosticKind.UNSUPPORTED if name is None else ManifestDiagnosticKind.MALFORMED))
+                continue
+            edges.append(edge)
+            parsed += 1
+    elif packages is not None:
+        attempted += 1
+        if diagnostics is not None:
+            diagnostics.append(("packages", ManifestDiagnosticKind.MALFORMED))
+    nested_attempted, nested_parsed = _npm_dependency_tree(payload.get("dependencies"), edges, diagnostics)
+    attempted += nested_attempted
+    parsed += nested_parsed
+    return DependencyClosure("npm", "complete", source, _ordered(edges)), attempted, parsed
 
 
 def _npm_closure(root: Path) -> DependencyClosure | None:
     payload = _read_json(root / "package-lock.json")
-    if not isinstance(payload, dict) or payload.get("lockfileVersion") not in (2, 3):
-        return None
+    closure, _, _ = _npm_closure_from_payload(payload, source="package-lock.json")
+    return closure
+
+
+def _cargo_closure_from_payload(
+    payload: object,
+    *,
+    source: str,
+    diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None,
+) -> tuple[DependencyClosure | None, int, int]:
+    if not isinstance(payload, dict):
+        return None, 0, 0
+    packages = payload.get("package")
+    if not isinstance(packages, list):
+        return None, 0, 0
     edges: list[DependencyEdge] = []
-    packages = payload.get("packages")
-    if isinstance(packages, dict):
-        for path, package in packages.items():
-            if not isinstance(path, str) or not isinstance(package, dict):
-                continue
-            name = _npm_name_from_path(path)
-            edge = _edge("npm", name, package.get("version"), _identity(package))
-            if edge is not None:
-                edges.append(edge)
-    _npm_dependency_tree(payload.get("dependencies"), edges)
-    return DependencyClosure("npm", "complete", "package-lock.json", _ordered(edges))
+    attempted = 0
+    parsed = 0
+    for index, package in enumerate(packages):
+        attempted += 1
+        record = f"package[{index}]"
+        if not isinstance(package, dict):
+            if diagnostics is not None:
+                diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        # A source-less package is a local workspace member.  Validate its
+        # identity, but do not report it as an external dependency.
+        if package.get("source") is None:
+            if _edge("crates", name, version) is None:
+                if diagnostics is not None:
+                    diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+            else:
+                parsed += 1
+            continue
+        edge = _edge("crates", name, version, _identity(package))
+        if edge is None:
+            if diagnostics is not None:
+                diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+            continue
+        edges.append(edge)
+        parsed += 1
+    return DependencyClosure("crates", "complete", source, _ordered(edges)), attempted, parsed
 
 
 def _cargo_closure(root: Path) -> DependencyClosure | None:
@@ -368,26 +527,16 @@ def _cargo_closure(root: Path) -> DependencyClosure | None:
         payload = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, TypeError):
         return None
-    packages = payload.get("package")
-    if not isinstance(packages, list):
-        return None
-    edges: list[DependencyEdge] = []
-    for package in packages:
-        if not isinstance(package, dict):
-            continue
-        name = package.get("name")
-        if package.get("source") is None:
-            continue
-        edge = _edge("crates", name, package.get("version"), _identity(package))
-        if edge is not None:
-            edges.append(edge)
-    return DependencyClosure("crates", "complete", "Cargo.lock", _ordered(edges))
+    closure, _, _ = _cargo_closure_from_payload(payload, source="Cargo.lock")
+    return closure
 
 
-def _go_requirements(text: str) -> list[DependencyEdge]:
+def _go_requirements(
+    text: str, diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None
+) -> list[DependencyEdge]:
     edges: list[DependencyEdge] = []
     in_require = False
-    for raw in text.splitlines():
+    for line_number, raw in enumerate(text.splitlines(), 1):
         line = raw.split("//", 1)[0].strip()
         if line == "require (":
             in_require = True
@@ -402,11 +551,17 @@ def _go_requirements(text: str) -> list[DependencyEdge]:
         else:
             continue
         if len(candidate) != 2 or _GO_VERSION.fullmatch(candidate[1]) is None:
+            if diagnostics is not None:
+                diagnostics.append((f"line:{line_number}", ManifestDiagnosticKind.MALFORMED))
             continue
         match = _GO_PSEUDO_VERSION.fullmatch(candidate[1])
         edge = _edge("go", candidate[0], candidate[1], match.group(1) if match else None)
         if edge is not None:
             edges.append(edge)
+        elif diagnostics is not None:
+            diagnostics.append((f"line:{line_number}", ManifestDiagnosticKind.MALFORMED))
+    if in_require and diagnostics is not None:
+        diagnostics.append(("require-block", ManifestDiagnosticKind.MALFORMED))
     return edges
 
 
@@ -417,15 +572,23 @@ def _go_closure(root: Path) -> DependencyClosure | None:
     return DependencyClosure("go", "complete", "go.mod", _ordered(_go_requirements(text)))
 
 
-def _python_edges(text: str) -> list[DependencyEdge]:
+def _python_edges(
+    text: str, diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None
+) -> list[DependencyEdge]:
     edges: list[DependencyEdge] = []
-    for line in text.splitlines():
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
         match = _PYTHON_PIN.fullmatch(line)
         if match is None or _PYTHON_VERSION.fullmatch(match.group(2)) is None:
+            if diagnostics is not None:
+                diagnostics.append((f"line:{line_number}", ManifestDiagnosticKind.UNSUPPORTED))
             continue
         edge = _edge("pypi", _normalize_python_name(match.group(1)), match.group(2))
         if edge is not None:
             edges.append(edge)
+        elif diagnostics is not None:
+            diagnostics.append((f"line:{line_number}", ManifestDiagnosticKind.MALFORMED))
     return edges
 
 
@@ -467,6 +630,235 @@ def dependency_closures(directory: str | Path) -> tuple[DependencyClosure, ...]:
         if closure is not None
     )
     return tuple(sorted(closures, key=lambda closure: closure.ecosystem))
+
+
+_MANIFEST_SOURCE_NAMES: dict[str, tuple[str, str, str, str]] = {
+    "Cargo.lock": ("crates", "leitir-cargo-lock", "1", "complete"),
+    "go.mod": ("go", "leitir-go-mod", "1", "complete"),
+    "package-lock.json": ("npm", "leitir-package-lock", "1", "complete"),
+    "pyproject.toml": ("pypi", "leitir-pyproject", "1", "direct_only"),
+    "requirements.txt": ("pypi", "leitir-requirements", "1", "direct_only"),
+}
+
+
+def _manifest_source_metadata(path: str) -> tuple[str, str, str, str] | None:
+    return _MANIFEST_SOURCE_NAMES.get(PurePosixPath(path).name)
+
+
+def _valid_manifest_path(path: str) -> bool:
+    candidate = PurePosixPath(path)
+    return (
+        bool(path)
+        and "\\" not in path
+        and not candidate.is_absolute()
+        and not PureWindowsPath(path).drive
+        and candidate.as_posix() == path
+        and all(part not in {"", ".", ".."} for part in candidate.parts)
+    )
+
+
+def _manifest_diagnostic(
+    path: str,
+    kind: ManifestDiagnosticKind,
+    record: str,
+    *,
+    source_failure: bool = False,
+) -> ManifestDependencyDiagnostic:
+    if kind is ManifestDiagnosticKind.ABSENT:
+        detail = "recipient_manifest_source_absent_v1"
+    elif source_failure:
+        detail = "dependency_source_parse_failed_v1"
+    elif kind is ManifestDiagnosticKind.MALFORMED:
+        detail = "dependency_record_malformed_v1"
+    elif kind is ManifestDiagnosticKind.SKIPPED:
+        detail = "dependency_record_omitted_v1"
+    else:
+        detail = "dependency_record_unsupported_v1"
+    return ManifestDependencyDiagnostic(path, kind, record, detail)
+
+
+def _decode_manifest_source(file: VerifiedManifestBytes) -> str | None:
+    try:
+        return file.content.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+
+
+def _manifest_python_pyproject(
+    text: str, diagnostics: list[tuple[str, ManifestDiagnosticKind]]
+) -> tuple[DependencyEdge, ...] | None:
+    try:
+        payload = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, TypeError):
+        return None
+    project = payload.get("project")
+    if project is None:
+        return ()
+    if not isinstance(project, dict):
+        return None
+    dependencies = project.get("dependencies")
+    if dependencies is None:
+        return ()
+    if not isinstance(dependencies, list):
+        return None
+    edges: list[DependencyEdge] = []
+    for index, dependency in enumerate(dependencies):
+        record = f"project.dependencies[{index}]"
+        if not isinstance(dependency, str):
+            diagnostics.append((record, ManifestDiagnosticKind.MALFORMED))
+            continue
+        local: list[tuple[str, ManifestDiagnosticKind]] = []
+        parsed = _python_edges(dependency, local)
+        edges.extend(parsed)
+        diagnostics.extend((record, kind) for _, kind in local)
+    return _ordered(edges)
+
+
+def _parse_manifest_source(file: VerifiedManifestBytes) -> ManifestDependencySource:
+    metadata = _manifest_source_metadata(file.path)
+    if metadata is None:  # Checked at the policy boundary; retained for type safety.
+        raise ValueError("unsupported dependency manifest source")
+    ecosystem, parser_id, parser_version, graph = metadata
+    source_name = PurePosixPath(file.path).name
+    raw_diagnostics: list[tuple[str, ManifestDiagnosticKind]] = []
+    text = _decode_manifest_source(file)
+    source_failed = text is None
+    deps: tuple[DependencyEdge, ...] = ()
+    attempted = 0
+    parsed = 0
+    if text is not None and source_name == "package-lock.json":
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, RecursionError):
+            payload = None
+            source_failed = True
+        if not source_failed:
+            closure, attempted, parsed = _npm_closure_from_payload(
+                payload, source=file.path, diagnostics=raw_diagnostics
+            )
+            source_failed = closure is None
+            if closure is not None:
+                deps = closure.deps
+    elif text is not None and source_name == "Cargo.lock":
+        try:
+            payload = tomllib.loads(text)
+        except (tomllib.TOMLDecodeError, TypeError):
+            payload = None
+            source_failed = True
+        if not source_failed:
+            closure, attempted, parsed = _cargo_closure_from_payload(
+                payload, source=file.path, diagnostics=raw_diagnostics
+            )
+            source_failed = closure is None
+            if closure is not None:
+                deps = closure.deps
+    elif text is not None and source_name == "go.mod":
+        edges = _go_requirements(text, raw_diagnostics)
+        deps = _ordered(edges)
+        attempted = len(edges) + len(raw_diagnostics)
+        parsed = len(edges)
+    elif text is not None and source_name == "requirements.txt":
+        edges = _python_edges(text, raw_diagnostics)
+        deps = _ordered(edges)
+        attempted = len(edges) + len(raw_diagnostics)
+        parsed = len(edges)
+    elif text is not None and source_name == "pyproject.toml":
+        parsed_edges = _manifest_python_pyproject(text, raw_diagnostics)
+        source_failed = parsed_edges is None
+        if parsed_edges is not None:
+            deps = parsed_edges
+            attempted = len(parsed_edges) + len(raw_diagnostics)
+            parsed = len(parsed_edges)
+
+    diagnostics: list[ManifestDependencyDiagnostic]
+    if source_failed:
+        diagnostics = [
+            _manifest_diagnostic(
+                file.path,
+                ManifestDiagnosticKind.MALFORMED,
+                "<source>",
+                source_failure=True,
+            )
+        ]
+        attempted = 0
+        parsed = 0
+        deps = ()
+    else:
+        diagnostics = [
+            _manifest_diagnostic(file.path, kind, record)
+            for record, kind in raw_diagnostics
+        ]
+    return ManifestDependencySource(
+        path=file.path,
+        source_digest=file.sha256,
+        ecosystem=ecosystem,
+        parser_id=parser_id,
+        parser_version=parser_version,
+        graph=graph,
+        deps=deps,
+        attempted_records=attempted,
+        parsed_records=parsed,
+        diagnostics=tuple(sorted(diagnostics)),
+    )
+
+
+def dependency_closures_from_manifest(
+    files: tuple[VerifiedManifestBytes, ...],
+    policy: DependencyManifestPolicy,
+) -> ManifestDependencyResult:
+    """Parse only content-bound bytes, retaining every non-parsed record.
+
+    Unlike :func:`dependency_closures`, this function never opens a path.  It is
+    therefore suitable for authorizing recipient profiles.
+    """
+
+    if not isinstance(files, tuple) or not isinstance(policy, DependencyManifestPolicy):
+        raise TypeError("files and policy must use manifest-bound types")
+    declared = policy.required_sources + policy.optional_sources
+    if (
+        len(set(declared)) != len(declared)
+        or any(_manifest_source_metadata(path) is None or not _valid_manifest_path(path) for path in declared)
+    ):
+        raise ValueError("dependency manifest policy has invalid or duplicate sources")
+    by_path: dict[str, VerifiedManifestBytes] = {}
+    for file in files:
+        if not isinstance(file, VerifiedManifestBytes) or not _valid_manifest_path(file.path):
+            raise ValueError("invalid verified manifest bytes")
+        if file.path in by_path:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "recipient manifest contains duplicate paths",
+                detail_code="recipient_manifest_bytes_mismatch_v1",
+            )
+        expected_digest = f"sha256:{hashlib.sha256(file.content).hexdigest()}"
+        if type(file.byte_length) is not int or file.byte_length != len(file.content) or file.sha256 != expected_digest:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                f"recipient manifest bytes do not match {file.path}",
+                detail_code="recipient_manifest_bytes_mismatch_v1",
+            )
+        by_path[file.path] = file
+
+    sources: list[ManifestDependencySource] = []
+    diagnostics: list[ManifestDependencyDiagnostic] = []
+    declared_set = frozenset(declared)
+    for path in sorted(by_path):
+        if _manifest_source_metadata(path) is not None and path not in declared_set:
+            diagnostics.append(
+                _manifest_diagnostic(path, ManifestDiagnosticKind.SKIPPED, "<source>")
+            )
+    for path in sorted(declared):
+        current_file = by_path.get(path)
+        if current_file is None:
+            diagnostics.append(_manifest_diagnostic(path, ManifestDiagnosticKind.ABSENT, "<source>"))
+            continue
+        source = _parse_manifest_source(current_file)
+        sources.append(source)
+        diagnostics.extend(source.diagnostics)
+    return ManifestDependencyResult(
+        sources=tuple(sorted(sources, key=lambda item: item.path)),
+        diagnostics=tuple(sorted(diagnostics)),
+    )
 
 
 def detect_installed_version_with_source(
@@ -513,8 +905,15 @@ def detect_installed_version(
 __all__ = [
     "DependencyClosure",
     "DependencyEdge",
+    "DependencyManifestPolicy",
     "DetectedVersion",
+    "ManifestDependencyDiagnostic",
+    "ManifestDependencyResult",
+    "ManifestDependencySource",
+    "ManifestDiagnosticKind",
+    "VerifiedManifestBytes",
     "dependency_closures",
+    "dependency_closures_from_manifest",
     "detect_installed_version",
     "detect_installed_version_with_source",
 ]

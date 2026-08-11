@@ -1754,6 +1754,7 @@ def main(
     ] = _build_default_benchmark_runner,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    _exit_windows_doctor_success: bool = False,
 ) -> int:
     """Parse one command and wire resolver -> engine -> report."""
 
@@ -1790,7 +1791,13 @@ def main(
             stdout=out,
         )
         if result == int(ExitCode.SUCCESS):
-            return successful()
+            result = successful()
+            if _exit_windows_doctor_success and os.name == "nt":
+                # Py_RunMain changes a successful status to 120 when
+                # Py_FinalizeEx cannot flush Windows stdout.  Doctor has
+                # already flushed and redirected stdout, so bypass shutdown.
+                os._exit(result)
+            return result
         return result
 
     if args.command == "bench":
@@ -1979,8 +1986,13 @@ def main(
     return successful()
 
 
+def _process_main() -> int:
+    """Run the CLI with process-only shutdown handling enabled."""
+    return main(_exit_windows_doctor_success=True)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_process_main())
 
 
 __all__ = [

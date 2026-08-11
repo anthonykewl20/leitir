@@ -6,10 +6,19 @@ import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
+import pytest
+
+import leitir.adapters.python_ast as python_ast_module
 from leitir.adapters import MatchMethod, PythonAdapter
-from leitir.adapters.python_ast import PythonAstAdapter
+from leitir.adapters.python_ast import (
+    LexicalClassification,
+    PythonAstAdapter,
+    PythonAstSpanMatch,
+)
 from leitir.adapters.registry import build_adapters
+from leitir.apisurface import extract_api_surface
 from leitir.engine import ScopedSearcher
 from leitir.search import (
     CoverageStatus,
@@ -98,6 +107,93 @@ def test_structural_matches_have_ast_provenance_and_stable_positions() -> None:
         )
     assert observed == sorted(
         observed, key=lambda item: (item[0], item[1] or -1, item[2])
+    )
+
+
+def test_loaded_names_have_per_scope_symtable_classification() -> None:
+    content = textwrap.dedent(
+        """\
+        import os
+        module_value = 1
+        module_result = module_value
+        def outer(parameter):
+            local_value = parameter
+            def inner():
+                return parameter + module_value + len([]) + os.sep + missing
+            return local_value
+        class Holder:
+            class_value = 2
+            reflected = class_value
+        """
+    )
+
+    expected = {
+        ("module_value", 3): LexicalClassification.LOCAL_ASSIGNED,
+        ("parameter", 5): LexicalClassification.PARAMETER,
+        ("parameter", 7): LexicalClassification.FREE,
+        ("module_value", 7): LexicalClassification.GLOBAL,
+        ("len", 7): LexicalClassification.BUILTIN,
+        ("os", 7): LexicalClassification.IMPORTED,
+        ("missing", 7): LexicalClassification.GLOBAL,
+        ("local_value", 8): LexicalClassification.LOCAL_ASSIGNED,
+        ("class_value", 11): LexicalClassification.LOCAL_ASSIGNED,
+    }
+    for (name, line), classification in expected.items():
+        result = _ast_adapter().find_matches_ex(
+            content, (_predicate(PredicateKind.SYMBOL_REFERENCE, name),)
+        )
+        span = next(span for span in result.spans if span.start_line == line)
+        assert isinstance(span, PythonAstSpanMatch)
+        assert span.method is MatchMethod.AST
+        assert [
+            detail.classification
+            for detail in span.reference_provenance
+            if detail.name == name
+        ] == [classification]
+
+
+def test_symtable_failure_keeps_ast_references_unknown_and_marks_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_symtable(content: str, filename: str = "<unknown>") -> object:
+        raise RuntimeError("injected symtable failure")
+
+    monkeypatch.setattr(python_ast_module, "python_symtable", fail_symtable)
+    content = "result = target\n"
+    predicate = _predicate(PredicateKind.SYMBOL_REFERENCE, "target")
+
+    result = _ast_adapter().find_matches_ex(content, (predicate,))
+    assert result.parser_unavailable is True
+    assert len(result.spans) == 1
+    span = result.spans[0]
+    assert isinstance(span, PythonAstSpanMatch)
+    assert span.method is MatchMethod.AST
+    assert tuple(
+        detail.classification for detail in span.reference_provenance
+    ) == (LexicalClassification.UNKNOWN,)
+    report = _search(content, predicate)
+    assert report.coverage.status is CoverageStatus.PARTIAL
+    assert report.matches
+
+
+def test_symtable_helper_keeps_apisurface_json_byte_compatible(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text(
+        "def public(value: int = 1) -> str:\n    return str(value)\n",
+        encoding="utf-8",
+    )
+
+    encoded = json.dumps(
+        extract_api_surface(tmp_path, "python"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    assert encoded == (
+        '{"methods":["ast"],"modules":[{"docstring":null,"method":"ast",'
+        '"name":"sample","path":"sample.py"}],"schema_version":1,"symbols":'
+        '[{"docstring":null,"kind":"function","line":1,"method":"ast",'
+        '"module":"sample","name":"public","path":"sample.py",'
+        '"qualified_name":"sample.public","signature":"(value: int = 1) -> str"}]}'
     )
 
 
@@ -215,7 +311,7 @@ def test_registry_selects_ast_adapter_without_changing_default_order() -> None:
     assert tuple(adapter.language for adapter in ast_adapters) == default_languages
 
 
-def test_scoped_ast_json_is_hash_seed_independent() -> None:
+def test_symtable_classification_is_hash_seed_independent() -> None:
     script = textwrap.dedent(
         """\
         import hashlib
@@ -226,7 +322,9 @@ def test_scoped_ast_json_is_hash_seed_independent() -> None:
         from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
         from leitir.tree import BlobEntry
 
-        content = b"def build():\\n    return 1\\nbuild()\\n"
+        import json
+
+        content = b"import os\\ndef build(value):\\n    return len(value) + os.sep\\nbuild([])\\n"
         blob = hashlib.sha1(b"blob %d\\x00" % len(content) + content).hexdigest()
         class Tree:
             def list_blobs_ex(self, slug, commit_sha):
@@ -234,14 +332,26 @@ def test_scoped_ast_json_is_hash_seed_independent() -> None:
             def read_blob(self, slug, blob_sha):
                 return content
         leitir.engine._utc_now = lambda: "2026-08-10T00:00:00Z"
-        report = ScopedSearcher(Tree(), (PythonAstAdapter(PythonAdapter()),)).search(
+        adapter = PythonAstAdapter(PythonAdapter())
+        report = ScopedSearcher(Tree(), (adapter,)).search(
             SearchSpec(
                 mode=SearchMode.SCOPED_EXHAUSTIVE,
                 must=(Predicate(PredicateKind.CALL, "build"),),
                 scopes=(RepoScope("owner/repo", "a" * 40),),
             )
         )
-        print(report.to_json(indent=None))
+        lexical = []
+        for name in ("len", "os", "value"):
+            result = adapter.find_matches_ex(
+                content.decode(),
+                (Predicate(PredicateKind.SYMBOL_REFERENCE, name),),
+            )
+            lexical.extend(
+                (detail.name, detail.classification.value, detail.start_col)
+                for span in result.spans
+                for detail in span.reference_provenance
+            )
+        print(json.dumps({"report": json.loads(report.to_json(indent=None)), "lexical": lexical}))
         """
     )
     outputs = []

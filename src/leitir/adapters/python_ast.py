@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import ast
+import builtins
+import symtable
+from dataclasses import dataclass
+from enum import StrEnum
 
 from leitir._python_ast import (
     parse_python,
     python_signature,
+    python_symtable,
 )
 from leitir.adapters import (
     AdapterMatchResult,
@@ -23,6 +28,137 @@ _STRUCTURAL_KINDS = frozenset(
         PredicateKind.SIGNATURE,
     }
 )
+
+_BUILTIN_NAMES = frozenset(vars(builtins))
+
+
+class LexicalClassification(StrEnum):
+    BUILTIN = "builtin"
+    GLOBAL = "global"
+    LOCAL_ASSIGNED = "local/assigned"
+    PARAMETER = "parameter"
+    FREE = "free"
+    IMPORTED = "imported"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceProvenance:
+    name: str
+    classification: LexicalClassification
+    start_col: int | None
+    end_col: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class PythonAstSpanMatch(SpanMatch):
+    """AST span with optional lexical detail for loaded-name references."""
+
+    reference_provenance: tuple[ReferenceProvenance, ...] = ()
+
+
+class _NameScopeVisitor(ast.NodeVisitor):
+    def __init__(self, root: symtable.SymbolTable) -> None:
+        self._scope = root
+        self.scopes: dict[ast.Name, symtable.SymbolTable] = {}
+        self._used_tables: set[int] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.scopes[node] = self._scope
+
+    def _child(self, name: str, lineno: int) -> symtable.SymbolTable | None:
+        for child in self._scope.get_children():
+            child_id = child.get_id()
+            if (
+                child_id not in self._used_tables
+                and child.get_name() == name
+                and child.get_lineno() == lineno
+            ):
+                self._used_tables.add(child_id)
+                return child
+        return None
+
+    def _visit_in(self, table: symtable.SymbolTable | None, nodes: list[ast.AST]) -> None:
+        previous = self._scope
+        if table is not None:
+            self._scope = table
+        for node in nodes:
+            self.visit(node)
+        self._scope = previous
+
+    def _visit_function(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        ):
+            if argument.annotation is not None:
+                self.visit(argument.annotation)
+        if node.args.vararg is not None and node.args.vararg.annotation is not None:
+            self.visit(node.args.vararg.annotation)
+        if node.args.kwarg is not None and node.args.kwarg.annotation is not None:
+            self.visit(node.args.kwarg.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+        self._visit_in(self._child(node.name, node.lineno), list(node.body))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expression in (*node.decorator_list, *node.bases):
+            self.visit(expression)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+        self._visit_in(self._child(node.name, node.lineno), list(node.body))
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        self._visit_in(self._child("lambda", node.lineno), [node.body])
+
+    def _visit_comprehension(
+        self,
+        node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+        name: str,
+        result_nodes: list[ast.AST],
+    ) -> None:
+        first, *remaining = node.generators
+        self.visit(first.iter)
+        child = self._child(name, node.lineno)
+        scoped_nodes: list[ast.AST] = [first.target, *first.ifs]
+        for generator in remaining:
+            scoped_nodes.extend((generator.iter, generator.target, *generator.ifs))
+        scoped_nodes.extend(result_nodes)
+        self._visit_in(child, scoped_nodes)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(node, "listcomp", [node.elt])
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension(node, "setcomp", [node.elt])
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension(node, "dictcomp", [node.key, node.value])
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension(node, "genexpr", [node.elt])
 
 
 class PythonAstAdapter:
@@ -77,6 +213,17 @@ class PythonAstAdapter:
                 ),
                 parser_unavailable=True,
             )
+        parser_unavailable = False
+        reference_provenance: dict[ast.Name, ReferenceProvenance] = {}
+        try:
+            symbols = python_symtable(content)
+        except Exception:
+            # The AST remains useful, but completeness requires both parser-backed
+            # structure and the promised lexical classification.
+            parser_unavailable = True
+            reference_provenance = self._unknown_reference_provenance(tree)
+        else:
+            reference_provenance = self._reference_provenance(tree, symbols)
         lines = content.split("\n")
         if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
             lines.pop()
@@ -101,13 +248,92 @@ class PythonAstAdapter:
                         existing.append(node)
             hits.append(predicate_hits)
         if any(not predicate_hits for predicate_hits in hits):
-            return AdapterMatchResult(())
+            return AdapterMatchResult((), parser_unavailable=parser_unavailable)
         selected_lines = (
             set().union(*(set(predicate_hits) for predicate_hits in hits))
             if whole_file
             else set.intersection(*(set(predicate_hits) for predicate_hits in hits))
         )
-        return AdapterMatchResult(self._spans_for_lines(selected_lines, must, hits))
+        return AdapterMatchResult(
+            self._spans_for_lines(
+                selected_lines, must, hits, reference_provenance
+            ),
+            parser_unavailable=parser_unavailable,
+        )
+
+    def _unknown_reference_provenance(
+        self, tree: ast.Module
+    ) -> dict[ast.Name, ReferenceProvenance]:
+        return {
+            node: self._provenance(node, LexicalClassification.UNKNOWN)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+
+    def _reference_provenance(
+        self, tree: ast.Module, symbols: symtable.SymbolTable
+    ) -> dict[ast.Name, ReferenceProvenance]:
+        visitor = _NameScopeVisitor(symbols)
+        visitor.visit(tree)
+        return {
+            node: self._provenance(
+                node, self._classify_reference(node.id, table, symbols)
+            )
+            for node, table in sorted(
+                visitor.scopes.items(),
+                key=lambda item: (
+                    item[0].lineno,
+                    item[0].col_offset,
+                    item[0].id,
+                ),
+            )
+        }
+
+    def _classify_reference(
+        self,
+        name: str,
+        table: symtable.SymbolTable,
+        module: symtable.SymbolTable,
+    ) -> LexicalClassification:
+        try:
+            symbol = table.lookup(name)
+        except KeyError:
+            return LexicalClassification.UNKNOWN
+        if symbol.is_parameter():
+            return LexicalClassification.PARAMETER
+        if symbol.is_imported():
+            return LexicalClassification.IMPORTED
+        if symbol.is_free():
+            return LexicalClassification.FREE
+        if symbol.is_local() or symbol.is_assigned():
+            return LexicalClassification.LOCAL_ASSIGNED
+        if symbol.is_global():
+            try:
+                module_symbol = module.lookup(name)
+            except KeyError:
+                module_symbol = None
+            if module_symbol is not None and module_symbol.is_imported():
+                return LexicalClassification.IMPORTED
+            module_bound = module_symbol is not None and (
+                module_symbol.is_local()
+                or module_symbol.is_assigned()
+                or module_symbol.is_parameter()
+            )
+            if not module_bound and name in _BUILTIN_NAMES:
+                return LexicalClassification.BUILTIN
+            return LexicalClassification.GLOBAL
+        return LexicalClassification.UNKNOWN
+
+    def _provenance(
+        self, node: ast.Name, classification: LexicalClassification
+    ) -> ReferenceProvenance:
+        end_col = getattr(node, "end_col_offset", None)
+        return ReferenceProvenance(
+            name=node.id,
+            classification=classification,
+            start_col=node.col_offset,
+            end_col=end_col if isinstance(end_col, int) else None,
+        )
 
     def _candidates(self, node: ast.AST) -> dict[PredicateKind, tuple[str, ...]]:
         candidates: dict[PredicateKind, tuple[str, ...]] = {}
@@ -191,6 +417,7 @@ class PythonAstAdapter:
         selected_lines: set[int],
         predicates: tuple[Predicate, ...],
         hits: list[dict[int, list[ast.AST] | None]],
+        reference_provenance: dict[ast.Name, ReferenceProvenance],
     ) -> tuple[SpanMatch, ...]:
         spans: list[SpanMatch] = []
         for line in sorted(selected_lines):
@@ -218,8 +445,24 @@ class PythonAstAdapter:
                 and isinstance((col := getattr(node, "end_col_offset", None)), int)
             ]
             coherent_end_cols = len(end_cols) == len(nodes)
+            provenance = tuple(
+                sorted(
+                    {
+                        reference_provenance[node]
+                        for node in nodes
+                        if isinstance(node, ast.Name)
+                        and node in reference_provenance
+                    },
+                    key=lambda detail: (
+                        detail.start_col,
+                        detail.end_col if detail.end_col is not None else -1,
+                        detail.name,
+                        detail.classification.value,
+                    ),
+                )
+            )
             spans.append(
-                SpanMatch(
+                PythonAstSpanMatch(
                     start_line=line,
                     end_line=line,
                     matched_kinds=tuple(sorted(kinds, key=lambda kind: kind.value)),
@@ -228,6 +471,7 @@ class PythonAstAdapter:
                         max(end_cols) if end_cols and coherent_end_cols else None
                     ),
                     method=(MatchMethod.HEURISTIC if heuristic else MatchMethod.AST),
+                    reference_provenance=provenance,
                 )
             )
         return tuple(spans)

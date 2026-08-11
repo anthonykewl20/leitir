@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import ast
+import symtable
 
 
 def parse_python(content: str, filename: str = "<unknown>") -> ast.Module:
     return ast.parse(content, filename=filename)
+
+
+def python_symtable(
+    content: str, filename: str = "<unknown>"
+) -> symtable.SymbolTable:
+    return symtable.symtable(content, filename, "exec")
 
 
 def python_unparse(node: ast.AST | None) -> str | None:

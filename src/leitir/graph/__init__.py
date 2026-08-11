@@ -18,8 +18,10 @@ from leitir.graph.model import (
     UnresolvedEdge,
     build_from_api_index,
 )
+from leitir.graph.python import GRAMMAR_ID, StaticExtraction, extract_static_edges
 
 __all__ = [
+    "GRAMMAR_ID",
     "GRAPH_SCHEMA_VERSION",
     "Edge",
     "EdgeKind",
@@ -32,6 +34,8 @@ __all__ = [
     "NodeKind",
     "NodeOrigin",
     "SourceRef",
+    "StaticExtraction",
     "UnresolvedEdge",
     "build_from_api_index",
+    "extract_static_edges",
 ]

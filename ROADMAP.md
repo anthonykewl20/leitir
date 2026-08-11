@@ -2,7 +2,7 @@
 
 ## Versioning philosophy
 
-- **v0.x** — active incremental development following SemVer. Patch releases (0.1.1, 0.1.2, ...) address audit findings, bug fixes, and incremental progress toward production-ready quality. A minor bump (0.2.0) is reserved for a real feature or behavior milestone, not routine audit work. Breaking changes are permitted within 0.x (pre-1.0) and must be called out in the changelog.
+- **v0.x** — active incremental development following SemVer. Patch releases (0.1.1, 0.1.2, 0.1.3, ...) carry **all** incremental work on the path to production-ready quality: audit findings, bug fixes, **and** feature/behavior increments alike (e.g. the Behavioral Transplant Set, composition/multi-language, Search v2). The patch number is an incrementing counter per thematic milestone, not a "bugfix-only" gate; under pre-1.0 SemVer anything may change and breaking changes are permitted, but must be called out in the changelog. There is no currently planned minor bump (0.2.0); if one is ever cut it would denote a deliberate compatibility boundary within 0.x, not a feature gate.
 - **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x series when the Critical/High audit findings are resolved, the self-scorecard passes, and real load testing confirms behavior at scale. The README's "Not production-ready" line changes when the quality bar is met, not when a specific version is cut.
 - **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a feature or quality milestone. v1.0 happens when the community demonstrates the project has earned the stability commitment that SemVer 1.0 implies. Until then, we ship 0.x.
 
@@ -26,7 +26,7 @@
 
 ## Current status
 
-v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** See milestone [v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1) for the next incremental step.
+v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The next thematic increment is [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2).
 
 ## Recently shipped
 
@@ -37,9 +37,9 @@ v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, 
 - ADR-002: deterministic evidence scoring engine (standalone repository scorer)
 - ADR-001: deterministic code-search kernel
 
-## Active work — [v0.1.1 milestone](https://github.com/anthonykewl20/leitir/milestone/1)
+## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
-Track at epic #42. Critical items must close before claiming "production-ready" quality; they do not gate the v0.1.1 version number itself (0.1.1 can ship with partial progress).
+Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are **closed**; what remains open in epic #42 are the human gates (external dogfood run, real ≥100-package load test, final human security sign-off) that must close before claiming the "production-ready" quality label. These gates do not gate the v0.1.1 version number itself.
 
 ### Critical (blocks the "production-ready" quality label)
 
@@ -69,6 +69,12 @@ Track at epic #42. Critical items must close before claiming "production-ready" 
 - #38 Add a CI coverage-regression gate.
 - #39 Close the load-time verification TOCTOU window with corpus-wide locking.
 
+## Next milestones (incremental, shipped as patch releases)
+
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (24 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description.
+- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (8 open): candidate composition (conflict matrix, architecture compatibility, duplicate abstraction, integration cost), lineage/upstream tracking, multi-language graph via tree-sitter, and occupied-recipient transplant validation.
+- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (12 open): local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. (This milestone currently holds the `ready-for-agent` issues.)
+
 ## Post-production-ready (still v0.x)
 
 - #40 Manifest authenticity (TUF/signatures) — adversarial threat model, separate from corruption detection
@@ -87,4 +93,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: pick an issue from the [v0.1.1 milestone](https://github.com/anthonykewl20/leitir/milestone/1) labeled `ready-for-agent` or `help wanted`.
+Humans: pick an issue from the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) labeled `ready-for-agent` or `help wanted` (Search v2 `ready-for-agent` work currently lives in [v0.1.4](https://github.com/anthonykewl20/leitir/milestone/4)).

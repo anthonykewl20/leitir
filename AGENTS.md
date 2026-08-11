@@ -2,9 +2,9 @@
 
 ## Where to find tracked work
 
-- **v0.1.1 milestone**: https://github.com/anthonykewl20/leitir/milestone/1
-- Pull available work with: `gh issue list --milestone "v0.1.1" --label ready-for-agent --state open`
-- The release-criteria epic is #42; read it first. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
+- **Current milestone: v0.1.2 (Behavioral Transplant Set)**: https://github.com/anthonykewl20/leitir/milestone/2
+- Pull available work with: `gh issue list --label ready-for-agent --state open` (the ready-for-agent pool currently lives in the v0.1.4 / Search v2 milestone, https://github.com/anthonykewl20/leitir/milestone/4; v0.1.2 / BTS issues are not yet sliced into ready-for-agent work)
+- Production-ready quality criteria stay tracked in epic #42 under the v0.1.1 milestone (all engineering issues closed; human gates remain). v0.1.2 carries the Behavioral Transplant Set (BTS) program — its exit criterion is in the milestone description. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
 

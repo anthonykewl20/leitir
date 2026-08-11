@@ -4,9 +4,9 @@ All notable changes to leitir will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
-within the 0.x series, patch releases (0.1.1, 0.1.2, ...) ship audit fixes and
-incremental work, while a minor bump (0.2.0) marks a feature or behavior milestone.
-Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
+within the 0.x series, patch releases (0.1.1, 0.1.2, ...) carry all incremental
+work — audit fixes, bug fixes, and feature/behavior increments alike. Breaking
+changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 <!-- leitir-sync-changelog start -->
 

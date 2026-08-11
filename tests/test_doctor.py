@@ -19,6 +19,21 @@ from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fiel
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _isolated_environment(home: Path) -> dict[str, str]:
+    environment = {
+        "CI": "true",
+        "HOME": str(home),
+        # pathlib.expanduser() uses USERPROFILE rather than HOME on Windows.
+        "USERPROFILE": str(home),
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(_REPOSITORY_ROOT / "src"),
+    }
+    # Windows requires SystemRoot in a replacement subprocess environment.
+    if system_root := os.environ.get("SYSTEMROOT"):
+        environment["SYSTEMROOT"] = system_root
+    return environment
+
+
 def _doctor_subprocess(
     home: Path,
     *,
@@ -26,13 +41,8 @@ def _doctor_subprocess(
     leitir_home: Path | None = None,
     source_date_epoch: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    environment = {
-        "CI": "true",
-        "HOME": str(home),
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONHASHSEED": seed,
-        "PYTHONPATH": str(_REPOSITORY_ROOT / "src"),
-    }
+    environment = _isolated_environment(home)
+    environment["PYTHONHASHSEED"] = seed
     if leitir_home is not None:
         environment["LEITIR_HOME"] = str(leitir_home)
     if source_date_epoch is not None:
@@ -137,12 +147,7 @@ def test_doctor_json_is_hash_seed_deterministic(tmp_path: Path) -> None:
 def test_doctor_closed_stdout_pipe_does_not_crash(tmp_path: Path) -> None:
     home = tmp_path / "isolated-home"
     home.mkdir()
-    environment = {
-        "CI": "true",
-        "HOME": str(home),
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONPATH": str(_REPOSITORY_ROOT / "src"),
-    }
+    environment = _isolated_environment(home)
     process = subprocess.Popen(
         [sys.executable, "-m", "leitir.cli", "doctor", "--no-network"],
         cwd=_REPOSITORY_ROOT,

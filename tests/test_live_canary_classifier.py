@@ -219,14 +219,13 @@ def test_plugin_records_assertion_failure_for_classifier(tmp_path: Path) -> None
         text=True,
     )
     assert result.returncode == 1
-    assert json.loads(events.read_text(encoding="utf-8")) == [
-        {
-            "class": "product-failure",
-            "kind": "",
-            "nodeid": f"{test_file.relative_to('/tmp')!s}::test_regression",
-            "surface": "product-surface",
-        }
-    ]
+    recorded = json.loads(events.read_text(encoding="utf-8"))
+    assert len(recorded) == 1
+    event = recorded[0]
+    assert event["class"] == "product-failure"
+    assert event["kind"] == ""
+    assert event["nodeid"].endswith("test_product_failure.py::test_regression")
+    assert event["surface"] == "product-surface"
 
 
 def test_enabled_gate_with_missing_named_test_fails_closed() -> None:

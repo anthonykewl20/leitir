@@ -1,7 +1,7 @@
 # ADR-0009: Transplant validation
 
 - Status: Accepted
-- Implementation: in-progress (B6, E1, S2 complete; E2, E3, E4a, E4b pending)
+- Implementation: in-progress (B6, E1, S2, E3 complete; E2, E4a, E4b pending)
 - Deciders: leitir maintainers; consensus reviewers (consensus-luna, consensus-terra)
 - Date: 2026-08-11
 - Technical Story: Epic #52; B6, E1, E2, E3, E4a, E4b, and S2 (#55, #60-#64, #73)

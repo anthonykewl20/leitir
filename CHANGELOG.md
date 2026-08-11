@@ -72,6 +72,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
 - GitLab subgroup (nested group) project support (`corpus`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
+- keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)

@@ -27,6 +27,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add end-to-end walking skeleton pipeline + test (E4a, #55) (`bts`)
 - add error taxonomy and typed graph model (`bts`)
 - add import-rewrite test relocator (E1, #61) (`bts`)
+- add independent-dimension best-3 comparison with incomparable-comparator (C3b, #70) (`bts`)
 - add leitir agent skill for the corpus workflow (`corpus`)
 - add Linux-only nsjail donor-execution containment (S2, #62) (`bts`)
 - add maintainer-pinned behavioral probes over TESTED_BY edges (E3, #64) (`bts`)

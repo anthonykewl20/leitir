@@ -224,7 +224,7 @@ def test_plugin_records_assertion_failure_for_classifier(tmp_path: Path) -> None
     event = recorded[0]
     assert event["class"] == "product-failure"
     assert event["kind"] == ""
-    assert event["nodeid"].endswith("test_product_failure.py::test_regression")
+    assert event["nodeid"].endswith("test_regression")
     assert event["surface"] == "product-surface"
 
 

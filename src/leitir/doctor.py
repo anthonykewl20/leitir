@@ -619,9 +619,11 @@ def run_doctor(*, as_json: bool = False, quiet: bool = False, no_network: bool =
             _write_human(checks, out, quiet=quiet)
         out.flush()
     except BrokenPipeError:
-        # Diagnostics completed successfully; a downstream reader choosing to close
-        # early does not turn a healthy environment into a doctor failure.
-        _silence_broken_stdout(out)
+        pass
+    # Redirect a broken process stdout to devnull before interpreter shutdown
+    # so CPython's C-level flush cannot turn a closed pipe into exit 120
+    # (notably on Windows). No-op when stdout is captured (fileno mismatch).
+    _silence_broken_stdout(out)
     return _exit_code(checks)
 
 

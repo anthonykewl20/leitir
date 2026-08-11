@@ -66,7 +66,11 @@ sha256sum "$INSTALL_PATH" | cut -d' ' -f1
 
 # exec_sandbox._verify_backend captures stdout and stderr together and hashes
 # every byte, including the final newline. Preserve that exact representation.
+set +e
 "$INSTALL_PATH" --version >"$version_output" 2>&1
+version_exit=$?
+set -e
+printf 'nsjail --version exit code: %s\n' "$version_exit"
 printf 'nsjail --version merged output byte count: '
 wc -c <"$version_output"
 printf 'nsjail --version merged output SHA-256: '

@@ -456,9 +456,14 @@ def _validate_relocation(relocation: Relocation) -> None:
         raise ValueError("unsupported relocation schema")
     if not _valid_digest(relocation.bts_digest) or not _valid_digest(relocation.relocation_digest):
         raise ValueError("relocation identity is malformed")
-    required = {"staging-v1/src", "staging-v1/probes"}
     realized = {item.logical_path for item in relocation.rerun_mounts if item.read_only and not item.donor_present}
-    if not required <= realized or any(item.donor_present for item in relocation.rerun_mounts):
+    required_roots = ("staging-v1/src", "staging-v1/probes")
+    if any(
+        not any(path == root or path.startswith(root + "/") for path in realized)
+        for root in required_roots
+    ) or any(
+        item.donor_present for item in relocation.rerun_mounts
+    ):
         raise ValueError("probe rerun mount plan does not attest donor absence")
     if relocation.rerun_mounts != tuple(sorted(relocation.rerun_mounts)):
         raise ValueError("rerun mount plan is not canonical")

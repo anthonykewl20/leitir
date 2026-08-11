@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import PurePosixPath
 
 from leitir.bts import BTS, BTSResult, BTSStatus
+from leitir.bts import _digest as _bts_digest
 from leitir.bts_errors import BTSRejectReason, TransplantError
 from leitir.exec_sandbox import (
     ContainmentPolicy,
@@ -369,6 +370,7 @@ def _reject(reason: BTSRejectReason, message: str, detail: str) -> TransplantErr
 
 
 def _validated_bts(value: BTS | BTSResult) -> BTS:
+    bare = isinstance(value, BTS)
     if isinstance(value, BTSResult):
         if value.status is not BTSStatus.COMPLETE or value.report.status is not BTSStatus.COMPLETE or value.bts is None:
             raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "only a COMPLETE BTS may be rerun", "rerun_non_complete_bts_v1")
@@ -376,6 +378,14 @@ def _validated_bts(value: BTS | BTSResult) -> BTS:
     if not isinstance(value, BTS):
         raise TypeError("bts must be a BTS or BTSResult")
     _digest(value.bts_digest, "bts_digest")
+    _digest(value.member_equivalence_digest, "member_equivalence_digest")
+    equivalence = _bts_digest(value, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
+    if bare and value.member_equivalence_digest != equivalence:
+        raise _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "bare BTS identity does not match its canonical records",
+            "rerun_bts_identity_v1",
+        )
     return value
 
 
@@ -388,9 +398,16 @@ def _mount_plan_has_donor(policy: RerunExecutionPolicy) -> bool:
 
 
 def _mount_plan_covers_relocation(relocation: Relocation, policy: RerunExecutionPolicy) -> bool:
-    destinations = {mount.destination for mount in policy.containment.readonly_mounts}
-    expected = {f"/{authorization.logical_path}" for authorization in relocation.rerun_mounts}
-    return expected <= destinations
+    mounts = {mount.destination: mount for mount in policy.containment.readonly_mounts}
+    if len(mounts) != len(policy.containment.readonly_mounts):
+        return False
+    files = {item.path: item for item in relocation.files}
+    for authorization in relocation.rerun_mounts:
+        relocated = files.get(authorization.logical_path)
+        mount = mounts.get(f"/{authorization.logical_path}")
+        if relocated is None or mount is None or mount.source_digest != relocated.sha256:
+            return False
+    return True
 
 
 def _duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:

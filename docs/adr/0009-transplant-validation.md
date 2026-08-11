@@ -225,7 +225,7 @@ Both generated nsjail configs must explicitly set and the controller must verify
 - `mode: ONCE` and `keep_env: false`;
 - `clone_newnet`, `clone_newuser`, `clone_newns`, `clone_newpid`,
   `clone_newipc`, and `clone_newuts` to `true`;
-- no owned/macvlan/user network interface or route, and `iface_no_lo: false` so
+- no owned/macvlan/user network interface or route, and `iface_no_lo: true` so
   loopback is not brought up under nsjail's config-schema semantics;
 - positive `cgroup_mem_max`, `cgroup_pids_max`, and
   `cgroup_cpu_ms_per_sec`, using a verified cgroup v2 hierarchy;

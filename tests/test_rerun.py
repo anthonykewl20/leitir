@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 from leitir.bts import BTS, BTSDisposition, MemberEvidence, RequiredFileEvidence, RequiredSymbolEvidence
-from leitir.bts_errors import BTSRejectReason
+from leitir.bts import _digest as _bts_digest
+from leitir.bts_errors import BTSRejectReason, TransplantError
 from leitir.exec_sandbox import (
     POLICY_SCHEMA,
     ContainmentPolicy,
@@ -21,7 +22,7 @@ from leitir.exec_sandbox import (
     ValidationAbortEnvelope,
 )
 from leitir.graph.model import NodeId, NodeKind, NodeOrigin, SourceRef
-from leitir.relocate import ContractTest, ModuleMap, SourceFile, relocate_tests
+from leitir.relocate import ContractTest, ModuleMap, Relocation, SourceFile, relocate_tests
 from leitir.rerun import (
     RERUN_POLICY_SCHEMA_VERSION,
     RUNNER_FRAME_SCHEMA_VERSION,
@@ -53,7 +54,7 @@ def _fixture() -> tuple[BTS, object]:
     node = NodeId(NodeOrigin.DONOR, NodeKind.FUNCTION, "donor.mod", "f", "donor/mod.py:1")
     reference = SourceRef("owner/repo", "1" * 40, "donor/mod.py", "2" * 40, 1, 0, 2, 12)
     member = MemberEvidence(node, reference, _digest(source[:-1]), BTSDisposition.INCLUDE)
-    bts = BTS(
+    draft = BTS(
         "leitir-bts-v1",
         node,
         (member,),
@@ -62,6 +63,12 @@ def _fixture() -> tuple[BTS, object]:
         (RequiredSymbolEvidence(node, reference),),
         "sha256:" + "3" * 64,
         "sha256:" + "4" * 64,
+    )
+    bts = replace(
+        draft,
+        member_equivalence_digest=_bts_digest(
+            draft, omit=frozenset({"bts_digest", "member_equivalence_digest"})
+        ),
     )
     relocation = relocate_tests(
         bts,
@@ -72,16 +79,13 @@ def _fixture() -> tuple[BTS, object]:
     return bts, relocation
 
 
-def _containment(*, donor_mounted: bool = False) -> ContainmentPolicy:
+def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> ContainmentPolicy:
     root_digest = _digest(b"rootfs")
     mounts = [ReadOnlyMount("/", "/pinned/rootfs", root_digest)]
-    for logical in (
-        "staging-v1/manifests",
-        "staging-v1/probes",
-        "staging-v1/src",
-        "staging-v1/tests/rewritten",
-    ):
-        mounts.append(ReadOnlyMount(f"/{logical}", f"/relocated/{logical}", _digest(logical.encode())))
+    files = {item.path: item for item in relocation.files}
+    for authorization in relocation.rerun_mounts:
+        logical = authorization.logical_path
+        mounts.append(ReadOnlyMount(f"/{logical}", f"/relocated/{logical}", files[logical].sha256))
     if donor_mounted:
         mounts.append(ReadOnlyMount("/donor", "/snapshots/donor", _digest(b"donor")))
     ordered = tuple(sorted(mounts))
@@ -111,7 +115,7 @@ def _containment(*, donor_mounted: bool = False) -> ContainmentPolicy:
         128,
         "/work",
         "ONCE",
-        False,
+        True,
         True,
         True,
         True,
@@ -137,10 +141,10 @@ def _containment(*, donor_mounted: bool = False) -> ContainmentPolicy:
     )
 
 
-def _policy(*, donor_mounted: bool = False) -> RerunExecutionPolicy:
+def _policy(relocation: Relocation, *, donor_mounted: bool = False) -> RerunExecutionPolicy:
     return RerunExecutionPolicy(
         RERUN_POLICY_SCHEMA_VERSION,
-        _containment(donor_mounted=donor_mounted),
+        _containment(relocation, donor_mounted=donor_mounted),
         ("/usr/bin/python3", "-S", "-s", "-P", "/harness/runner.py"),
         _digest(b"runner-closure"),
         _digest(b"baseline-policy"),
@@ -182,7 +186,7 @@ def _result(frame: bytes) -> ExecutionResult:
 
 def _run(monkeypatch: pytest.MonkeyPatch, rerun_outcomes: tuple[OutcomeEvidence, ...], baseline_outcomes: tuple[OutcomeEvidence, ...], **frame_options: bool):
     bts, relocation = _fixture()
-    policy = _policy()
+    policy = _policy(relocation)
     monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: object())
     monkeypatch.setattr("leitir.rerun.run_contained", lambda plan, argv: _result(_frame(rerun_outcomes, **frame_options)))
     return rerun_transplant(relocation, bts, _baseline(baseline_outcomes), execution_policy=policy)
@@ -220,7 +224,7 @@ def test_same_id_transition_with_matching_counts_is_semantic_degradation(monkeyp
 
 def test_runner_failure_is_hard_gate_abort(monkeypatch: pytest.MonkeyPatch) -> None:
     bts, relocation = _fixture()
-    policy = _policy()
+    policy = _policy(relocation)
     monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: object())
     abort = ValidationAbortEnvelope(
         "leitir-validation-abort-v1", "execution", "donor", BTSRejectReason.REJECT_HARD_GATE_FAILED,
@@ -243,9 +247,32 @@ def test_observed_donor_import_is_terminal(monkeypatch: pytest.MonkeyPatch) -> N
 def test_donor_importable_mount_plan_is_terminal_without_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     bts, relocation = _fixture()
     monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: pytest.fail("must reject before launch"))
-    report = rerun_transplant(relocation, bts, _baseline(()), execution_policy=_policy(donor_mounted=True))
+    report = rerun_transplant(relocation, bts, _baseline(()), execution_policy=_policy(relocation, donor_mounted=True))
     assert isinstance(report, RerunReport)
     assert report.reason is BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED
+
+
+def test_rerun_rejects_mount_digest_not_bound_to_relocated_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    bts, relocation = _fixture()
+    policy = _policy(relocation)
+    target = next(mount for mount in policy.containment.readonly_mounts if mount.destination != "/")
+    mounts = tuple(
+        replace(mount, source_digest=_digest(b"wrong-relocated-bytes")) if mount == target else mount
+        for mount in policy.containment.readonly_mounts
+    )
+    policy = replace(policy, containment=replace(policy.containment, readonly_mounts=mounts))
+    monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: pytest.fail("must reject before launch"))
+    with pytest.raises(TransplantError) as caught:
+        rerun_transplant(relocation, bts, _baseline(()), execution_policy=policy)
+    assert caught.value.evidence.detail_code == "rerun_relocation_mount_missing_v1"
+
+
+def test_rerun_rejects_forged_bare_bts_identity() -> None:
+    bts, relocation = _fixture()
+    forged = replace(bts, member_equivalence_digest="sha256:" + "f" * 64)
+    with pytest.raises(TransplantError) as caught:
+        rerun_transplant(relocation, forged, _baseline(()), execution_policy=_policy(relocation))
+    assert caught.value.evidence.detail_code == "rerun_bts_identity_v1"
 
 
 def test_recorder_failure_is_hard_gate_abort(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,7 +283,8 @@ def test_recorder_failure_is_hard_gate_abort(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_policy_rejects_isolated_mode() -> None:
     with pytest.raises(ValueError, match="isolated mode"):
-        replace(_policy(), runner_argv=("/usr/bin/python3", "-I", "/harness/runner.py"))
+        bts, relocation = _fixture()
+        replace(_policy(relocation), runner_argv=("/usr/bin/python3", "-I", "/harness/runner.py"))
 
 
 def test_baseline_digest_tamper_rejects() -> None:
@@ -272,7 +300,7 @@ import leitir.rerun as rerun
 fixtures=runpy.run_path('tests/test_rerun.py')
 outcomes=(fixtures['_outcome']('tests/t.py::test_a::-',rerun.TestOutcome.PASS),)
 bts, relocation=fixtures['_fixture']()
-policy=fixtures['_policy']()
+policy=fixtures['_policy'](relocation)
 rerun.prepare_execution=lambda containment: object()
 rerun.run_contained=lambda plan, argv: fixtures['_result'](fixtures['_frame'](outcomes))
 report=rerun.rerun_transplant(relocation,bts,fixtures['_baseline'](outcomes),execution_policy=policy)

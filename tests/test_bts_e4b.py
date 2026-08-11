@@ -31,6 +31,7 @@ from tests.test_bts_skeleton import (
     TrustedFixtureExecution,
     _digest,
     _request,
+    _rerun_policy,
 )
 
 
@@ -81,6 +82,7 @@ class TrustedCorpusPipeline:
             source_files=request.source_files,
             tests=request.contract_tests,
         )
+        request = replace(request, rerun_execution_policy=_rerun_policy(relocation))
         execution = TrustedFixtureExecution(relocation, request.snapshot.source_root, remove_helper=donor == self.break_donor)
         original_prepare = rerun_module.prepare_execution
         original_run = rerun_module.run_contained

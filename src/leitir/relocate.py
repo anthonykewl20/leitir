@@ -22,7 +22,7 @@ from enum import Enum
 from itertools import pairwise
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from leitir.bts import BTS, BTSResult, BTSStatus, MemberEvidence
+from leitir.bts import BTS, BTSResult, BTSStatus, MemberEvidence, _digest
 from leitir.bts_errors import BTSError, BTSRejectReason
 
 RELOCATION_SCHEMA_VERSION = "leitir-bts-relocation-v1"
@@ -590,6 +590,7 @@ def _module_path(module: str) -> str:
 
 
 def _validate_bts(value: BTS | BTSResult) -> BTS:
+    bare = isinstance(value, BTS)
     if isinstance(value, BTSResult):
         if value.status is not BTSStatus.COMPLETE or value.report.status is not BTSStatus.COMPLETE or value.bts is None:
             raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "only a COMPLETE BTS may be relocated", "relocate_non_complete_bts_v1")
@@ -600,6 +601,13 @@ def _validate_bts(value: BTS | BTSResult) -> BTS:
         raise TypeError("relocate_tests requires a BTS or BTSResult")
     if bts.schema_version != "leitir-bts-v1" or _DIGEST.fullmatch(bts.bts_digest) is None or _DIGEST.fullmatch(bts.member_equivalence_digest) is None:
         raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "BTS identity is malformed", "relocate_bts_identity_v1")
+    equivalence = _digest(bts, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
+    if bare and bts.member_equivalence_digest != equivalence:
+        raise _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "bare BTS identity does not match its canonical records",
+            "relocate_bts_identity_v1",
+        )
     if not bts.members:
         raise _reject(BTSRejectReason.REJECT_UNDER_COLLECTION, "BTS has no relocatable members", "relocate_empty_bts_v1")
     return bts
@@ -703,7 +711,9 @@ def relocate_tests(
         ):
             raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "recipient module path collides", "relocate_module_collision_v1")
 
-    files: list[RelocatedFile] = []
+    files: list[RelocatedFile] = [
+        RelocatedFile(f"{RELOCATION_LAYOUT}/probes/.empty", FileRole.PROBE, b"")
+    ]
     for module in sorted(chunks):
         content = b"\n\n".join(chunk for _, chunk in sorted(chunks[module]))
         if not content.endswith(b"\n"):
@@ -769,15 +779,19 @@ def relocate_tests(
             raise _reject(BTSRejectReason.REJECT_DUPLICATE_RESULT, "relocation has a file/directory prefix collision", "relocate_output_prefix_collision_v1")
 
     baseline = tuple(sorted((MountAuthorization("donor", True, True), MountAuthorization(f"{RELOCATION_LAYOUT}/tests/original", True, False))))
+    rerun_prefixes = (
+        f"{RELOCATION_LAYOUT}/harness/",
+        f"{RELOCATION_LAYOUT}/manifests/",
+        f"{RELOCATION_LAYOUT}/probes/",
+        f"{RELOCATION_LAYOUT}/src/",
+        f"{RELOCATION_LAYOUT}/tests/rewritten/",
+    )
+    # File-granular authorizations make the S2 mount digest bind one exact E1
+    # file rather than ambiguously authorizing a directory tree.
     rerun = tuple(
-        sorted(
-            (
-                MountAuthorization(f"{RELOCATION_LAYOUT}/manifests", True, False),
-                MountAuthorization(f"{RELOCATION_LAYOUT}/probes", True, False),
-                MountAuthorization(f"{RELOCATION_LAYOUT}/src", True, False),
-                MountAuthorization(f"{RELOCATION_LAYOUT}/tests/rewritten", True, False),
-            )
-        )
+        MountAuthorization(item.path, True, False)
+        for item in ordered_files
+        if item.path.startswith(rerun_prefixes)
     )
     tree_identity = _canonical(
         {

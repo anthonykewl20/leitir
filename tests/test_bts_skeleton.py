@@ -107,12 +107,16 @@ def _resolution_policy() -> ResolutionPolicy:
     )
 
 
-def _containment() -> ContainmentPolicy:
+def _containment(relocation: Relocation | None = None) -> ContainmentPolicy:
     rootfs_digest = _digest(b"trusted-fixture-rootfs-placeholder")
     mounts = [ReadOnlyMount("/", "/pinned/rootfs", rootfs_digest)]
-    for logical in ("manifests", "probes", "src", "tests/rewritten"):
-        destination = f"/staging-v1/{logical}"
-        mounts.append(ReadOnlyMount(destination, f"/relocated/staging-v1/{logical}", _digest(destination.encode())))
+    if relocation is None:
+        logical_digests = ((f"staging-v1/{name}", _digest(f"/staging-v1/{name}".encode())) for name in ("manifests", "probes", "src", "tests/rewritten"))
+    else:
+        files = {item.path: item for item in relocation.files}
+        logical_digests = ((item.logical_path, files[item.logical_path].sha256) for item in relocation.rerun_mounts)
+    for logical, digest in logical_digests:
+        mounts.append(ReadOnlyMount(f"/{logical}", f"/relocated/{logical}", digest))
     ordered = tuple(sorted(mounts))
     mount_payload = {
         "readonly_mounts": [
@@ -140,7 +144,7 @@ def _containment() -> ContainmentPolicy:
         128,
         "/work",
         "ONCE",
-        False,
+        True,
         True,
         True,
         True,
@@ -166,10 +170,10 @@ def _containment() -> ContainmentPolicy:
     )
 
 
-def _rerun_policy() -> RerunExecutionPolicy:
+def _rerun_policy(relocation: Relocation | None = None) -> RerunExecutionPolicy:
     return RerunExecutionPolicy(
         RERUN_POLICY_SCHEMA_VERSION,
-        _containment(),
+        _containment(relocation),
         (sys.executable, "-S", "-s", "-P", "<trusted-fixture-runner>"),
         _digest(b"e4a-trusted-fixture-runner"),
         _digest(b"e4a-baseline-policy"),
@@ -351,6 +355,7 @@ def _run(root: Path, *, remove_helper: bool = False) -> tuple[BTSPipelineResult,
         tests=request.contract_tests,
     )
     execution = TrustedFixtureExecution(relocation, root, remove_helper=remove_helper)
+    request = replace(request, rerun_execution_policy=_rerun_policy(relocation))
     original_prepare = rerun_module.prepare_execution
     original_run = rerun_module.run_contained
     try:

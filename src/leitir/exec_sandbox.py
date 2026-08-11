@@ -31,6 +31,36 @@ RESULT_SCHEMA = "leitir-execution-result-v1"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 _MAX_POLICY_TEXT = 64 * 1024
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+_DENY_DEFAULT_ACTIONS = frozenset({"KILL", "ERRNO", "TRAP"})
+_FORBIDDEN_SYSCALLS = frozenset(
+    {
+        "accept",
+        "accept4",
+        "bind",
+        "bpf",
+        "connect",
+        "getpeername",
+        "getsockname",
+        "ioctl",
+        "keyctl",
+        "listen",
+        "mount",
+        "ptrace",
+        "reboot",
+        "recvfrom",
+        "recvmsg",
+        "sendmsg",
+        "sendto",
+        "setns",
+        "shutdown",
+        "socket",
+        "socketpair",
+        "umount",
+        "umount2",
+        "unshare",
+    }
+)
 
 
 def donor_execution_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -275,7 +305,7 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
         policy.clone_newipc,
         policy.clone_newuts,
     )
-    if any(value is not True for value in namespace_values) or policy.iface_no_lo is not False:
+    if any(value is not True for value in namespace_values) or policy.iface_no_lo is not True:
         raise _reject("required namespace or network control is not fully applied", "invalid_namespace_control")
     numeric = (
         policy.cgroup_mem_max,
@@ -297,27 +327,15 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
     if not policy.seccomp_string.strip() or len(policy.seccomp_string.encode("utf-8")) > _MAX_POLICY_TEXT:
         raise _reject("a bounded nonempty seccomp policy is required", "invalid_seccomp_policy")
     seccomp_upper = policy.seccomp_string.upper()
-    if "DEFAULT" not in seccomp_upper or not any(word in seccomp_upper for word in ("KILL", "ERRNO", "TRAP")):
+    defaults = re.findall(r"\bDEFAULT\s+([A-Z][A-Z0-9_]*)\b", seccomp_upper)
+    if not defaults or any(action not in _DENY_DEFAULT_ACTIONS for action in defaults):
         raise _reject("seccomp policy must declare default-deny behavior", "seccomp_not_default_deny")
-    forbidden_syscalls = (
-        "ACCEPT",
-        "BIND",
-        "BPF",
-        "CONNECT",
-        "IOCTL",
-        "KEYCTL",
-        "LISTEN",
-        "MOUNT",
-        "PTRACE",
-        "REBOOT",
-        "RECVFROM",
-        "SENDTO",
-        "SETNS",
-        "SOCKET",
-        "UMOUNT",
-        "UNSHARE",
-    )
-    if any(re.search(rf"\b{syscall}\w*\b", seccomp_upper) for syscall in forbidden_syscalls):
+    allowed_identifiers = {
+        item.lower()
+        for block in re.findall(r"\bALLOW\s*\{([^}]*)\}", policy.seccomp_string, flags=re.IGNORECASE | re.DOTALL)
+        for item in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", block)
+    }
+    if allowed_identifiers & _FORBIDDEN_SYSCALLS:
         raise _reject("seccomp allowlist mentions a policy-forbidden syscall", "seccomp_forbidden_syscall")
     digests = (policy.nsjail_sha256, policy.config_schema_digest, policy.rootfs_digest, policy.mount_plan_digest)
     if any(not _valid_digest(value) for value in digests):
@@ -381,7 +399,8 @@ def _render_config(policy: ContainmentPolicy) -> str:
         "clone_newpid: true",
         "clone_newipc: true",
         "clone_newuts: true",
-        "iface_no_lo: false",
+        # NsJail's iface_no_lo switch suppresses loopback setup when true.
+        "iface_no_lo: true",
         "use_cgroupv2: true",
         f"cgroup_mem_max: {policy.cgroup_mem_max}",
         f"cgroup_pids_max: {policy.cgroup_pids_max}",
@@ -452,6 +471,7 @@ def _verify_backend(policy: ContainmentPolicy) -> None:
         raise _reject("pinned nsjail binary is unavailable", "nsjail_unavailable") from exc
     if digest != policy.nsjail_sha256:
         raise _reject("nsjail executable digest does not match policy", "nsjail_digest_mismatch")
+    _verify_mount_sources(policy)
     try:
         completed = subprocess.run(
             (policy.nsjail_path, "--version"),
@@ -473,6 +493,36 @@ def _verify_backend(policy: ContainmentPolicy) -> None:
         raise _reject("nsjail build identity is malformed", "nsjail_identity_mismatch") from exc
     if rendered_version != policy.nsjail_version or policy.nsjail_build_identity != _digest_bytes(version):
         raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
+
+
+def _verified_regular_file_digest(path: Path) -> str:
+    """Hash one regular mount source without following a terminal symlink."""
+
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("mount source is not a regular file")
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        return f"sha256:{digest.hexdigest()}"
+    finally:
+        os.close(descriptor)
+
+
+def _verify_mount_sources(policy: ContainmentPolicy) -> None:
+    rootfs: ReadOnlyMount | None = None
+    for mount in policy.readonly_mounts:
+        try:
+            actual = _verified_regular_file_digest(Path(mount.source))
+        except OSError as exc:
+            raise _reject("read-only mount source cannot be verified", "mount_source_unverifiable") from exc
+        if actual != mount.source_digest:
+            raise _reject("read-only mount source digest does not match policy", "mount_source_digest_mismatch")
+        if mount.destination == "/":
+            rootfs = mount
+    if rootfs is None or rootfs.source_digest != policy.rootfs_digest:
+        raise _reject("rootfs mount does not bind the policy rootfs digest", "rootfs_digest_mismatch")
 
 
 def prepare_execution(policy: ContainmentPolicy) -> ExecutionPlan:
@@ -517,9 +567,158 @@ class _Capture:
     timed_out: bool = False
     truncated: bool = False
     leaked: bool = False
+    noncanonical_kill: bool = False
 
 
-def _bounded_communicate(process: subprocess.Popen[bytes], *, limit: int, timeout: int) -> _Capture:
+@dataclass(frozen=True, slots=True)
+class _AppliedState:
+    child_pid: int
+    cgroup_path: Path
+
+
+def _read_proc_text(pid: int, name: str) -> str:
+    return Path(f"/proc/{pid}/{name}").read_text(encoding="utf-8", errors="strict")
+
+
+def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:
+    metadata = Path(f"/proc/{pid}/ns/{namespace}").stat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def _discover_jailed_child(supervisor_pid: int, timeout: float = 2.0) -> int:
+    deadline = time.monotonic() + timeout
+    children_file = Path(f"/proc/{supervisor_pid}/task/{supervisor_pid}/children")
+    while time.monotonic() < deadline:
+        try:
+            children = children_file.read_text(encoding="ascii").split()
+        except OSError:
+            children = []
+        if len(children) == 1 and children[0].isdigit():
+            return int(children[0])
+        time.sleep(0.005)
+    raise _reject("nsjail did not expose exactly one jailed child", "applied_state_unavailable")
+
+
+def _parse_status(text: str) -> dict[str, str]:
+    return {name: value.strip() for line in text.splitlines() for name, separator, value in [line.partition(":")] if separator}
+
+
+def _realized_cgroup(pid: int) -> Path:
+    entries = [line.split(":", 2) for line in _read_proc_text(pid, "cgroup").splitlines()]
+    unified = next((parts[2] for parts in entries if len(parts) == 3 and parts[0] == "0" and parts[1] == ""), None)
+    if unified is None or not unified.startswith("/") or ".." in PurePosixPath(unified).parts:
+        raise _reject("jailed child has no verifiable cgroup-v2 membership", "applied_cgroup_mismatch")
+    path = (_CGROUP_ROOT / unified.lstrip("/")).resolve()
+    try:
+        path.relative_to(_CGROUP_ROOT)
+    except ValueError as exc:
+        raise _reject("jailed child cgroup escaped the v2 hierarchy", "applied_cgroup_mismatch") from exc
+    return path
+
+
+def _verify_applied_state(process: subprocess.Popen[bytes], policy: ContainmentPolicy) -> _AppliedState:
+    """Stop the just-created jail, inspect kernel state, then release it."""
+
+    child_pid: int | None = None
+    cgroup: Path | None = None
+    verified = False
+    try:
+        child_pid = _discover_jailed_child(process.pid)
+        os.killpg(process.pid, signal.SIGSTOP)
+        status = _parse_status(_read_proc_text(child_pid, "status"))
+        if status.get("NoNewPrivs") != "1" or status.get("Seccomp") != "2" or int(status.get("CapEff", "-1"), 16) != 0:
+            raise _reject("privilege or seccomp controls are not applied", "applied_privilege_mismatch")
+        for namespace in ("net", "user", "mnt", "pid", "ipc", "uts"):
+            if _ns_identity(child_pid, namespace) == _ns_identity(os.getpid(), namespace):
+                raise _reject("required namespace is not applied", "applied_namespace_mismatch")
+        for mapping_name in ("uid_map", "gid_map"):
+            fields = _read_proc_text(child_pid, mapping_name).split()
+            if len(fields) < 3 or fields[0] != "65534" or fields[2] != "1":
+                raise _reject("nonprivileged UID/GID map is not applied", "applied_idmap_mismatch")
+
+        mounts: dict[str, frozenset[str]] = {}
+        for line in _read_proc_text(child_pid, "mountinfo").splitlines():
+            before, separator, _after = line.partition(" - ")
+            fields = before.split()
+            if not separator or len(fields) < 6:
+                raise _reject("realized mount table is malformed", "applied_mount_mismatch")
+            mounts[fields[4]] = frozenset(fields[5].split(","))
+        if any(mount.destination not in mounts or "ro" not in mounts[mount.destination] for mount in policy.readonly_mounts):
+            raise _reject("read-only mount plan is not fully applied", "applied_mount_mismatch")
+        if policy.writable_tmpfs not in mounts or "rw" not in mounts[policy.writable_tmpfs]:
+            raise _reject("bounded writable tmpfs is not applied", "applied_mount_mismatch")
+
+        interfaces = [line.partition(":")[0].strip() for line in _read_proc_text(child_pid, "net/dev").splitlines()[2:] if ":" in line]
+        if interfaces:
+            raise _reject("network namespace contains an interface", "applied_network_mismatch")
+        ipv4_routes = _read_proc_text(child_pid, "net/route").splitlines()[1:]
+        ipv6_routes = [line for line in _read_proc_text(child_pid, "net/ipv6_route").splitlines() if line.strip()]
+        if ipv4_routes or ipv6_routes:
+            raise _reject("network namespace contains a route", "applied_network_mismatch")
+
+        cgroup = _realized_cgroup(child_pid)
+        expected_controls = {
+            "memory.max": str(policy.cgroup_mem_max),
+            "pids.max": str(policy.cgroup_pids_max),
+            "cpu.max": f"{policy.cgroup_cpu_ms_per_sec * 1000} 1000000",
+        }
+        if any((cgroup / name).read_text(encoding="ascii").strip() != expected for name, expected in expected_controls.items()):
+            raise _reject("cgroup-v2 limits do not match policy", "applied_cgroup_mismatch")
+        controllers = frozenset((cgroup / "cgroup.controllers").read_text(encoding="ascii").split())
+        if not {"cpu", "memory", "pids"} <= controllers or not _cgroup_populated(cgroup):
+            raise _reject("required cgroup-v2 controllers are not active", "applied_cgroup_mismatch")
+        members = {int(value) for value in (cgroup / "cgroup.procs").read_text(encoding="ascii").split()}
+        if child_pid not in members:
+            raise _reject("jailed child is outside its realized cgroup", "applied_cgroup_mismatch")
+        verified = True
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise _reject("applied containment state could not be verified", "applied_state_unavailable") from exc
+    except TransplantError:
+        raise
+    finally:
+        if verified:
+            try:
+                os.killpg(process.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+        else:
+            state = None if child_pid is None or cgroup is None else _AppliedState(child_pid, cgroup)
+            _terminate_tree(process, state)
+    assert child_pid is not None and cgroup is not None
+    return _AppliedState(child_pid, cgroup)
+
+
+def _cgroup_populated(path: Path) -> bool:
+    values = dict(line.split(maxsplit=1) for line in (path / "cgroup.events").read_text(encoding="ascii").splitlines())
+    return values.get("populated") != "0"
+
+
+def _kill_cgroup_tree(path: Path) -> bool:
+    try:
+        (path / "cgroup.kill").write_text("1", encoding="ascii")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if not _cgroup_populated(path):
+                return True
+            time.sleep(0.01)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return False
+
+
+def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | None) -> bool:
+    if state is not None and _kill_cgroup_tree(state.cgroup_path):
+        return True
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return False
+
+
+def _bounded_communicate(
+    process: subprocess.Popen[bytes], *, limit: int, timeout: int, applied_state: _AppliedState
+) -> _Capture:
     capture = _Capture(bytearray(), bytearray())
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
@@ -552,18 +751,12 @@ def _bounded_communicate(process: subprocess.Popen[bytes], *, limit: int, timeou
     finally:
         selector.close()
     if capture.timed_out or capture.truncated:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        capture.noncanonical_kill = not _terminate_tree(process, applied_state)
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         capture.leaked = True
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        capture.noncanonical_kill = not _terminate_tree(process, applied_state)
     return capture
 
 
@@ -629,6 +822,8 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             config_file.flush()
             os.fsync(config_file.fileno())
         launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))
+        # Re-read all mount sources immediately before the backend can open them.
+        _verify_mount_sources(plan.policy)
         process = subprocess.Popen(
             launch_argv,
             stdin=subprocess.DEVNULL,
@@ -637,7 +832,13 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             env={},
             start_new_session=True,
         )
-        capture = _bounded_communicate(process, limit=plan.output_limit_bytes, timeout=plan.wall_time_seconds)
+        applied_state = _verify_applied_state(process, plan.policy)
+        capture = _bounded_communicate(
+            process,
+            limit=plan.output_limit_bytes,
+            timeout=plan.wall_time_seconds,
+            applied_state=applied_state,
+        )
     except (OSError, subprocess.SubprocessError):
         return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)
     finally:
@@ -648,6 +849,16 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
                 os.unlink(config_path)
             except FileNotFoundError:
                 pass
+    # ADR-0009 requires immutable authorizing inputs across the complete run.
+    _verify_mount_sources(plan.policy)
+    if capture.noncanonical_kill:
+        return _abort(
+            plan,
+            "noncanonical_killpg_fallback",
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            len(capture.stdout),
+            len(capture.stderr),
+        )
     if capture.timed_out:
         return _abort(plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
     if capture.truncated:

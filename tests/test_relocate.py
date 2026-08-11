@@ -18,6 +18,9 @@ from leitir.bts import (
     RequiredFileEvidence,
     RequiredSymbolEvidence,
 )
+from leitir.bts import (
+    _digest as _bts_digest,
+)
 from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.graph.model import NodeId, NodeKind, NodeOrigin, SourceRef
 from leitir.relocate import (
@@ -54,7 +57,7 @@ def _bts(source: bytes, *, start_col: int = 0) -> BTS:
     )
     member_bytes = source[start_col:-1] if source.endswith(b"\n") else source[start_col:]
     member = MemberEvidence(node, source_ref, _digest(member_bytes), BTSDisposition.INCLUDE)
-    return BTS(
+    draft = BTS(
         "leitir-bts-v1",
         node,
         (member,),
@@ -63,6 +66,16 @@ def _bts(source: bytes, *, start_col: int = 0) -> BTS:
         (RequiredSymbolEvidence(node, source_ref),),
         "sha256:" + _HEX,
         "sha256:" + "1" * 64,
+    )
+    return BTS(
+        draft.schema_version,
+        draft.seed,
+        draft.members,
+        draft.dispositions,
+        draft.required_files,
+        draft.required_symbols,
+        draft.bts_digest,
+        _bts_digest(draft, omit=frozenset({"bts_digest", "member_equivalence_digest"})),
     )
 
 
@@ -213,6 +226,16 @@ def test_omitted_decorator_rejects_instead_of_silent_expansion() -> None:
         bts.bts_digest,
         bts.member_equivalence_digest,
     )
+    narrowed = BTS(
+        narrowed.schema_version,
+        narrowed.seed,
+        narrowed.members,
+        narrowed.dispositions,
+        narrowed.required_files,
+        narrowed.required_symbols,
+        narrowed.bts_digest,
+        _bts_digest(narrowed, omit=frozenset({"bts_digest", "member_equivalence_digest"})),
+    )
     with pytest.raises(BTSError) as raised:
         relocate_tests(
             narrowed,
@@ -222,6 +245,29 @@ def test_omitted_decorator_rejects_instead_of_silent_expansion() -> None:
         )
     assert raised.value.reason is BTSRejectReason.REJECT_UNDER_COLLECTION
     assert raised.value.evidence.detail_code == "relocate_required_span_expansion_v1"
+
+
+def test_bare_bts_with_forged_member_equivalence_digest_rejects() -> None:
+    source = b"def f():\n    return 3\n"
+    forged = _bts(source)
+    forged = BTS(
+        forged.schema_version,
+        forged.seed,
+        forged.members,
+        forged.dispositions,
+        forged.required_files,
+        forged.required_symbols,
+        forged.bts_digest,
+        "sha256:" + "f" * 64,
+    )
+    with pytest.raises(BTSError) as raised:
+        relocate_tests(
+            forged,
+            module_map=ModuleMap.from_pairs(("donor.mod", "transplant.core")),
+            source_files=(SourceFile("donor/mod.py", source),),
+            tests=(),
+        )
+    assert raised.value.evidence.detail_code == "relocate_bts_identity_v1"
 
 
 @pytest.mark.parametrize("status", [BTSStatus.PARTIAL, BTSStatus.REJECT])
@@ -287,7 +333,8 @@ def test_publish_requires_empty_recipient_and_preserves_read_only_bytes(tmp_path
 def test_relocation_is_hash_seed_independent() -> None:
     program = r'''
 import hashlib
-from leitir.bts import BTS, BTSDisposition, MemberEvidence, RequiredFileEvidence, RequiredSymbolEvidence
+from dataclasses import replace
+from leitir.bts import BTS, BTSDisposition, MemberEvidence, RequiredFileEvidence, RequiredSymbolEvidence, _digest as bts_digest
 from leitir.graph.model import NodeId, NodeKind, NodeOrigin, SourceRef
 from leitir.relocate import ContractTest, ModuleMap, SourceFile, relocate_tests
 s = b"def f():\n    return 3\n"
@@ -296,6 +343,7 @@ r = SourceRef("o/r", "1"*40, "donor/mod.py", "2"*40, 1, 0, 2, 12)
 d = "sha256:" + hashlib.sha256(s[:-1]).hexdigest()
 m = MemberEvidence(n, r, d, BTSDisposition.INCLUDE)
 b = BTS("leitir-bts-v1", n, (m,), (), (RequiredFileEvidence(r.path,r.blob_sha,d),), (RequiredSymbolEvidence(n,r),), "sha256:"+"0"*64, "sha256:"+"1"*64)
+b = replace(b, member_equivalence_digest=bts_digest(b, omit=frozenset({"bts_digest", "member_equivalence_digest"})))
 x = relocate_tests(b, module_map=ModuleMap.from_pairs(("donor.mod","transplant.core")), source_files=(SourceFile(r.path,s),), tests=(ContractTest("test_x.py",b"from donor.mod import f\n","donor.tests.test_x"),))
 print(x.relocation_digest)
 print(hashlib.sha256(x.to_bytes()).hexdigest())

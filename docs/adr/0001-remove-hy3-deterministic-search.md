@@ -7,13 +7,58 @@
 Implementation notes: revised 2026-08-02 for slice reordering and the CLI
 integration layer; completed 2026-08-03 when P0r retirement and P1–P6 landed.
 
+## Search v2 extensions (2026-08-11)
+
+Search v2 extends this accepted decision without changing its core split between
+scoped exhaustiveness and indeterminate global discovery:
+
+- Construct adapters deterministically from one eight-language registry. Keep
+  Python/Rust/Go behavior as the baseline and add heuristic, nvim-treesitter-
+  attributed Tier-2 adapters for JavaScript, TypeScript, Java, C, and C++.
+  (`src/leitir/adapters/registry.py:17-59`,
+  `src/leitir/adapters/_tier2.py:1-7`,
+  `src/leitir/adapters/_tier2.py:197-226`.)
+- Keep heuristic Python matching as the default; make stdlib `ast` plus
+  `symtable` lexical classification opt-in through `--ast`. Parser or symbol-
+  table failure is reported as partial rather than parser-backed completeness.
+  (`src/leitir/cli.py:383-389`,
+  `src/leitir/adapters/python_ast.py:186-226`,
+  `src/leitir/engine.py:369-395`.)
+- Stream blobs above 2 MiB in line-aligned windows while incrementally checking
+  their declared size and Git blob SHA-1. Stream failures fail closed for that
+  blob and make coverage partial. (`src/leitir/engine.py:317-350`,
+  `src/leitir/streaming.py:37-168`.)
+- Recover truncated recursive trees through a deterministic non-recursive walk
+  with depth, request, and entry budgets. Search safely recovered blobs and
+  report `PARTIAL` when recovery was needed or incomplete.
+  (`src/leitir/tree.py:136-210`, `src/leitir/engine.py:236-260`.)
+- Add whole-file required-predicate mode while retaining same-line matching by
+  default. (`src/leitir/search.py:198-223`,
+  `src/leitir/adapters/__init__.py:111-161`.)
+- Canonicalize required predicate languages, route only to a matching adapter,
+  and reject unsupported required languages before scanning.
+  (`src/leitir/adapters/languages.py:5-17`,
+  `src/leitir/engine.py:217-229`, `src/leitir/engine.py:399-408`,
+  `src/leitir/discovery_search.py:466-479`.)
+- Validate global results against the complete byte-verified provenance tuple
+  `(slug, commit_sha, path, blob_sha)` and reject moving references.
+  (`src/leitir/discovery_search.py:642-657`,
+  `src/leitir/discovery_search.py:671-707`.)
+
+The CLI now exposes global result/page budgets and language filtering, and the
+pinned benchmark contains 32 tasks across all eight adapter languages.
+(`src/leitir/cli.py:391-405`, `src/leitir/cli.py:1830-1858`,
+`src/leitir/bench.py:24-31`,
+`src/leitir/benchmarks/search-v1/manifest.json:1`.) The legacy REST search
+transport, global `REGEX` rejection, and dedicated search-v2 live-provider
+canary remain follow-up work.
+
 ## Context
 
-Leitir currently uses a fixed `tencent/hy3` model (via OpenRouter) to generate
-search queries, synthesize code, and repair failures. The model identity is
-hard-coded (`src/leitir/config.py:18`) and enforced
-(`src/leitir/openrouter.py:294-298`), and no `seed` is sent
-(`src/leitir/openrouter.py:440-475`), so runs are not reproducible.
+At the time of this decision, Leitir used a fixed `tencent/hy3` model (via
+OpenRouter) to generate search queries, synthesize code, and repair failures.
+The model identity was hard-coded and no `seed` was sent, so runs were not
+reproducible. Those implementation modules were deleted by P0r.
 
 Goal: Leitir becomes a harness-agnostic, deterministic, code-driven tool that is
 accurate and exhaustive at finding correct existing code on GitHub.
@@ -81,13 +126,13 @@ enrichment behind the existing CLI (P5–P6).
       Gate: offline 32 passed; live 3 passed.
 
 - [x] P2: Scoped-exhaustive MVP (strict commit pin, tree enumerate, Python adapter).
-      (`src/leitir/tree.py`, `src/leitir/adapters.py`, `src/leitir/engine.py`,
+      (`src/leitir/tree.py`, `src/leitir/adapters/__init__.py`, `src/leitir/engine.py`,
       `tests/test_engine.py`, `tests/test_engine_e2e.py`,
       `tests/test_engine_e2e_live.py`)
       Gate: offline 72 passed; live 8 passed.
 
 - [x] P3: Strict package resolution + more language adapters.
-      (`src/leitir/resolver.py`, `src/leitir/adapters.py` RustAdapter+GoAdapter,
+      (`src/leitir/resolver.py`, `src/leitir/adapters/__init__.py` RustAdapter+GoAdapter,
       `tests/test_adapters_multi.py`, `tests/test_resolver.py`,
       `tests/test_resolver_e2e.py`, `tests/test_resolver_e2e_live.py`,
       `tests/fixtures_resolver.py`)
@@ -148,9 +193,11 @@ enrichment behind the existing CLI (P5–P6).
       the list to what it actually proves is left as a separate change.
 
 - [x] P6: Deterministic ranking + pinned benchmark.
-      Score normalization, tie-breaking by provenance stability, and a
-      versioned benchmark suite (12 tasks: 4 Python, 4 Rust, 4 Go) with
-      expected-result pins. `leitir bench` command.
+      Score normalization, tie-breaking by provenance stability, and the
+      original versioned benchmark suite (12 tasks: 4 Python, 4 Rust, 4 Go)
+      with expected-result pins. Search v2 subsequently expanded the same
+      benchmark to 32 tasks across eight languages, as recorded above.
+      `leitir bench` command.
       (`src/leitir/ranking.py`, `src/leitir/bench.py`,
       `src/leitir/benchmarks/search-v1/`, `tests/test_ranking.py`,
       `tests/test_bench.py`, `tests/test_bench_e2e_live.py`)

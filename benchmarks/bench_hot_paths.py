@@ -47,6 +47,11 @@ class _MemoryTree:
         del slug, commit_sha
         return tuple(entry for entry, _content in self._files)
 
+    def list_blobs_ex(
+        self, slug: str, commit_sha: str
+    ) -> tuple[tuple[BlobEntry, ...], bool]:
+        return self.list_blobs(slug, commit_sha), False
+
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         del slug
         return self._content[blob_sha]

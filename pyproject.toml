@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-leitir = "leitir.cli:main"
+leitir = "leitir.cli:_process_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

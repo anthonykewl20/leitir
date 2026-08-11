@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from leitir.search import Predicate, PredicateKind
+
+
+class MatchMethod(StrEnum):
+    AST = "ast"
+    HEURISTIC = "heuristic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +27,9 @@ class SpanMatch:
     start_line: int
     end_line: int
     matched_kinds: tuple[PredicateKind, ...]
+    start_col: int | None = None
+    end_col: int | None = None
+    method: MatchMethod = MatchMethod.HEURISTIC
 
     def __post_init__(self) -> None:
         if self.start_line < 1:
@@ -29,6 +38,19 @@ class SpanMatch:
             raise ValueError("end_line must be >= start_line")
         if not self.matched_kinds:
             raise ValueError("must record at least one matched kind")
+        if (
+            self.start_line == self.end_line
+            and self.start_col is not None
+            and self.end_col is not None
+            and self.end_col < self.start_col
+        ):
+            raise ValueError("end_col must be >= start_col for a single-line span")
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterMatchResult:
+    spans: tuple[SpanMatch, ...]
+    parser_unavailable: bool = False
 
 
 @runtime_checkable
@@ -43,9 +65,22 @@ class LanguageAdapter(Protocol):
         ...
 
     def find_matches(
-        self, content: str, predicates: tuple[Predicate, ...]
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
     ) -> tuple[SpanMatch, ...]:
         """Return all spans satisfying every must-predicate."""
+        ...
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
         ...
 
 
@@ -74,16 +109,41 @@ class PythonAdapter:
         return path.endswith(".py")
 
     def find_matches(
-        self, content: str, predicates: tuple[Predicate, ...]
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]
         if not must_preds:
             return ()
 
-        candidate_lines = self._candidate_lines(lines, must_preds)
+        per_predicate_hits = [
+            self._lines_for_predicate(lines, pred) for pred in must_preds
+        ]
+        if any(not hit_lines for hit_lines in per_predicate_hits):
+            return ()
+        if whole_file:
+            evidence: dict[int, set[PredicateKind]] = {}
+            for pred, hit_lines in zip(must_preds, per_predicate_hits, strict=True):
+                for line_idx in hit_lines:
+                    evidence.setdefault(line_idx, set()).add(pred.kind)
+            return tuple(
+                SpanMatch(
+                    start_line=line_idx + 1,
+                    end_line=line_idx + 1,
+                    matched_kinds=tuple(sorted(kinds, key=lambda kind: kind.value)),
+                )
+                for line_idx, kinds in sorted(evidence.items())
+            )
+
+        candidate_lines = set.intersection(*per_predicate_hits)
         if not candidate_lines:
             return ()
 
@@ -100,19 +160,16 @@ class PythonAdapter:
                 )
         return tuple(spans)
 
-    def _candidate_lines(
-        self, lines: list[str], predicates: list[Predicate]
-    ) -> set[int]:
-        candidates: set[int] | None = None
-        for pred in predicates:
-            hits = self._lines_for_predicate(lines, pred)
-            if candidates is None:
-                candidates = hits
-            else:
-                candidates &= hits
-            if not candidates:
-                return set()
-        return candidates or set()
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -217,24 +274,41 @@ class RustAdapter:
         return path.endswith(".rs")
 
     def find_matches(
-        self, content: str, predicates: tuple[Predicate, ...]
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]
         if not must_preds:
             return ()
 
-        candidates: set[int] | None = None
-        for pred in must_preds:
-            hits = self._lines_for_predicate(lines, pred)
-            if candidates is None:
-                candidates = hits
-            else:
-                candidates &= hits
-            if not candidates:
-                return ()
+        per_predicate_hits = [
+            self._lines_for_predicate(lines, pred) for pred in must_preds
+        ]
+        if any(not hit_lines for hit_lines in per_predicate_hits):
+            return ()
+        if whole_file:
+            evidence: dict[int, set[PredicateKind]] = {}
+            for pred, hit_lines in zip(must_preds, per_predicate_hits, strict=True):
+                for line_idx in hit_lines:
+                    evidence.setdefault(line_idx, set()).add(pred.kind)
+            return tuple(
+                SpanMatch(
+                    start_line=line_idx + 1,
+                    end_line=line_idx + 1,
+                    matched_kinds=tuple(sorted(kinds, key=lambda kind: kind.value)),
+                )
+                for line_idx, kinds in sorted(evidence.items())
+            )
+
+        candidates = set.intersection(*per_predicate_hits)
 
         spans: list[SpanMatch] = []
         for line_idx in sorted(candidates or set()):
@@ -254,6 +328,17 @@ class RustAdapter:
                     )
                 )
         return tuple(spans)
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -349,24 +434,41 @@ class GoAdapter:
         return path.endswith(".go")
 
     def find_matches(
-        self, content: str, predicates: tuple[Predicate, ...]
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
     ) -> tuple[SpanMatch, ...]:
         lines = content.split("\n")
+        if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
+            lines.pop()
         must_preds = [
             p for p in predicates if p.kind is not PredicateKind.PATH
         ]
         if not must_preds:
             return ()
 
-        candidates: set[int] | None = None
-        for pred in must_preds:
-            hits = self._lines_for_predicate(lines, pred)
-            if candidates is None:
-                candidates = hits
-            else:
-                candidates &= hits
-            if not candidates:
-                return ()
+        per_predicate_hits = [
+            self._lines_for_predicate(lines, pred) for pred in must_preds
+        ]
+        if any(not hit_lines for hit_lines in per_predicate_hits):
+            return ()
+        if whole_file:
+            evidence: dict[int, set[PredicateKind]] = {}
+            for pred, hit_lines in zip(must_preds, per_predicate_hits, strict=True):
+                for line_idx in hit_lines:
+                    evidence.setdefault(line_idx, set()).add(pred.kind)
+            return tuple(
+                SpanMatch(
+                    start_line=line_idx + 1,
+                    end_line=line_idx + 1,
+                    matched_kinds=tuple(sorted(kinds, key=lambda kind: kind.value)),
+                )
+                for line_idx, kinds in sorted(evidence.items())
+            )
+
+        candidates = set.intersection(*per_predicate_hits)
 
         spans: list[SpanMatch] = []
         for line_idx in sorted(candidates or set()):
@@ -386,6 +488,17 @@ class GoAdapter:
                     )
                 )
         return tuple(spans)
+
+    def find_matches_ex(
+        self,
+        content: str,
+        predicates: tuple[Predicate, ...],
+        *,
+        whole_file: bool = False,
+    ) -> AdapterMatchResult:
+        return AdapterMatchResult(
+            self.find_matches(content, predicates, whole_file=whole_file)
+        )
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate

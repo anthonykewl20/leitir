@@ -4,9 +4,9 @@ All notable changes to leitir will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
-within the 0.x series, patch releases (0.1.1, 0.1.2, ...) ship audit fixes and
-incremental work, while a minor bump (0.2.0) marks a feature or behavior milestone.
-Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
+within the 0.x series, patch releases (0.1.1, 0.1.2, ...) carry all incremental
+work — audit fixes, bug fixes, and feature/behavior increments alike. Breaking
+changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 <!-- leitir-sync-changelog start -->
 
@@ -16,7 +16,17 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - retire the v1 Hy3 synthesis pipeline (`kernel`)
 
 ### Added
+- add --max-results, --max-pages, and --language global controls (`search`)
+- add --whole-file required-predicate mode with deduplicated file-wide evidence (`search`)
+- add a local trigram index and indexed searcher for fast regex search (`search`)
+- add BTS walk, budget, dispositions, and digests (B5, #58) (`bts`)
+- add error taxonomy and typed graph model (`bts`)
 - add leitir agent skill for the corpus workflow (`corpus`)
+- add name-resolving CALL and complete READS passes (B4, #57) (`bts`)
+- add opt-in Python AST adapter with heuristic fallback (`search`)
+- add static IMPORTS/INHERITS/RAISES extraction (B3, #56) (`bts`)
+- add symtable lexical classification to the Python AST adapter (`search`)
+- add tier-2 heuristic adapters for JavaScript, TypeScript, Java, C, and C++ (`search`)
 - ADR-002 S1 assessment contracts, policy schema, gate algebra (`score`)
 - ADR-002 S2 canonical evidence and subject provenance (`score`)
 - ADR-002 S3 offline engine-correctness collectors (`score`)
@@ -39,9 +49,11 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - ADR-005 C8 usage-example extraction (`corpus`)
 - ADR-005 C9 version diffing (`corpus`)
 - ASV performance benchmark suite + scorecard performance dimension (`perf`)
+- bind BTS digests to the authoritative verified donor tree (B5b, #59) (`bts`)
 - changesets-style tag inference and subpath-aware get (`corpus`)
 - Codeberg + Sourcehut git hosts (`corpus`)
 - deduplicate global hits by content digest and repo path (#50) (`search`)
+- enforce canonical predicate-language routing in scoped and global modes (`search`)
 - generate CHANGELOG from conventional commits + drift gate (`changelog`)
 - GitHub-only release pipeline + PyPI deferred path (`distribution`)
 - Go module multi-host (gitlab/bitbucket/golang.org/x) (`corpus`)
@@ -53,30 +65,44 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - P4+P5 deterministic CLI shell + global discovery (ADR-001) (`search`)
 - P6 deterministic ranking + pinned search-v1 benchmark (`bench`)
 - publish reproducible offline decision=pass (#41) (`scorecard`)
+- stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - unified credentials + private repo/registry auth (`corpus`)
+- widen pinned search benchmark to eight languages (`bench`)
 
 ### Fixed
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
+- bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
+- force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
 - GitLab subgroup (nested group) project support (`corpus`)
+- guard stdout write and force os._exit on Windows doctor paths (`doctor`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
+- keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)
+- recover truncated GitHub tree listings with a bounded subtree walk (`search`)
+- redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
+- reject archive members with concealed backslashes and drive prefixes (`parity`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
 - tolerate .gitattributes EOL normalization in tree verification (`corpus`)
 - treat source checkout as healthy in install checks (#43) (`doctor`)
 - trust tests fairness, Bitbucket live tolerance, lock best-effort (`corpus`)
+- use os.pathsep in PYTHONPATH so bts_walk subprocess runs on Windows (`tests`)
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security
+- close fail-closed gap for non-dict GitHub tree payloads (`search`)
 - close integrity residuals (#28 #39) (`materialize`)
 - corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)
 - cross-platform bugs caught by first Windows CI run (`ci`)
 - final-state review hardening (B1 B2 B3, C1-C7) (`integrity`)
+- harden global search match integrity and adapter line model (`security`)
+- pin HOME/USERPROFILE and preserve SYSTEMROOT in sanitized collector env (`score`)
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
+- reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
 [Unreleased]: https://github.com/anthonykewl20/leitir/commits/HEAD

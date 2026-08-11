@@ -8,6 +8,7 @@ import multiprocessing
 import shutil
 import tarfile
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -28,18 +29,42 @@ SHA = "a" * 40
 
 def _concurrent_materialize_worker(
     root: str,
+    base_url: str | None,
     started: multiprocessing.synchronize.Event,
     release: multiprocessing.synchronize.Event,
+    lock_attempted: multiprocessing.synchronize.Event | None,
     queue: multiprocessing.queues.Queue,
 ) -> None:
+    fetched = False
+
     def fetch_started() -> None:
-        started.set()
-        release.wait(5)
+        nonlocal fetched
+        fetched = True
+        if lock_attempted is None:
+            started.set()
+            if not release.wait(10):
+                raise TimeoutError("timed out waiting to release first materialization")
+
+    if lock_attempted is not None:
+        real_target_lock = materialize_module._target_lock
+
+        @contextmanager
+        def observed_target_lock(*args: object, **kwargs: object):
+            lock_attempted.set()
+            with real_target_lock(*args, **kwargs):  # type: ignore[arg-type]
+                yield
+
+        materialize_module._target_lock = observed_target_lock
 
     try:
-        with scripted_server([(200, {}, _tarball())]) as server:
-            result = _materialize(Path(root), server.base_url, on_fetch=fetch_started)
-        queue.put(str(result))
+        if base_url is None:
+            with scripted_server([(200, {}, _tarball())]) as server:
+                result = _materialize(
+                    Path(root), server.base_url, on_fetch=fetch_started
+                )
+        else:
+            result = _materialize(Path(root), base_url, on_fetch=fetch_started)
+        queue.put((str(result), fetched))
     except BaseException as exc:
         queue.put(repr(exc))
 
@@ -330,22 +355,47 @@ def test_abandoned_staging_is_cleaned_under_target_lock(tmp_path):
 def test_concurrent_materializations_publish_once_without_cache_gap(tmp_path):
     started = multiprocessing.Event()
     release = multiprocessing.Event()
+    second_lock_attempted = multiprocessing.Event()
 
     queue = multiprocessing.Queue()
-    args = (str(tmp_path), started, release, queue)
-    first = multiprocessing.Process(target=_concurrent_materialize_worker, args=args)
-    second = multiprocessing.Process(target=_concurrent_materialize_worker, args=args)
-    first.start()
-    assert started.wait(5)
-    second.start()
-    time.sleep(0.1)
-    release.set()
-    first.join(10)
-    second.join(10)
-    assert first.exitcode == second.exitcode == 0
-    results = sorted([queue.get(timeout=2), queue.get(timeout=2)])
+    # A spawned worker must import the test module before it can run its target.
+    # Keep unrelated socket-server setup out of that startup path. Fork workers
+    # retain the original child-local server path so Linux behavior is unchanged.
+    spawn_server = (
+        scripted_server([(200, {}, _tarball())])
+        if multiprocessing.get_start_method() == "spawn"
+        else nullcontext(None)
+    )
+    with spawn_server as server:
+        base_url = server.base_url if server is not None else None
+        first_args = (str(tmp_path), base_url, started, release, None, queue)
+        second_args = (
+            str(tmp_path),
+            base_url,
+            started,
+            release,
+            second_lock_attempted,
+            queue,
+        )
+        first = multiprocessing.Process(
+            target=_concurrent_materialize_worker, args=first_args
+        )
+        second = multiprocessing.Process(
+            target=_concurrent_materialize_worker, args=second_args
+        )
+        first.start()
+        assert started.wait(10)
+        second.start()
+        assert second_lock_attempted.wait(10)
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert first.exitcode == second.exitcode == 0
+        if server is not None:
+            assert server.state.served_count == 1
+    results = [queue.get(timeout=2), queue.get(timeout=2)]
     target = tmp_path / "repos/github.com/example/demo" / SHA
-    assert results == [str(target), str(target)]
+    assert sorted(results) == [(str(target), False), (str(target), True)]
     assert (target / "src/example.py").read_bytes() == b"pinned source\n"
     assert not list(target.parent.glob(f".{SHA}.tmp-*"))
 

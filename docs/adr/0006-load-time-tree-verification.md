@@ -23,7 +23,8 @@ The anchor is mandatory for every shelf, including shelves whose upstream
 verification result is false. This prevents deleting both `verified` and the
 digest from downgrading a shelf out of load-time integrity checking.
 
-The `get`, `info`, `api`, `examples`, `trust`, `sbom`, and `diff` commands
+The `get`, `info`, `api`, `examples`, `trust`, `sbom`, `diff`, and local-index
+build/query commands
 reacquire the same per-target advisory lock used by materialization, repeat
 manifest and tree verification under that lock, and retain the lock through
 their subsequent shelf-byte reads. `sbom` locks its deterministic index
@@ -32,6 +33,13 @@ re-verifies both generations before comparing them. Writers publish by atomic
 rename while holding the same target lock. Thus a cooperating writer cannot
 replace a shelf during those command reads: the reader sees the verified
 generation, or verification fails cleanly.
+
+Local indexed search additionally requires `source == "git-commit"`,
+`parity == "exact"`, and `materialized_tree_hash_scope == "full"`. Its own
+versioned manifest binds the independently re-read source manifest, document
+table, postings, and index bytes. Trigram postings can eliminate candidates but
+cannot establish a match; the original predicates still run against locked
+source bytes. Index construction is explicit, never a search-path cache repair.
 
 The deliberate exceptions are precise. `remove` and `clean` are destructive
 mutation commands, not read-and-serve operations; taking read lifetimes while

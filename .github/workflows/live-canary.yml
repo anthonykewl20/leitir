@@ -1,17 +1,13 @@
 # Live-provider canary credentials:
 # - Required repository secret: GH_TOKEN (the opt-in gate and GitHub credential).
-# - Optional repository secrets: GITLAB_TOKEN, BITBUCKET_TOKEN,
-#   BITBUCKET_USERNAME, CODEBERG_TOKEN, SRHT_TOKEN, NPM_TOKEN, PYPI_TOKEN,
-#   PIP_TOKEN, and CARGO_TOKEN.
-# The required GH_TOKEN is also exported as GITHUB_TOKEN because leitir's live
-# tests and credential resolver support both names.
+# - Search v2 repository variables remain false until their named tests land:
+#   LEITIR_CANARY_TREE_V2, LEITIR_CANARY_STREAM_V2, LEITIR_CANARY_INDEX_V2.
 name: Live provider canary
 
 on:
   workflow_dispatch:
-  # Uncomment to run nightly after the required secret has been configured.
-  # schedule:
-  #   - cron: '0 3 * * *'
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions: {}
 
@@ -21,45 +17,40 @@ concurrency:
 
 jobs:
   gate:
-    name: Check live canary opt-in
+    name: Check live canary opt-in and feature gates
     runs-on: ubuntu-latest
     env:
       LIVE_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      LEITIR_CANARY_TREE_V2: ${{ vars.LEITIR_CANARY_TREE_V2 }}
+      LEITIR_CANARY_STREAM_V2: ${{ vars.LEITIR_CANARY_STREAM_V2 }}
+      LEITIR_CANARY_INDEX_V2: ${{ vars.LEITIR_CANARY_INDEX_V2 }}
     outputs:
       enabled: ${{ steps.opt-in.outputs.enabled }}
+      tree_v2: ${{ steps.surfaces.outputs.tree_v2 }}
+      stream_v2: ${{ steps.surfaces.outputs.stream_v2 }}
+      index_v2: ${{ steps.surfaces.outputs.index_v2 }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Check required secret
         id: opt-in
-        shell: bash
-        run: |
-          if [[ -n "$LIVE_GITHUB_TOKEN" ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Live canary enabled: required GH_TOKEN secret is configured." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Live canary skipped: configure the GH_TOKEN repository secret to opt in." >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: python scripts/check_live_canary_secret.py
+      - name: Resolve Search v2 surface gates
+        id: surfaces
+        run: python scripts/live_canary_gate.py
 
-  live-tests:
-    name: Live E2E tests (non-blocking)
+  baseline-live:
+    name: Baseline live search
     needs: gate
     if: ${{ needs.gate.outputs.enabled == 'true' }}
-    continue-on-error: true
     runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
     env:
       LEITIR_ENABLE_LIVE_E2E: '1'
-      LEITIR_ENABLE_SCORE_LIVE: '1'
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-      BITBUCKET_TOKEN: ${{ secrets.BITBUCKET_TOKEN }}
-      BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
-      CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
-      SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-      PIP_TOKEN: ${{ secrets.PIP_TOKEN }}
-      CARGO_TOKEN: ${{ secrets.CARGO_TOKEN }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -71,19 +62,177 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: requirements.txt
-      - name: Run live E2E suite
-        id: live-tests
-        shell: bash
+      - name: Probe selected baseline live surfaces
+        id: probe
+        continue-on-error: true
         run: >-
           PYTHONPATH=src uv run --no-project --with-requirements requirements.txt
-          python -m pytest -q --tb=short
-      - name: Report live canary result
+          python -m pytest -q --tb=short -p tests.live_canary_plugin
+          --live-canary-events=events.json --live-canary-surface=baseline-live
+          tests/test_global_e2e_live.py tests/test_engine_e2e_live.py
+      - name: Classify baseline result
+        id: classify
         if: ${{ always() }}
         env:
-          TEST_OUTCOME: ${{ steps.live-tests.outcome }}
-        shell: bash
-        run: |
-          echo "Live provider canary result: $TEST_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$TEST_OUTCOME" != "success" ]]; then
-            exit 1
-          fi
+          PYTEST_OUTCOME: ${{ steps.probe.outcome }}
+        run: >-
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface baseline-live --pytest-outcome "$PYTEST_OUTCOME"
+
+  truncated-tree-recovery:
+    name: Truncated-tree recovery (pinned Linux fixture)
+    needs: gate
+    if: ${{ needs.gate.outputs.enabled == 'true' && needs.gate.outputs.tree_v2 == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      LIVE_CANARY_FIXTURE_REPO: torvalds/linux
+      LIVE_CANARY_FIXTURE_COMMIT: d58772d8520c7ef247c4b95c9bd76d3a25da9ff5
+      LIVE_CANARY_EXPECT_TRUNCATED_TREE: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Probe truncated-tree recovery
+        id: probe
+        continue-on-error: true
+        run: >-
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt
+          python -m pytest -q --tb=short -p tests.live_canary_plugin
+          --live-canary-events=events.json --live-canary-surface=truncated-tree-recovery
+          tests/test_tree_recovery_e2e_live.py
+      - name: Classify truncated-tree recovery
+        id: classify
+        if: ${{ always() }}
+        env:
+          PYTEST_OUTCOME: ${{ steps.probe.outcome }}
+        run: >-
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface truncated-tree-recovery --pytest-outcome "$PYTEST_OUTCOME"
+
+  streamed-large-blob:
+    name: Streamed and SHA-verified >2 MiB blob (pinned Linux fixture)
+    needs: gate
+    if: ${{ needs.gate.outputs.enabled == 'true' && needs.gate.outputs.stream_v2 == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      LIVE_CANARY_FIXTURE_REPO: torvalds/linux
+      LIVE_CANARY_FIXTURE_COMMIT: d58772d8520c7ef247c4b95c9bd76d3a25da9ff5
+      LIVE_CANARY_FIXTURE_PATH: drivers/accel/habanalabs/include/gaudi2/asic_reg/gaudi2_blocks_linux_driver.h
+      LIVE_CANARY_FIXTURE_BLOB_SHA: 3caee4515ad62aa7b8031b93bccb4e69b9ed0e64
+      LIVE_CANARY_FIXTURE_SIZE: '2456864'
+      LIVE_CANARY_REQUIRE_STREAM_SHA_VERIFICATION: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Probe verified large-blob streaming
+        id: probe
+        continue-on-error: true
+        run: >-
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt
+          python -m pytest -q --tb=short -p tests.live_canary_plugin
+          --live-canary-events=events.json --live-canary-surface=streamed-large-blob
+          tests/test_streaming_e2e_live.py
+      - name: Classify verified large-blob streaming
+        id: classify
+        if: ${{ always() }}
+        env:
+          PYTEST_OUTCOME: ${{ steps.probe.outcome }}
+        run: >-
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface streamed-large-blob --pytest-outcome "$PYTEST_OUTCOME"
+
+  index-vs-scan-recall:
+    name: Index vs exhaustive-scan recall (pinned CPython fixture)
+    needs: gate
+    if: ${{ needs.gate.outputs.enabled == 'true' && needs.gate.outputs.index_v2 == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      LIVE_CANARY_FIXTURE_REPO: python/cpython
+      LIVE_CANARY_FIXTURE_COMMIT: deaf509e8fc6e0363bd6f26d52ad42f976ec42f2
+      # Equality means the complete SourceRef identity, not paths or counts alone.
+      LIVE_CANARY_COMPARE_FULL_SOURCE_IDENTITY: 'true'
+      LIVE_CANARY_SOURCE_IDENTITY_FIELDS: slug,commit_sha,path,blob_sha,start_line,end_line
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Probe index/exhaustive full-identity equality
+        id: probe
+        continue-on-error: true
+        run: >-
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt
+          python -m pytest -q --tb=short -p tests.live_canary_plugin
+          --live-canary-events=events.json --live-canary-surface=index-vs-scan-recall
+          tests/test_index_recall_e2e_live.py
+      - name: Classify index recall
+        id: classify
+        if: ${{ always() }}
+        env:
+          PYTEST_OUTCOME: ${{ steps.probe.outcome }}
+        run: >-
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface index-vs-scan-recall --pytest-outcome "$PYTEST_OUTCOME"
+
+  summarize:
+    name: Summarize all live canary surfaces
+    needs:
+      - gate
+      - baseline-live
+      - truncated-tree-recovery
+      - streamed-large-blob
+      - index-vs-scan-recall
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      GATE_RESULT: ${{ needs.gate.result }}
+      LIVE_CANARY_ENABLED: ${{ needs.gate.outputs.enabled }}
+      TREE_V2: ${{ needs.gate.outputs.tree_v2 }}
+      STREAM_V2: ${{ needs.gate.outputs.stream_v2 }}
+      INDEX_V2: ${{ needs.gate.outputs.index_v2 }}
+      BASELINE_RESULT: ${{ needs.baseline-live.outputs.classification }}
+      TREE_RESULT: ${{ needs.truncated-tree-recovery.outputs.classification }}
+      STREAM_RESULT: ${{ needs.streamed-large-blob.outputs.classification }}
+      INDEX_RESULT: ${{ needs.index-vs-scan-recall.outputs.classification }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Write final classification table
+        run: python scripts/classify_live_canary.py --summary-from-env

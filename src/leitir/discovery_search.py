@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
@@ -18,10 +19,11 @@ from typing import Protocol, runtime_checkable
 
 from leitir import _http
 from leitir.adapters import LanguageAdapter
+from leitir.adapters.languages import canonicalize_language
 from leitir.credentials import validate_secret
-from leitir.engine import path_matches, score_content
+from leitir.engine import _required_language, _score_content_ex, path_matches
 from leitir.materialize import _utc_now
-from leitir.ranking import order_source_matches
+from leitir.ranking import order_source_matches, source_identity
 from leitir.search import (
     Coverage,
     CoverageStatus,
@@ -46,6 +48,14 @@ logger = logging.getLogger(__name__)
 def _git_blob_sha(content: bytes) -> str:
     header = b"blob " + str(len(content)).encode("ascii") + b"\x00"
     return hashlib.sha1(header + content).hexdigest()
+
+
+def _line_count(content: str) -> int:
+    if not content:
+        return 0
+    if content.endswith("\n"):
+        return content.count("\n")
+    return content.count("\n") + 1
 
 
 def _cross_checked_commit_sha(item_url: object, html_url: object) -> str | None:
@@ -391,12 +401,15 @@ def _compile_query(
                 emitted_syntax=emitted,
             )
         )
-        if pred.language and language is not None and pred.language != language:
+        pred_language = (
+            canonicalize_language(pred.language) if pred.language else None
+        )
+        if pred_language is not None and language is not None and pred_language != language:
             raise SearchSpecError(
                 "REJECT_SEMANTIC_DEGRADATION: conflicting predicate languages"
             )
-        if pred.language:
-            language = pred.language
+        if pred_language is not None:
+            language = pred_language
 
     for clause in ("should", "must_not"):
         for index, pred in enumerate(getattr(spec, clause)):
@@ -454,6 +467,15 @@ class GlobalSearcher:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
             raise ValueError("GlobalSearcher only handles global_discovery")
 
+        required_language = _required_language(spec)
+        supported_languages = {
+            canonicalize_language(adapter.language) for adapter in self._adapters
+        }
+        if (
+            required_language is not None
+            and required_language not in supported_languages
+        ):
+            raise SearchSpecError("unsupported required predicate language")
         query, query_translation = _compile_query(spec)
         matches: list[SourceMatch] = []
         exclusions: dict[str, int] = {}
@@ -484,7 +506,7 @@ class GlobalSearcher:
             collected.extend(page.hits)
             provisional = dedup_hits(collected)
             adapter_eligible = sum(
-                self._adapter_for(hit.path) is not None
+                self._adapter_for(hit.path, required_language) is not None
                 for hit in provisional.candidates
             )
             if adapter_eligible >= self._max_results:
@@ -502,7 +524,7 @@ class GlobalSearcher:
             exclusions["pin_disagreement"] = outcome.pin_disagreements
         eligible_groups: list[tuple[CodeSearchHit, ...]] = []
         for candidate, group in zip(outcome.candidates, outcome.groups, strict=True):
-            if self._adapter_for(candidate.path) is None:
+            if self._adapter_for(candidate.path, required_language) is None:
                 exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
             else:
                 eligible_groups.append(group)
@@ -512,6 +534,8 @@ class GlobalSearcher:
         attempts = 0
         promoted_attempted = 0
         verification_failed = False
+        verified: list[CodeSearchHit] = []
+        verified_line_counts: dict[tuple[str, str, str, str], int] = {}
         for group in eligible_groups:
             if attempts >= self._max_results:
                 incomplete_results = True
@@ -526,7 +550,7 @@ class GlobalSearcher:
                 if path_preds and not path_matches(hit.path, path_preds):
                     exclusions["path_mismatch"] = exclusions.get("path_mismatch", 0) + 1
                     continue
-                adapter = self._adapter_for(hit.path)
+                adapter = self._adapter_for(hit.path, required_language)
                 if adapter is None:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1
                     continue
@@ -568,13 +592,22 @@ class GlobalSearcher:
                     continue
 
                 content, blob_sha = verified_content
-                matches.extend(
-                    score_content(
-                        content, adapter, hit.slug, commit_sha,
-                        hit.path, blob_sha,
-                        content_preds, spec.should, spec.must_not,
-                    )
+                verified.append(hit)
+                verified_line_counts[
+                    (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
+                ] = _line_count(content)
+                blob_matches, parser_unavailable = _score_content_ex(
+                    content, adapter, hit.slug, commit_sha,
+                    hit.path, blob_sha,
+                    content_preds, spec.should, spec.must_not,
+                    whole_file=spec.whole_file_must,
                 )
+                matches.extend(blob_matches)
+                if parser_unavailable:
+                    incomplete_results = True
+                    exclusions["parser_unavailable"] = (
+                        exclusions.get("parser_unavailable", 0) + 1
+                    )
                 files_indexed += 1
                 break
 
@@ -603,7 +636,7 @@ class GlobalSearcher:
             ),
             query_translation=query_translation,
         )
-        validate_report(report, tuple(collected))
+        validate_report(report, tuple(verified), verified_line_counts)
         return report
 
     def _read_content(
@@ -623,16 +656,25 @@ class GlobalSearcher:
             return None
         return data.decode("utf-8"), digest
 
-    def _adapter_for(self, path: str) -> LanguageAdapter | None:
+    def _adapter_for(
+        self, path: str, required_language: str | None = None
+    ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            if adapter.eligible(path):
+            language = canonicalize_language(adapter.language)
+            if (
+                required_language is None or language == required_language
+            ) and adapter.eligible(path):
                 return adapter
         return None
 
 
-def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> None:
-    """Reject global reports whose provenance is not derived from indexed hits."""
-    resolution = getattr(report, "resolution", None)
+def validate_report(
+    report: SearchReport,
+    hits: tuple[CodeSearchHit, ...],
+    line_counts: dict[tuple[str, str, str, str], int] | None = None,
+) -> None:
+    """Reject global reports with untrusted provenance or malformed matches."""
+    resolution = report.resolution
     is_global = report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
     if is_global and (
         resolution is None
@@ -643,6 +685,23 @@ def validate_report(report: SearchReport, hits: tuple[CodeSearchHit, ...]) -> No
         raise SearchSpecError("REJECT_SEMANTIC_DEGRADATION: missing query translation")
     if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
         return
-    indexed = {(hit.slug, hit.commit_sha) for hit in hits}
-    if any((match.source.slug, match.source.commit_sha) not in indexed for match in report.matches):
-        raise ValueError("REJECT_MOVING_REFERENCE")
+    accepted = {
+        (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
+        for hit in hits
+    }
+    seen: set[tuple[str, str, str, str, int, int]] = set()
+    for match in report.matches:
+        source = match.source
+        identity = (source.slug, source.commit_sha, source.path, source.blob_sha)
+        if identity not in accepted:
+            raise ValueError("REJECT_MOVING_REFERENCE")
+        if not math.isfinite(match.score) or match.score < 0:
+            raise ValueError("REJECT_INVALID_SCORE")
+        if line_counts is not None:
+            limit = line_counts.get(identity)
+            if limit is None or source.end_line > limit:
+                raise ValueError("REJECT_INVALID_SPAN")
+        signature = source_identity(source)
+        if signature in seen:
+            raise ValueError("REJECT_DUPLICATE_MATCH")
+        seen.add(signature)

@@ -4,9 +4,13 @@
 
 Leitir follows SemVer within the 0.x series:
 
-- Patch releases such as `0.1.1` address audit findings, bug fixes, and
-  incremental work.
-- Minor releases such as `0.2.0` mark a real feature or behavior milestone.
+- Patch releases (0.1.1, 0.1.2, 0.1.3, ...) carry all incremental work: audit
+  findings, bug fixes, and feature/behavior increments alike (e.g. the
+  Behavioral Transplant Set, composition/multi-language, Search v2). The patch
+  number is an incrementing counter per thematic milestone, not a bugfix-only
+  gate.
+- There is no currently planned minor bump; if one is ever cut it denotes a
+  deliberate compatibility boundary within 0.x, not a feature gate.
 - Breaking changes are permitted before 1.0 and must be called out in the
   changelog.
 - `v1.0` is reserved for the 10,000-user adoption milestone, not for a single

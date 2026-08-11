@@ -121,6 +121,8 @@ cat "$path/package.json"
 
 # Run search and benchmark commands
 leitir search --package zod --version 3.22.0 --ecosystem npm --must symbol_definition:parse
+leitir index
+leitir search --package zod --version 3.22.0 --ecosystem npm --must exact_text:parse --index
 leitir bench
 ```
 
@@ -140,6 +142,12 @@ flowchart LR
 
 ### Search and benchmark
 - `search`: resolve spec+predicate scope and return provenance-bound results.
+- `index [scope ...] [--root ROOT|--local]`: explicitly build deterministic local
+  trigram indexes for eligible materialized shelves. A shelf is eligible only with
+  `source=git-commit`, `parity=exact`, and a full materialized-tree hash.
+  `search --index` reports uncovered fallback scopes as partial;
+  `search --require-index` rejects them. Search never builds or repairs an index.
+  Export/import excludes index artifacts and `gc` preserves them.
 - `bench`: run the pinned `search-v1` benchmark with fixed tasks and strict output shape.
 
 ### Diagnostics
@@ -247,6 +255,10 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
   license evidence is neutral (50), and legacy manifests without `has_tests` treat
   tests as unknown until `upgrade-cache` or re-materialization refreshes evidence.
 - Deterministic behavior: stable outputs for fixed inputs and hash-safe operation independent of interpreter hash order.
+- Local trigram candidates are only a reduction step: the original predicates still
+  run against source bytes while the materialization lock is held. Missing, stale,
+  malformed, sampled, drifted, or schema-incompatible index shelves cannot produce
+  complete indexed coverage.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
 - Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. It paginates with a fixed cap and reports pin, fetch, decode, provenance, adapter, and duplicate exclusions. Duplicate candidates are collapsed from repeated repository paths and then the index's claimed blob SHA; only the elected representative (or a deterministic promoted replacement after failure) is fetched, so `deduplicated` does not claim byte verification of members that remain collapsed. The `max_results` budget bounds fetch attempts, including promoted retries within a collapsed content group. Verification failures can therefore produce an honestly incomplete report that does not include every distinct candidate.

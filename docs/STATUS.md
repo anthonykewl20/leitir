@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-09)
+# Leitir — Status (2026-08-11)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -8,7 +8,22 @@ scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
 **ADR-001 is complete.** Slices P1–P6 plus the retirement slice P0r are landed.
 The kernel accepts a typed `SearchSpec`, returns a provenance-bound
 `SearchReport`, resolves packages across PyPI/crates/Go, ranks deterministically,
-and ships a pinned 12-task benchmark behind `leitir bench`.
+and ships a pinned 32-task benchmark across eight languages (four tasks each)
+behind `leitir bench`. (`src/leitir/bench.py:24-31`,
+`src/leitir/benchmarks/search-v1/manifest.json:1`.)
+
+ADR-001's search kernel now includes the search-v2 extensions: a deterministic
+eight-language adapter registry and canonical language routing, opt-in Python
+AST/`symtable` matching, heuristic Tier-2 adapters, whole-file required
+predicates, verified streaming for blobs above 2 MiB, bounded truncated-tree
+recovery with partial-result reporting, exposed global budgets, and exact
+global `(slug, commit_sha, path, blob_sha)` provenance validation.
+(`src/leitir/adapters/registry.py:17-59`,
+`src/leitir/adapters/languages.py:5-17`,
+`src/leitir/adapters/python_ast.py:186-226`,
+`src/leitir/adapters/_tier2.py:38-111`, `src/leitir/streaming.py:37-168`,
+`src/leitir/tree.py:136-210`, `src/leitir/cli.py:377-405`,
+`src/leitir/discovery_search.py:671-707`.)
 
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
@@ -88,7 +103,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite under branch coverage: **1516 passed, 56 skipped**. The skips are
+Offline suite under branch coverage: **1666 passed, 56 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from leitir.adapters import GoAdapter, RustAdapter
+import pytest
+
+from leitir.adapters import GoAdapter, PythonAdapter, RustAdapter
+from leitir.discovery_search import _line_count
 from leitir.search import Predicate, PredicateKind
 
 RUST_SAMPLE = """\
@@ -241,6 +244,9 @@ class TestMultiAdapterEngine:
                     BlobEntry("cmd/main.go", go_sha, len(go_code)),
                 )
 
+            def list_blobs_ex(self, slug, commit_sha):
+                return self.list_blobs(slug, commit_sha), False
+
             def read_blob(self, slug, blob_sha):
                 if blob_sha == rust_sha:
                     return rust_code.encode()
@@ -260,3 +266,118 @@ class TestMultiAdapterEngine:
         assert "src/main.rs" in paths
         assert "cmd/main.go" in paths
         assert report.coverage.files_eligible == 2
+
+
+def test_adapter_never_emits_phantom_line_and_preserves_real_lines():
+    cases = [
+        (PythonAdapter(), "def foo():\n    pass\n", 2),
+        (RustAdapter(), "pub fn foo() {}\nimpl Foo for Bar {}\n", 2),
+        (GoAdapter(), "func foo() {}\nfunc bar() {}\n", 2),
+    ]
+    for adapter, content, real_lines in cases:
+        star = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r".*"),)
+        )
+        assert {s.end_line for s in star} == set(range(1, real_lines + 1))
+        empty_anchor = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r"^$"),)
+        )
+        assert all(s.end_line <= real_lines for s in empty_anchor)
+
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        assert adapter.find_matches(
+            "", (Predicate(PredicateKind.REGEX, r".*"),)
+        ) == ()
+        assert adapter.find_matches(
+            "", (Predicate(PredicateKind.REGEX, r"^$"),)
+        ) == ()
+
+    for adapter, content, real_lines in [
+        (PythonAdapter(), "def foo():\n    pass", 2),
+        (RustAdapter(), "pub fn foo() {}\nimpl Foo for Bar {}", 2),
+        (GoAdapter(), "func foo() {}\nfunc bar() {}", 2),
+    ]:
+        star = adapter.find_matches(
+            content, (Predicate(PredicateKind.REGEX, r".*"),)
+        )
+        assert {s.end_line for s in star} == set(range(1, real_lines + 1))
+
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        spans = adapter.find_matches(
+            "a\n\n\n", (Predicate(PredicateKind.REGEX, r"^$"),)
+        )
+        assert {s.end_line for s in spans} == {2, 3}
+
+
+def test_adapter_max_end_line_matches_validator_line_count():
+    for adapter in (PythonAdapter(), RustAdapter(), GoAdapter()):
+        for content in ("a\n", "a\nb\n", "a\nb", "x\n\n\n", "only"):
+            spans = adapter.find_matches(
+                content, (Predicate(PredicateKind.REGEX, r".*"),)
+            )
+            if spans:
+                assert max(s.end_line for s in spans) == _line_count(content)
+            else:
+                assert _line_count(content) == 0
+
+
+@pytest.mark.parametrize(
+    ("adapter", "definition", "call"),
+    (
+        (PythonAdapter(), "def build():", "run()"),
+        (RustAdapter(), "fn build() {}", "run();"),
+        (GoAdapter(), "func build() {}", "run()"),
+    ),
+)
+def test_adapter_whole_file_matches_required_evidence_on_different_lines(
+    adapter, definition, call
+):
+    content = "\n".join((definition, *("" for _ in range(48)), call))
+    predicates = (
+        Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+        Predicate(PredicateKind.CALL, "run"),
+    )
+
+    assert adapter.find_matches(content, predicates) == ()
+    matches = adapter.find_matches(content, predicates, whole_file=True)
+    assert tuple(
+        (match.start_line, match.end_line, match.matched_kinds) for match in matches
+    ) == (
+        (1, 1, (PredicateKind.SYMBOL_DEFINITION,)),
+        (50, 50, (PredicateKind.CALL,)),
+    )
+
+
+@pytest.mark.parametrize("adapter", (PythonAdapter(), RustAdapter(), GoAdapter()))
+def test_adapter_whole_file_rejects_missing_required_and_is_keyword_only(adapter):
+    predicates = (
+        Predicate(PredicateKind.IDENTIFIER, "present"),
+        Predicate(PredicateKind.IDENTIFIER, "missing"),
+    )
+    assert adapter.find_matches("present\n", predicates, whole_file=True) == ()
+    with pytest.raises(TypeError):
+        adapter.find_matches("present\n", predicates, True)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "content"),
+    (
+        (PythonAdapter(), "def build(): run()\nrun()\n"),
+        (RustAdapter(), "fn build() { run(); }\nrun();\n"),
+        (GoAdapter(), "func build() { run() }\nrun()\n"),
+    ),
+)
+def test_adapter_whole_file_deduplicates_evidence_in_stable_order(adapter, content):
+    matches = adapter.find_matches(
+        content,
+        (
+            Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+            Predicate(PredicateKind.CALL, "run"),
+            Predicate(PredicateKind.CALL, "run"),
+        ),
+        whole_file=True,
+    )
+    assert tuple((match.start_line, match.matched_kinds) for match in matches) == (
+        (1, (PredicateKind.CALL, PredicateKind.SYMBOL_DEFINITION)),
+        (2, (PredicateKind.CALL,)),
+    )

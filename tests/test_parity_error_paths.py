@@ -27,6 +27,7 @@ def _zip(entries: tuple[tuple[str, bytes, int | None], ...]) -> bytes:
         with zipfile.ZipFile(output, "w") as archive:
             for name, content, mode in entries:
                 member = zipfile.ZipInfo(name)
+                member.filename = name
                 if mode is not None:
                     member.create_system = 3
                     member.external_attr = mode << 16
@@ -39,6 +40,7 @@ def _zip(entries: tuple[tuple[str, bytes, int | None], ...]) -> bytes:
     [
         (_zip(()), "archive is empty"),
         (_zip((("root\\file.txt", b"x", None),)), "invalid archive member path"),
+        (_zip((("C:/root/file.txt", b"x", None),)), "escapes its target"),
         (_zip((("root/../escape.txt", b"x", None),)), "escapes its target"),
         (_zip(((f"root/{MANIFEST_NAME}", b"{}", None),)), "reserved manifest"),
         (

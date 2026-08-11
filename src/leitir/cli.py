@@ -10,6 +10,8 @@ services.
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import errno
 import hashlib
 import importlib.metadata
 import json
@@ -61,6 +63,50 @@ class ExitCode(IntEnum):
     CORPUS_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
+
+
+def _is_broken_pipe_error(exc: OSError) -> bool:
+    """Return whether an output failure means the pipe reader has gone away."""
+    return (
+        isinstance(exc, BrokenPipeError)
+        or exc.errno == errno.EPIPE
+        or (os.name == "nt" and exc.errno == errno.EINVAL)
+        or getattr(exc, "winerror", None) in (109, 232)
+    )
+
+
+class _BrokenPipeSafeStdout:
+    """Proxy process stdout while suppressing only broken-pipe failures."""
+
+    def __init__(self, stream: TextIO) -> None:
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except OSError as exc:
+            if not _is_broken_pipe_error(exc):
+                raise
+            return len(text)
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except OSError as exc:
+            if not _is_broken_pipe_error(exc):
+                raise
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _protect_stdout_shutdown(out: TextIO) -> TextIO:
+    """Keep CPython's shutdown flush from turning a closed pipe into exit 120."""
+    if out is not sys.stdout or isinstance(out, _BrokenPipeSafeStdout):
+        return out
+    protected = cast(TextIO, _BrokenPipeSafeStdout(out))
+    sys.stdout = protected
+    return protected
 
 
 def _installed_version() -> str:
@@ -134,6 +180,16 @@ def _parse_predicate(raw: str) -> Predicate:
     return Predicate(kind=kind, value=value, language=language)
 
 
+def _positive_search_budget(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="leitir",
@@ -155,6 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--quiet", action="store_true")
     doctor.add_argument("--no-network", action="store_true")
     search = commands.add_parser("search", help="search a pinned code corpus")
+    index_command = commands.add_parser(
+        "index", help="explicitly build or refresh local trigram index shelves"
+    )
+    index_command.add_argument("scopes", nargs="*", metavar="scope")
+    index_roots = index_command.add_mutually_exclusive_group()
+    index_roots.add_argument("--root", default=None, help="corpus root directory")
+    index_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     bench = commands.add_parser(
         "bench",
         help="run the pinned search benchmark",
@@ -362,6 +425,51 @@ def build_parser() -> argparse.ArgumentParser:
         dest="must_not",
         help="exclusion predicate (kind:value[:language])",
     )
+    search.add_argument(
+        "--whole-file",
+        action="store_true",
+        default=False,
+        dest="whole_file",
+        help="match required predicates anywhere in the same file (not just the same line)",
+    )
+    search.add_argument(
+        "--ast",
+        action="store_true",
+        default=False,
+        dest="ast",
+        help="use the Python AST adapter (opt-in structural matching)",
+    )
+    search.add_argument(
+        "--max-results",
+        type=_positive_search_budget,
+        default=None,
+        help="global search result/candidate budget (requires --global)",
+    )
+    search.add_argument(
+        "--max-pages",
+        type=_positive_search_budget,
+        default=None,
+        help="global search page budget (requires --global)",
+    )
+    search.add_argument(
+        "--language",
+        default=None,
+        help="global search language filter, copied into every required predicate (requires --global)",
+    )
+    search.add_argument(
+        "--index",
+        action="store_true",
+        dest="use_index",
+        help="use verified local trigram indexes with scoped fallback",
+    )
+    search.add_argument(
+        "--require-index",
+        action="store_true",
+        help="fail closed unless a verified index covers every scope",
+    )
+    search_roots = search.add_mutually_exclusive_group()
+    search_roots.add_argument("--root", default=None, help="corpus root directory for indexed search")
+    search_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs for indexed search")
 
     return parser
 
@@ -477,14 +585,16 @@ def _build_default_resolver(token: str | None) -> object:
     )
 
 
-def _build_default_searcher(tree_source: object) -> object:
-    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+def _build_default_searcher(
+    tree_source: object, ast_python: bool = False
+) -> object:
+    from .adapters.registry import build_adapters
     from .engine import ScopedSearcher
     from .tree import TreeSource
 
     return ScopedSearcher(
         tree_source=cast(TreeSource, tree_source),
-        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+        adapters=build_adapters(ast_python=ast_python),
     )
 
 
@@ -500,8 +610,14 @@ def _load_benchmark_manifest(path: str | None) -> object:
     return load_manifest(path)
 
 
-def _build_default_global_searcher(code_search: object, tree_source: object) -> object:
-    from .adapters import GoAdapter, PythonAdapter, RustAdapter
+def _build_default_global_searcher(
+    code_search: object,
+    tree_source: object,
+    max_results: int,
+    max_pages: int,
+    ast_python: bool = False,
+) -> object:
+    from .adapters.registry import build_adapters
     from .discovery_search import CodeSearchPort, GlobalSearcher
     from .tree import TreeSource
 
@@ -510,8 +626,10 @@ def _build_default_global_searcher(code_search: object, tree_source: object) -> 
     return GlobalSearcher(
         code_search=typed_code_search,
         tree_source=cast(TreeSource, tree_source),
-        adapters=(PythonAdapter(), RustAdapter(), GoAdapter()),
+        adapters=build_adapters(ast_python=ast_python),
         blob_reader=cast(Any, code_search).read_blob_by_path,
+        max_results=max_results,
+        max_pages=max_pages,
     )
 
 
@@ -863,6 +981,21 @@ def _run_corpus_command(
             removed = _gc_abandoned_staging(root)
             print(
                 json.dumps({"removed": removed, "root": str(root)}, sort_keys=True),
+                file=out,
+            )
+            return int(ExitCode.SUCCESS)
+        if args.command == "index":
+            from .index.builder import build_shelf_index, shelves_from_corpus
+
+            shelves = shelves_from_corpus(root, tuple(args.scopes))
+            if not shelves:
+                raise ValueError("the corpus has no materialized shelves to index")
+            built_paths = [str(build_shelf_index(root, shelf).absolute()) for shelf in shelves]
+            print(
+                json.dumps(
+                    {"count": len(built_paths), "indexes": built_paths, "schema_version": 1},
+                    sort_keys=True,
+                ),
                 file=out,
             )
             return int(ExitCode.SUCCESS)
@@ -1631,16 +1764,15 @@ def main(
     *,
     tree_source_factory: Callable[[str | None], object] = _build_default_tree_source,
     resolver_factory: Callable[[str | None], object] = _build_default_resolver,
-    searcher_factory: Callable[[object], object] = _build_default_searcher,
+    searcher_factory: Callable[..., object] = _build_default_searcher,
     code_search_factory: Callable[[str | None], object] = _build_default_code_search,
-    global_searcher_factory: Callable[
-        [object, object], object
-    ] = _build_default_global_searcher,
+    global_searcher_factory: Callable[..., object] = _build_default_global_searcher,
     benchmark_runner_factory: Callable[
         [object], object
     ] = _build_default_benchmark_runner,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    _exit_windows_doctor_success: bool = False,
 ) -> int:
     """Parse one command and wire resolver -> engine -> report."""
 
@@ -1668,15 +1800,35 @@ def main(
     if args.command == "doctor":
         from .doctor import run_doctor
 
-        result = run_doctor(
-            as_json=args.as_json,
-            quiet=args.quiet,
-            no_network=args.no_network,
-            stdout=out,
-        )
-        if result == int(ExitCode.SUCCESS):
-            return successful()
-        return result
+        exit_process = _exit_windows_doctor_success and os.name == "nt"
+        result = int(ExitCode.INFRASTRUCTURE_FAILURE)
+        try:
+            if stdout is None:
+                out = _protect_stdout_shutdown(out)
+            result = run_doctor(
+                as_json=args.as_json,
+                quiet=args.quiet,
+                no_network=args.no_network,
+                stdout=out,
+            )
+            if result == int(ExitCode.SUCCESS):
+                try:
+                    result = successful()
+                except OSError as exc:
+                    if not _is_broken_pipe_error(exc):
+                        raise
+            return result
+        finally:
+            if exit_process:
+                # Py_RunMain changes the status to 120 when Py_FinalizeEx
+                # cannot flush Windows stdout.  Exit with doctor's actual
+                # result (or infrastructure failure if it raised) first.
+                error = sys.exception()
+                try:
+                    if error is not None:
+                        sys.excepthook(type(error), error, error.__traceback__)
+                finally:
+                    os._exit(result)
 
     if args.command == "bench":
         token = _github_token()
@@ -1714,6 +1866,7 @@ def main(
         "list",
         "upgrade-cache",
         "gc",
+        "index",
         "trust",
         "remove",
         "clean",
@@ -1746,21 +1899,70 @@ def main(
         print("leitir: error: at least one --must predicate is required", file=err)
         return int(ExitCode.MALFORMED_USAGE)
 
+    global_only_used = any(
+        value is not None
+        for value in (args.max_results, args.max_pages, args.language)
+    )
+    if not args.global_search and global_only_used:
+        print(
+            "leitir: error: --max-results, --max-pages, and --language require --global",
+            file=err,
+        )
+        return int(ExitCode.MALFORMED_USAGE)
+    if args.global_search and (args.use_index or args.require_index):
+        print("leitir: error: --index and --require-index require a scoped search", file=err)
+        return int(ExitCode.MALFORMED_USAGE)
+
+    must = tuple(args.must)
+    if args.language is not None:
+        from .adapters.languages import canonicalize_language
+
+        requested = canonicalize_language(args.language)
+        if any(
+            p.language is not None
+            and canonicalize_language(p.language) != requested
+            for p in must
+        ):
+            print(
+                "leitir: error: --language conflicts with a required predicate language",
+                file=err,
+            )
+            return int(ExitCode.MALFORMED_USAGE)
+        must = tuple(dataclasses.replace(p, language=args.language) for p in must)
+
     token = _github_token()
 
     try:
         if args.global_search:
             spec = SearchSpec(
                 mode=SearchMode.GLOBAL_DISCOVERY,
-                must=tuple(args.must),
+                must=must,
                 should=tuple(args.should),
                 must_not=tuple(args.must_not),
+                whole_file_must=args.whole_file,
             )
             code_search = code_search_factory(token)
             tree_source = tree_source_factory(token)
-            searcher = cast(
-                _Searcher, global_searcher_factory(code_search, tree_source)
-            )
+            max_results = args.max_results if args.max_results is not None else 30
+            max_pages = args.max_pages if args.max_pages is not None else 10
+            if args.ast:
+                searcher = cast(
+                    _Searcher,
+                    global_searcher_factory(
+                        code_search,
+                        tree_source,
+                        max_results,
+                        max_pages,
+                        ast_python=True,
+                    ),
+                )
+            else:
+                searcher = cast(
+                    _Searcher,
+                    global_searcher_factory(
+                        code_search, tree_source, max_results, max_pages
+                    ),
+                )
             report = searcher.search(spec)
         else:
             if args.repo is not None:
@@ -1777,10 +1979,30 @@ def main(
                 should=tuple(args.should),
                 must_not=tuple(args.must_not),
                 scopes=(scope,),
+                whole_file_must=args.whole_file,
             )
 
             tree_source = tree_source_factory(token)
-            searcher = cast(_Searcher, searcher_factory(tree_source))
+            searcher = cast(
+                _Searcher,
+                searcher_factory(tree_source, ast_python=True)
+                if args.ast
+                else searcher_factory(tree_source),
+            )
+            if args.use_index or args.require_index:
+                from .adapters.registry import build_adapters
+                from .engine import ScopedSearcher
+                from .index.query import IndexedSearcher
+
+                adapters = build_adapters(ast_python=args.ast)
+                if not isinstance(searcher, ScopedSearcher):
+                    raise ValueError("indexed search requires a ScopedSearcher fallback")
+                searcher = IndexedSearcher(
+                    _corpus_root(args, err),
+                    searcher,
+                    adapters,
+                    require_index=args.require_index,
+                )
             report = searcher.search(spec)
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)
@@ -1794,8 +2016,13 @@ def main(
     return successful()
 
 
+def _process_main() -> int:
+    """Run the CLI with process-only shutdown handling enabled."""
+    return main(_exit_windows_doctor_success=True)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_process_main())
 
 
 __all__ = [

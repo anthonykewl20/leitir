@@ -16,6 +16,7 @@ from leitir.search import (
     SearchMode,
     SearchReport,
     SearchSpec,
+    SearchSpecError,
     SourceMatch,
     SourceRef,
 )
@@ -49,6 +50,46 @@ def test_global_discovery_allows_no_scope():
     assert spec.mode is SearchMode.GLOBAL_DISCOVERY
 
 
+@pytest.mark.parametrize(
+    ("mode", "scopes"),
+    (
+        (SearchMode.GLOBAL_DISCOVERY, ()),
+        (SearchMode.SCOPED_EXHAUSTIVE, (RepoScope("python/cpython", SHA),)),
+    ),
+)
+def test_spec_rejects_conflicting_canonical_required_languages(mode, scopes):
+    with pytest.raises(
+        SearchSpecError, match="conflicting required predicate languages"
+    ):
+        SearchSpec(
+            mode=mode,
+            must=(
+                Predicate(PredicateKind.IDENTIFIER, "first", "js"),
+                Predicate(PredicateKind.IDENTIFIER, "second", "python"),
+            ),
+            scopes=scopes,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mode", "scopes"),
+    (
+        (SearchMode.GLOBAL_DISCOVERY, ()),
+        (SearchMode.SCOPED_EXHAUSTIVE, (RepoScope("python/cpython", SHA),)),
+    ),
+)
+def test_spec_accepts_alias_equivalent_required_languages(mode, scopes):
+    spec = SearchSpec(
+        mode=mode,
+        must=(
+            Predicate(PredicateKind.IDENTIFIER, "first", "js"),
+            Predicate(PredicateKind.IDENTIFIER, "second", "javascript"),
+        ),
+        scopes=scopes,
+    )
+    assert len(spec.must) == 2
+
+
 def test_invalid_commit_sha_is_rejected():
     with pytest.raises(ValueError):
         RepoScope("python/cpython", "not-a-sha")
@@ -77,6 +118,12 @@ def test_spec_digest_is_stable_and_order_sensitive():
     assert _spec().digest() == _spec().digest()
     other = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "doseq"),))
     assert _spec().digest() != other.digest()
+
+
+def test_whole_file_must_is_validated_and_changes_digest():
+    assert _spec().digest() != _spec(whole_file_must=True).digest()
+    with pytest.raises(TypeError, match="whole_file_must must be bool"):
+        _spec(whole_file_must=1)
 
 
 def test_source_ref_permalink_uses_commit_not_branch():

@@ -26,11 +26,48 @@ HISTORICAL_SCORECARDS = {
 
 def _git(root: Path, *argv: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
-        ("git", *argv),
+        (
+            "git",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
+            *argv,
+        ),
         cwd=root,
         check=True,
         capture_output=True,
     )
+
+
+def _first_json_diff(generated: object, published: object, path: str = "") -> str | None:
+    if type(generated) is not type(published):
+        return f"{path}: type {type(generated).__name__} != {type(published).__name__}"
+    if isinstance(generated, dict):
+        for key in sorted(set(generated) | set(published)):
+            if key not in generated:
+                return f"{path}.{key}: missing in generated"
+            if key not in published:
+                return f"{path}.{key}: missing in published"
+            diff = _first_json_diff(generated[key], published[key], f"{path}.{key}")
+            if diff is not None:
+                return diff
+        return None
+    if isinstance(generated, list):
+        for index in range(max(len(generated), len(published))):
+            if index >= len(generated):
+                return f"{path}[{index}]: missing in generated"
+            if index >= len(published):
+                return f"{path}[{index}]: missing in published"
+            diff = _first_json_diff(
+                generated[index], published[index], f"{path}[{index}]"
+            )
+            if diff is not None:
+                return diff
+        return None
+    if generated != published:
+        return f"{path}: {generated!r} != {published!r}"
+    return None
 
 
 def _assert_published_matches(
@@ -40,9 +77,19 @@ def _assert_published_matches(
     published_json: Path = PUBLISHED_JSON,
     published_html: Path = PUBLISHED_HTML,
 ) -> None:
-    assert generated_json.read_bytes() == published_json.read_bytes(), (
-        "published canonical JSON drifted; regenerate it from the pinned clean subject"
-    )
+    if generated_json.read_bytes() != published_json.read_bytes():
+        detail = "could not parse generated/published JSON for a field diff"
+        try:
+            detail = _first_json_diff(
+                json.loads(generated_json.read_bytes()),
+                json.loads(published_json.read_bytes()),
+            ) or detail
+        except (ValueError, OSError):
+            pass
+        raise AssertionError(
+            "published canonical JSON drifted; regenerate it from the pinned clean subject"
+            f"\nfirst diff: {detail}"
+        )
     assert generated_html.read_bytes() == published_html.read_bytes(), (
         "published HTML drifted; regenerate it from the pinned canonical assessment"
     )

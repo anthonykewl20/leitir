@@ -27,6 +27,7 @@ _EXCLUSION_REASONS = frozenset(
         "head_unresolved",
         "no_adapter",
         "path_mismatch",
+        "parser_unavailable",
         "provenance_mismatch",
         "pin_disagreement",
         "unpinned_hit",
@@ -203,6 +204,7 @@ class SearchSpec:
     should: tuple[Predicate, ...] = ()
     must_not: tuple[Predicate, ...] = ()
     scopes: tuple[RepoScope, ...] = ()
+    whole_file_must: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, SearchMode):
@@ -217,10 +219,21 @@ class SearchSpec:
             not isinstance(item, RepoScope) for item in self.scopes
         ):
             raise TypeError("scopes must be a tuple of RepoScope")
+        if not isinstance(self.whole_file_must, bool):
+            raise TypeError("whole_file_must must be bool")
         if not self.must:
             raise ValueError("a search requires at least one must predicate")
         if self.mode is SearchMode.SCOPED_EXHAUSTIVE and not self.scopes:
             raise ValueError("scoped_exhaustive requires at least one scope")
+        from leitir.adapters.languages import canonicalize_language
+
+        required_languages = {
+            canonicalize_language(pred.language)
+            for pred in self.must
+            if pred.language is not None
+        }
+        if len(required_languages) > 1:
+            raise SearchSpecError("conflicting required predicate languages")
 
     def digest(self) -> str:
         """Canonical identity of the spec; equal specs share a digest."""
@@ -248,6 +261,7 @@ class SearchSpec:
                 {"slug": scope.slug, "commit_sha": scope.commit_sha}
                 for scope in self.scopes
             ],
+            "whole_file_must": self.whole_file_must,
         }
 
 

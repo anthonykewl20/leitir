@@ -72,10 +72,12 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
+- bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
 - GitLab subgroup (nested group) project support (`corpus`)
+- guard stdout write and force os._exit on Windows doctor paths (`doctor`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
@@ -88,6 +90,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - tolerate .gitattributes EOL normalization in tree verification (`corpus`)
 - treat source checkout as healthy in install checks (#43) (`doctor`)
 - trust tests fairness, Bitbucket live tolerance, lock best-effort (`corpus`)
+- use os.pathsep in PYTHONPATH so bts_walk subprocess runs on Windows (`tests`)
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security

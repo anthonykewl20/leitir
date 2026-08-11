@@ -166,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--quiet", action="store_true")
     doctor.add_argument("--no-network", action="store_true")
     search = commands.add_parser("search", help="search a pinned code corpus")
+    index_command = commands.add_parser(
+        "index", help="explicitly build or refresh local trigram index shelves"
+    )
+    index_command.add_argument("scopes", nargs="*", metavar="scope")
+    index_roots = index_command.add_mutually_exclusive_group()
+    index_roots.add_argument("--root", default=None, help="corpus root directory")
+    index_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     bench = commands.add_parser(
         "bench",
         help="run the pinned search benchmark",
@@ -404,6 +411,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="global search language filter, copied into every required predicate (requires --global)",
     )
+    search.add_argument(
+        "--index",
+        action="store_true",
+        dest="use_index",
+        help="use verified local trigram indexes with scoped fallback",
+    )
+    search.add_argument(
+        "--require-index",
+        action="store_true",
+        help="fail closed unless a verified index covers every scope",
+    )
+    search_roots = search.add_mutually_exclusive_group()
+    search_roots.add_argument("--root", default=None, help="corpus root directory for indexed search")
+    search_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs for indexed search")
 
     return parser
 
@@ -915,6 +936,21 @@ def _run_corpus_command(
             removed = _gc_abandoned_staging(root)
             print(
                 json.dumps({"removed": removed, "root": str(root)}, sort_keys=True),
+                file=out,
+            )
+            return int(ExitCode.SUCCESS)
+        if args.command == "index":
+            from .index.builder import build_shelf_index, shelves_from_corpus
+
+            shelves = shelves_from_corpus(root, tuple(args.scopes))
+            if not shelves:
+                raise ValueError("the corpus has no materialized shelves to index")
+            built_paths = [str(build_shelf_index(root, shelf).absolute()) for shelf in shelves]
+            print(
+                json.dumps(
+                    {"count": len(built_paths), "indexes": built_paths, "schema_version": 1},
+                    sort_keys=True,
+                ),
                 file=out,
             )
             return int(ExitCode.SUCCESS)
@@ -1764,6 +1800,7 @@ def main(
         "list",
         "upgrade-cache",
         "gc",
+        "index",
         "trust",
         "remove",
         "clean",
@@ -1805,6 +1842,9 @@ def main(
             "leitir: error: --max-results, --max-pages, and --language require --global",
             file=err,
         )
+        return int(ExitCode.MALFORMED_USAGE)
+    if args.global_search and (args.use_index or args.require_index):
+        print("leitir: error: --index and --require-index require a scoped search", file=err)
         return int(ExitCode.MALFORMED_USAGE)
 
     must = tuple(args.must)
@@ -1883,6 +1923,20 @@ def main(
                 if args.ast
                 else searcher_factory(tree_source),
             )
+            if args.use_index or args.require_index:
+                from .adapters.registry import build_adapters
+                from .engine import ScopedSearcher
+                from .index.query import IndexedSearcher
+
+                adapters = build_adapters(ast_python=args.ast)
+                if not isinstance(searcher, ScopedSearcher):
+                    raise ValueError("indexed search requires a ScopedSearcher fallback")
+                searcher = IndexedSearcher(
+                    _corpus_root(args, err),
+                    searcher,
+                    adapters,
+                    require_index=args.require_index,
+                )
             report = searcher.search(spec)
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)

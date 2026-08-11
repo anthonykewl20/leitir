@@ -414,6 +414,87 @@ def _safe(name: str, function: Callable[[], Check]) -> Check:
                      "".join(traceback.format_exception(exc)))
 
 
+def check_search_indexes(root: Path) -> Check:
+    """Report malformed, stale, or schema-incompatible trigram index shelves."""
+    from .index.verify import SCHEMA_VERSION, ShelfRef, index_shelf_path, open_verified_shelf
+
+    catalog = root / ".search-index" / "manifest.json"
+    if not catalog.exists():
+        return Check(
+            "index.shelves",
+            "pass",
+            "no local search indexes",
+            json_data={"invalid": 0, "valid": 0},
+        )
+    try:
+        if catalog.is_symlink() or not catalog.is_file():
+            raise ValueError("top-level index manifest is not a regular file")
+        payload = json.loads(catalog.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+            return Check(
+                "index.shelves",
+                "error",
+                "search index schema is incompatible",
+                json_data={"expected_schema_version": SCHEMA_VERSION},
+            )
+        records = payload.get("shelves")
+        if not isinstance(records, list):
+            raise ValueError("top-level index shelves must be a list")
+        shelves: list[ShelfRef] = []
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("shelf"), dict):
+                raise ValueError("top-level index shelf record is malformed")
+            identity = record["shelf"]
+            shelves.append(ShelfRef(identity["host"], identity["owner"], identity["repo"], identity["commit"]))
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        return Check("index.shelves", "error", "search index catalog is malformed", str(exc))
+
+    invalid: list[str] = []
+    if len(set(shelves)) != len(shelves):
+        invalid.append("top-level index manifest contains duplicate shelf identities")
+    discovered: set[ShelfRef] = set()
+    index_root = root / ".search-index"
+    for path in sorted(index_root.rglob("manifest.json")):
+        if path == catalog:
+            continue
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("shelf manifest is not a regular file")
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict) or not isinstance(metadata.get("shelf"), dict):
+                raise ValueError("shelf manifest identity is malformed")
+            identity = metadata["shelf"]
+            shelf = ShelfRef(identity["host"], identity["owner"], identity["repo"], identity["commit"])
+            if path.absolute() != (index_shelf_path(root, shelf) / "manifest.json").absolute():
+                raise ValueError("shelf manifest path does not match its identity")
+            discovered.add(shelf)
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            invalid.append(f"{path}: {exc}")
+    shelves_set = set(shelves)
+    for shelf in sorted(discovered - shelves_set):
+        invalid.append(f"{shelf.host}/{shelf.slug}@{shelf.commit}: missing from top-level index manifest")
+    for shelf in sorted(shelves_set):
+        try:
+            with open_verified_shelf(root, shelf):
+                pass
+        except Exception as exc:
+            invalid.append(f"{shelf.host}/{shelf.slug}@{shelf.commit}: {exc}")
+    if invalid:
+        return Check(
+            "index.shelves",
+            "warn",
+            f"{len(invalid)} stale or invalid search index shelf(s)",
+            "\n".join(invalid),
+            {"invalid": len(invalid), "valid": max(0, len(shelves_set) - len(invalid))},
+        )
+    return Check(
+        "index.shelves",
+        "pass",
+        f"{len(shelves_set)} search index shelf(s) verified",
+        json_data={"invalid": 0, "valid": len(shelves_set)},
+    )
+
+
 def collect_checks(*, no_network: bool = False, root: Path | None = None) -> tuple[list[Check], str | None]:
     """Run every diagnostic independently and return results plus installed version."""
     corpus_root = (root or resolve_root(None)).absolute()
@@ -437,6 +518,7 @@ def collect_checks(*, no_network: bool = False, root: Path | None = None) -> tup
         checks.append(Check("cache.shelves", "error", "cache inspection failed",
                             "".join(traceback.format_exception(exc))))
         manifests = []
+    checks.append(_safe("index.shelves", lambda: check_search_indexes(corpus_root)))
     checks.append(_safe("creds", check_credentials))
     installed = next((check.json_data["version"] for check in checks
                       if check.name == "install.version" and check.status == "pass"

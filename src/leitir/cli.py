@@ -65,17 +65,35 @@ class ExitCode(IntEnum):
     INFRASTRUCTURE_FAILURE = 3
 
 
+def _is_broken_pipe_error(exc: OSError) -> bool:
+    """Return whether an output failure means the pipe reader has gone away."""
+    return (
+        isinstance(exc, BrokenPipeError)
+        or exc.errno == errno.EPIPE
+        or (os.name == "nt" and exc.errno == errno.EINVAL)
+        or getattr(exc, "winerror", None) in (109, 232)
+    )
+
+
 class _BrokenPipeSafeStdout:
-    """Proxy stdout while suppressing only broken-pipe flush failures."""
+    """Proxy process stdout while suppressing only broken-pipe failures."""
 
     def __init__(self, stream: TextIO) -> None:
         self._stream = stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except OSError as exc:
+            if not _is_broken_pipe_error(exc):
+                raise
+            return len(text)
 
     def flush(self) -> None:
         try:
             self._stream.flush()
         except OSError as exc:
-            if exc.errno != errno.EPIPE:
+            if not _is_broken_pipe_error(exc):
                 raise
 
     def __getattr__(self, name: str) -> Any:
@@ -1782,23 +1800,35 @@ def main(
     if args.command == "doctor":
         from .doctor import run_doctor
 
-        if stdout is None:
-            out = _protect_stdout_shutdown(out)
-        result = run_doctor(
-            as_json=args.as_json,
-            quiet=args.quiet,
-            no_network=args.no_network,
-            stdout=out,
-        )
-        if result == int(ExitCode.SUCCESS):
-            result = successful()
-            if _exit_windows_doctor_success and os.name == "nt":
-                # Py_RunMain changes a successful status to 120 when
-                # Py_FinalizeEx cannot flush Windows stdout.  Doctor has
-                # already flushed and redirected stdout, so bypass shutdown.
-                os._exit(result)
+        exit_process = _exit_windows_doctor_success and os.name == "nt"
+        result = int(ExitCode.INFRASTRUCTURE_FAILURE)
+        try:
+            if stdout is None:
+                out = _protect_stdout_shutdown(out)
+            result = run_doctor(
+                as_json=args.as_json,
+                quiet=args.quiet,
+                no_network=args.no_network,
+                stdout=out,
+            )
+            if result == int(ExitCode.SUCCESS):
+                try:
+                    result = successful()
+                except OSError as exc:
+                    if not _is_broken_pipe_error(exc):
+                        raise
             return result
-        return result
+        finally:
+            if exit_process:
+                # Py_RunMain changes the status to 120 when Py_FinalizeEx
+                # cannot flush Windows stdout.  Exit with doctor's actual
+                # result (or infrastructure failure if it raised) first.
+                error = sys.exception()
+                try:
+                    if error is not None:
+                        sys.excepthook(type(error), error, error.__traceback__)
+                finally:
+                    os._exit(result)
 
     if args.command == "bench":
         token = _github_token()

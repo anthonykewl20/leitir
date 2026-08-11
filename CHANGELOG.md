@@ -68,6 +68,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
+- force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
 - GitLab subgroup (nested group) project support (`corpus`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)

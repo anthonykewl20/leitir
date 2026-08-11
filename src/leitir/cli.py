@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import errno
 import hashlib
 import importlib.metadata
 import json
@@ -62,6 +63,32 @@ class ExitCode(IntEnum):
     CORPUS_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
+
+
+class _BrokenPipeSafeStdout:
+    """Proxy stdout while suppressing only broken-pipe flush failures."""
+
+    def __init__(self, stream: TextIO) -> None:
+        self._stream = stream
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except OSError as exc:
+            if exc.errno != errno.EPIPE:
+                raise
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _protect_stdout_shutdown(out: TextIO) -> TextIO:
+    """Keep CPython's shutdown flush from turning a closed pipe into exit 120."""
+    if out is not sys.stdout or isinstance(out, _BrokenPipeSafeStdout):
+        return out
+    protected = cast(TextIO, _BrokenPipeSafeStdout(out))
+    sys.stdout = protected
+    return protected
 
 
 def _installed_version() -> str:
@@ -1754,6 +1781,8 @@ def main(
     if args.command == "doctor":
         from .doctor import run_doctor
 
+        if stdout is None:
+            out = _protect_stdout_shutdown(out)
         result = run_doctor(
             as_json=args.as_json,
             quiet=args.quiet,

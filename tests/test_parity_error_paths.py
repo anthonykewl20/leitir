@@ -39,6 +39,7 @@ def _zip(entries: tuple[tuple[str, bytes, int | None], ...]) -> bytes:
     [
         (_zip(()), "archive is empty"),
         (_zip((("root\\file.txt", b"x", None),)), "invalid archive member path"),
+        (_zip((("C:/root/file.txt", b"x", None),)), "escapes its target"),
         (_zip((("root/../escape.txt", b"x", None),)), "escapes its target"),
         (_zip(((f"root/{MANIFEST_NAME}", b"{}", None),)), "reserved manifest"),
         (
@@ -63,6 +64,19 @@ def test_extract_artifact_rejects_unsafe_zip_members(
     tmp_path: Path, archive: bytes, message: str
 ) -> None:
     with pytest.raises(UnsafeArchiveError, match=message):
+        extract_artifact(archive, tmp_path / "output")
+
+
+def test_extract_artifact_checks_zip_member_name_before_windows_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = _zip((("root\\file.txt", b"x", None),))
+    # CPython's ZipInfo replaces os.sep in ``filename`` on Windows while
+    # retaining the archive spelling in ``orig_filename``.  Emulate that
+    # reader behavior on Linux so this regression does not depend on CI.
+    monkeypatch.setattr(zipfile.os, "sep", "\\")
+
+    with pytest.raises(UnsafeArchiveError, match="invalid archive member path"):
         extract_artifact(archive, tmp_path / "output")
 
 

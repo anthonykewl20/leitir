@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from leitir import _http
 from leitir.credentials import Credentials
@@ -149,10 +149,14 @@ def _extract_zip(data: bytes, destination: Path) -> None:
         roots: set[str] = set()
         seen: set[PurePosixPath] = set()
         for info in infos:
-            if not info.filename or "\\" in info.filename:
+            # ZipInfo normalizes the platform separator in ``filename``.  On
+            # Windows that can conceal a raw backslash-bearing member, so
+            # validate the pre-normalization archive name instead.
+            name = info.orig_filename
+            if not name or "\\" in name:
                 raise UnsafeArchiveError("invalid archive member path")
-            path = PurePosixPath(info.filename)
-            if path.is_absolute() or ".." in path.parts:
+            path = PurePosixPath(name)
+            if path.is_absolute() or PureWindowsPath(name).drive or ".." in path.parts:
                 raise UnsafeArchiveError("archive member escapes its target")
             parts = tuple(part for part in path.parts if part not in ("", "."))
             if not parts:

@@ -45,6 +45,10 @@ flowchart TD
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
 - Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.
+- Deterministic ADR-0011 behavioral-transplant reference and reuse packets. V1
+  uses canonical uncompressed USTAR; references are metadata-only, while reuse
+  packets bind exact member, relocated source, original/rewritten test, adapter,
+  probe, harness, and legal-slot payload bytes.
 - Standalone ADR-002 repository self-assessment engine that drives its own
   six-dimension gate decisions without model calls; it is separate from runtime
   corpus trust scoring.
@@ -104,6 +108,14 @@ filesystem mount plan, not by Python import hooks. The rerun report requires the
 exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;
 the runtime import recorder remains diagnostic-only. The contained interpreter
 uses a sanitized environment with `PYTHONHASHSEED=0` and never uses `-I`.
+
+`leitir.transplant` packages only a recomputed `COMPLETE` BTS with a matching
+complete validation receipt. Loading verifies the canonical USTAR representation,
+logical bundle digest, receipt, and every payload digest. This is receipt
+verification, not self-contained baseline-plus-rerun revalidation; optional reruns
+still require the separately pinned ADR-0009 execution prerequisites. Packet hashes
+provide integrity and subject binding, not publisher authenticity. License and
+obligations records are the separately owned D1 policy boundary.
 
 From a source checkout:
 

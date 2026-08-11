@@ -20,6 +20,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add --whole-file required-predicate mode with deduplicated file-wide evidence (`search`)
 - add leitir agent skill for the corpus workflow (`corpus`)
 - add opt-in Python AST adapter with heuristic fallback (`search`)
+- add symtable lexical classification to the Python AST adapter (`search`)
 - add tier-2 heuristic adapters for JavaScript, TypeScript, Java, C, and C++ (`search`)
 - ADR-002 S1 assessment contracts, policy schema, gate algebra (`score`)
 - ADR-002 S2 canonical evidence and subject provenance (`score`)
@@ -60,6 +61,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - publish reproducible offline decision=pass (#41) (`scorecard`)
 - stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - unified credentials + private repo/registry auth (`corpus`)
+- widen pinned search benchmark to eight languages (`bench`)
 
 ### Fixed
 - address review findings (qwen) (`corpus`)
@@ -79,6 +81,7 @@ Breaking changes are permitted within 0.x (pre-1.0) and must be called out here.
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security
+- close fail-closed gap for non-dict GitHub tree payloads (`search`)
 - close integrity residuals (#28 #39) (`materialize`)
 - corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)
 - cross-platform bugs caught by first Windows CI run (`ci`)

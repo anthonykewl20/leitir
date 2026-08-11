@@ -47,6 +47,9 @@ def _spec(registry: BehaviorContractRegistry = PINNED_BEHAVIOR_CONTRACT_REGISTRY
         license_policy=LicensePolicy.create(policy_id="permissive", policy_version="v1", allowed_spdx_expressions=("MIT",)),
         prohibited_dependencies=("pickle",),
         required_platforms=("any",),
+        max_candidate_budget_id="test-candidate-budget",
+        max_candidate_budget_version="v1",
+        max_candidate_budget_digest="sha256:" + "1" * 64,
         behavior_registry=registry,
     )
 

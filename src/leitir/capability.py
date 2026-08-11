@@ -536,6 +536,9 @@ class CapabilitySpec:
     license_policy: LicensePolicy
     prohibited_dependencies: tuple[str, ...]
     required_platforms: tuple[str, ...]
+    max_candidate_budget_id: str
+    max_candidate_budget_version: str
+    max_candidate_budget_digest: str
     behavior_registry: BehaviorContractRegistry = field(repr=False, compare=False)
     schema_version: str = CAPABILITY_SCHEMA_VERSION
     behavior_registry_digest: str = field(init=False)
@@ -547,6 +550,9 @@ class CapabilitySpec:
             "behavior_registry_digest",
             "interfaces",
             "license_policy",
+            "max_candidate_budget_digest",
+            "max_candidate_budget_id",
+            "max_candidate_budget_version",
             "performance_constraints",
             "prohibited_behaviors",
             "prohibited_dependencies",
@@ -602,6 +608,9 @@ class CapabilitySpec:
             _unsupported("unsupported or contradictory target platform")
         if not isinstance(self.license_policy, LicensePolicy):
             _schema_reject("license_policy is required")
+        _text(self.max_candidate_budget_id, "max_candidate_budget_id", identifier=True)
+        _text(self.max_candidate_budget_version, "max_candidate_budget_version", identifier=True)
+        _digest(self.max_candidate_budget_digest, "max_candidate_budget_digest")
 
         contracts = tuple(self.behavior_registry.resolve(*key) for key in sorted(required_keys | prohibited_keys))
         object.__setattr__(self, "required_behaviors", required)
@@ -644,6 +653,9 @@ class CapabilitySpec:
             "behavior_registry_digest": self.behavior_registry_digest,
             "interfaces": [item._payload() for item in self.interfaces],
             "license_policy": self.license_policy._payload(),
+            "max_candidate_budget_digest": self.max_candidate_budget_digest,
+            "max_candidate_budget_id": self.max_candidate_budget_id,
+            "max_candidate_budget_version": self.max_candidate_budget_version,
             "performance_constraints": [item._payload() for item in self.performance_constraints],
             "prohibited_behaviors": [
                 item._payload(contract_digests[(item.behavior_id, item.contract_version)])
@@ -702,6 +714,9 @@ class CapabilitySpec:
                 required_platforms=tuple(
                     _text(item, "required_platforms item") for item in _list(decoded, "required_platforms")
                 ),
+                max_candidate_budget_id=decoded["max_candidate_budget_id"],
+                max_candidate_budget_version=decoded["max_candidate_budget_version"],
+                max_candidate_budget_digest=decoded["max_candidate_budget_digest"],
                 behavior_registry=registry,
                 schema_version=decoded["schema_version"],
             )

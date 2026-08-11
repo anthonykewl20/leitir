@@ -37,7 +37,7 @@ flowchart TD
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
 - `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
 - API surface indexes with stdlib `ast` extraction for Python and conservative JS/TS heuristics behind a plugin hook.
-- Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence.
+- Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
 - Deterministic trust scoring on a 0–100 scale, with factor weights (20,15,15,10,10,15,15) fixed to verification, parity, license, documentation, tests, checksum, and age (sum 100).
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.

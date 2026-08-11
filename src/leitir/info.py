@@ -17,7 +17,7 @@ from .corpus import (
     write_api_index,
     write_examples_index,
 )
-from .examples import extract_examples
+from .examples import EXAMPLES_SCHEMA_VERSION, extract_examples, valid_serialized_classification
 from .materialize import update_manifest
 from .sbom import infer_license
 from .trust import compute_trust
@@ -39,7 +39,7 @@ def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, obj
 def _valid_api(index: object) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(index, dict)
-        and index.get("schema_version") == 1
+        and index.get("schema_version") == EXAMPLES_SCHEMA_VERSION
         and isinstance(index.get("methods"), list)
         and isinstance(index.get("modules"), list)
         and isinstance(index.get("symbols"), list)
@@ -73,6 +73,7 @@ def _valid_examples(index: object) -> TypeGuard[dict[str, object]]:
             and isinstance(item.get("code"), str)
             and isinstance(item.get("symbols"), list)
             and all(isinstance(symbol, str) for symbol in item["symbols"])
+            and valid_serialized_classification(item)
             for item in index["snippets"]
         )
     )

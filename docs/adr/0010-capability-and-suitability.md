@@ -1,7 +1,7 @@
 # ADR-0010: Capability and suitability
 
 - Status: Accepted
-- Implementation: C4 recipient profiling implemented; remaining slices not started
+- Implementation: C4 recipient profiling and C4b example classification implemented; remaining slices not started
 - Deciders: leitir maintainers; consensus reviewers (consensus-luna, consensus-terra)
 - Date: 2026-08-11
 - Technical Story: Epic #52; C1, C4, C4b, C2, C3a, and C3b (#65-#70)

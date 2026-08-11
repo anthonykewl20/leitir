@@ -20,6 +20,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add --whole-file required-predicate mode with deduplicated file-wide evidence (`search`)
 - add a local trigram index and indexed searcher for fast regex search (`search`)
 - add BTS walk, budget, dispositions, and digests (B5, #58) (`bts`)
+- add deterministic semantic example classification (C4b, #67) (`bts`)
 - add diagnostic-only runtime import recorder (B6, #60) (`bts`)
 - add donor-banning exact-count rerun harness (E2, #63) (`bts`)
 - add end-to-end walking skeleton pipeline + test (E4a, #55) (`bts`)

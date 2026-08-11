@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import tarfile
+import textwrap
 import threading
 from pathlib import Path
 
@@ -124,18 +128,44 @@ def test_cli_indexed_search_has_exhaustive_recall_and_order(tmp_path, monkeypatc
 
 
 def test_indexed_and_exhaustive_reports_have_identical_source_identities(tmp_path):
-    files = {"z.py": b"needle = 1\n", "a.py": b"# needle\n", "other.rs": b"fn other() {}\n"}
+    files = {
+        "z.py": b"needle = 1\n",
+        "a.py": b"# needle forbidden\n",
+        "b.py": b"needle = 2\n",
+        "other.rs": b"fn other() {}\n",
+    }
     shelf = _corpus(tmp_path, files)
     build_shelf_index(tmp_path, shelf)
     scoped, indexed = _searchers(tmp_path, files)
+    spec = SearchSpec(
+        SearchMode.SCOPED_EXHAUSTIVE,
+        must=(Predicate(PredicateKind.REGEX, "needle"),),
+        must_not=(Predicate(PredicateKind.EXACT_TEXT, "forbidden"),),
+        scopes=(RepoScope("example/demo", SHA),),
+    )
 
-    exhaustive = scoped.search(_spec())
-    report = indexed.search(_spec())
+    exhaustive = scoped.search(spec)
+    report = indexed.search(spec)
 
     identity = lambda match: tuple(match.source.to_dict().items())
     assert tuple(map(identity, report.matches)) == tuple(map(identity, exhaustive.matches))
     assert report.coverage.files_eligible == exhaustive.coverage.files_eligible
     assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+
+
+def test_index_and_scoped_fallback_identity_collision_is_deduplicated(tmp_path, monkeypatch):
+    files = {"a.py": b"needle = 1\n"}
+    shelf = _corpus(tmp_path, files)
+    build_shelf_index(tmp_path, shelf)
+    _scoped, indexed = _searchers(tmp_path, files)
+    missing = ShelfRef("gitlab.com", shelf.owner, shelf.repo, shelf.commit)
+    monkeypatch.setattr(indexed, "_shelves", lambda _slug, _commit: (shelf, missing))
+
+    report = indexed.search(_spec())
+
+    identities = [tuple(match.source.to_dict().items()) for match in report.matches]
+    assert len(identities) == 1
+    assert len(identities) == len(set(identities))
 
 
 @pytest.mark.parametrize("tamper", ["index", "manifest-schema", "source", "source-manifest", "symlink"])
@@ -336,6 +366,78 @@ def test_repeated_builds_publish_byte_identical_artifacts(tmp_path):
     }
 
     assert second == first
+
+
+@pytest.mark.parametrize("seed", ["1", "42"])
+def test_index_artifacts_and_report_are_hash_seed_independent(seed):
+    script = textwrap.dedent(
+        """
+        import hashlib
+        import json
+        import tempfile
+        from pathlib import Path
+
+        import leitir.index.query
+        from leitir.adapters.registry import build_adapters
+        from leitir.corpus import write_sources
+        from leitir.engine import ScopedSearcher
+        from leitir.index.builder import ShelfRef, build_shelf_index
+        from leitir.index.query import IndexedSearcher
+        from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
+        from leitir.tree import BlobEntry
+        from leitir.treehash import TREE_HASH_ALGORITHM, compute_materialized_tree_hash
+
+        sha = "a" * 40
+        files = {"z.py": b"needle = 2\\n", "a.py": b"needle = 1\\n"}
+        def blob_sha(data):
+            return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\0" + data, usedforsecurity=False).hexdigest()
+        class Tree:
+            def list_blobs_ex(self, slug, commit_sha):
+                return tuple(BlobEntry(path, blob_sha(data), len(data)) for path, data in sorted(files.items())), False
+            def read_blob(self, slug, requested_sha):
+                return next(data for data in files.values() if blob_sha(data) == requested_sha)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "repos/github.com/example/demo" / sha
+            target.mkdir(parents=True)
+            for relative, data in files.items():
+                (target / relative).write_bytes(data)
+            tree_hash, scope = compute_materialized_tree_hash(target)
+            manifest = {
+                "commit_sha": sha, "fetch_method": "codeload-tarball", "fetched_at": "2026-01-01T00:00:00Z",
+                "host": "github.com", "materialized_tree_hash": tree_hash,
+                "materialized_tree_hash_algorithm": TREE_HASH_ALGORITHM, "materialized_tree_hash_scope": scope,
+                "owner": "example", "parity": "exact", "repo": "demo",
+                "repo_url": "https://github.com/example/demo", "source": "git-commit",
+                "spec": f"example/demo@{sha}", "verified": False,
+            }
+            (target / "leitir-manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+            write_sources(root, [{
+                "commit_sha": sha, "fetched_at": "2026-01-01T00:00:00Z", "host": "github.com",
+                "name": "example/demo", "owner": "example", "path": f"repos/github.com/example/demo/{sha}",
+                "repo": "demo",
+            }])
+            shelf = ShelfRef("github.com", "example", "demo", sha)
+            build_shelf_index(root, shelf)
+            adapters = build_adapters()
+            searcher = IndexedSearcher(root, ScopedSearcher(Tree(), adapters), adapters)
+            spec = SearchSpec(SearchMode.SCOPED_EXHAUSTIVE, must=(Predicate(PredicateKind.EXACT_TEXT, "needle"),), scopes=(RepoScope("example/demo", sha),))
+            leitir.index.query._utc_now = lambda: "2026-08-11T00:00:00Z"
+            artifacts = {
+                path.relative_to(root / ".search-index").as_posix(): path.read_bytes().hex()
+                for path in sorted((root / ".search-index").rglob("*.json"))
+            }
+            print(json.dumps({"artifacts": artifacts, "report": searcher.search(spec).to_json(indent=None)}, sort_keys=True))
+        """
+    )
+
+    def run(hash_seed: str) -> bytes:
+        environment = os.environ.copy()
+        environment["PYTHONHASHSEED"] = hash_seed
+        environment["PYTHONPATH"] = "src"
+        return subprocess.check_output([sys.executable, "-c", script], env=environment)
+
+    assert run(seed) == run("0")
 
 
 def test_index_root_symlink_path_escape_is_rejected(tmp_path):

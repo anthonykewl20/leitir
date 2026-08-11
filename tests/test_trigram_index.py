@@ -168,6 +168,21 @@ def test_index_and_scoped_fallback_identity_collision_is_deduplicated(tmp_path, 
     assert len(identities) == len(set(identities))
 
 
+def test_indexed_search_rejects_symlinked_source_file(tmp_path):
+    files = {"a.py": b"needle = 1\n", "b.py": b"other\n"}
+    shelf = _corpus(tmp_path, files)
+    build_shelf_index(tmp_path, shelf)
+    source = tmp_path / "repos/github.com/example/demo" / SHA / "a.py"
+    source.unlink()
+    source.symlink_to(source.parent / "b.py")
+
+    _scoped, indexed = _searchers(tmp_path, files)
+    assert indexed.search(_spec()).coverage.status is CoverageStatus.PARTIAL
+    _scoped, required = _searchers(tmp_path, files, require=True)
+    with pytest.raises(VerificationError):
+        required.search(_spec())
+
+
 @pytest.mark.parametrize("tamper", ["index", "manifest-schema", "source", "source-manifest", "symlink"])
 def test_tampered_index_shelf_is_partial_or_required_index_rejects(tmp_path, tamper):
     files = {"a.py": b"needle = 1\n"}

@@ -59,6 +59,10 @@ flowchart TD
 - Manifest-bound recipient project profiles with deterministic dependency and
   runtime evidence; malformed, omitted, or provenance-mismatched lockfile input
   rejects instead of falling back to ambient filesystem discovery.
+- Maintainer-pinned, non-compensating BTS suitability gates: every applicable
+  required gate must pass before a candidate enters comparison. ADR-0002
+  `unknown`, `error`, and `skipped` outcomes remain distinct and never pass, and
+  behavior proof must bind the pinned behavior-contract registry.
 
 ```mermaid
 flowchart LR

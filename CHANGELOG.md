@@ -34,6 +34,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add multi-stage candidate retrieval funnel (C2, #68) (`bts`)
 - add N-donor empty-project exit gate (E4b, #73) (`bts`)
 - add name-resolving CALL and complete READS passes (B4, #57) (`bts`)
+- add non-compensating suitability hard gates (C3a, #69) (`bts`)
 - add opt-in Python AST adapter with heuristic fallback (`search`)
 - add per-source license policy + obligations manifest (D1, #72) (`bts`)
 - add static IMPORTS/INHERITS/RAISES extraction (B3, #56) (`bts`)

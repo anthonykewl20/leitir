@@ -139,6 +139,10 @@ class GitHubTreeSource:
         url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
         logger.debug("tree API url=%s", url)
         payload = self._get_json(url, self._headers())
+        if not isinstance(payload, dict):
+            raise TreeEnumerationError(
+                "malformed tree response: expected JSON object"
+            )
         if not payload.get("truncated"):
             blobs = _recursive_blobs(payload)
             logger.debug("tree fetched blobs=%d slug=%s sha=%s", len(blobs), slug, commit_sha[:12])
@@ -172,6 +176,11 @@ class GitHubTreeSource:
                 subtree_url = f"{self._base_url}/repos/{slug}/git/trees/{tree_sha}"
                 subtree = self._get_json(subtree_url, self._headers())
                 requests += 1
+                if not isinstance(subtree, dict):
+                    raise TreeEnumerationError(
+                        "malformed tree response: expected JSON object",
+                        partial_blobs=partial_blobs(),
+                    )
                 if subtree.get("truncated"):
                     raise TreeTruncatedError(
                         slug, commit_sha, partial_blobs=partial_blobs()

@@ -162,6 +162,18 @@ def test_malformed_tree_responses_fail_closed(payload: dict[str, object]):
         source.list_blobs_ex("owner/repo", ROOT)
 
 
+def test_non_dict_recursive_payload_fails_closed():
+    source = FakeTreeSource(["not", "an", "object"])  # type: ignore[arg-type]
+    with pytest.raises(TreeEnumerationError):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_non_dict_subtree_payload_fails_closed_with_partial_blobs():
+    source = truncated_source({ROOT: ["not", "an", "object"]})  # type: ignore[dict-item]
+    with pytest.raises(TreeEnumerationError):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
 def test_commit_entries_are_skipped_in_recursive_and_walk_paths():
     recursive = FakeTreeSource({"tree": [item("vendor", "commit", BLOB_A)]})
     assert recursive.list_blobs_ex("owner/repo", ROOT) == ((), False)

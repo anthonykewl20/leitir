@@ -1,7 +1,7 @@
 # ADR-0008: Behavioral Transplant Set foundation
 
 - Status: Accepted
-- Implementation: not-started
+- Implementation: complete (S1, B2-B5b)
 - Deciders: leitir maintainers; consensus reviewers (consensus-luna, consensus-terra)
 - Date: 2026-08-11
 - Technical Story: Epic #52; foundation slices S1 and B2-B5b (#53, #54, #56, #57, #58, #59)

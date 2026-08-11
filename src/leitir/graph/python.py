@@ -56,6 +56,25 @@ _BUILTIN_EXCEPTIONS = frozenset(
     }
 )
 
+# Pinned from the Python 3.11 built-in namespace documented by the language
+# reference.  This is deliberately not derived from the running interpreter.
+_BUILTIN_NAMES = _BUILTIN_EXCEPTIONS | frozenset(
+    {
+        "False", "None", "NotImplemented", "True", "Ellipsis", "__build_class__",
+        "__debug__", "abs", "aiter", "all", "anext", "any", "ascii", "bin",
+        "bool", "breakpoint", "bytearray", "bytes", "callable", "chr",
+        "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod",
+        "enumerate", "filter", "float", "format", "frozenset", "globals", "hasattr",
+        "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass",
+        "iter", "len", "license", "list", "locals", "map", "max", "memoryview",
+        "min", "next", "object", "oct", "ord", "pow", "print", "property", "range", "repr",
+        "reversed", "round", "set", "slice", "sorted", "staticmethod", "str", "sum",
+        "super", "tuple", "type", "vars", "zip",
+    }
+)
+_DYNAMIC_BUILTIN_CALLS = frozenset({"eval", "exec", "getattr", "setattr"})
+_RESOURCE_BUILTIN_CALLS = frozenset({"open"})
+
 
 @dataclass(frozen=True, slots=True)
 class StaticExtraction:
@@ -85,6 +104,15 @@ class _Binding:
     reference: SourceRef
     path: str | None
     rule: str
+
+
+def _is_callable_kind(kind: NodeKind) -> bool:
+    return kind in {
+        NodeKind.FUNCTION,
+        NodeKind.ASYNC_FUNCTION,
+        NodeKind.METHOD,
+        NodeKind.ASYNC_METHOD,
+    }
 
 
 @dataclass(slots=True, eq=False)
@@ -186,6 +214,12 @@ class _Extractor(ast.NodeVisitor):
         self._handlers: list[ast.expr | None] = []
         self._type_only_depth = 0
         self._definition_ids: dict[ast.AST, NodeId] = {}
+        self._future_annotations = any(
+            isinstance(statement, ast.ImportFrom)
+            and statement.module == "__future__"
+            and any(alias.name == "annotations" for alias in statement.names)
+            for statement in tree.body
+        )
 
         module_id = NodeId(NodeOrigin.DONOR, NodeKind.MODULE, module, module, f"{path}:module")
         self.module_id = module_id
@@ -280,9 +314,23 @@ class _Extractor(ast.NodeVisitor):
                     targets = list(statement.targets)
                 else:
                     targets = [statement.target]
+                creates_module_binding = isinstance(statement, ast.Assign) or (
+                    isinstance(statement, ast.AnnAssign) and statement.value is not None
+                )
                 for target in targets:
                     for name, ref in self._unknown_targets(target):
-                        self._bind(scope, name, _Binding(None, ref, None, "assigned_binding_v1"))
+                        target_id: NodeId | None = None
+                        if creates_module_binding and not conditional and (scope is self.module_scope or scope.class_body):
+                            qualified = f"{prefix}.{name}"
+                            target_id = NodeId(
+                                NodeOrigin.DONOR,
+                                NodeKind.CONSTANT,
+                                self.module,
+                                qualified,
+                                f"{self.path}:{ref.start_line}:{ref.start_col}:{qualified}",
+                            )
+                            self._add_node(target_id, ref, "ast")
+                        self._bind(scope, name, _Binding(target_id, ref, None, "assigned_binding_v1"))
             elif isinstance(statement, (ast.For, ast.AsyncFor)):
                 for name, ref in self._unknown_targets(statement.target):
                     self._bind(scope, name, _Binding(None, ref, None, "assigned_binding_v1"))
@@ -421,6 +469,154 @@ class _Extractor(ast.NodeVisitor):
         path = ".".join((binding.path, *attrs))
         return self._external(path, kind=kind), binding.reference, binding.rule
 
+    def _is_builtin(self, name: str) -> bool:
+        scope = self._lookup_scope(name)
+        return name in _BUILTIN_NAMES and (scope is None or not scope.bindings.get(name))
+
+    def _proved_local_without_dependency(self, name: str, binding_scope: _Scope) -> bool:
+        try:
+            symbol = self.scope.table.lookup(name)
+        except KeyError:
+            return False
+        return (
+            binding_scope is self.scope
+            and binding_scope is not self.module_scope
+            and not symbol.is_global()
+            and (symbol.is_parameter() or symbol.is_local() or symbol.is_assigned())
+        )
+
+    def _read(self, expression: ast.expr, *, kind: NodeKind = NodeKind.CONSTANT) -> None:
+        """Account for one maximal runtime load expression."""
+
+        chain = self._chain(expression)
+        if chain is None:
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                "dynamic_runtime_reference_v1",
+                "runtime_reference_v1",
+            )
+            return
+        name, attrs = chain
+        binding_scope = self._lookup_scope(name)
+        if binding_scope is None:
+            if not attrs and name in _BUILTIN_NAMES:
+                return
+            detail = "implicit_resource_v1" if name == "__file__" else "unresolved_nonlocal_load_v1"
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                detail,
+                "runtime_reference_v1",
+            )
+            return
+        bindings = binding_scope.bindings.get(name, [])
+        if not bindings:
+            if not attrs and name in _BUILTIN_NAMES:
+                return
+            # symtable proved a local/parameter whose value is not a graph
+            # dependency.  Attribute access on that value is receiver dispatch.
+            if attrs and self._proved_local_without_dependency(name, binding_scope):
+                self._record_unresolved(
+                    EdgeKind.READS,
+                    self.scope.owner,
+                    expression,
+                    self._expression(expression),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                    "receiver_dispatch_v1",
+                    "runtime_reference_v1",
+                )
+                return
+            if self._proved_local_without_dependency(name, binding_scope):
+                return
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                "unresolved_nonlocal_load_v1",
+                "runtime_reference_v1",
+            )
+            return
+        if len(bindings) != 1:
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                "ambiguous_runtime_binding_v1",
+                "runtime_reference_v1",
+            )
+            return
+        binding = bindings[0]
+        if binding.target is not None:
+            if attrs:
+                self._record_unresolved(
+                    EdgeKind.READS,
+                    self.scope.owner,
+                    expression,
+                    self._expression(expression),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                    "receiver_dispatch_v1",
+                    "runtime_reference_v1",
+                )
+                return
+            self._edge(EdgeKind.READS, self.scope.owner, binding.target, expression, binding.reference, binding.rule)
+            return
+        if binding.path is None:
+            # A parameter/local is proved scope-correct and intentionally does
+            # not become a dependency.  Conditional or conflicting bindings,
+            # however, have records and therefore cannot be silently ignored.
+            if binding_scope is not self.module_scope and binding.rule in {
+                "parameter_binding_v1",
+                "assigned_binding_v1",
+                "handler_binding_v1",
+                "comprehension_binding_v1",
+            }:
+                if attrs:
+                    self._record_unresolved(
+                        EdgeKind.READS,
+                        self.scope.owner,
+                        expression,
+                        self._expression(expression),
+                        BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                        "receiver_dispatch_v1",
+                        "runtime_reference_v1",
+                    )
+                return
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                "unresolved_nonlocal_load_v1",
+                "runtime_reference_v1",
+            )
+            return
+        if attrs and binding.rule == "from_import_binding_v1":
+            self._record_unresolved(
+                EdgeKind.READS,
+                self.scope.owner,
+                expression,
+                self._expression(expression),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                "receiver_dispatch_v1",
+                "runtime_reference_v1",
+            )
+            return
+        path = ".".join((binding.path, *attrs))
+        target = self._external(path, kind=kind)
+        self._edge(EdgeKind.READS, self.scope.owner, target, expression, binding.reference, binding.rule)
+
     def _expression(self, node: ast.AST | None) -> str:
         if node is None:
             return "<bare raise>"
@@ -472,23 +668,62 @@ class _Extractor(ast.NodeVisitor):
         self._handlers = previous_handlers
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if node.name == "__getattr__":
+            self._record_unresolved(
+                EdgeKind.READS, self._definition_ids[node], node, node.name,
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_getattr_v1", "dynamic_namespace_v1",
+            )
         for decorator in node.decorator_list:
-            self.visit(decorator)
+            self._record_unresolved(
+                EdgeKind.READS, self.scope.owner, decorator, self._expression(decorator),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "decorator_v1", "decorator_runtime_v1",
+            )
         for default in (*node.args.defaults, *node.args.kw_defaults):
             if default is not None:
                 self.visit(default)
+        if not self._future_annotations:
+            for annotation in (
+                *(argument.annotation for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)),
+                node.args.vararg.annotation if node.args.vararg is not None else None,
+                node.args.kwarg.annotation if node.args.kwarg is not None else None,
+                node.returns,
+            ):
+                if annotation is not None:
+                    self.visit(annotation)
         self._with_scope(node, node.body, reset_handlers=True)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node.name == "__getattr__":
+            self._record_unresolved(
+                EdgeKind.READS, self._definition_ids[node], node, node.name,
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_getattr_v1", "dynamic_namespace_v1",
+            )
         for decorator in node.decorator_list:
-            self.visit(decorator)
+            self._record_unresolved(
+                EdgeKind.READS, self.scope.owner, decorator, self._expression(decorator),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "decorator_v1", "decorator_runtime_v1",
+            )
         for default in (*node.args.defaults, *node.args.kw_defaults):
             if default is not None:
                 self.visit(default)
+        if not self._future_annotations:
+            for annotation in (
+                *(argument.annotation for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)),
+                node.args.vararg.annotation if node.args.vararg is not None else None,
+                node.args.kwarg.annotation if node.args.kwarg is not None else None,
+                node.returns,
+            ):
+                if annotation is not None:
+                    self.visit(annotation)
         self._with_scope(node, node.body, reset_handlers=True)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         class_id = self._definition_ids[node]
+        for decorator in node.decorator_list:
+            self._record_unresolved(
+                EdgeKind.READS, self.scope.owner, decorator, self._expression(decorator),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "decorator_v1", "decorator_runtime_v1",
+            )
         for base in node.bases:
             resolved = self._resolve(base, kind=NodeKind.CLASS)
             if resolved is None:
@@ -603,9 +838,15 @@ class _Extractor(ast.NodeVisitor):
     def visit_Match(self, node: ast.Match) -> None:
         self.visit(node.subject)
         for case in node.cases:
+            self.visit(case.pattern)
             if case.guard is not None:
                 self.visit(case.guard)
             self._visit_conditional_statements(case.body)
+
+    def visit_MatchClass(self, node: ast.MatchClass) -> None:
+        self._read(node.cls, kind=NodeKind.CLASS)
+        for pattern in (*node.patterns, *node.kwd_patterns):
+            self.visit(pattern)
 
     def visit_Try(self, node: ast.Try) -> None:
         self._conditional_depth += 1
@@ -614,7 +855,7 @@ class _Extractor(ast.NodeVisitor):
         self._conditional_depth -= 1
         for handler in node.handlers:
             if handler.type is not None:
-                self.visit(handler.type)
+                self._read_exception_types(handler.type)
             self._handlers.append(handler.type)
             self._conditional_depth += 1
             for statement in handler.body:
@@ -631,7 +872,7 @@ class _Extractor(ast.NodeVisitor):
         self._conditional_depth -= 1
         for handler in node.handlers:
             if handler.type is not None:
-                self.visit(handler.type)
+                self._read_exception_types(handler.type)
             self._handlers.append(handler.type)
             self._conditional_depth += 1
             for statement in handler.body:
@@ -641,7 +882,113 @@ class _Extractor(ast.NodeVisitor):
         for statement in (*node.orelse, *node.finalbody):
             self.visit(statement)
 
-    def visit_Call(self, node: ast.Call) -> None:
+    def _read_exception_types(self, expression: ast.expr) -> None:
+        if isinstance(expression, ast.Tuple):
+            for element in expression.elts:
+                self._read(element, kind=NodeKind.CLASS)
+        else:
+            self._read(expression, kind=NodeKind.CLASS)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self._read(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self._read(node)
+            if self._chain(node) is None:
+                self.visit(node.value)
+        elif isinstance(node.ctx, (ast.Store, ast.Del)):
+            self._record_unresolved(
+                EdgeKind.READS, self.scope.owner, node, self._expression(node),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "monkeypatch_v1", "attribute_assignment_v1",
+            )
+            self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.target)
+        if node.value is not None:
+            self.visit(node.value)
+        if not self._future_annotations:
+            self.visit(node.annotation)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        previous = self.scope
+        child = _Scope(self._child_table("lambda", node.lineno), self.scope, self.scope.owner, {})
+        self.scope = child
+        self._index_arguments(node.args, child)
+        self.visit(node.body)
+        self.scope = previous
+
+    def _visit_comprehension_scope(
+        self,
+        node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+        name: str,
+    ) -> None:
+        first, *remaining = node.generators
+        self.visit(first.iter)
+        previous = self.scope
+        matches = [
+            table
+            for table in self.scope.table.get_children()
+            if table.get_name() == name and table.get_lineno() == node.lineno and table.get_id() not in self._used_tables
+        ]
+        if len(matches) > 1:
+            raise BTSError(
+                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                f"AST/symtable scope mismatch for {name!r}",
+                detail_code="symtable_scope_mismatch",
+            )
+        if matches:
+            table = matches[0]
+            self._used_tables.add(table.get_id())
+            inherited_bindings: dict[str, list[_Binding]] = {}
+        else:
+            # CPython 3.12+ inlines list/set/dict comprehensions in symtable
+            # (PEP 709).  Reusing the containing table while retaining a
+            # separate binding envelope reconstructs the pinned 3.11 lexical
+            # boundary without consulting runtime values.
+            if name == "genexpr":
+                raise BTSError(
+                    BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                    "AST/symtable scope mismatch for 'genexpr'",
+                    detail_code="symtable_scope_mismatch",
+                )
+            table = self.scope.table
+            inherited_bindings = {binding_name: list(values) for binding_name, values in self.scope.bindings.items()}
+        child = _Scope(table, self.scope, self.scope.owner, inherited_bindings)
+        for generator in node.generators:
+            for target_name, ref in self._unknown_targets(generator.target):
+                child.bindings[target_name] = [_Binding(None, ref, None, "comprehension_binding_v1")]
+        self.scope = child
+        self.visit(first.target)
+        for condition in first.ifs:
+            self.visit(condition)
+        for generator in remaining:
+            self.visit(generator.iter)
+            self.visit(generator.target)
+            for condition in generator.ifs:
+                self.visit(condition)
+        if isinstance(node, ast.DictComp):
+            self.visit(node.key)
+            self.visit(node.value)
+        else:
+            self.visit(node.elt)
+        self.scope = previous
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension_scope(node, "listcomp")
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension_scope(node, "setcomp")
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension_scope(node, "dictcomp")
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension_scope(node, "genexpr")
+
+    def _dynamic_import_call(self, node: ast.Call) -> bool:
         chain = self._chain(node.func)
         resolved_path: str | None = None
         if chain is not None:
@@ -661,7 +1008,117 @@ class _Extractor(ast.NodeVisitor):
                 EdgeKind.IMPORTS, self.module_id, node, self._expression(node),
                 BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_import_v1", "dynamic_import_call_v1",
             )
-        self.generic_visit(node)
+        return dynamic
+
+    def _resolve_call(self, node: ast.Call) -> None:
+        chain = self._chain(node.func)
+        if chain is None:
+            self._record_unresolved(
+                EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_dispatch_v1", "direct_call_binding_v1",
+            )
+            return
+        name, attrs = chain
+        scope = self._lookup_scope(name)
+        if scope is None:
+            if not attrs and name in _DYNAMIC_BUILTIN_CALLS:
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_dispatch_v1", "direct_call_binding_v1",
+                )
+            elif not attrs and name in _RESOURCE_BUILTIN_CALLS:
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "implicit_resource_v1", "direct_call_binding_v1",
+                )
+            elif not attrs and name in _BUILTIN_NAMES:
+                return
+            else:
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNRESOLVED_EDGE, "unresolved_callee_binding_v1", "direct_call_binding_v1",
+                )
+            return
+        bindings = scope.bindings.get(name, [])
+        if not bindings and not attrs and name in _DYNAMIC_BUILTIN_CALLS:
+            self._record_unresolved(
+                EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "dynamic_dispatch_v1", "direct_call_binding_v1",
+            )
+            return
+        if not bindings and not attrs and name in _RESOURCE_BUILTIN_CALLS:
+            self._record_unresolved(
+                EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "implicit_resource_v1", "direct_call_binding_v1",
+            )
+            return
+        if not bindings and not attrs and name in _BUILTIN_NAMES:
+            return
+        if len(bindings) != 1:
+            local = not bindings and not attrs and self._proved_local_without_dependency(name, scope)
+            detail = "callable_local_v1" if local else "ambiguous_callee_binding_v1"
+            reason = BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT if local else BTSRejectReason.REJECT_UNRESOLVED_EDGE
+            self._record_unresolved(
+                EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func), reason, detail,
+                "direct_call_binding_v1",
+            )
+            return
+        binding = bindings[0]
+        if binding.target is not None and not attrs:
+            if binding.target.kind is NodeKind.CLASS:
+                self._edge(
+                    EdgeKind.INSTANTIATES, self.scope.owner, binding.target, node.func,
+                    binding.reference, binding.rule,
+                )
+            elif _is_callable_kind(binding.target.kind):
+                self._edge(EdgeKind.CALLS, self.scope.owner, binding.target, node.func, binding.reference, binding.rule)
+            else:
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "assignment_dispatch_v1", "direct_call_binding_v1",
+                )
+            return
+        if binding.path is not None:
+            if attrs and binding.rule != "import_binding_v1":
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "receiver_dispatch_v1", "direct_call_binding_v1",
+                )
+                return
+            if not attrs and binding.rule == "import_binding_v1":
+                self._record_unresolved(
+                    EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+                    BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "receiver_dispatch_v1", "direct_call_binding_v1",
+                )
+                return
+            path = ".".join((binding.path, *attrs))
+            target = self._external(path, kind=NodeKind.FUNCTION)
+            self._edge(EdgeKind.CALLS, self.scope.owner, target, node.func, binding.reference, binding.rule)
+            return
+        detail = "receiver_dispatch_v1" if attrs else "callable_local_v1"
+        self._record_unresolved(
+            EdgeKind.CALLS, self.scope.owner, node.func, self._expression(node.func),
+            BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, detail, "direct_call_binding_v1",
+        )
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if not self._dynamic_import_call(node):
+            self._resolve_call(node)
+        chain = self._chain(node.func)
+        if chain is None:
+            self.visit(node.func)
+        builtin_isinstance = chain in {("isinstance", ()), ("issubclass", ())} and self._is_builtin(chain[0])
+        for index, argument in enumerate(node.args):
+            if builtin_isinstance and index == 1:
+                if isinstance(argument, ast.Tuple):
+                    for element in argument.elts:
+                        self._read(element, kind=NodeKind.CLASS)
+                else:
+                    self._read(argument, kind=NodeKind.CLASS)
+            else:
+                self.visit(argument)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
 
     def _raise_expression(self, expression: ast.expr, node: ast.Raise) -> None:
         target_expression = expression.func if isinstance(expression, ast.Call) else expression

@@ -114,7 +114,7 @@ def test_bare_raise_resolves_only_from_one_resolved_handler_type():
     edge = _edges(result, EdgeKind.RAISES)[0]
     assert edge.target.qualified_name == "builtins.KeyError"
     assert edge.target.origin is NodeOrigin.STDLIB
-    assert result.unresolved == ()
+    assert not [item for item in result.unresolved if item.kind is EdgeKind.RAISES]
 
 
 @pytest.mark.parametrize(

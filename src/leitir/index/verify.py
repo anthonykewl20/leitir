@@ -65,12 +65,9 @@ class VerifiedIndexShelf:
     def read_document(self, document: IndexDocument) -> bytes:
         path = self.target / Path(document.path)
         try:
-            metadata = path.lstat()
-            if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-                raise VerificationError(f"indexed source is not a regular file: {document.path}")
             if not path.resolve().is_relative_to(self.target.resolve()):
                 raise VerificationError(f"indexed source escapes its shelf: {document.path}")
-            data = path.read_bytes()
+            data = _read_regular(path)
         except OSError as exc:
             raise VerificationError(f"cannot read indexed source: {document.path}") from exc
         if len(data) != document.size or _git_blob_sha(data) != document.blob_sha:

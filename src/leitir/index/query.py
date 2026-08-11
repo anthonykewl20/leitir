@@ -15,6 +15,7 @@ from leitir.engine import ScopedSearcher, _required_language, _score_content_ex,
 from leitir.index.postings import intersect_sorted, iter_trigrams
 from leitir.index.rank import dedupe_source_matches
 from leitir.index.verify import ShelfRef, VerifiedIndexShelf, open_verified_shelf
+from leitir.matching import document_excluded_ex
 from leitir.materialize import VerificationError, _utc_now
 from leitir.ranking import order_source_matches
 from leitir.search import (
@@ -185,16 +186,10 @@ class IndexedSearcher:
             content = data.decode("utf-8", errors="replace")
             parser_unavailable = False
             if spec.must_not:
-                for predicate in spec.must_not:
-                    if predicate.kind is PredicateKind.PATH:
-                        continue
-                    result = adapter.find_matches_ex(content, (predicate,))
-                    parser_unavailable = parser_unavailable or result.parser_unavailable
-                    if result.spans:
-                        break
-                else:
-                    result = None
-                if result is not None and result.spans:
+                is_excluded, parser_unavailable = document_excluded_ex(
+                    content, adapter, spec.must_not
+                )
+                if is_excluded:
                     if parser_unavailable:
                         excluded += 1
                         incomplete = True

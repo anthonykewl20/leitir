@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.adapters.languages import canonicalize_language
+from leitir.matching import document_excluded_ex
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches
 from leitir.search import (
@@ -368,7 +369,7 @@ class ScopedSearcher:
 
             parser_unavailable = False
             if must_not:
-                excluded, parser_unavailable = self._excluded_ex(
+                excluded, parser_unavailable = document_excluded_ex(
                     content, adapter, must_not
                 )
                 if parser_unavailable:
@@ -406,21 +407,3 @@ class ScopedSearcher:
             ) and adapter.eligible(path):
                 return adapter
         return None
-
-    def _excluded_ex(
-        self,
-        content: str,
-        adapter: LanguageAdapter,
-        must_not: tuple[Predicate, ...],
-    ) -> tuple[bool, bool]:
-        parser_unavailable = False
-        for pred in must_not:
-            if pred.kind is PredicateKind.PATH:
-                continue
-            result = adapter.find_matches_ex(content, (pred,))
-            parser_unavailable = (
-                parser_unavailable or result.parser_unavailable
-            )
-            if result.spans:
-                return True, parser_unavailable
-        return False, parser_unavailable

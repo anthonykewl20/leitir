@@ -39,6 +39,10 @@ flowchart TD
 - API surface indexes with stdlib `ast` extraction for Python and conservative JS/TS heuristics behind a plugin hook.
 - Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
+- BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3
+  resolver. It emits authoritative canonical `obligations.json` and derives
+  `ATTRIBUTION.md` from that closed manifest; missing, ambiguous, deferred, or
+  recipient-incompatible evidence fails closed.
 - Deterministic trust scoring on a 0–100 scale, with factor weights (20,15,15,10,10,15,15) fixed to verification, parity, license, documentation, tests, checksum, and age (sum 100).
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.
 - Transitive dependency closure via `leitir lock` and closure metadata in manifests.

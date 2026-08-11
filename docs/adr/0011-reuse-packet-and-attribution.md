@@ -1,7 +1,7 @@
 # ADR-0011: Reuse packet and attribution
 
 - Status: Accepted
-- Implementation: partial (C5 deterministic packet/container complete; D1 license policy and obligations pending)
+- Implementation: C5 deterministic packet/container and D1 license policy implemented
 - Deciders: leitir maintainers; consensus reviewers (consensus-luna, consensus-terra)
 - Date: 2026-08-11
 - Technical Story: Epic #52; C5 and D1 (#71, #72)

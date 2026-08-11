@@ -26,7 +26,14 @@ HISTORICAL_SCORECARDS = {
 
 def _git(root: Path, *argv: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
-        ("git", *argv),
+        (
+            "git",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
+            *argv,
+        ),
         cwd=root,
         check=True,
         capture_output=True,

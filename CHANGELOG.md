@@ -49,6 +49,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - ADR-005 C8 usage-example extraction (`corpus`)
 - ADR-005 C9 version diffing (`corpus`)
 - ASV performance benchmark suite + scorecard performance dimension (`perf`)
+- bind BTS digests to the authoritative verified donor tree (B5b, #59) (`bts`)
 - changesets-style tag inference and subpath-aware get (`corpus`)
 - Codeberg + Sourcehut git hosts (`corpus`)
 - deduplicate global hits by content digest and repo path (#50) (`search`)

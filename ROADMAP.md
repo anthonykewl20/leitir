@@ -71,7 +71,7 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 
 ## Next milestones (incremental, shipped as patch releases)
 
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (24 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description.
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (24 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description. No `ready-for-agent` slices yet — the implementation issues are all `adr-required` (ADR-008..011 not written) and the milestone is upstream-blocked by the v0.1.1 production-ready human gates (#42, build-order rule 1).
 - **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (8 open): candidate composition (conflict matrix, architecture compatibility, duplicate abstraction, integration cost), lineage/upstream tracking, multi-language graph via tree-sitter, and occupied-recipient transplant validation.
 - **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (12 open): local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. (This milestone currently holds the `ready-for-agent` issues.)
 

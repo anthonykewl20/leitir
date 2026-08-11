@@ -34,6 +34,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add static IMPORTS/INHERITS/RAISES extraction (B3, #56) (`bts`)
 - add symtable lexical classification to the Python AST adapter (`search`)
 - add tier-2 heuristic adapters for JavaScript, TypeScript, Java, C, and C++ (`search`)
+- add typed CapabilitySpec + pinned behavior-contract registry (C1, #65) (`bts`)
 - ADR-002 S1 assessment contracts, policy schema, gate algebra (`score`)
 - ADR-002 S2 canonical evidence and subject provenance (`score`)
 - ADR-002 S3 offline engine-correctness collectors (`score`)

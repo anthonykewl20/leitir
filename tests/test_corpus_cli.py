@@ -142,12 +142,20 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
     contender_acquired = threading.Event()
     critical_section_active = threading.Event()
     contender_observed_overlap = threading.Event()
+    main_holds_lock = threading.Event()
     threads = []
 
     @contextmanager
     def process_lock(_root, _target, _sha):
+        main_thread = threading.current_thread() is threading.main_thread()
         with writer_lock:
-            yield
+            if main_thread:
+                main_holds_lock.set()
+            try:
+                yield
+            finally:
+                if main_thread:
+                    main_holds_lock.clear()
 
     def fake_materialize(*_args, **_kwargs):
         return target
@@ -177,7 +185,7 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
     def checked_upsert(_root, _entry):
         # Pointer regeneration can lock multiple targets and therefore runs
         # only after this target's writer lock is released.
-        assert not writer_lock.locked()
+        assert not main_holds_lock.is_set()
 
     monkeypatch.setattr(leitir.corpus, "_target_lock", process_lock)
     monkeypatch.setattr(leitir.corpus, "materialize_repo", fake_materialize)

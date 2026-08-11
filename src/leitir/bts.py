@@ -1,26 +1,27 @@
-"""Deterministic, fail-closed Behavioral Transplant Set graph walk.
-
-This is the static-graph (B5) calculator.  Source-byte verification and the
-materialization capability which supplies stronger provenance are owned by B5b;
-the identities available here are consequently the immutable identities carried
-by :class:`~leitir.graph.model.Graph`.
-"""
+"""Deterministic, fail-closed Behavioral Transplant Set computation."""
 
 from __future__ import annotations
 
 import hashlib
 import heapq
 import json
+import os
+import re
+import stat
+import types
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
 from itertools import pairwise
-from typing import TypeAlias
+from pathlib import Path
+from typing import TypeAlias, get_args, get_origin, get_type_hints
 
-from leitir.bts_errors import BTSRejectReason
+from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.graph.model import (
     GRAPH_SCHEMA_VERSION,
     Edge,
     EdgeKind,
+    EdgeProvenance,  # noqa: F401 - required by get_type_hints during report reconstruction
     ExtractionBlocker,
     Graph,
     NodeId,
@@ -29,6 +30,8 @@ from leitir.graph.model import (
     SourceRef,
     UnresolvedEdge,
 )
+from leitir.materialize import _target_lock
+from leitir.treehash import FULL, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
 BTS_SCHEMA_VERSION = "leitir-bts-v1"
 BTS_RESOLVER_VERSION = "leitir-bts-walk-v1"
@@ -38,6 +41,64 @@ _RUNTIME_KINDS = frozenset(
 _SEED_KINDS = frozenset(
     {NodeKind.FUNCTION, NodeKind.ASYNC_FUNCTION, NodeKind.METHOD, NodeKind.ASYNC_METHOD}
 )
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+_BLOB_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+@dataclass(frozen=True, slots=True)
+class DonorSnapshot:
+    """Authoritative identity and lock capability for one materialized donor."""
+
+    slug: str
+    commit_sha: str
+    source: str
+    parity: str
+    materialized_tree_hash: str
+    materialized_tree_hash_algorithm: str
+    materialized_tree_hash_scope: str
+    materialization_root: Path
+    source_root: Path
+
+    def __post_init__(self) -> None:
+        _text(self.slug, "slug")
+        if self.source != "git-commit":
+            reason = BTSRejectReason.REJECT_MOVING_REFERENCE if self.source in {
+                "git-branch", "git-tag", "branch", "tag", "head",
+            } else BTSRejectReason.REJECT_PROVENANCE_MISMATCH
+            raise BTSError(reason, "donor source is not an immutable Git commit", detail_code="bts_donor_source_v1")
+        if not isinstance(self.commit_sha, str) or _COMMIT_SHA.fullmatch(self.commit_sha) is None:
+            raise BTSError(
+                BTSRejectReason.REJECT_MOVING_REFERENCE,
+                "donor commit is not an immutable 40-character SHA",
+                detail_code="bts_commit_sha_v1",
+            )
+        if self.parity != "exact" or self.materialized_tree_hash_scope != FULL:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "donor snapshot does not have exact, full-tree parity",
+                detail_code="bts_snapshot_parity_scope_v1",
+            )
+        if self.materialized_tree_hash_algorithm != TREE_HASH_ALGORITHM or not self.materialized_tree_hash:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "donor snapshot has missing or unsupported tree-hash integrity",
+                detail_code="bts_tree_hash_identity_v1",
+            )
+        if not isinstance(self.materialization_root, Path) or not isinstance(self.source_root, Path):
+            raise TypeError("snapshot roots must be pathlib.Path values")
+        materialization_root = self.materialization_root.expanduser().absolute()
+        source_root = self.source_root.expanduser().absolute()
+        try:
+            source_root.relative_to(materialization_root)
+        except ValueError as exc:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "source root is outside its materialization lock root",
+                detail_code="bts_source_root_confinement_v1",
+                cause=exc,
+            ) from exc
+        object.__setattr__(self, "materialization_root", materialization_root)
+        object.__setattr__(self, "source_root", source_root)
 
 
 class BTSDisposition(str, Enum):  # noqa: UP042 - ADR-0008 pins str, Enum
@@ -434,6 +495,10 @@ class BudgetCounters:
 @dataclass(frozen=True, slots=True)
 class AnalysisInputs:
     seed: NodeId
+    donor_slug: str
+    donor_commit_sha: str
+    materialized_tree_hash: str
+    materialized_tree_hash_algorithm: str
     graph_schema_version: str
     graph_digest: str
     resolver_version: str
@@ -464,6 +529,29 @@ class BTSReport:
 
     def to_bytes(self) -> bytes:
         return _canonical_bytes(self)
+
+    @classmethod
+    def from_json(cls, value: str | bytes) -> BTSReport:
+        """Reconstruct and re-derive a canonical report, never trusting its digest."""
+        try:
+            text = value.decode("utf-8", errors="strict") if isinstance(value, bytes) else value
+            raw = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+            report = _from_json_value(raw, cls)
+            if not isinstance(report, cls):
+                raise ValueError("decoded value is not a BTS report")
+            expected = _digest(report, omit=frozenset({"analysis_digest"}))
+            if report.analysis_digest != expected:
+                raise ValueError("BTS report analysis_digest mismatch")
+            if report.to_bytes().decode("utf-8") != text:
+                raise ValueError("BTS report is not canonical JSON")
+            return report
+        except (UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError, BTSError) as exc:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "invalid or noncanonical BTS report artifact",
+                detail_code="bts_report_cache_v1",
+                cause=exc,
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,6 +592,60 @@ def _json_value(value: object, *, omit: frozenset[str] = frozenset()) -> object:
     raise TypeError(f"unsupported canonical value: {type(value).__name__}")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _from_json_value(value: object, target: object) -> object:
+    origin = get_origin(target)
+    arguments = get_args(target)
+    if origin in (types.UnionType, TypeAlias):
+        last: Exception | None = None
+        for option in arguments:
+            try:
+                return _from_json_value(value, option)
+            except (TypeError, ValueError, BTSError) as exc:
+                last = exc
+        raise ValueError("value does not match a canonical union") from last
+    if origin is tuple:
+        if not isinstance(value, list) or len(arguments) != 2 or arguments[1] is not Ellipsis:
+            raise ValueError("canonical tuple must be an array")
+        return tuple(_from_json_value(item, arguments[0]) for item in value)
+    if isinstance(target, type) and issubclass(target, Enum):
+        if not isinstance(value, str):
+            raise ValueError("enum value must be a string")
+        return target(value)
+    if isinstance(target, type) and is_dataclass(target):
+        if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+            raise ValueError("canonical dataclass must be an object")
+        hints = get_type_hints(target, globalns=globals(), localns=globals())
+        if set(value) != set(hints):
+            raise ValueError("canonical dataclass has missing or unknown fields")
+        return target(**{name: _from_json_value(value[name], field_type) for name, field_type in hints.items()})
+    if target is type(None):
+        if value is not None:
+            raise ValueError("expected null")
+        return None
+    if target is int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("expected integer")
+        return value
+    if target is bool:
+        if not isinstance(value, bool):
+            raise ValueError("expected boolean")
+        return value
+    if target is str:
+        if not isinstance(value, str):
+            raise ValueError("expected string")
+        return value
+    raise TypeError(f"unsupported canonical target: {target!r}")
+
+
 def _canonical_bytes(value: object, *, omit: frozenset[str] = frozenset()) -> bytes:
     return (
         json.dumps(_json_value(value, omit=omit), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
@@ -515,9 +657,99 @@ def _digest(value: object, *, omit: frozenset[str] = frozenset()) -> str:
     return f"sha256:{hashlib.sha256(_canonical_bytes(value, omit=omit)).hexdigest()}"
 
 
-def _source_identity(source: SourceRef) -> str:
-    """Return B5's content identity without pretending that a Git blob is SHA-256 bytes."""
-    return f"graph-source:{_digest(source)}"
+def _git_blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+
+def _source_span(data: bytes, source: SourceRef) -> bytes:
+    lines = data.splitlines(keepends=True) or [b""]
+    if data.endswith((b"\n", b"\r")):
+        lines.append(b"")
+    if source.start_line > len(lines) or source.end_line > len(lines):
+        raise ValueError("source line is outside the file")
+    starts: list[int] = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line)
+    start_line = lines[source.start_line - 1]
+    end_line = lines[source.end_line - 1]
+    if source.start_col > len(start_line) or source.end_col > len(end_line):
+        raise ValueError("source byte column is outside the line")
+    start = starts[source.start_line - 1] + source.start_col
+    end = starts[source.end_line - 1] + source.end_col
+    if end < start:
+        raise ValueError("source span end precedes start")
+    return data[start:end]
+
+
+def _read_regular_file(root: Path, relative: str) -> bytes:
+    path = root.joinpath(*relative.split("/"))
+    try:
+        path.relative_to(root)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("included source is not a regular file")
+            with os.fdopen(fd, "rb") as handle:
+                fd = -1
+                return handle.read()
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except (OSError, ValueError) as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"cannot read included donor source: {relative}",
+            detail_code="bts_source_read_v1",
+            cause=exc,
+        ) from exc
+
+
+def _verified_source_digest(snapshot: DonorSnapshot, source: SourceRef) -> str:
+    if source.slug != snapshot.slug or source.commit_sha != snapshot.commit_sha:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "graph source identity does not match the donor snapshot",
+            detail_code="bts_graph_snapshot_identity_v1",
+        )
+    if _BLOB_SHA.fullmatch(source.blob_sha) is None:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "graph source has a malformed Git blob SHA",
+            detail_code="bts_blob_sha_format_v1",
+        )
+    data = _read_regular_file(snapshot.source_root, source.path)
+    if _git_blob_sha(data) != source.blob_sha:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "included source bytes do not match the recorded Git blob",
+            detail_code="bts_blob_sha_mismatch_v1",
+        )
+    try:
+        span = _source_span(data, source)
+    except ValueError as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "included source span does not match the recorded bytes",
+            detail_code="bts_source_span_v1",
+            cause=exc,
+        ) from exc
+    return f"sha256:{hashlib.sha256(span).hexdigest()}"
+
+
+def _graph_sources(graph: Graph) -> tuple[SourceRef, ...]:
+    sources: set[SourceRef] = set(graph.coverage.files) | set(graph.coverage.parsed_files)
+    sources.update(node.source for node in graph.nodes if node.source is not None)
+    for graph_edge in graph.edges:
+        sources.add(graph_edge.provenance.site)
+        if graph_edge.provenance.binding is not None:
+            sources.add(graph_edge.provenance.binding)
+    for unresolved_edge in graph.unresolved:
+        sources.add(unresolved_edge.provenance.site)
+        if unresolved_edge.provenance.binding is not None:
+            sources.add(unresolved_edge.provenance.binding)
+    return tuple(sorted(sources, key=_source_key))
 
 
 def _line_union(members: list[MemberEvidence]) -> tuple[int, dict[str, set[int]]]:
@@ -594,7 +826,13 @@ def _report(
                         "frontier": base.frontier, "counters": base.counters, "analysis_digest": _digest(base, omit=frozenset({"analysis_digest"}))})
 
 
-def compute_bts(seed: NodeId, graph: Graph, budget: BTSBudget, policy: ResolutionPolicy) -> BTSResult:
+def _compute_bts(
+    snapshot: DonorSnapshot,
+    seed: NodeId,
+    graph: Graph,
+    budget: BTSBudget,
+    policy: ResolutionPolicy,
+) -> BTSResult:
     """Compute the deterministic static BTS reachable from ``seed``.
 
     Semantic rejects discovered at a reached node are evaluated before walker
@@ -607,7 +845,8 @@ def compute_bts(seed: NodeId, graph: Graph, budget: BTSBudget, policy: Resolutio
 
     graph_digest = _digest(graph)
     inputs = AnalysisInputs(
-        seed, graph.schema_version, graph_digest, BTS_RESOLVER_VERSION, budget,
+        seed, snapshot.slug, snapshot.commit_sha, snapshot.materialized_tree_hash,
+        snapshot.materialized_tree_hash_algorithm, graph.schema_version, graph_digest, BTS_RESOLVER_VERSION, budget,
         policy.policy_id, policy.policy_digest, _digest(policy), policy.stdlib_identity.allowlist_digest,
         policy.adapter_catalog.content_digest,
     )
@@ -669,7 +908,17 @@ def compute_bts(seed: NodeId, graph: Graph, budget: BTSBudget, policy: Resolutio
             dispositions.append(reject)
             blockers.append(reject)
             continue
-        candidate = MemberEvidence(current, node.source, _source_identity(node.source))
+        try:
+            source_digest = _verified_source_digest(snapshot, node.source)
+        except BTSError as exc:
+            reject = DispositionEvidence(
+                incoming, current, BTSDisposition.REJECT, None, exc.reason,
+                exc.evidence.detail_code or "bts_source_verification_v1",
+            )
+            dispositions.append(reject)
+            blockers.append(reject)
+            continue
+        candidate = MemberEvidence(current, node.source, source_digest)
         prospective = [*members, candidate]
         source_lines, _ = _line_union(prospective)
         files = len({member.source.path for member in prospective})
@@ -778,6 +1027,48 @@ def compute_bts(seed: NodeId, graph: Graph, budget: BTSBudget, policy: Resolutio
     return BTSResult(BTSStatus.COMPLETE, report, bts)
 
 
+GraphProvider: TypeAlias = Graph | Callable[[Path], Graph]
+
+
+def compute_bts(
+    snapshot: DonorSnapshot,
+    seed: NodeId,
+    graph: GraphProvider,
+    budget: BTSBudget,
+    policy: ResolutionPolicy,
+) -> BTSResult:
+    """Compute from one verified donor generation under its materialization lock.
+
+    A provider callable is invoked under the same lock as tree verification and
+    included-byte reads, allowing extraction to be enclosed by the authoritative
+    R6 critical section. A prebuilt frozen ``Graph`` is accepted for composition,
+    but all of its reached source claims are re-derived from locked tree bytes.
+    """
+    if not isinstance(snapshot, DonorSnapshot):
+        raise TypeError("compute_bts requires a validated DonorSnapshot as its first argument")
+    try:
+        with _target_lock(snapshot.materialization_root, snapshot.source_root, snapshot.commit_sha):
+            verify_materialized_tree_hash(
+                snapshot.source_root,
+                snapshot.materialized_tree_hash,
+                algorithm=snapshot.materialized_tree_hash_algorithm,
+                scope=snapshot.materialized_tree_hash_scope,
+            )
+            extracted = graph(snapshot.source_root) if callable(graph) else graph
+            if not isinstance(extracted, Graph):
+                raise TypeError("graph provider must return a validated Graph")
+            for source_ref in _graph_sources(extracted):
+                _verified_source_digest(snapshot, source_ref)
+            return _compute_bts(snapshot, seed, extracted, budget, policy)
+    except TreeHashError as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "materialized donor tree integrity verification failed",
+            detail_code="bts_materialized_tree_hash_v1",
+            cause=exc,
+        ) from exc
+
+
 __all__ = [
     "BTS",
     "BTS_RESOLVER_VERSION",
@@ -794,6 +1085,7 @@ __all__ = [
     "BudgetCounters",
     "DispositionEvidence",
     "DispositionRule",
+    "DonorSnapshot",
     "EdgeEvidence",
     "EnvironmentContract",
     "ExternalRule",

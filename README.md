@@ -48,6 +48,9 @@ flowchart TD
 - Standalone ADR-002 repository self-assessment engine that drives its own
   six-dimension gate decisions without model calls; it is separate from runtime
   corpus trust scoring.
+- Manifest-bound recipient project profiles with deterministic dependency and
+  runtime evidence; malformed, omitted, or provenance-mismatched lockfile input
+  rejects instead of falling back to ambient filesystem discovery.
 
 ```mermaid
 flowchart LR

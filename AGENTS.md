@@ -3,7 +3,7 @@
 ## Where to find tracked work
 
 - **Current milestone: v0.1.2 (Behavioral Transplant Set)**: https://github.com/anthonykewl20/leitir/milestone/2
-- Pull available work with: `gh issue list --label ready-for-agent --state open` (the ready-for-agent pool currently lives in the v0.1.4 / Search v2 milestone, https://github.com/anthonykewl20/leitir/milestone/4). The v0.1.2 / BTS milestone has no ready-for-agent slices yet: its implementation issues are all `adr-required` (ADR-008..011 are not yet written). Technical upstream is met (global-discovery complete); the v0.1.1 human gates (#42) run in parallel — BTS is not hard-blocked.
+- Pull available work with: `gh issue list --label ready-for-agent --state open` (the ready-for-agent pool currently lives in the v0.1.4 / Search v2 milestone, https://github.com/anthonykewl20/leitir/milestone/4). The v0.1.2 / BTS milestone implementation is complete: ADR-008..0011 are Accepted and all 21 BTS slices are merged; the remaining open item is #73 (exit gate), which awaits the external donor corpus + nsjail containment backend (ADR-009). Technical upstream is met (global-discovery complete); the v0.1.1 human gates (#42) run in parallel.
 - Production-ready quality criteria stay tracked in epic #42 under the v0.1.1 milestone (all engineering issues closed; human gates remain). v0.1.2 carries the Behavioral Transplant Set (BTS) program — its exit criterion is in the milestone description. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
@@ -18,7 +18,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 1262+ passed (current), 0 failed.
+- Target: 2018+ passed (current), 0 failed.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

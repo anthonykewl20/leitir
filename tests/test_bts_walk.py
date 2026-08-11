@@ -236,7 +236,7 @@ result = compute_bts(snapshot, seed, graph, _budget(), _policy())
 assert result.bts is not None
 print(result.report.to_bytes().hex() + ':' + result.bts.to_bytes().hex())
 """
-    environment = {**os.environ, "PYTHONHASHSEED": hash_seed, "PYTHONPATH": "src:."}
+    environment = {**os.environ, "PYTHONHASHSEED": hash_seed, "PYTHONPATH": f"src{os.pathsep}."}
     completed = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True, env=environment)
     baseline_environment = {**environment, "PYTHONHASHSEED": "0"}
     baseline = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True, env=baseline_environment)

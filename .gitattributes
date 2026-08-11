@@ -1,1 +1,4 @@
 tests/fixtures_score/** -text
+
+.leitir-score/** text eol=lf
+scorecard/** text eol=lf

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import textwrap
+import tracemalloc
 from collections.abc import Callable, Iterator
 from typing import TypeVar
 
@@ -28,7 +30,7 @@ from leitir.streaming import (
     StreamVerificationError,
     score_blob_stream,
 )
-from leitir.tree import BlobEntry, GitHubTreeSource
+from leitir.tree import STREAM_CHUNK_SIZE, BlobEntry, GitHubTreeSource
 
 T = TypeVar("T")
 COMMIT_SHA = "a" * 40
@@ -125,6 +127,28 @@ def test_large_verified_stream_matches_whole_buffer_and_is_complete() -> None:
     assert report.coverage.files_excluded == 0
     assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
     assert report.coverage.incomplete_results is False
+
+
+def test_streaming_peak_allocation_is_bounded_as_blob_size_grows() -> None:
+    allocation_budget = 8 * (STREAM_CHUNK_SIZE + MAX_LINE_BYTES)
+    peaks: list[int] = []
+    line = b"x" * 4095 + b"\n"
+
+    for size_mib in (1, 4, 16, 64):
+        data = line * (size_mib * 1024 * 1024 // len(line))
+        source = FakeTreeSource(data, chunk_size=STREAM_CHUNK_SIZE)
+        gc.collect()
+        tracemalloc.start()
+        try:
+            assert _stream_score(
+                source, _spec(PredicateKind.EXACT_TEXT, "not-present")
+            ) == []
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        peaks.append(peak)
+
+    assert all(peak < allocation_budget for peak in peaks), peaks
 
 
 def test_tampered_stream_discards_provisional_matches() -> None:

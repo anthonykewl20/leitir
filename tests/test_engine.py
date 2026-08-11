@@ -405,6 +405,29 @@ class TestSadPaths:
         searcher = ScopedSearcher(_fake_source(), (PythonAdapter(), RustAdapter()))
         assert searcher._adapter_for("source.rs", "python") is None
 
+    def test_tampered_python_predicate_language_cannot_route_rust_path(self):
+        rust = b"fn urlencode() {}\n"
+        rust_sha = _blob_sha(rust)
+        source = FakeTreeSource(
+            blobs={
+                "parse.rs": (BlobEntry("parse.rs", rust_sha, len(rust)), rust),
+            }
+        )
+        searcher = ScopedSearcher(source, (PythonAdapter(), RustAdapter()))
+
+        report = searcher.search(
+            _spec(
+                must=(
+                    Predicate(PredicateKind.IDENTIFIER, "urlencode", "python"),
+                )
+            )
+        )
+
+        assert report.matches == ()
+        assert report.coverage.files_eligible == 0
+        assert report.coverage.files_indexed == 0
+        assert source.read_calls == []
+
 
 def test_required_language_report_is_hash_seed_independent():
     script = textwrap.dedent(

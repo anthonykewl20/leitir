@@ -119,6 +119,88 @@ def test_javascript_dollar_identifier_definition_call_and_reference() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("adapter", "definition"),
+    (
+        (JavaScriptAdapter(), "function build() {}"),
+        (TypeScriptAdapter(), "function build(): void {}"),
+        (JavaAdapter(), "int build() { return 1; }"),
+        (CAdapter(), "int build(void) { return 1; }"),
+        (CppAdapter(), "int build() { return 1; }"),
+    ),
+    ids=("javascript", "typescript", "java", "c", "cpp"),
+)
+def test_tier2_whole_file_matches_required_evidence_on_different_lines(
+    adapter: Tier2RegexAdapter, definition: str
+) -> None:
+    content = "\n".join((definition, *("" for _ in range(48)), "run();"))
+    predicates = (
+        Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+        Predicate(PredicateKind.CALL, "run"),
+    )
+
+    assert adapter.find_matches(content, predicates) == ()
+    matches = adapter.find_matches(content, predicates, whole_file=True)
+    assert tuple(
+        (match.start_line, match.end_line, match.matched_kinds) for match in matches
+    ) == (
+        (1, 1, (PredicateKind.SYMBOL_DEFINITION,)),
+        (50, 50, (PredicateKind.CALL,)),
+    )
+
+
+@pytest.mark.parametrize(
+    "adapter",
+    (
+        JavaScriptAdapter(),
+        TypeScriptAdapter(),
+        JavaAdapter(),
+        CAdapter(),
+        CppAdapter(),
+    ),
+    ids=("javascript", "typescript", "java", "c", "cpp"),
+)
+def test_tier2_whole_file_rejects_missing_required_predicate(
+    adapter: Tier2RegexAdapter,
+) -> None:
+    predicates = (
+        Predicate(PredicateKind.IDENTIFIER, "present"),
+        Predicate(PredicateKind.IDENTIFIER, "missing"),
+    )
+
+    assert adapter.find_matches("present\n", predicates, whole_file=True) == ()
+
+
+@pytest.mark.parametrize(
+    ("adapter", "content"),
+    (
+        (JavaScriptAdapter(), "function build() { run(); }\nrun();\n"),
+        (TypeScriptAdapter(), "function build(): void { run(); }\nrun();\n"),
+        (JavaAdapter(), "int build() { run(); return 1; }\nrun();\n"),
+        (CAdapter(), "int build(void) { run(); return 1; }\nrun();\n"),
+        (CppAdapter(), "int build() { run(); return 1; }\nrun();\n"),
+    ),
+    ids=("javascript", "typescript", "java", "c", "cpp"),
+)
+def test_tier2_whole_file_deduplicates_evidence_in_stable_order(
+    adapter: Tier2RegexAdapter, content: str
+) -> None:
+    matches = adapter.find_matches(
+        content,
+        (
+            Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+            Predicate(PredicateKind.CALL, "run"),
+            Predicate(PredicateKind.CALL, "run"),
+        ),
+        whole_file=True,
+    )
+
+    assert tuple((match.start_line, match.matched_kinds) for match in matches) == (
+        (1, (PredicateKind.CALL, PredicateKind.SYMBOL_DEFINITION)),
+        (2, (PredicateKind.CALL,)),
+    )
+
+
 def test_tier2_search_is_hash_seed_independent() -> None:
     script = (
         "import json; "

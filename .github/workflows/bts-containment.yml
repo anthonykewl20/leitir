@@ -1,0 +1,98 @@
+name: BTS containment Phase 1
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nsjail-containment:
+    name: Build and probe nsjail containment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      # GitHub-hosted Linux runners provide passwordless sudo. It is needed for
+      # apt, /usr/bin installation, namespace setup, and host cgroup-v2 writes.
+      - name: Build pinned nsjail
+        run: sudo tools/build-nsjail.sh
+      - name: Add nsjail to PATH
+        run: printf '%s\n' /usr/bin >>"$GITHUB_PATH"
+      - name: Report runner containment capabilities
+        run: |
+          uname -a
+          nsjail --version 2>&1
+          stat -fc 'cgroup filesystem type: %T' /sys/fs/cgroup
+          printf 'available controllers: '
+          tr '\n' ' ' </sys/fs/cgroup/cgroup.controllers
+          printf '\nactive subtree controllers: '
+          tr '\n' ' ' </sys/fs/cgroup/cgroup.subtree_control
+          printf '\n'
+          sysctl kernel.unprivileged_userns_clone 2>/dev/null || true
+      - name: Smoke-test namespaces, seccomp, and cgroup v2
+        id: smoke
+        shell: bash
+        run: |
+          host_uid="$(id -u)"
+          host_gid="$(id -g)"
+          config="$RUNNER_TEMP/nsjail-phase1.cfg"
+          cat >"$config" <<EOF
+          mode: ONCE
+          keep_env: false
+          keep_caps: false
+          disable_no_new_privs: false
+          clone_newnet: true
+          clone_newuser: true
+          clone_newns: true
+          clone_newpid: true
+          clone_newipc: true
+          clone_newuts: true
+          clone_newcgroup: true
+          iface_no_lo: true
+          use_cgroupv2: true
+          cgroupv2_mount: "/sys/fs/cgroup"
+          cgroup_mem_max: 67108864
+          cgroup_pids_max: 16
+          cgroup_cpu_ms_per_sec: 500
+          uidmap { inside_id: "65534" outside_id: "$host_uid" count: 1 use_newidmap: false }
+          gidmap { inside_id: "65534" outside_id: "$host_gid" count: 1 use_newidmap: false }
+          mount { src: "/" dst: "/" is_bind: true rw: false mandatory: true nosuid: true nodev: true }
+          seccomp_string: "DEFAULT ALLOW"
+          EOF
+
+          # Success proves this runner can launch all six namespaces, install a
+          # seccomp filter/NoNewPrivs, apply non-root ID maps, and create all
+          # three required cgroup-v2 limits. Failure is the Phase-1 result.
+          sudo nsjail --config "$config" -- /bin/true
+      - name: Run informational live containment tests
+        id: live-tests
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          LEITIR_ENABLE_DONOR_EXECUTION: '1'
+          PYTHONPATH: src
+        run: >-
+          uv run --no-project --with-requirements requirements.txt
+          python -m pytest -q --tb=short tests/test_exec_sandbox.py -k live
+      - name: Summarize experiment
+        if: ${{ always() }}
+        env:
+          LIVE_TEST_OUTCOME: ${{ steps.live-tests.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          printf '### BTS containment Phase 1\n\n' >>"$GITHUB_STEP_SUMMARY"
+          printf -- '- Namespace/seccomp/cgroup-v2 smoke-gate outcome: `%s`\n' "$SMOKE_OUTCOME" >>"$GITHUB_STEP_SUMMARY"
+          printf -- '- Informational live-test outcome: `%s`\n' "$LIVE_TEST_OUTCOME" >>"$GITHUB_STEP_SUMMARY"
+          printf -- '- Live failures/skips are expected until the release rootfs and corpus artifacts exist.\n' >>"$GITHUB_STEP_SUMMARY"

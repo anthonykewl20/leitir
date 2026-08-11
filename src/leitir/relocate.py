@@ -590,22 +590,27 @@ def _module_path(module: str) -> str:
 
 
 def _validate_bts(value: BTS | BTSResult) -> BTS:
-    bare = isinstance(value, BTS)
     if isinstance(value, BTSResult):
         if value.status is not BTSStatus.COMPLETE or value.report.status is not BTSStatus.COMPLETE or value.bts is None:
             raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "only a COMPLETE BTS may be relocated", "relocate_non_complete_bts_v1")
         bts = value.bts
+        value.report.from_json(value.report.to_bytes())
+        primary = _digest(
+            (value.report, bts),
+            omit=frozenset({"analysis_digest", "bts_digest", "member_equivalence_digest"}),
+        )
     elif isinstance(value, BTS):
         bts = value
+        primary = bts.bts_digest
     else:
         raise TypeError("relocate_tests requires a BTS or BTSResult")
     if bts.schema_version != "leitir-bts-v1" or _DIGEST.fullmatch(bts.bts_digest) is None or _DIGEST.fullmatch(bts.member_equivalence_digest) is None:
         raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "BTS identity is malformed", "relocate_bts_identity_v1")
     equivalence = _digest(bts, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
-    if bare and bts.member_equivalence_digest != equivalence:
+    if bts.member_equivalence_digest != equivalence or bts.bts_digest != primary:
         raise _reject(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
-            "bare BTS identity does not match its canonical records",
+            "BTS identity does not match its canonical records",
             "relocate_bts_identity_v1",
         )
     if not bts.members:

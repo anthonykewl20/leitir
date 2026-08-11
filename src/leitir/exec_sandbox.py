@@ -20,7 +20,9 @@ import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
+from typing import Protocol
 
 from leitir.bts_errors import BTSRejectReason, TransplantError
 
@@ -32,7 +34,6 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
-_DENY_DEFAULT_ACTIONS = frozenset({"KILL", "ERRNO", "TRAP"})
 _FORBIDDEN_SYSCALLS = frozenset(
     {
         "accept",
@@ -61,6 +62,67 @@ _FORBIDDEN_SYSCALLS = frozenset(
         "unshare",
     }
 )
+
+
+class SeccompAction(StrEnum):
+    """Closed Kafel actions supported by the v1 policy generator."""
+
+    ALLOW = "ALLOW"
+    KILL = "KILL"
+
+
+class PermittedSyscall(StrEnum):
+    """Minimal syscall surface for the pinned CPython/runner closure."""
+
+    ARCH_PRCTL = "arch_prctl"
+    BRK = "brk"
+    CLOCK_GETTIME = "clock_gettime"
+    CLOSE = "close"
+    EXECVE = "execve"
+    EXIT = "exit"
+    EXIT_GROUP = "exit_group"
+    FCNTL = "fcntl"
+    FSTAT = "fstat"
+    FUTEX = "futex"
+    GETCWD = "getcwd"
+    GETDENTS64 = "getdents64"
+    GETPID = "getpid"
+    GETRANDOM = "getrandom"
+    LSEEK = "lseek"
+    MMAP = "mmap"
+    MPROTECT = "mprotect"
+    MUNMAP = "munmap"
+    NEWFSTATAT = "newfstatat"
+    OPENAT = "openat"
+    PRLIMIT64 = "prlimit64"
+    READ = "read"
+    READLINK = "readlink"
+    READLINKAT = "readlinkat"
+    RT_SIGACTION = "rt_sigaction"
+    RT_SIGPROCMASK = "rt_sigprocmask"
+    SET_ROBUST_LIST = "set_robust_list"
+    SET_TID_ADDRESS = "set_tid_address"
+    STATX = "statx"
+    WRITE = "write"
+
+
+@dataclass(frozen=True, slots=True)
+class SeccompPolicy:
+    """Typed canonical policy; arbitrary caller-authored Kafel is unsupported."""
+
+    default_action: SeccompAction
+    allowed_syscalls: tuple[PermittedSyscall, ...]
+
+    def render_kafel(self) -> str:
+        names = ", ".join(item.value for item in self.allowed_syscalls)
+        return f"DEFAULT {self.default_action.value}\n{SeccompAction.ALLOW.value} {{ {names} }}\n"
+
+
+CANONICAL_SECCOMP_POLICY = SeccompPolicy(
+    SeccompAction.KILL,
+    tuple(sorted(PermittedSyscall, key=lambda item: item.value)),
+)
+CANONICAL_SECCOMP_STRING = CANONICAL_SECCOMP_POLICY.render_kafel()
 
 
 def donor_execution_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -109,7 +171,6 @@ class ContainmentPolicy:
     cgroup_mem_max: int
     cgroup_pids_max: int
     cgroup_cpu_ms_per_sec: int
-    seccomp_string: str
     wall_time_seconds: int
     rlimit_as_mb: int
     rlimit_cpu_seconds: int
@@ -121,6 +182,12 @@ class ContainmentPolicy:
     output_limit_bytes: int
     environment: tuple[str, ...]
     opt_in_satisfied: bool
+
+    @property
+    def seccomp_string(self) -> str:
+        """Return Leitir's generated policy; callers cannot supply Kafel."""
+
+        return CANONICAL_SECCOMP_STRING
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,19 +391,13 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
     )
     if any(not _positive_int(value) for value in numeric) or type(policy.rlimit_core_mb) is not int or policy.rlimit_core_mb != 0:
         raise _reject("resource limits must be bounded positive integers and core must be zero", "invalid_resource_limit")
-    if not policy.seccomp_string.strip() or len(policy.seccomp_string.encode("utf-8")) > _MAX_POLICY_TEXT:
-        raise _reject("a bounded nonempty seccomp policy is required", "invalid_seccomp_policy")
-    seccomp_upper = policy.seccomp_string.upper()
-    defaults = re.findall(r"\bDEFAULT\s+([A-Z][A-Z0-9_]*)\b", seccomp_upper)
-    if not defaults or any(action not in _DENY_DEFAULT_ACTIONS for action in defaults):
-        raise _reject("seccomp policy must declare default-deny behavior", "seccomp_not_default_deny")
-    allowed_identifiers = {
-        item.lower()
-        for block in re.findall(r"\bALLOW\s*\{([^}]*)\}", policy.seccomp_string, flags=re.IGNORECASE | re.DOTALL)
-        for item in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", block)
-    }
-    if allowed_identifiers & _FORBIDDEN_SYSCALLS:
-        raise _reject("seccomp allowlist mentions a policy-forbidden syscall", "seccomp_forbidden_syscall")
+    allowed_syscalls = frozenset(item.value for item in CANONICAL_SECCOMP_POLICY.allowed_syscalls)
+    if (
+        CANONICAL_SECCOMP_POLICY.default_action is not SeccompAction.KILL
+        or allowed_syscalls & _FORBIDDEN_SYSCALLS
+        or len(policy.seccomp_string.encode("utf-8")) > _MAX_POLICY_TEXT
+    ):
+        raise _reject("Leitir's canonical seccomp policy is invalid", "invalid_seccomp_policy")
     digests = (policy.nsjail_sha256, policy.config_schema_digest, policy.rootfs_digest, policy.mount_plan_digest)
     if any(not _valid_digest(value) for value in digests):
         raise _reject("containment integrity digest is missing or malformed", "invalid_integrity_digest")
@@ -510,12 +571,55 @@ def _verified_regular_file_digest(path: Path) -> str:
         os.close(descriptor)
 
 
+def _verified_directory_tree_digest(root: Path) -> str:
+    """Hash a canonical, symlink-free directory tree including entry modes."""
+
+    root_metadata = root.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise OSError("rootfs mount source is not a directory")
+    entries: list[dict[str, object]] = [
+        {"mode": stat.S_IMODE(root_metadata.st_mode), "path": ".", "type": "directory"}
+    ]
+
+    def visit(directory: Path, relative: PurePosixPath) -> None:
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: os.fsencode(item.name))
+        for child in children:
+            name = child.name
+            if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+                raise OSError("rootfs contains a noncanonical entry name")
+            child_relative = relative / name
+            logical_path = child_relative.as_posix()
+            metadata = child.stat(follow_symlinks=False)
+            mode = stat.S_IMODE(metadata.st_mode)
+            if stat.S_ISDIR(metadata.st_mode):
+                entries.append({"mode": mode, "path": logical_path, "type": "directory"})
+                visit(Path(child.path), child_relative)
+            elif stat.S_ISREG(metadata.st_mode):
+                entries.append(
+                    {
+                        "mode": mode,
+                        "path": logical_path,
+                        "sha256": _verified_regular_file_digest(Path(child.path)),
+                        "type": "file",
+                    }
+                )
+            else:
+                raise OSError("rootfs contains a symlink or special file")
+
+    visit(root, PurePosixPath())
+    return _digest_payload({"entries": entries, "schema_version": "leitir-directory-tree-v1"})
+
+
 def _verify_mount_sources(policy: ContainmentPolicy) -> None:
     rootfs: ReadOnlyMount | None = None
     for mount in policy.readonly_mounts:
         try:
-            actual = _verified_regular_file_digest(Path(mount.source))
-        except OSError as exc:
+            if mount.destination == "/":
+                actual = _verified_directory_tree_digest(Path(mount.source))
+            else:
+                actual = _verified_regular_file_digest(Path(mount.source))
+        except (OSError, UnicodeError, ValueError) as exc:
             raise _reject("read-only mount source cannot be verified", "mount_source_unverifiable") from exc
         if actual != mount.source_digest:
             raise _reject("read-only mount source digest does not match policy", "mount_source_digest_mismatch")
@@ -576,6 +680,36 @@ class _AppliedState:
     cgroup_path: Path
 
 
+class _AppliedStateReader(Protocol):
+    """Injectable kernel-state reader used by focused verifier tests."""
+
+    def proc_text(self, pid: int, name: str) -> str: ...
+
+    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]: ...
+
+    def cgroup_text(self, path: Path, name: str) -> str: ...
+
+    def network_interfaces(self, pid: int) -> Mapping[str, str]: ...
+
+
+class _ProcfsAppliedStateReader:
+    def proc_text(self, pid: int, name: str) -> str:
+        return _read_proc_text(pid, name)
+
+    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]:
+        return _ns_identity(pid, namespace)
+
+    def cgroup_text(self, path: Path, name: str) -> str:
+        return (path / name).read_text(encoding="ascii")
+
+    def network_interfaces(self, pid: int) -> Mapping[str, str]:
+        # /proc/net/dev has names and counters but no authoritative link-state.
+        # Until the live backend supplies a post-install handshake plus a
+        # namespace-scoped rtnetlink receipt, refusing is the only safe answer.
+        del pid
+        raise OSError("namespace-scoped interface state is unavailable")
+
+
 def _read_proc_text(pid: int, name: str) -> str:
     return Path(f"/proc/{pid}/{name}").read_text(encoding="utf-8", errors="strict")
 
@@ -603,8 +737,8 @@ def _parse_status(text: str) -> dict[str, str]:
     return {name: value.strip() for line in text.splitlines() for name, separator, value in [line.partition(":")] if separator}
 
 
-def _realized_cgroup(pid: int) -> Path:
-    entries = [line.split(":", 2) for line in _read_proc_text(pid, "cgroup").splitlines()]
+def _realized_cgroup(pid: int, reader: _AppliedStateReader) -> Path:
+    entries = [line.split(":", 2) for line in reader.proc_text(pid, "cgroup").splitlines()]
     unified = next((parts[2] for parts in entries if len(parts) == 3 and parts[0] == "0" and parts[1] == ""), None)
     if unified is None or not unified.startswith("/") or ".." in PurePosixPath(unified).parts:
         raise _reject("jailed child has no verifiable cgroup-v2 membership", "applied_cgroup_mismatch")
@@ -616,28 +750,32 @@ def _realized_cgroup(pid: int) -> Path:
     return path
 
 
-def _verify_applied_state(process: subprocess.Popen[bytes], policy: ContainmentPolicy) -> _AppliedState:
-    """Stop the just-created jail, inspect kernel state, then release it."""
+def _verify_applied_state(
+    process: subprocess.Popen[bytes],
+    policy: ContainmentPolicy,
+    *,
+    child_pid: int,
+    reader: _AppliedStateReader | None = None,
+) -> _AppliedState:
+    """Verify a child already held by an authoritative backend barrier."""
 
-    child_pid: int | None = None
-    cgroup: Path | None = None
-    verified = False
+    state_reader = _ProcfsAppliedStateReader() if reader is None else reader
     try:
-        child_pid = _discover_jailed_child(process.pid)
-        os.killpg(process.pid, signal.SIGSTOP)
-        status = _parse_status(_read_proc_text(child_pid, "status"))
+        if process.poll() is not None or child_pid <= 0:
+            raise _reject("jailed child is not held at the applied-state barrier", "applied_state_unavailable")
+        status = _parse_status(state_reader.proc_text(child_pid, "status"))
         if status.get("NoNewPrivs") != "1" or status.get("Seccomp") != "2" or int(status.get("CapEff", "-1"), 16) != 0:
             raise _reject("privilege or seccomp controls are not applied", "applied_privilege_mismatch")
         for namespace in ("net", "user", "mnt", "pid", "ipc", "uts"):
-            if _ns_identity(child_pid, namespace) == _ns_identity(os.getpid(), namespace):
+            if state_reader.namespace_identity(child_pid, namespace) == state_reader.namespace_identity(os.getpid(), namespace):
                 raise _reject("required namespace is not applied", "applied_namespace_mismatch")
         for mapping_name in ("uid_map", "gid_map"):
-            fields = _read_proc_text(child_pid, mapping_name).split()
+            fields = state_reader.proc_text(child_pid, mapping_name).split()
             if len(fields) < 3 or fields[0] != "65534" or fields[2] != "1":
                 raise _reject("nonprivileged UID/GID map is not applied", "applied_idmap_mismatch")
 
         mounts: dict[str, frozenset[str]] = {}
-        for line in _read_proc_text(child_pid, "mountinfo").splitlines():
+        for line in state_reader.proc_text(child_pid, "mountinfo").splitlines():
             before, separator, _after = line.partition(" - ")
             fields = before.split()
             if not separator or len(fields) < 6:
@@ -648,43 +786,31 @@ def _verify_applied_state(process: subprocess.Popen[bytes], policy: ContainmentP
         if policy.writable_tmpfs not in mounts or "rw" not in mounts[policy.writable_tmpfs]:
             raise _reject("bounded writable tmpfs is not applied", "applied_mount_mismatch")
 
-        interfaces = [line.partition(":")[0].strip() for line in _read_proc_text(child_pid, "net/dev").splitlines()[2:] if ":" in line]
-        if interfaces:
-            raise _reject("network namespace contains an interface", "applied_network_mismatch")
-        ipv4_routes = _read_proc_text(child_pid, "net/route").splitlines()[1:]
-        ipv6_routes = [line for line in _read_proc_text(child_pid, "net/ipv6_route").splitlines() if line.strip()]
+        interfaces = state_reader.network_interfaces(child_pid)
+        if set(interfaces) != {"lo"} or interfaces.get("lo") != "down":
+            raise _reject("network namespace is not limited to a down loopback", "applied_network_mismatch")
+        ipv4_routes = state_reader.proc_text(child_pid, "net/route").splitlines()[1:]
+        ipv6_routes = [line for line in state_reader.proc_text(child_pid, "net/ipv6_route").splitlines() if line.strip()]
         if ipv4_routes or ipv6_routes:
             raise _reject("network namespace contains a route", "applied_network_mismatch")
 
-        cgroup = _realized_cgroup(child_pid)
+        cgroup = _realized_cgroup(child_pid, state_reader)
         expected_controls = {
             "memory.max": str(policy.cgroup_mem_max),
             "pids.max": str(policy.cgroup_pids_max),
             "cpu.max": f"{policy.cgroup_cpu_ms_per_sec * 1000} 1000000",
         }
-        if any((cgroup / name).read_text(encoding="ascii").strip() != expected for name, expected in expected_controls.items()):
+        if any(state_reader.cgroup_text(cgroup, name).strip() != expected for name, expected in expected_controls.items()):
             raise _reject("cgroup-v2 limits do not match policy", "applied_cgroup_mismatch")
-        controllers = frozenset((cgroup / "cgroup.controllers").read_text(encoding="ascii").split())
-        if not {"cpu", "memory", "pids"} <= controllers or not _cgroup_populated(cgroup):
+        controllers = frozenset(state_reader.cgroup_text(cgroup, "cgroup.controllers").split())
+        events = dict(line.split(maxsplit=1) for line in state_reader.cgroup_text(cgroup, "cgroup.events").splitlines())
+        if not {"cpu", "memory", "pids"} <= controllers or events.get("populated") != "1":
             raise _reject("required cgroup-v2 controllers are not active", "applied_cgroup_mismatch")
-        members = {int(value) for value in (cgroup / "cgroup.procs").read_text(encoding="ascii").split()}
+        members = {int(value) for value in state_reader.cgroup_text(cgroup, "cgroup.procs").split()}
         if child_pid not in members:
             raise _reject("jailed child is outside its realized cgroup", "applied_cgroup_mismatch")
-        verified = True
     except (OSError, UnicodeError, ValueError) as exc:
         raise _reject("applied containment state could not be verified", "applied_state_unavailable") from exc
-    except TransplantError:
-        raise
-    finally:
-        if verified:
-            try:
-                os.killpg(process.pid, signal.SIGCONT)
-            except ProcessLookupError:
-                pass
-        else:
-            state = None if child_pid is None or cgroup is None else _AppliedState(child_pid, cgroup)
-            _terminate_tree(process, state)
-    assert child_pid is not None and cgroup is not None
     return _AppliedState(child_pid, cgroup)
 
 
@@ -750,13 +876,21 @@ def _bounded_communicate(
                 break
     finally:
         selector.close()
+    teardown_attempted = False
+    authoritative_teardown = False
     if capture.timed_out or capture.truncated:
-        capture.noncanonical_kill = not _terminate_tree(process, applied_state)
+        authoritative_teardown = _terminate_tree(process, applied_state)
+        teardown_attempted = True
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         capture.leaked = True
-        capture.noncanonical_kill = not _terminate_tree(process, applied_state)
+        if not teardown_attempted:
+            authoritative_teardown = _terminate_tree(process, applied_state)
+            teardown_attempted = True
+    if not teardown_attempted:
+        authoritative_teardown = _terminate_tree(process, applied_state)
+    capture.noncanonical_kill = not authoritative_teardown
     return capture
 
 
@@ -781,6 +915,22 @@ def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_byt
         stderr_digest=None,
         result_digest=None,
         abort=envelope,
+    )
+
+
+def _require_applied_state_barrier(policy: ContainmentPolicy) -> None:
+    """Refuse until the pinned backend exposes a post-install start handshake.
+
+    NsJail's observable child/process-group state does not establish that all
+    controls have been installed before donor instructions can run.  A SIGSTOP
+    issued by this controller is inherently racy, so v1 does not launch merely
+    because procfs inspection code is available.
+    """
+
+    del policy
+    raise _reject(
+        "the backend cannot establish a verified post-install execution barrier",
+        "applied_state_barrier_unavailable",
     )
 
 
@@ -810,6 +960,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     if platform.machine() != plan.architecture:
         raise _reject("host architecture changed after plan preparation", "architecture_mismatch")
     _verify_backend(plan.policy)
+    _require_applied_state_barrier(plan.policy)
     config_fd: int | None = None
     config_path: str | None = None
     try:
@@ -832,7 +983,8 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             env={},
             start_new_session=True,
         )
-        applied_state = _verify_applied_state(process, plan.policy)
+        child_pid = _discover_jailed_child(process.pid)
+        applied_state = _verify_applied_state(process, plan.policy, child_pid=child_pid)
         capture = _bounded_communicate(
             process,
             limit=plan.output_limit_bytes,

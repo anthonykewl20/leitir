@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from leitir.bts import (
     AdaptRule,
     BTSBudget,
     BTSDisposition,
+    BTSResult,
     BTSStatus,
     DispositionRule,
     DonorSnapshot,
@@ -41,6 +43,8 @@ from leitir.graph.model import (
     UnresolvedEdge,
 )
 from leitir.graph.python import extract_static_edges
+from leitir.relocate import _validate_bts as _validate_relocation_bts
+from leitir.rerun import _validated_bts as _validate_rerun_bts
 from leitir.tree import GitHubTreeSource
 from leitir.treehash import FULL, TREE_HASH_ALGORITHM, compute_materialized_tree_hash
 
@@ -117,6 +121,25 @@ def test_complete_walk_has_exact_members_dispositions_and_digests() -> None:
     assert [item.disposition for item in result.report.traversed_edges] == [BTSDisposition.INCLUDE]
     assert result.report.analysis_digest.startswith("sha256:") and len(result.report.analysis_digest) == 71
     assert result.bts.bts_digest.startswith("sha256:") and len(result.bts.bts_digest) == 71
+
+
+@pytest.mark.parametrize("validator", [_validate_relocation_bts, _validate_rerun_bts])
+@pytest.mark.parametrize("forgery", ["primary", "records"])
+def test_forged_complete_btsresult_wrapper_rejects_rederived_digests(
+    validator: Callable[[object], object], forgery: str
+) -> None:
+    snapshot, seed, graph = _fixture()
+    result = compute_bts(snapshot, seed, graph, _budget(), _policy())
+    assert result.bts is not None
+    artifact = (
+        replace(result.bts, bts_digest="sha256:" + "f" * 64)
+        if forgery == "primary"
+        else replace(result.bts, members=tuple(reversed(result.bts.members)))
+    )
+    forged = BTSResult(result.status, result.report, artifact)
+    with pytest.raises(BTSError) as caught:
+        validator(forged)
+    assert caught.value.reason is BTSRejectReason.REJECT_PROVENANCE_MISMATCH
 
 
 @pytest.mark.parametrize("change", [{"max_nodes": 1}, {"max_donor_source_bps": 4_000}])

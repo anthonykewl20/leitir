@@ -126,7 +126,6 @@ def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> Cont
         67_108_864,
         16,
         500,
-        "DEFAULT KILL { read, write, exit, exit_group }",
         2,
         64,
         1,
@@ -247,9 +246,10 @@ def test_observed_donor_import_is_terminal(monkeypatch: pytest.MonkeyPatch) -> N
 def test_donor_importable_mount_plan_is_terminal_without_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     bts, relocation = _fixture()
     monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: pytest.fail("must reject before launch"))
-    report = rerun_transplant(relocation, bts, _baseline(()), execution_policy=_policy(relocation, donor_mounted=True))
-    assert isinstance(report, RerunReport)
-    assert report.reason is BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED
+    with pytest.raises(TransplantError) as caught:
+        rerun_transplant(relocation, bts, _baseline(()), execution_policy=_policy(relocation, donor_mounted=True))
+    assert caught.value.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
+    assert caught.value.evidence.detail_code == "rerun_relocation_mount_missing_v1"
 
 
 def test_rerun_rejects_mount_digest_not_bound_to_relocated_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,6 +265,26 @@ def test_rerun_rejects_mount_digest_not_bound_to_relocated_file(monkeypatch: pyt
     with pytest.raises(TransplantError) as caught:
         rerun_transplant(relocation, bts, _baseline(()), execution_policy=policy)
     assert caught.value.evidence.detail_code == "rerun_relocation_mount_missing_v1"
+
+
+def test_rerun_rejects_extra_mount_even_when_all_relocated_files_are_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    bts, relocation = _fixture()
+    policy = _policy(relocation)
+    extra = ReadOnlyMount("/ambient-extra", "/host/ambient-extra", _digest(b"extra"))
+    containment = replace(policy.containment, readonly_mounts=tuple(sorted((*policy.containment.readonly_mounts, extra))))
+    monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: pytest.fail("must reject before launch"))
+    with pytest.raises(TransplantError) as caught:
+        rerun_transplant(relocation, bts, _baseline(()), execution_policy=replace(policy, containment=containment))
+    assert caught.value.evidence.detail_code == "rerun_relocation_mount_missing_v1"
+
+
+def test_rerun_rejects_forged_relocation_digest_before_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    bts, relocation = _fixture()
+    forged = replace(relocation, relocation_digest=_digest(b"forged-relocation"))
+    monkeypatch.setattr("leitir.rerun.prepare_execution", lambda containment: pytest.fail("must reject before launch"))
+    with pytest.raises(TransplantError) as caught:
+        rerun_transplant(forged, bts, _baseline(()), execution_policy=_policy(relocation))
+    assert caught.value.evidence.detail_code == "rerun_relocation_digest_v1"
 
 
 def test_rerun_rejects_forged_bare_bts_identity() -> None:

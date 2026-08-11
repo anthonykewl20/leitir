@@ -50,14 +50,25 @@ canonical artifact.
 
 Version 1 supports Linux and one release-pinned external native backend:
 **nsjail**. Before launch, Leitir verifies the executable digest and build
-identity and rejects unless the policy explicitly applies all required Linux
+identity and the canonical directory-tree digest of the rootfs, and rejects
+unless the policy explicitly applies all required Linux
 namespaces, cgroup v2 memory/CPU/pid limits, numeric rlimits (including file
-descriptors and zero core size), a default-deny seccomp policy, no inherited
+descriptors and zero core size), Leitir's generated closed-allowlist Kafel
+seccomp policy (caller-authored Kafel is not accepted), no inherited
 environment or capabilities, no-new-privileges, a read-only allowlisted mount
-plan, no network interfaces/routes, and one size/inode-bounded writable tmpfs.
-The parent additionally enforces wall time and bounded output. Limit hits,
+plan, only a down loopback interface and no routes, and one size/inode-bounded
+writable tmpfs. The parent additionally enforces wall time and bounded output,
+and requires cgroup-v2 `cgroup.kill` plus verified `populated 0` after every
+outcome. A process-group kill is nonauthoritative and can never produce success. Limit hits,
 output overflow, process leaks, or an unverifiable control reject and cannot
 produce authorizing canonical evidence.
+
+NsJail does not expose a controller-verifiable post-install child handshake in
+this environment. A process-group `SIGSTOP` is racy because donor instructions
+may run first. Consequently the offline path refuses donor execution with
+`applied_state_barrier_unavailable`, even when the opt-in is set. Only a gated
+live path with release-pinned nsjail, rootfs, and runner artifacts may attempt
+execution after such a barrier can be authoritatively established.
 
 There is no portable, audit-hook, `resource`-only, or unsandboxed fallback.
 Python audit hooks are diagnostic only. Residual risk remains in the Linux

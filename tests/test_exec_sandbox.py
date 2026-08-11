@@ -22,8 +22,6 @@ from leitir.exec_sandbox import (
     run_contained,
 )
 
-_REAL_CGROUP_KILL = sandbox._kill_cgroup_tree
-
 
 def _digest(data: bytes) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
@@ -58,8 +56,10 @@ def fake_nsjail(tmp_path: Path) -> tuple[Path, str, str]:
 def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wall_time: int = 2) -> ContainmentPolicy:
     path, version, build_identity = fake_nsjail
     rootfs = path.parent / "rootfs"
-    rootfs.write_bytes(b"rootfs")
-    root_digest = _digest(b"rootfs")
+    rootfs.mkdir()
+    (rootfs / "python").write_bytes(b"rootfs")
+    (rootfs / "python").chmod(0o555)
+    root_digest = sandbox._verified_directory_tree_digest(rootfs)
     mount = ReadOnlyMount("/", str(rootfs), root_digest)
     mount_payload = {
         "readonly_mounts": [{"destination": "/", "source": str(rootfs), "source_digest": root_digest}],
@@ -95,7 +95,6 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
         cgroup_mem_max=67_108_864,
         cgroup_pids_max=16,
         cgroup_cpu_ms_per_sec=500,
-        seccomp_string="DEFAULT KILL { read, write, exit, exit_group }",
         wall_time_seconds=wall_time,
         rlimit_as_mb=64,
         rlimit_cpu_seconds=1,
@@ -108,14 +107,6 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
         environment=("LANG=C.UTF-8", "PYTHONHASHSEED=0", "TZ=UTC"),
         opt_in_satisfied=True,
     )
-
-
-@pytest.fixture(autouse=True)
-def applied_state_stub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    cgroup = tmp_path / "cgroup"
-    cgroup.mkdir()
-    monkeypatch.setattr(sandbox, "_verify_applied_state", lambda process, policy: sandbox._AppliedState(process.pid, cgroup))
-    monkeypatch.setattr(sandbox, "_kill_cgroup_tree", lambda path: True)
 
 
 @pytest.mark.parametrize("value", [None, "0", "true", "yes", "01", " 1"])
@@ -164,7 +155,6 @@ def test_non_linux_host_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tu
         ("cgroup_mem_max", 0),
         ("cgroup_pids_max", 0),
         ("cgroup_cpu_ms_per_sec", 0),
-        ("seccomp_string", ""),
     ],
 )
 def test_missing_or_unapplied_v1_control_rejects_before_launch(
@@ -214,26 +204,35 @@ def test_binary_digest_tamper_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsja
     assert caught.value.evidence.detail_code == "nsjail_digest_mismatch"
 
 
-def test_seccomp_default_allow_rejects_even_when_kill_appears_elsewhere(
+def test_seccomp_is_exact_canonical_generated_kafel(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    policy = replace(_policy(fake_nsjail), seccomp_string="ALLOW { read, write } DEFAULT ALLOW # KILL")
-    with pytest.raises(TransplantError) as caught:
-        prepare_execution(policy)
-    assert caught.value.evidence.detail_code == "seccomp_not_default_deny"
-
-
-def test_default_kill_with_explicit_full_network_deny_set_passes(
-    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
-) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    network = ", ".join(sorted(sandbox._FORBIDDEN_SYSCALLS))
-    policy = replace(
-        _policy(fake_nsjail),
-        seccomp_string=f"ALLOW {{ read, write, exit, exit_group }} DENY {{ {network} }} DEFAULT KILL",
+    plan = prepare_execution(_policy(fake_nsjail))
+    assert plan.policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
+    assert plan.policy.seccomp_string == (
+        "DEFAULT KILL\n"
+        "ALLOW { arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, fstat, futex, "
+        "getcwd, getdents64, getpid, getrandom, lseek, mmap, mprotect, munmap, newfstatat, openat, "
+        "prlimit64, read, readlink, readlinkat, rt_sigaction, rt_sigprocmask, set_robust_list, "
+        "set_tid_address, statx, write }\n"
     )
-    assert prepare_execution(policy).policy.seccomp_string.endswith("DEFAULT KILL")
+    allowed = {item.value for item in sandbox.CANONICAL_SECCOMP_POLICY.allowed_syscalls}
+    assert allowed.isdisjoint(sandbox._FORBIDDEN_SYSCALLS)
+
+
+@pytest.mark.parametrize(
+    "custom",
+    [
+        "DEFAULT KILL /* hidden */ ALLOW { socket }",
+        "DEFAULT KILL\nLOG { socket }",
+        "DEFAULT KILL\nALLOW { SYSCALL[41] }",
+        "DEFAULT KILL // comment\nALLOW { socket }",
+    ],
+)
+def test_caller_cannot_supply_smuggled_kafel(fake_nsjail: tuple[Path, str, str], custom: str) -> None:
+    with pytest.raises((TypeError, AttributeError, ValueError)):
+        replace(_policy(fake_nsjail), seccomp_string=custom)
 
 
 def test_mount_source_digest_tamper_rejects_before_launch(
@@ -241,7 +240,9 @@ def test_mount_source_digest_tamper_rejects_before_launch(
 ) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     policy = _policy(fake_nsjail)
-    Path(policy.readonly_mounts[0].source).write_bytes(b"tampered")
+    root_file = Path(policy.readonly_mounts[0].source, "python")
+    root_file.chmod(0o755)
+    root_file.write_bytes(b"tampered")
     with pytest.raises(TransplantError) as caught:
         prepare_execution(policy)
     assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
@@ -273,31 +274,86 @@ def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
     assert caught.value.evidence.detail_code == "rootfs_digest_mismatch"
 
 
-def test_applied_state_failure_rejects_without_releasing_child(
-    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
-) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-
-    def reject_state(process: subprocess.Popen[bytes], policy: ContainmentPolicy) -> sandbox._AppliedState:
-        del policy
-        os.killpg(process.pid, 9)
-        raise sandbox._reject("applied state missing", "applied_state_unavailable")
-
-    monkeypatch.setattr(sandbox, "_verify_applied_state", reject_state)
-    with pytest.raises(TransplantError) as caught:
-        run_contained(prepare_execution(_policy(fake_nsjail)), (sys.executable, "-c", "import time; time.sleep(30)"))
-    assert caught.value.evidence.detail_code == "applied_state_unavailable"
-
-
-def test_mount_source_change_during_execution_rejects_result(
-    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+def test_offline_execution_refuses_before_donor_launch(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], tmp_path: Path
 ) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     plan = prepare_execution(_policy(fake_nsjail))
-    rootfs = plan.policy.readonly_mounts[0].source
+    marker = tmp_path / "donor-ran"
     with pytest.raises(TransplantError) as caught:
-        run_contained(plan, (sys.executable, "-c", f"open({rootfs!r}, 'wb').write(b'tampered')"))
-    assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
+        run_contained(plan, (sys.executable, "-c", f"open({str(marker)!r}, 'w').write('bad')"))
+    assert caught.value.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
+    assert caught.value.evidence.detail_code == "applied_state_barrier_unavailable"
+    assert not marker.exists()
+
+
+class _FakeProcess:
+    pid = 100
+
+    def poll(self) -> None:
+        return None
+
+
+class _FakeAppliedStateReader:
+    def __init__(self, interfaces: dict[str, str] | None = None) -> None:
+        self.interfaces = {"lo": "down"} if interfaces is None else interfaces
+
+    def proc_text(self, pid: int, name: str) -> str:
+        del pid
+        values = {
+            "status": "NoNewPrivs:\t1\nSeccomp:\t2\nCapEff:\t0000000000000000\n",
+            "uid_map": "65534 1000 1\n",
+            "gid_map": "65534 1000 1\n",
+            "mountinfo": "1 0 0:1 / / ro - ext4 root ro\n2 1 0:2 / /work rw - tmpfs tmpfs rw\n",
+            "net/route": "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n",
+            "net/ipv6_route": "",
+            "cgroup": "0::/leitir-test\n",
+        }
+        return values[name]
+
+    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]:
+        identities = {name: index for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}
+        return (identities[namespace], pid)
+
+    def cgroup_text(self, path: Path, name: str) -> str:
+        del path
+        values = {
+            "memory.max": "67108864\n",
+            "pids.max": "16\n",
+            "cpu.max": "500000 1000000\n",
+            "cgroup.controllers": "cpu memory pids\n",
+            "cgroup.events": "populated 1\n",
+            "cgroup.procs": "100\n",
+        }
+        return values[name]
+
+    def network_interfaces(self, pid: int) -> dict[str, str]:
+        del pid
+        return self.interfaces
+
+
+def test_real_applied_state_verifier_accepts_only_complete_kernel_receipt(fake_nsjail: tuple[Path, str, str]) -> None:
+    state = sandbox._verify_applied_state(
+        _FakeProcess(),  # type: ignore[arg-type]
+        _policy(fake_nsjail),
+        child_pid=100,
+        reader=_FakeAppliedStateReader(),
+    )
+    assert state.child_pid == 100
+
+
+@pytest.mark.parametrize("interfaces", [{"lo": "up"}, {"lo": "down", "eth0": "down"}, {}])
+def test_real_applied_state_verifier_rejects_network_bypass(
+    fake_nsjail: tuple[Path, str, str], interfaces: dict[str, str]
+) -> None:
+    with pytest.raises(TransplantError) as caught:
+        sandbox._verify_applied_state(
+            _FakeProcess(),  # type: ignore[arg-type]
+            _policy(fake_nsjail),
+            child_pid=100,
+            reader=_FakeAppliedStateReader(interfaces),
+        )
+    assert caught.value.evidence.detail_code == "applied_network_mismatch"
 
 
 def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(
@@ -307,7 +363,6 @@ def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(
     cgroup.mkdir()
     (cgroup / "cgroup.kill").write_text("", encoding="ascii")
     states = iter((True, False))
-    monkeypatch.setattr(sandbox, "_kill_cgroup_tree", _REAL_CGROUP_KILL)
     monkeypatch.setattr(sandbox, "_cgroup_populated", lambda path: next(states))
     assert sandbox._kill_cgroup_tree(cgroup) is True
     assert (cgroup / "cgroup.kill").read_text(encoding="ascii") == "1"
@@ -322,59 +377,64 @@ def test_plan_cannot_recompute_away_an_unapplied_policy_control(monkeypatch: pyt
     assert caught.value.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
 
 
-def test_timeout_is_bounded_nonauthorizing_abort(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    plan = prepare_execution(_policy(fake_nsjail, wall_time=1))
-    result = run_contained(plan, (sys.executable, "-c", "import time; time.sleep(5)"))
-    assert result.completed is False
-    assert result.result_digest is None
-    assert result.stdout == result.stderr == b""
-    assert result.abort is not None
-    assert result.abort.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
-    assert result.abort.detail_category == "wall_time_limit"
+@pytest.mark.parametrize(
+    ("program", "limit", "timeout"),
+    [
+        ("print('ok')", 4096, 2),
+        ("raise SystemExit(7)", 4096, 2),
+        ("import os; os.write(1, b'x' * 4096)", 64, 2),
+        ("import time; time.sleep(5)", 4096, 1),
+    ],
+)
+def test_cgroup_teardown_is_attempted_for_every_capture_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, program: str, limit: int, timeout: int
+) -> None:
+    process = subprocess.Popen(
+        (sys.executable, "-c", program),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    calls: list[Path] = []
 
+    def kill_tree(path: Path) -> bool:
+        calls.append(path)
+        try:
+            os.killpg(process.pid, 9)
+        except ProcessLookupError:
+            pass
+        return True
 
-def test_nonzero_exit_is_hard_gate_abort(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    result = run_contained(prepare_execution(_policy(fake_nsjail)), (sys.executable, "-c", "raise SystemExit(7)"))
-    assert result.abort is not None
-    assert result.abort.reason is BTSRejectReason.REJECT_HARD_GATE_FAILED
-    assert result.abort.detail_category == "child_crash"
-
-
-def test_output_truncation_is_bounded_execution_threat(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    plan = prepare_execution(_policy(fake_nsjail, output_limit=64))
-    result = run_contained(plan, (sys.executable, "-c", "import os; os.write(1, b'x' * 4096)"))
-    assert result.abort is not None
-    assert result.abort.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
-    assert result.abort.detail_category == "output_limit"
-    assert result.abort.stdout_bytes <= 64
-    assert len(result.to_json()) < 1024
-
-
-def test_success_is_content_addressed(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
-    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    result = run_contained(prepare_execution(_policy(fake_nsjail)), (sys.executable, "-c", "print('fixed')"))
-    assert result.completed is True
-    assert result.stdout == b"fixed\n"
-    assert result.stdout_digest == _digest(b"fixed\n")
-    assert result.result_digest is not None
+    monkeypatch.setattr(sandbox, "_kill_cgroup_tree", kill_tree)
+    cgroup = tmp_path / "cgroup"
+    capture = sandbox._bounded_communicate(
+        process,
+        limit=limit,
+        timeout=timeout,
+        applied_state=sandbox._AppliedState(process.pid, cgroup),
+    )
+    assert calls == [cgroup]
+    assert capture.noncanonical_kill is False
 
 
 def test_plan_rendering_is_pythonhashseed_independent(fake_nsjail: tuple[Path, str, str]) -> None:
     path, version, build_identity = fake_nsjail
-    (path.parent / "rootfs").write_bytes(b"rootfs")
+    rootfs = path.parent / "rootfs"
+    rootfs.mkdir()
+    (rootfs / "python").write_bytes(b"rootfs")
+    (rootfs / "python").chmod(0o555)
     script = f"""
 import json, platform
 from leitir.exec_sandbox import *
 import hashlib
 root_path = {str(path.parent / 'rootfs')!r}
-root = 'sha256:' + hashlib.sha256(open(root_path, 'rb').read()).hexdigest()
+import leitir.exec_sandbox as sandbox
+root = sandbox._verified_directory_tree_digest(__import__('pathlib').Path(root_path))
 mounts = (ReadOnlyMount('/', root_path, root),)
 payload = {{'readonly_mounts':[{{'destination':'/','source':root_path,'source_digest':root}}], 'rootfs_digest':root, 'writable_tmpfs':'/work', 'writable_tmpfs_bytes':1048576, 'writable_tmpfs_inodes':128}}
 md = 'sha256:' + hashlib.sha256((json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\\n').encode()).hexdigest()
-p = ContainmentPolicy(POLICY_SCHEMA, {str(path)!r}, {_digest(path.read_bytes())!r}, {version!r}, {build_identity!r}, 'sha256:'+'2'*64, platform.machine(), root, md, mounts, '/work', 1048576, 128, '/work', 'ONCE', False, True, True, True, True, True, True, True, 67108864, 16, 500, 'DEFAULT KILL {{ read, write, exit, exit_group }}', 2, 64, 1, 1, 32, 16, 8, 0, 4096, ('LANG=C.UTF-8','PYTHONHASHSEED=0','TZ=UTC'), True)
+p = ContainmentPolicy(POLICY_SCHEMA, {str(path)!r}, {_digest(path.read_bytes())!r}, {version!r}, {build_identity!r}, 'sha256:'+'2'*64, platform.machine(), root, md, mounts, '/work', 1048576, 128, '/work', 'ONCE', False, True, True, True, True, True, True, True, 67108864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 4096, ('LANG=C.UTF-8','PYTHONHASHSEED=0','TZ=UTC'), True)
 print(prepare_execution(p).to_json(), end='')
 """
     outputs = []

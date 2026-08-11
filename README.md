@@ -108,7 +108,10 @@ so no third-party runtime dependencies are pulled in.
 Behavioral-transplant donor execution is default-off and Linux-only. It requires
 the exact opt-in `LEITIR_ENABLE_DONOR_EXECUTION=1` and a release-pinned external
 native **nsjail** binary and policy; missing or unverifiable containment rejects,
-with no portable or unsandboxed fallback. NsJail is not a Python dependency.
+with no portable or unsandboxed fallback. The current controller also refuses
+before donor launch when a backend post-install applied-state barrier cannot be
+established; opt-in alone is never treated as verification. NsJail is not a
+Python dependency.
 See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
 
 Relocated contract tests are rerun with the donor excluded by the read-only

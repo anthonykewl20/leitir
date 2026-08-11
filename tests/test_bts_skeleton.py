@@ -155,7 +155,6 @@ def _containment(relocation: Relocation | None = None) -> ContainmentPolicy:
         67_108_864,
         16,
         500,
-        "DEFAULT KILL { read, write, exit, exit_group }",
         2,
         64,
         1,

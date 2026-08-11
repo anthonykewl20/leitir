@@ -26,7 +26,7 @@ from leitir.exec_sandbox import (
     run_contained,
 )
 from leitir.graph.runtime import DonorAbsenceAuthority, RuntimeEvidenceRole
-from leitir.relocate import RELOCATION_SCHEMA_VERSION, Relocation
+from leitir.relocate import RELOCATION_LAYOUT, RELOCATION_SCHEMA_VERSION, MountAuthorization, Relocation
 
 RERUN_SCHEMA_VERSION = "leitir-bts-rerun-v1"
 BASELINE_SCHEMA_VERSION = "leitir-contract-baseline-v1"
@@ -370,23 +370,32 @@ def _reject(reason: BTSRejectReason, message: str, detail: str) -> TransplantErr
 
 
 def _validated_bts(value: BTS | BTSResult) -> BTS:
-    bare = isinstance(value, BTS)
     if isinstance(value, BTSResult):
         if value.status is not BTSStatus.COMPLETE or value.report.status is not BTSStatus.COMPLETE or value.bts is None:
             raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "only a COMPLETE BTS may be rerun", "rerun_non_complete_bts_v1")
-        value = value.bts
-    if not isinstance(value, BTS):
+        result = value
+        result.report.from_json(result.report.to_bytes())
+        artifact = result.bts
+        assert artifact is not None
+        primary = _bts_digest(
+            (result.report, artifact),
+            omit=frozenset({"analysis_digest", "bts_digest", "member_equivalence_digest"}),
+        )
+    elif isinstance(value, BTS):
+        artifact = value
+        primary = artifact.bts_digest
+    else:
         raise TypeError("bts must be a BTS or BTSResult")
-    _digest(value.bts_digest, "bts_digest")
-    _digest(value.member_equivalence_digest, "member_equivalence_digest")
-    equivalence = _bts_digest(value, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
-    if bare and value.member_equivalence_digest != equivalence:
+    _digest(artifact.bts_digest, "bts_digest")
+    _digest(artifact.member_equivalence_digest, "member_equivalence_digest")
+    equivalence = _bts_digest(artifact, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
+    if artifact.member_equivalence_digest != equivalence or artifact.bts_digest != primary:
         raise _reject(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
             "bare BTS identity does not match its canonical records",
             "rerun_bts_identity_v1",
         )
-    return value
+    return artifact
 
 
 def _mount_plan_has_donor(policy: RerunExecutionPolicy) -> bool:
@@ -397,11 +406,60 @@ def _mount_plan_has_donor(policy: RerunExecutionPolicy) -> bool:
     )
 
 
+def _derived_relocation_digest(relocation: Relocation) -> str:
+    inventory = [
+        {"mode": item.mode, "path": item.path, "role": item.role.value, "sha256": item.sha256, "size": len(item.content)}
+        for item in sorted(relocation.files)
+    ]
+    identity = {
+        "baseline_mounts": [
+            (item.logical_path, item.read_only, item.donor_present) for item in relocation.baseline_mounts
+        ],
+        "bts_digest": relocation.bts_digest,
+        "files": inventory,
+        "module_map_digest": relocation.module_map.digest,
+        "rerun_mounts": [
+            (item.logical_path, item.read_only, item.donor_present) for item in relocation.rerun_mounts
+        ],
+        "schema_version": relocation.schema_version,
+    }
+    return _canonical_digest(identity)
+
+
+def _relocation_records_are_canonical(relocation: Relocation) -> bool:
+    files = tuple(sorted(relocation.files))
+    if files != relocation.files or len({item.path for item in files}) != len(files):
+        return False
+    expected_baseline = tuple(
+        sorted((
+            MountAuthorization("donor", True, True),
+            MountAuthorization(f"{RELOCATION_LAYOUT}/tests/original", True, False),
+        ))
+    )
+    prefixes = (
+        f"{RELOCATION_LAYOUT}/harness/",
+        f"{RELOCATION_LAYOUT}/manifests/",
+        f"{RELOCATION_LAYOUT}/probes/",
+        f"{RELOCATION_LAYOUT}/src/",
+        f"{RELOCATION_LAYOUT}/tests/rewritten/",
+    )
+    expected_rerun = tuple(
+        MountAuthorization(item.path, True, False) for item in files if item.path.startswith(prefixes)
+    )
+    return relocation.baseline_mounts == expected_baseline and relocation.rerun_mounts == expected_rerun
+
+
 def _mount_plan_covers_relocation(relocation: Relocation, policy: RerunExecutionPolicy) -> bool:
     mounts = {mount.destination: mount for mount in policy.containment.readonly_mounts}
     if len(mounts) != len(policy.containment.readonly_mounts):
         return False
     files = {item.path: item for item in relocation.files}
+    expected_destinations = {"/", *(f"/{item.logical_path}" for item in relocation.rerun_mounts)}
+    if set(mounts) != expected_destinations:
+        return False
+    rootfs = mounts.get("/")
+    if rootfs is None or rootfs.source_digest != policy.containment.rootfs_digest:
+        return False
     for authorization in relocation.rerun_mounts:
         relocated = files.get(authorization.logical_path)
         mount = mounts.get(f"/{authorization.logical_path}")
@@ -559,6 +617,8 @@ def rerun_transplant(
     RerunExecutionPolicy(*[getattr(execution_policy, item.name) for item in fields(RerunExecutionPolicy)])
     if relocation.schema_version != RELOCATION_SCHEMA_VERSION or relocation.bts_digest != artifact.bts_digest:
         raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "relocation does not bind the supplied BTS", "rerun_relocation_binding_v1")
+    if not _relocation_records_are_canonical(relocation) or relocation.relocation_digest != _derived_relocation_digest(relocation):
+        raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "relocation identity does not match its canonical records", "rerun_relocation_digest_v1")
     if not relocation.rerun_mounts or any(item.donor_present or not item.read_only for item in relocation.rerun_mounts):
         raise _reject(BTSRejectReason.REJECT_EXECUTION_THREAT, "E1 rerun authorization does not exclude donor bytes", "rerun_e1_mount_authorization_v1")
     if not any(item.donor_present and item.read_only for item in relocation.baseline_mounts):

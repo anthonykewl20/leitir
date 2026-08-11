@@ -1320,7 +1320,13 @@ def test_validate_report_is_deterministic_across_pythonhashseed_values():
             capture_output=True,
             check=False,
         )
-        results.append((completed.returncode, completed.stdout, completed.stderr))
+        results.append(
+            (
+                completed.returncode,
+                completed.stdout.replace(b"\r\n", b"\n"),
+                completed.stderr,
+            )
+        )
 
     assert results[0] == results[1] == results[2]
     assert results[0] == (

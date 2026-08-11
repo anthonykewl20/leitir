@@ -140,6 +140,8 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
     writer_lock = threading.Lock()
     contender_started = threading.Event()
     contender_acquired = threading.Event()
+    critical_section_active = threading.Event()
+    contender_observed_overlap = threading.Event()
     threads = []
 
     @contextmanager
@@ -154,18 +156,23 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
 
     def checked_update(path, fields):
         assert writer_lock.locked()
+        critical_section_active.set()
 
         def contender():
             contender_started.set()
             with process_lock(tmp_path, target, SHA):
+                if critical_section_active.is_set():
+                    contender_observed_overlap.set()
                 contender_acquired.set()
 
         thread = threading.Thread(target=contender)
         thread.start()
         assert contender_started.wait(timeout=2)
-        assert not contender_acquired.wait(timeout=0.05)
         threads.append(thread)
-        return real_update(path, fields)
+        try:
+            return real_update(path, fields)
+        finally:
+            critical_section_active.clear()
 
     def checked_upsert(_root, _entry):
         # Pointer regeneration can lock multiple targets and therefore runs
@@ -183,8 +190,10 @@ def test_materialize_source_metadata_update_blocks_racing_publisher(
 
     for thread in threads:
         thread.join(timeout=2)
+        assert not thread.is_alive()
     assert result == target
     assert contender_acquired.is_set()
+    assert not contender_observed_overlap.is_set()
     manifest = json.loads((target / "leitir-manifest.json").read_text(encoding="utf-8"))
     assert "entry_points" in manifest
 

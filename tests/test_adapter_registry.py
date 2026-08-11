@@ -89,7 +89,8 @@ def test_build_adapters_is_deterministic_across_pythonhashseed() -> None:
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = seed
         environment["PYTHONPATH"] = "src"
-        outputs.append(subprocess.check_output(command, env=environment))
+        output = subprocess.check_output(command, env=environment)
+        outputs.append(output.replace(b"\r\n", b"\n"))
 
     assert outputs[0] == outputs[1] == outputs[2]
     assert outputs[0] == (

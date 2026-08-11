@@ -114,6 +114,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)
 - cross-platform bugs caught by first Windows CI run (`ci`)
 - final-state review hardening (B1 B2 B3, C1-C7) (`integrity`)
+- harden containment verification, seccomp validation, and digest binding (security review) (`bts`)
 - harden global search match integrity and adapter line model (`security`)
 - pin HOME/USERPROFILE and preserve SYSTEMROOT in sanitized collector env (`score`)
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)

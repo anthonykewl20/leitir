@@ -33,7 +33,7 @@ jobs:
       - name: Report runner containment capabilities
         run: |
           uname -a
-          nsjail --version 2>&1
+          nsjail --version 2>&1 || true
           stat -fc 'cgroup filesystem type: %T' /sys/fs/cgroup
           printf 'available controllers: '
           tr '\n' ' ' </sys/fs/cgroup/cgroup.controllers

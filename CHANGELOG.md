@@ -83,6 +83,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - guard stdout write and force os._exit on Windows doctor paths (`doctor`)
 - harden tree walker validation, lowercase SHAs, and early truncation raise (`search`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
+- include Starred assignment targets in Python AST definitions (`search`)
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - make nsjail --version capture non-fatal in build script (`bts`)

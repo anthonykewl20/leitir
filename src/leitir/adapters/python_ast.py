@@ -409,6 +409,8 @@ class PythonAstAdapter:
                 names.append(target.id)
             elif isinstance(target, (ast.Tuple, ast.List)):
                 pending[0:0] = target.elts
+            elif isinstance(target, ast.Starred):
+                pending.insert(0, target.value)
         return names
 
     def _call_names(self, function: ast.expr) -> tuple[tuple[str, ...], bool]:

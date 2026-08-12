@@ -306,6 +306,51 @@ def test_imports_are_symbol_definitions() -> None:
     assert result.spans[0].method is MatchMethod.AST
 
 
+def test_starred_assignment_target_is_a_symbol_definition() -> None:
+    content = "head, *rest = values\n"
+
+    for name in ("head", "rest"):
+        predicate = _predicate(PredicateKind.SYMBOL_DEFINITION, name)
+        result = _ast_adapter().find_matches_ex(content, (predicate,))
+        assert len(result.spans) == 1
+        assert result.spans[0].start_line == 1
+        assert result.spans[0].method is MatchMethod.AST
+
+    report = _search(
+        content, _predicate(PredicateKind.SYMBOL_DEFINITION, "rest")
+    )
+    assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+    assert len(report.matches) == 1
+
+
+@pytest.mark.parametrize(
+    ("content", "names"),
+    (
+        ("(a, *b, c) = xs\n", ("a", "b", "c")),
+        ("[x, *y] = ys\n", ("x", "y")),
+    ),
+)
+def test_nested_starred_assignment_targets_are_symbol_definitions(
+    content: str, names: tuple[str, ...]
+) -> None:
+    for name in names:
+        result = _ast_adapter().find_matches_ex(
+            content, (_predicate(PredicateKind.SYMBOL_DEFINITION, name),)
+        )
+        assert len(result.spans) == 1
+        assert result.spans[0].method is MatchMethod.AST
+
+
+def test_starred_call_argument_is_not_a_symbol_definition() -> None:
+    result = _ast_adapter().find_matches_ex(
+        "f(*args)\n",
+        (_predicate(PredicateKind.SYMBOL_DEFINITION, "args"),),
+    )
+
+    assert result.parser_unavailable is False
+    assert result.spans == ()
+
+
 def test_multiline_ast_node_does_not_mix_end_column_lines() -> None:
     result = _ast_adapter().find_matches_ex(
         "result = build(\n    value,\n)\n",

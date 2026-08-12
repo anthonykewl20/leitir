@@ -277,7 +277,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Scoring
 
-`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=indeterminate`, while a current-worktree offline rerun reports `decision=fail` because one fixed-gate test is skipped; neither reaches pass. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
+`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=pass`, `complete=true`. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
 
 ## Tests
 

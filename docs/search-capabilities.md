@@ -219,10 +219,11 @@ of hash iteration order for identical inputs.
 
 ### Verification and operations
 
-- Real-provider tests are opt-in, and the live workflow is non-blocking. The
-  dedicated search-v2 provider canary remains future work. (`docs/ci.md:3-14`,
-  `.github/workflows/live-canary.yml:43-52`,
-  `tests/test_global_e2e_live.py:1-23`.)
+- Real-provider tests are opt-in, and the live canary is fail-closed: its
+  classifier exits non-zero for configuration or product failures on enabled
+  surfaces. Search-v2 probes for baseline live search, truncated-tree recovery,
+  verified large-blob streaming, and index-vs-scan recall are wired into the
+  workflow. (`docs/ci.md`.)
 - Retry cannot remove remote-index incompleteness or service-side limits.
 
 ## 4. Improvement opportunities
@@ -235,7 +236,7 @@ global budgets. The remaining opportunities are:
 |---|---|---:|---|---|
 | Investigate migration to newer GitHub Code Search | The current transport is legacy REST `/search/code`; endpoint semantics, auth, pagination, and immutable provenance require fresh API research. (`src/leitir/discovery_search.py:184-249`) | M-L | Medium | Possible, subject to a supported API |
 | Support global `REGEX` through a bounded superset | The legacy endpoint cannot express arbitrary regex; fail-closed rejection is safer than pretending a term is equivalent. (`src/leitir/discovery_search.py:349-377`) | L / hard | High | Possible only for safely bounded subsets |
-| Add a live-search canary | Add search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming to the opt-in workflow. (`.github/workflows/live-canary.yml:43-52`, `tests/test_global_e2e_live.py:1-23`) | S | Low | Yes |
+| Completed: live-search canary (S3 slice #88; PRs #106/#121) | Search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming are in the opt-in workflow. (`docs/ci.md`) | S | Low | Yes |
 
 ## 5. References
 

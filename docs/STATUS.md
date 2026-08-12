@@ -21,7 +21,7 @@ global `(slug, commit_sha, path, blob_sha)` provenance validation.
 (`src/leitir/adapters/registry.py:17-59`,
 `src/leitir/adapters/languages.py:5-17`,
 `src/leitir/adapters/python_ast.py:186-226`,
-`src/leitir/adapters/_tier2.py:38-111`, `src/leitir/streaming.py:37-168`,
+`src/leitir/adapters/_tier2/_base.py:23-99`, `src/leitir/streaming.py:37-168`,
 `src/leitir/tree.py:136-210`, `src/leitir/cli.py:377-405`,
 `src/leitir/discovery_search.py:671-707`.)
 

@@ -150,9 +150,9 @@ The deterministic registry contains eight languages: Python, Rust, Go,
 JavaScript, TypeScript, Java, C, and C++. (`src/leitir/adapters/registry.py:17-37`.)
 The latter five are Tier-2 regex adapters with hand-adapted patterns attributed
 to nvim-treesitter; emitted matches record `method=heuristic`.
-(`src/leitir/adapters/_tier2.py:1-7`,
-`src/leitir/adapters/_tier2.py:38-111`,
-`src/leitir/adapters/_tier2.py:197-226`.)
+(`src/leitir/adapters/_tier2/__init__.py:1-7`,
+`src/leitir/adapters/_tier2/_base.py:23-99`,
+`src/leitir/adapters/_tier2/javascript.py:1-34`.)
 
 Heuristic matching remains the default, including for Python. `--ast` replaces
 only the Python adapter with `PythonAstAdapter`; structural predicates then use
@@ -198,7 +198,7 @@ of hash iteration order for identical inputs.
 - Matching is heuristic and line-oriented by default. The Python AST adapter is
   opt-in, and the JavaScript/TypeScript/Java/C/C++ adapters remain heuristic.
   (`src/leitir/adapters/registry.py:40-59`,
-  `src/leitir/adapters/_tier2.py:38-111`.)
+  `src/leitir/adapters/_tier2/_base.py:23-99`.)
 - Large blobs are streamed and SHA-1 verified, but a line over 512 KiB, a
   verification/read failure, or whole-file mode on a large blob yields a
   partial exclusion. (`src/leitir/streaming.py:17-20`,
@@ -239,7 +239,7 @@ global budgets. The remaining opportunities are:
 - Scoped scan and coverage: `src/leitir/engine.py`.
 - Adapter registry and implementations: `src/leitir/adapters/registry.py`,
   `src/leitir/adapters/__init__.py`, `src/leitir/adapters/python_ast.py`, and
-  `src/leitir/adapters/_tier2.py`.
+  `src/leitir/adapters/_tier2/`.
 - Large-blob streaming: `src/leitir/streaming.py`.
 - Pinned tree enumeration and reads: `src/leitir/tree.py`.
 - [GitHub REST search documentation](https://docs.github.com/en/rest/search/search)

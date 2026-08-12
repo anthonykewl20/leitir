@@ -16,8 +16,8 @@ scoped exhaustiveness and indeterminate global discovery:
   Python/Rust/Go behavior as the baseline and add heuristic, nvim-treesitter-
   attributed Tier-2 adapters for JavaScript, TypeScript, Java, C, and C++.
   (`src/leitir/adapters/registry.py:17-59`,
-  `src/leitir/adapters/_tier2.py:1-7`,
-  `src/leitir/adapters/_tier2.py:197-226`.)
+  `src/leitir/adapters/_tier2/__init__.py:1-7`,
+  `src/leitir/adapters/_tier2/javascript.py:1-34`.)
 - Keep heuristic Python matching as the default; make stdlib `ast` plus
   `symtable` lexical classification opt-in through `--ast`. Parser or symbol-
   table failure is reported as partial rather than parser-backed completeness.

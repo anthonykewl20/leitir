@@ -73,11 +73,14 @@ def pytest_runtest_makereport(
     report = outcome.get_result()
     if report.skipped and item.config.getoption("--live-canary-enabled") == "true":
         existing = item.config.stash[_EVENTS_KEY]
-        if not any(event["nodeid"] == item.nodeid and event["class"] == "skipped-not-landed" for event in existing):
+        if not any(event["nodeid"] == item.nodeid for event in existing):
             _append(
                 item.config,
                 {
-                    "class": "skipped-not-landed",
+                    # Only an explicitly disabled, not-yet-landed surface may
+                    # report skipped-not-landed. A selected test that skips is
+                    # missing coverage and must fail closed.
+                    "class": "configuration-failure",
                     "kind": "",
                     "nodeid": item.nodeid,
                     "surface": item.config.getoption("--live-canary-surface"),

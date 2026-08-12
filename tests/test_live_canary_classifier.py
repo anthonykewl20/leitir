@@ -196,6 +196,49 @@ def test_disabled_declared_surface_records_explicit_skip(tmp_path: Path) -> None
     ]
 
 
+def test_enabled_selected_surface_cannot_report_a_skip_as_not_landed(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_selected_surface.py"
+    events = tmp_path / "events.json"
+    test_file.write_text(
+        "import pytest\n\ndef test_selected_probe():\n    pytest.skip('fixture unavailable')\n",
+        encoding="utf-8",
+    )
+    probe = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "tests.live_canary_plugin",
+            f"--live-canary-events={events}",
+            "--live-canary-surface=selected-surface",
+            str(test_file),
+        ),
+        cwd=_ROOT,
+        env={**os.environ, "PYTHONPATH": f"src{os.pathsep}."},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+    recorded = json.loads(events.read_text(encoding="utf-8"))
+    assert len(recorded) == 1
+    event = recorded[0]
+    assert event["class"] == "configuration-failure"
+    assert event["kind"] == ""
+    assert event["nodeid"].endswith("test_selected_probe")
+    assert event["surface"] == "selected-surface"
+
+    classified = _run_classifier(
+        tmp_path,
+        json.loads(events.read_text(encoding="utf-8")),
+        outcome="success",
+    )
+    assert classified.returncode == 1
+    assert "`configuration-failure`" in classified.stdout
+
+
 def test_plugin_records_assertion_failure_for_classifier(tmp_path: Path) -> None:
     test_file = tmp_path / "test_product_failure.py"
     events = tmp_path / "events.json"

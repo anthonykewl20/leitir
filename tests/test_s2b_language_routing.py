@@ -6,8 +6,9 @@ import hashlib
 
 import pytest
 
-from leitir.adapters import LanguageAdapter, PythonAdapter, RustAdapter
+from leitir.adapters import PythonAdapter, RustAdapter
 from leitir.adapters._tier2 import JavaScriptAdapter
+from leitir.discovery_search import CodeSearchHit, CodeSearchPage, GlobalSearcher
 from leitir.engine import ScopedSearcher
 from leitir.search import (
     Predicate,
@@ -20,7 +21,6 @@ from leitir.search import (
 from leitir.tree import BlobEntry
 
 SHA = "a" * 40
-XFAIL_REASON = "S2b #89 not yet implemented; blocked by S0 #87 / S1 #86"
 
 
 def _blob_sha(content: bytes) -> str:
@@ -52,6 +52,23 @@ class RecordingTree:
             for _path, content in self._files
             if _blob_sha(content) == blob_sha
         )
+
+
+class RecordingCodeSearch:
+    def __init__(self, blob_sha: str) -> None:
+        self._blob_sha = blob_sha
+
+    def search(
+        self, query: str, *, per_page: int = 10, page: int = 1
+    ) -> CodeSearchPage:
+        hit = CodeSearchHit(
+            slug="owner/repo",
+            path="src/lib.rs",
+            blob_sha=self._blob_sha,
+            html_url=f"https://github.com/owner/repo/blob/{SHA}/src/lib.rs",
+            commit_sha=SHA,
+        )
+        return CodeSearchPage(hits=(hit,), total_count=1, incomplete_results=False)
 
 
 def _scopes(mode: SearchMode) -> tuple[RepoScope, ...]:
@@ -134,23 +151,29 @@ def test_tampered_predicate_language_cannot_authorize_rust_path() -> None:
     assert tree.read_calls == []
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
-def test_tampered_adapter_language_cannot_authorize_rust_path() -> None:
-    class TamperedRustAdapter(RustAdapter):
-        @property
-        def language(self) -> str:
-            return "python"
-
+def test_global_tampered_predicate_language_rejects_before_blob_read() -> None:
     rust = b"fn target() {}\n"
     tree = RecordingTree((("src/lib.rs", rust),))
-    adapters: tuple[LanguageAdapter, ...] = (PythonAdapter(), TamperedRustAdapter())
+    predicate = Predicate(PredicateKind.IDENTIFIER, "target", "rust")
+    spec = SearchSpec(mode=SearchMode.GLOBAL_DISCOVERY, must=(predicate,))
+    object.__setattr__(predicate, "language", "python")
+    blob_reads: list[tuple[str, str, str]] = []
 
-    report = ScopedSearcher(tree, adapters).search(_scoped_spec("python"))
+    def read_blob(slug: str, commit_sha: str, path: str) -> bytes:
+        blob_reads.append((slug, commit_sha, path))
+        return rust
+
+    report = GlobalSearcher(
+        RecordingCodeSearch(_blob_sha(rust)),
+        tree,
+        (PythonAdapter(), RustAdapter()),
+        blob_reader=read_blob,
+    ).search(spec)
 
     assert report.matches == ()
-    assert report.coverage.files_eligible == 0
     assert report.coverage.files_indexed == 0
-    assert tree.read_calls == []
+    assert report.coverage.exclusions == {"no_adapter": 1}
+    assert blob_reads == []
 
 
 def test_required_language_shrinks_coverage_eligible_universe() -> None:

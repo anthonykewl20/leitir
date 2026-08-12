@@ -15,6 +15,7 @@ import json
 import fixtures_real as fx
 
 from leitir.adapters import PythonAdapter
+from leitir.adapters._tier2 import JavaScriptAdapter
 from leitir.cli import ExitCode, main
 from leitir.discovery_search import (
     CodeSearchHit,
@@ -98,8 +99,9 @@ def _hit(**overrides) -> CodeSearchHit:
     return CodeSearchHit(**base)
 
 
-def _invoke(argv, page=None):
+def _invoke(argv, page=None, adapters=None):
     cs = _FakeCodeSearch(page or _page(_hit()))
+    configured_adapters = adapters or (PythonAdapter(),)
     out = io.StringIO()
     err = io.StringIO()
     code = main(
@@ -109,7 +111,7 @@ def _invoke(argv, page=None):
         global_searcher_factory=lambda code_search, tree_source, max_results, max_pages: GlobalSearcher(
             code_search=code_search,
             tree_source=tree_source,
-            adapters=(PythonAdapter(),),
+            adapters=configured_adapters,
             blob_reader=code_search.read_blob_by_path,
             max_results=max_results,
             max_pages=max_pages,
@@ -170,16 +172,19 @@ class TestGlobalHappyPath:
         assert "language:python" in cs.queries[0]
 
     def test_global_options_bound_pagination_and_add_language(self):
-        code, out, _, cs = _invoke([
-            "search", "--global", "--max-results", "5", "--max-pages", "1",
-            "--language", "python", "--must", "identifier:urlencode",
-        ])
+        code, out, _, cs = _invoke(
+            [
+                "search", "--global", "--max-results", "5", "--max-pages", "1",
+                "--language", "js", "--must", "identifier:urlencode",
+            ],
+            adapters=(JavaScriptAdapter(),),
+        )
         payload = json.loads(out)
 
         assert code == ExitCode.SUCCESS
         assert len(cs.calls) == 1
         assert cs.calls[0][1:] == (5, 1)
-        assert "language:python" in cs.calls[0][0]
+        assert "language:js" in cs.calls[0][0]
         assert payload["coverage"]["files_indexed"] <= 5
         assert len(payload["matches"]) <= 5
 

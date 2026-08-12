@@ -401,10 +401,15 @@ def _compile_query(
                 emitted_syntax=emitted,
             )
         )
-        pred_language = (
-            canonicalize_language(pred.language) if pred.language else None
+        pred_language = pred.language
+        canonical_language = (
+            canonicalize_language(pred_language) if pred_language else None
         )
-        if pred_language is not None and language is not None and pred_language != language:
+        if (
+            canonical_language is not None
+            and language is not None
+            and canonical_language != canonicalize_language(language)
+        ):
             raise SearchSpecError(
                 "REJECT_SEMANTIC_DEGRADATION: conflicting predicate languages"
             )

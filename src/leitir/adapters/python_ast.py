@@ -223,7 +223,11 @@ class PythonAstAdapter:
             parser_unavailable = True
             reference_provenance = self._unknown_reference_provenance(tree)
         else:
-            reference_provenance = self._reference_provenance(tree, symbols)
+            try:
+                reference_provenance = self._reference_provenance(tree, symbols)
+            except Exception:
+                parser_unavailable = True
+                reference_provenance = self._unknown_reference_provenance(tree)
         lines = content.split("\n")
         if lines and lines[-1] == "" and (content == "" or content.endswith("\n")):
             lines.pop()
@@ -240,7 +244,9 @@ class PythonAstAdapter:
                 continue
             predicate_hits: dict[int, list[ast.AST] | None] = {}
             for node in nodes:
-                values = self._candidates(node).get(predicate.kind, ())
+                candidates, render_unavailable = self._candidates(node)
+                parser_unavailable = parser_unavailable or render_unavailable
+                values = candidates.get(predicate.kind, ())
                 line = getattr(node, "lineno", None)
                 if predicate.value in values and isinstance(line, int):
                     existing = predicate_hits.setdefault(line, [])
@@ -335,14 +341,17 @@ class PythonAstAdapter:
             end_col=end_col if isinstance(end_col, int) else None,
         )
 
-    def _candidates(self, node: ast.AST) -> dict[PredicateKind, tuple[str, ...]]:
+    def _candidates(
+        self, node: ast.AST
+    ) -> tuple[dict[PredicateKind, tuple[str, ...]], bool]:
         candidates: dict[PredicateKind, tuple[str, ...]] = {}
+        render_unavailable = False
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             candidates[PredicateKind.SYMBOL_DEFINITION] = (node.name,)
             try:
                 candidates[PredicateKind.SIGNATURE] = (python_signature(node),)
-            except RecursionError:
-                pass
+            except Exception:
+                render_unavailable = True
         elif isinstance(node, ast.ClassDef):
             candidates[PredicateKind.SYMBOL_DEFINITION] = (node.name,)
         elif isinstance(node, ast.Assign):
@@ -384,10 +393,12 @@ class PythonAstAdapter:
                 if alias.name != "*"
             )
         elif isinstance(node, ast.Call):
-            candidates[PredicateKind.CALL] = self._call_names(node.func)
+            call_names, call_render_unavailable = self._call_names(node.func)
+            candidates[PredicateKind.CALL] = call_names
+            render_unavailable = render_unavailable or call_render_unavailable
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             candidates[PredicateKind.SYMBOL_REFERENCE] = (node.id,)
-        return candidates
+        return candidates, render_unavailable
 
     def _target_names(self, targets: tuple[ast.expr, ...] | list[ast.expr]) -> list[str]:
         names: list[str] = []
@@ -400,17 +411,17 @@ class PythonAstAdapter:
                 pending[0:0] = target.elts
         return names
 
-    def _call_names(self, function: ast.expr) -> tuple[str, ...]:
+    def _call_names(self, function: ast.expr) -> tuple[tuple[str, ...], bool]:
         if isinstance(function, ast.Name):
-            return (function.id,)
+            return (function.id,), False
         if isinstance(function, ast.Attribute):
             names = [function.attr]
             try:
                 names.append(ast.unparse(function))
-            except RecursionError:
-                pass
-            return tuple(dict.fromkeys(names))
-        return ()
+            except Exception:
+                return tuple(names), True
+            return tuple(dict.fromkeys(names)), False
+        return (), False
 
     def _spans_for_lines(
         self,

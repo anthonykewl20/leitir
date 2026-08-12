@@ -1,0 +1,38 @@
+{
+  "postings": {
+    "aba": [
+      2
+    ],
+    "ana": [
+      0,
+      1,
+      2
+    ],
+    "and": [
+      1
+    ],
+    "ban": [
+      0,
+      1,
+      2
+    ],
+    "cab": [
+      2
+    ],
+    "dan": [
+      1
+    ],
+    "na\n": [
+      0,
+      1,
+      2
+    ],
+    "nan": [
+      0
+    ],
+    "nda": [
+      1
+    ]
+  },
+  "schema_version": "leitir-trigram-index-v1"
+}

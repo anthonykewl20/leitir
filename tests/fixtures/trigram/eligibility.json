@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "eligible": true,
+      "label": "exact-full-git-commit",
+      "manifest": {
+        "materialized_tree_hash_scope": "full",
+        "parity": "exact",
+        "source": "git-commit"
+      },
+      "require_index": "serve verified index"
+    },
+    {
+      "eligible": false,
+      "label": "registry-artifact",
+      "manifest": {
+        "materialized_tree_hash_scope": "full",
+        "parity": "exact",
+        "source": "registry-artifact"
+      },
+      "require_index": "reject non-zero",
+      "search_index": "ScopedSearcher fallback; PARTIAL"
+    },
+    {
+      "eligible": false,
+      "label": "sampled",
+      "manifest": {
+        "materialized_tree_hash_scope": "sampled",
+        "parity": "exact",
+        "source": "git-commit"
+      },
+      "require_index": "reject non-zero",
+      "search_index": "ScopedSearcher fallback; PARTIAL"
+    },
+    {
+      "eligible": false,
+      "label": "drift",
+      "manifest": {
+        "materialized_tree_hash_scope": "full",
+        "parity": "drift",
+        "source": "git-commit"
+      },
+      "require_index": "reject non-zero",
+      "search_index": "ScopedSearcher fallback; PARTIAL"
+    },
+    {
+      "eligible": false,
+      "label": "unknown-parity",
+      "manifest": {
+        "materialized_tree_hash_scope": "full",
+        "parity": "unknown",
+        "source": "git-commit"
+      },
+      "require_index": "reject non-zero",
+      "search_index": "ScopedSearcher fallback; PARTIAL"
+    },
+    {
+      "eligible": false,
+      "label": "missing-fields",
+      "manifest": {
+        "source": "git-commit"
+      },
+      "require_index": "reject non-zero",
+      "search_index": "ScopedSearcher fallback; PARTIAL"
+    }
+  ],
+  "predicate": "source == git-commit and parity == exact and materialized_tree_hash_scope == full"
+}

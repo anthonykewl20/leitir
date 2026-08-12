@@ -1,0 +1,28 @@
+{
+  "documents": [
+    {
+      "blob_sha": "637a09b86af61897fb72f26bfb874f2ae726db82",
+      "commit": "1111111111111111111111111111111111111111",
+      "host": "github.com",
+      "owner": "fixture",
+      "path": "src/alpha.txt",
+      "repo": "overlap"
+    },
+    {
+      "blob_sha": "ddc4978f1d95d9d4b2d2b0b60b9d00ba95fa1a96",
+      "commit": "1111111111111111111111111111111111111111",
+      "host": "github.com",
+      "owner": "fixture",
+      "path": "src/beta.txt",
+      "repo": "overlap"
+    },
+    {
+      "blob_sha": "3c25785bb83378d1c83df2c91bd76cd53fb30c51",
+      "commit": "1111111111111111111111111111111111111111",
+      "host": "github.com",
+      "owner": "fixture",
+      "path": "src/gamma.txt",
+      "repo": "overlap"
+    }
+  ]
+}

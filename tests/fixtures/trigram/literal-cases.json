@@ -1,0 +1,57 @@
+{
+  "no_sound_literal": [
+    ".*",
+    ".+",
+    "[a-z]+",
+    "a|b",
+    "^",
+    "(?=banana)",
+    "(?!banana)"
+  ],
+  "sound": [
+    {
+      "candidate_doc_ids": [
+        0
+      ],
+      "grams": [
+        "ana",
+        "ban",
+        "nan"
+      ],
+      "pattern": "banana",
+      "runs": [
+        "banana"
+      ]
+    },
+    {
+      "candidate_doc_ids": [
+        1
+      ],
+      "grams": [
+        "ana",
+        "and",
+        "ban",
+        "dan",
+        "nda"
+      ],
+      "pattern": "^bandana$",
+      "runs": [
+        "bandana"
+      ]
+    },
+    {
+      "candidate_doc_ids": [],
+      "grams": [
+        "ana",
+        "ban",
+        "cab",
+        "nan"
+      ],
+      "pattern": "banana(cab)",
+      "runs": [
+        "banana",
+        "cab"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "index_metadata": {
+        "source_tree_hash": "h1:COPIED-WITHOUT-REVERIFICATION"
+      },
+      "label": "copied-tree-hash",
+      "mutation": "copy source manifest tree hash into index metadata without calling read_valid_manifest",
+      "outcome": "reject"
+    },
+    {
+      "label": "stale-shelf",
+      "mutation": "replace src/alpha.txt bytes with plantain after index publication",
+      "outcome": "tree hash mismatch; fallback PARTIAL or require-index non-zero"
+    },
+    {
+      "label": "unknown-schema",
+      "mutation": "set schema_version to leitir-trigram-index-v999",
+      "outcome": "refuse; never upgrade in place",
+      "schema_version": "leitir-trigram-index-v999"
+    }
+  ]
+}

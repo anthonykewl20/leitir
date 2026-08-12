@@ -50,11 +50,14 @@ sends the GitHub JSON media type and API-version header. A token is sent only
 when the configured endpoint is HTTPS on `api.github.com`.
 (`src/leitir/discovery_search.py:184-249`.)
 
-`GlobalSearcher` defaults to `max_results=30` and `max_pages=10`, requests
-`min(max_results, 100)` items per page, and stops on its candidate budget,
-GitHub's `incomplete_results`, a short/empty page, a page failure, or the page
-budget. Candidate fetch/verification attempts, including promoted candidates,
-are also bounded by `max_results`. (`src/leitir/discovery_search.py:441-519`,
+`GlobalSearcher` defaults to `max_results=30` and `max_pages=10`; both the CLI
+and constructor enforce service-aligned maxima of 1000 results and 100 pages.
+It requests `min(max_results, 100)` items per page, and stops on its candidate
+budget, GitHub's `incomplete_results`, a short/empty page, a page failure, or
+the page budget. Candidate-budget stops are reported incomplete whenever the
+remote count shows uncollected results. Candidate fetch/verification attempts,
+including promoted candidates, are also bounded by `max_results`.
+(`src/leitir/discovery_search.py:441-519`,
 `src/leitir/discovery_search.py:532-560`.)
 
 ### Query translation and language routing
@@ -64,8 +67,9 @@ endpoint cannot express. Required `REGEX` is rejected. Exact text,
 identifiers, and token sequences become GitHub terms; path and structural
 predicates become a GitHub superset followed by local filtering. `should` and
 `must_not` are local filters, while their `PATH` form is rejected. Conflicting
-required languages are rejected and a canonical language qualifier is added
-to the query. (`src/leitir/discovery_search.py:349-433`.)
+required languages are rejected and a canonical language value is stored in
+the search spec (so aliases and case variants share an identity); that
+qualifier is added to the query. (`src/leitir/discovery_search.py:349-433`.)
 
 Both search paths canonicalize language aliases and require a matching adapter.
 An unsupported required language is rejected before candidates are scanned.

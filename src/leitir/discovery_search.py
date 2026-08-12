@@ -43,6 +43,8 @@ from leitir.tree import TreeReadError, TreeSource, TreeTruncatedError
 _API = "https://api.github.com"
 _RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
+MAX_SEARCH_RESULTS = 1000
+MAX_SEARCH_PAGES = 100
 logger = logging.getLogger(__name__)
 
 
@@ -457,10 +459,22 @@ class GlobalSearcher:
         max_pages: int = 10,
         clock: Callable[[], str] | None = None,
     ) -> None:
-        if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1:
-            raise ValueError("max_results must be a positive integer")
-        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
-            raise ValueError("max_pages must be a positive integer")
+        if (
+            isinstance(max_results, bool)
+            or not isinstance(max_results, int)
+            or not 1 <= max_results <= MAX_SEARCH_RESULTS
+        ):
+            raise ValueError(
+                f"max_results must be an integer from 1 to {MAX_SEARCH_RESULTS}"
+            )
+        if (
+            isinstance(max_pages, bool)
+            or not isinstance(max_pages, int)
+            or not 1 <= max_pages <= MAX_SEARCH_PAGES
+        ):
+            raise ValueError(
+                f"max_pages must be an integer from 1 to {MAX_SEARCH_PAGES}"
+            )
         self._search = code_search
         self._tree = tree_source
         self._adapters = adapters
@@ -491,6 +505,7 @@ class GlobalSearcher:
         files_eligible = 0
         incomplete_results = False
         collected: list[CodeSearchHit] = []
+        phase_a_stopped_for_candidate_budget = False
         per_page = min(self._max_results, 100)
         content_preds = tuple(
             predicate for predicate in spec.must if predicate.kind is not PredicateKind.PATH
@@ -518,6 +533,9 @@ class GlobalSearcher:
                 for hit in provisional.candidates
             )
             if adapter_eligible >= self._max_results:
+                phase_a_stopped_for_candidate_budget = True
+                if page.total_count > len(collected):
+                    incomplete_results = True
                 break
             if page.incomplete_results:
                 break
@@ -525,6 +543,12 @@ class GlobalSearcher:
                 break
             if page_number == self._max_pages:
                 incomplete_results = True
+
+        # Preserve the reason independently of the coverage flag: reaching the
+        # candidate boundary is complete only when the remote count proves that
+        # every result was collected on the pages consumed above.
+        if phase_a_stopped_for_candidate_budget and files_eligible > len(collected):
+            incomplete_results = True
 
         # Phase B: collapse only index claims. Collapsed members are not read.
         outcome = dedup_hits(collected)

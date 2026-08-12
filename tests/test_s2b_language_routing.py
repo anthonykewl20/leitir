@@ -151,6 +151,32 @@ def test_tampered_predicate_language_cannot_authorize_rust_path() -> None:
     assert tree.read_calls == []
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "engine._adapter_for trusts self-reported adapter.language (#89/#87 "
+        "follow-up); bind routing to trusted registry language identity"
+    ),
+)
+def test_tampered_adapter_language_cannot_authorize_rust_path() -> None:
+    class SpoofedRustAdapter(RustAdapter):
+        @property
+        def language(self) -> str:
+            return "python"
+
+    rust = b"fn target() {}\n"
+    tree = RecordingTree((("src/lib.rs", rust),))
+
+    report = ScopedSearcher(
+        tree, (PythonAdapter(), SpoofedRustAdapter())
+    ).search(_scoped_spec("python"))
+
+    assert report.matches == ()
+    assert report.coverage.files_eligible == 0
+    assert report.coverage.files_indexed == 0
+    assert tree.read_calls == []
+
+
 def test_global_tampered_predicate_language_rejects_before_blob_read() -> None:
     rust = b"fn target() {}\n"
     tree = RecordingTree((("src/lib.rs", rust),))

@@ -460,14 +460,42 @@ def test_global_language_is_copied_to_must_predicates_and_changes_digest():
     assert js_spec.digest() != python_spec.digest()
 
 
+def test_global_language_equal_to_required_predicate_remains_valid():
+    searcher = FakeGlobalSearcher()
+
+    code = main(
+        [
+            "search", "--global", "--language", "js",
+            "--must", "identifier:foo:js",
+        ],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=lambda cs, ts, mr, mp: searcher,
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert searcher.specs[0].must[0].language == "js"
+
+
 @pytest.mark.parametrize(
     "argv",
     [
         ["search", "--global", "--max-results", "0", "--must", "identifier:x"],
         ["search", "--global", "--max-results", "-3", "--must", "identifier:x"],
+        ["search", "--global", "--max-results", "nope", "--must", "identifier:x"],
+        ["search", "--global", "--max-results", "--must", "identifier:x"],
+        ["search", "--global", "--max-pages", "0", "--must", "identifier:x"],
+        ["search", "--global", "--max-pages", "-3", "--must", "identifier:x"],
+        ["search", "--global", "--max-pages", "nope", "--must", "identifier:x"],
+        ["search", "--global", "--max-pages", "--must", "identifier:x"],
         [
-            "search", "--global", "--max-results", "5", "--repo", "owner/repo",
+            "search", "--max-results", "5", "--repo", "owner/repo",
             "--commit", SHA, "--must", "identifier:x",
+        ],
+        [
+            "search", "--max-pages", "1", "--package", "requests",
+            "--version", "1.0", "--ecosystem", "pypi", "--must", "identifier:x",
         ],
         [
             "search", "--global", "--language", "js",
@@ -486,6 +514,7 @@ def test_global_only_options_reject_malformed_usage_before_transport(argv):
     code = main(
         argv,
         tree_source_factory=unexpected_transport,
+        resolver_factory=unexpected_transport,
         code_search_factory=unexpected_transport,
         stdout=io.StringIO(),
         stderr=io.StringIO(),

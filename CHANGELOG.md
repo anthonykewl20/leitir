@@ -100,6 +100,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - treat source checkout as healthy in install checks (#43) (`doctor`)
 - trust tests fairness, Bitbucket live tolerance, lock best-effort (`corpus`)
 - use os.pathsep in PYTHONPATH so bts_walk subprocess runs on Windows (`tests`)
+- verify buffered blob SHA, bind tree response SHA, and require truncated field (`search`)
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security

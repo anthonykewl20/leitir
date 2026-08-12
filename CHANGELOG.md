@@ -86,6 +86,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - make nsjail --version capture non-fatal in build script (`bts`)
+- make validate_report fail-closed on span bounds without line_counts (`search`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)

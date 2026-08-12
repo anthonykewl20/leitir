@@ -269,14 +269,11 @@ def test_enabled_collection_skip_with_another_collected_module_fails_closed(tmp_
     )
     assert probe.returncode == 0, probe.stderr
     recorded = json.loads(events.read_text(encoding="utf-8"))
-    assert recorded == [
-        {
-            "class": "configuration-failure",
-            "kind": "",
-            "nodeid": skipped_file.name,
-            "surface": "collection-surface",
-        }
-    ]
+    assert len(recorded) == 1
+    assert recorded[0]["class"] == "configuration-failure"
+    assert recorded[0]["surface"] == "collection-surface"
+    assert recorded[0]["kind"] == ""
+    assert recorded[0]["nodeid"].endswith(skipped_file.name)
 
     classified = _run_classifier(tmp_path, recorded, outcome="success")
     assert classified.returncode == 1

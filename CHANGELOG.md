@@ -72,6 +72,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
+- bind adapter language routing to trusted registry identity (`search`)
 - bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - canonicalize predicate-vs-flag language comparison (`search`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)

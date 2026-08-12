@@ -55,6 +55,9 @@ class _Tree:
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         return self._data
 
+    def read_blob_stream(self, slug: str, blob_sha: str) -> tuple[bytes, ...]:
+        return (self._data,)
+
 
 def _ast_adapter() -> PythonAstAdapter:
     return PythonAstAdapter(PythonAdapter())
@@ -171,6 +174,26 @@ def test_symtable_failure_keeps_ast_references_unknown_and_marks_partial(
     assert tuple(
         detail.classification for detail in span.reference_provenance
     ) == (LexicalClassification.UNKNOWN,)
+    report = _search(content, predicate)
+    assert report.coverage.status is CoverageStatus.PARTIAL
+    assert report.matches
+
+
+def test_deeply_nested_ast_visitor_failure_falls_back_and_marks_partial() -> None:
+    depth = 1200
+    content = "\n".join(
+        (
+            *("    " * level + f"def f{level}():" for level in range(depth)),
+            "    " * depth + "target()",
+        )
+    )
+    predicate = _predicate(PredicateKind.CALL, "target")
+
+    result = _ast_adapter().find_matches_ex(content, (predicate,))
+
+    assert result.parser_unavailable is True
+    assert result.spans
+    assert all(span.method is MatchMethod.HEURISTIC for span in result.spans)
     report = _search(content, predicate)
     assert report.coverage.status is CoverageStatus.PARTIAL
     assert report.matches

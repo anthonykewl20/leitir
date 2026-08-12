@@ -79,6 +79,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
 - GitLab subgroup (nested group) project support (`corpus`)
+- guard AST visitor and render against untrusted-input recursion (`search`)
 - guard stdout write and force os._exit on Windows doctor paths (`doctor`)
 - harden tree walker validation, lowercase SHAs, and early truncation raise (`search`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)

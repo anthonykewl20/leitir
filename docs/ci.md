@@ -3,9 +3,9 @@
 ## Live-provider canary
 
 `.github/workflows/live-canary.yml` is an opt-in canary for the real-provider
-end-to-end tests. It runs the test suite on Ubuntu with
-`LEITIR_ENABLE_LIVE_E2E=1` and `LEITIR_ENABLE_SCORE_LIVE=1`; the default CI
-continues to run with both gates disabled.
+end-to-end tests. It runs the selected live canary probes on Ubuntu with
+`LEITIR_ENABLE_LIVE_E2E=1`; the default CI continues to run with that gate
+disabled.
 
 To enable the canary, add a repository Actions secret named `GH_TOKEN`. This
 is the required opt-in gate and should contain a GitHub token suitable for

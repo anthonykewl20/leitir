@@ -119,7 +119,7 @@ The published canonical self-assessment **passes the offline profile**:
 ```
 profile=offline  decision=pass  complete=true
 score_bps=unknown  observed_score_bps=8697
-lower_bound_bps=5581  upper_bound_bps=8914
+lower_bound_bps=7247  upper_bound_bps=8914
 release_readiness=not_claimed          exit 0
 ```
 

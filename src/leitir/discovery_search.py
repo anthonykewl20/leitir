@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.adapters.languages import canonicalize_language
+from leitir.adapters.registry import trusted_adapter_language
 from leitir.credentials import validate_secret
 from leitir.engine import _required_language, _score_content_ex, path_matches
 from leitir.materialize import _utc_now
@@ -474,7 +475,9 @@ class GlobalSearcher:
 
         required_language = _required_language(spec)
         supported_languages = {
-            canonicalize_language(adapter.language) for adapter in self._adapters
+            language
+            for adapter in self._adapters
+            if (language := trusted_adapter_language(adapter)) is not None
         }
         if (
             required_language is not None
@@ -665,7 +668,9 @@ class GlobalSearcher:
         self, path: str, required_language: str | None = None
     ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            language = canonicalize_language(adapter.language)
+            language = trusted_adapter_language(adapter)
+            if language is None:
+                continue
             if (
                 required_language is None or language == required_language
             ) and adapter.eligible(path):

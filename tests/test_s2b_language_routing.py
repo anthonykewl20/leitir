@@ -151,13 +151,6 @@ def test_tampered_predicate_language_cannot_authorize_rust_path() -> None:
     assert tree.read_calls == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "engine._adapter_for trusts self-reported adapter.language (#89/#87 "
-        "follow-up); bind routing to trusted registry language identity"
-    ),
-)
 def test_tampered_adapter_language_cannot_authorize_rust_path() -> None:
     class SpoofedRustAdapter(RustAdapter):
         @property
@@ -175,6 +168,37 @@ def test_tampered_adapter_language_cannot_authorize_rust_path() -> None:
     assert report.coverage.files_eligible == 0
     assert report.coverage.files_indexed == 0
     assert tree.read_calls == []
+
+
+def test_global_tampered_adapter_language_cannot_authorize_rust_path() -> None:
+    class SpoofedRustAdapter(RustAdapter):
+        @property
+        def language(self) -> str:
+            return "python"
+
+    rust = b"fn target() {}\n"
+    blob_reads: list[tuple[str, str, str]] = []
+
+    def read_blob(slug: str, commit_sha: str, path: str) -> bytes:
+        blob_reads.append((slug, commit_sha, path))
+        return rust
+
+    report = GlobalSearcher(
+        RecordingCodeSearch(_blob_sha(rust)),
+        RecordingTree((("src/lib.rs", rust),)),
+        (PythonAdapter(), SpoofedRustAdapter()),
+        blob_reader=read_blob,
+    ).search(
+        SearchSpec(
+            mode=SearchMode.GLOBAL_DISCOVERY,
+            must=(Predicate(PredicateKind.IDENTIFIER, "target", "python"),),
+        )
+    )
+
+    assert report.matches == ()
+    assert report.coverage.files_indexed == 0
+    assert report.coverage.exclusions == {"no_adapter": 1}
+    assert blob_reads == []
 
 
 def test_global_tampered_predicate_language_rejects_before_blob_read() -> None:

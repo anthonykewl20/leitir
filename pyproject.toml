@@ -31,6 +31,7 @@ where = ["src"]
 leitir = [
     "benchmarks/**/*.json",
     "benchmarks/**/*.md",
+    "benchmarks/**/*.txt",
 ]
 
 [tool.ruff]

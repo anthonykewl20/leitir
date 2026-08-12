@@ -100,8 +100,8 @@ user strings.
 
 ### 4. Add a live search canary
 
-**Status:** The repository has live-canary infrastructure, but no search
-canary is wired into it.
+**Status:** The gated search live canary has been added to the repository's
+live-canary infrastructure; see `docs/ci.md`.
 
 **Proven source:** `.github/workflows/live-canary.yml` (existing workflow) and
 Leitir's global/scoped search entry points. License: project-owned workflow;
@@ -443,7 +443,7 @@ code.
 2. Strengthen `validate_report` to the full provenance tuple and add tamper
    tests.
 3. Enforce predicate language routing in adapters.
-4. Add the gated search live canary.
+4. The gated search live canary has been added; see `docs/ci.md`.
 
 Success means observable budgets, stronger validation, explicit language
 behavior, and a repeatable smoke; global search remains indeterminate.

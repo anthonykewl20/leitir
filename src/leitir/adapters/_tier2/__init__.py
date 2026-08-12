@@ -15,14 +15,6 @@ from leitir.adapters._tier2.java import JAVA, JavaAdapter
 from leitir.adapters._tier2.javascript import JAVASCRIPT, JavaScriptAdapter
 from leitir.adapters._tier2.typescript import TYPESCRIPT, TypeScriptAdapter
 
-RegexInventory.__module__ = __name__
-Tier2RegexAdapter.__module__ = __name__
-JavaScriptAdapter.__module__ = __name__
-TypeScriptAdapter.__module__ = __name__
-JavaAdapter.__module__ = __name__
-CAdapter.__module__ = __name__
-CppAdapter.__module__ = __name__
-
 __all__ = [
     "CPP",
     "JAVA",

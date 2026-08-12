@@ -17,6 +17,7 @@ from leitir.adapters._tier2 import (
     TypeScriptAdapter,
 )
 from leitir.adapters.registry import build_adapters
+from leitir.engine import score_content
 from leitir.search import Predicate, PredicateKind
 
 
@@ -199,6 +200,83 @@ def test_tier2_whole_file_deduplicates_evidence_in_stable_order(
         (1, (PredicateKind.CALL, PredicateKind.SYMBOL_DEFINITION)),
         (2, (PredicateKind.CALL,)),
     )
+
+
+@pytest.fixture(
+    params=(
+        (
+            JavaScriptAdapter(),
+            "src/build.js",
+            "function build() {}\nconst boost = true;\nboost();\nforbidden();\nrun();\n",
+        ),
+        (
+            JavaAdapter(),
+            "src/Build.java",
+            "int build() { return 1; }\nboolean boost = true;\nboost();\nforbidden();\nrun();\n",
+        ),
+    ),
+    ids=("javascript", "java"),
+)
+def tier2_whole_file_fixture(
+    request: pytest.FixtureRequest,
+) -> tuple[Tier2RegexAdapter, str, str]:
+    adapter, path, content = request.param
+    return adapter, path, content
+
+
+def test_tier2_whole_file_fixture_scores_should_once_and_orders_matches(
+    tier2_whole_file_fixture: tuple[Tier2RegexAdapter, str, str],
+) -> None:
+    adapter, path, content = tier2_whole_file_fixture
+    matches = score_content(
+        content,
+        adapter,
+        "owner/repo",
+        "a" * 40,
+        path,
+        "b" * 40,
+        (
+            Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+            Predicate(PredicateKind.CALL, "run"),
+        ),
+        (Predicate(PredicateKind.IDENTIFIER, "boost"),),
+        (),
+        whole_file=True,
+    )
+
+    assert tuple(
+        (match.source.start_line, match.score, match.matched_kinds)
+        for match in matches
+    ) == (
+        (
+            1,
+            3.0,
+            (PredicateKind.IDENTIFIER, PredicateKind.SYMBOL_DEFINITION),
+        ),
+        (5, 3.0, (PredicateKind.CALL, PredicateKind.IDENTIFIER)),
+    )
+
+
+def test_tier2_whole_file_fixture_must_not_excludes_any_occurrence(
+    tier2_whole_file_fixture: tuple[Tier2RegexAdapter, str, str],
+) -> None:
+    adapter, path, content = tier2_whole_file_fixture
+
+    assert score_content(
+        content,
+        adapter,
+        "owner/repo",
+        "a" * 40,
+        path,
+        "b" * 40,
+        (
+            Predicate(PredicateKind.SYMBOL_DEFINITION, "build"),
+            Predicate(PredicateKind.CALL, "run"),
+        ),
+        (),
+        (Predicate(PredicateKind.CALL, "forbidden"),),
+        whole_file=True,
+    ) == []
 
 
 def test_tier2_search_is_hash_seed_independent() -> None:

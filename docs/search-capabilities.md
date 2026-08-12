@@ -118,7 +118,9 @@ tree. If GitHub marks it truncated, Leitir performs a deterministic,
 non-recursive subtree walk with depth, request, and entry budgets. Malformed
 responses, nested truncation, path collisions, and exhausted budgets fail
 closed with any blobs safely recovered so far attached to the enumeration
-error. (`src/leitir/tree.py:136-210`, `src/leitir/tree.py:308-388`.)
+error. The `list_blobs()` compatibility wrapper raises immediately when the
+recursive response is truncated; only `list_blobs_ex()` performs recovery.
+(`src/leitir/tree.py:135-251`, `src/leitir/tree.py:342-413`.)
 
 `ScopedSearcher` searches recovered blobs. Successful recovery and failed
 recovery with partial blobs both produce real matches but set coverage to

@@ -9,6 +9,7 @@ leakage between retries — simulating sustained real usage.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 
 import _http_server as hs
@@ -408,12 +409,18 @@ class TestTreeSourceRetryReal:
     consumer, so its three HTTP sites must retry transitively."""
 
     TREE_PAYLOAD = {
+        "sha": SHA,
         "truncated": False,
         "tree": [
             {"type": "blob", "path": "Lib/x.py", "sha": BLOB, "size": 10},
         ],
     }
-    BLOB_API_PAYLOAD = {"content": "ZGVmIGZvbygpOnBhc3M=", "encoding": "base64"}
+    BLOB_API_PAYLOAD = {
+        "content": base64.b64encode(BLOB_CONTENT).decode("ascii"),
+        "encoding": "base64",
+        "sha": BLOB,
+        "size": len(BLOB_CONTENT),
+    }
 
     @pytest.mark.parametrize("iteration", range(6))
     def test_list_blobs_retries_502(self, iteration):
@@ -437,7 +444,7 @@ class TestTreeSourceRetryReal:
         ]) as h:
             tree = GitHubTreeSource(base_url=h.base_url, sleeper=sleeps.append, base_delay=1.0)
             data = tree.read_blob("o/r", BLOB)
-        assert data == b"def foo():pass"
+        assert data == BLOB_CONTENT
         assert sleeps == [1.0]
 
     @pytest.mark.parametrize("iteration", range(6))

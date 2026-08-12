@@ -143,15 +143,14 @@ class GitHubTreeSource:
             raise TreeEnumerationError(
                 "malformed tree response: expected JSON object"
             )
-        truncated = payload.get("truncated", False)
-        if not isinstance(truncated, bool):
-            raise TreeEnumerationError("malformed tree response: invalid truncated flag")
+        root_tree_sha = _require_response_sha(payload)
+        truncated = _require_truncated(payload)
         if not truncated:
             blobs = _recursive_blobs(payload)
             logger.debug("tree fetched blobs=%d slug=%s sha=%s", len(blobs), slug, commit_sha[:12])
             return blobs, False
 
-        stack = [(commit_sha, "")]
+        stack = [(root_tree_sha, "")]
         visited: set[tuple[str, str]] = set()
         cache: dict[str, tuple[dict[str, object], ...]] = {}
         blobs_by_path: dict[str, BlobEntry] = {}
@@ -190,12 +189,16 @@ class GitHubTreeSource:
                         "malformed tree response: expected JSON object",
                         partial_blobs=partial_blobs(),
                     )
-                nested_truncated = subtree.get("truncated", False)
-                if not isinstance(nested_truncated, bool):
-                    raise TreeEnumerationError(
-                        "malformed tree response: invalid truncated flag",
-                        partial_blobs=partial_blobs(),
-                    )
+                try:
+                    response_sha = _require_response_sha(subtree)
+                    if response_sha != tree_sha:
+                        raise TreeEnumerationError(
+                            "malformed tree response: response SHA does not match requested tree"
+                        )
+                    nested_truncated = _require_truncated(subtree)
+                except TreeEnumerationError as exc:
+                    exc.attach_partial_blobs(partial_blobs())
+                    raise
                 if nested_truncated:
                     raise TreeTruncatedError(
                         slug, commit_sha, partial_blobs=partial_blobs()
@@ -244,24 +247,59 @@ class GitHubTreeSource:
             raise TreeEnumerationError(
                 "malformed tree response: expected JSON object"
             )
-        truncated = payload.get("truncated", False)
-        if not isinstance(truncated, bool):
-            raise TreeEnumerationError("malformed tree response: invalid truncated flag")
+        _require_response_sha(payload)
+        truncated = _require_truncated(payload)
         if truncated:
             raise TreeTruncatedError(slug, commit_sha, partial_blobs=())
         return _recursive_blobs(payload)
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         import base64
+        import binascii
         from urllib.request import Request
 
-        url = f"{self._base_url}/repos/{slug}/git/blobs/{blob_sha}"
+        try:
+            canonical_blob_sha = _require_hex_sha(blob_sha)
+        except TreeEnumerationError as exc:
+            raise TreeReadError("cannot read blob: malformed requested blob SHA") from exc
+
+        url = f"{self._base_url}/repos/{slug}/git/blobs/{canonical_blob_sha}"
         headers = self._headers()
 
         def _fetch() -> bytes:
             with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
                 payload = json.load(resp)
-            return base64.b64decode(payload["content"])
+            if not isinstance(payload, dict):
+                raise TreeReadError("malformed blob response: expected JSON object")
+            try:
+                decoded = base64.b64decode(payload["content"])
+            except (KeyError, TypeError, ValueError, binascii.Error) as exc:
+                raise TreeReadError("malformed blob response: invalid content") from exc
+
+            response_sha = payload.get("sha")
+            if (
+                not isinstance(response_sha, str)
+                or len(response_sha) != 40
+                or not _is_hex(response_sha)
+                or response_sha.lower() != canonical_blob_sha
+            ):
+                raise TreeReadError(
+                    "malformed blob response: response SHA does not match requested blob"
+                )
+            response_size = payload.get("size")
+            if (
+                isinstance(response_size, bool)
+                or not isinstance(response_size, int)
+                or response_size != len(decoded)
+            ):
+                raise TreeReadError(
+                    "malformed blob response: size does not match decoded content"
+                )
+            if self.git_blob_sha(decoded) != canonical_blob_sha:
+                raise TreeReadError(
+                    "malformed blob response: content does not match requested blob SHA"
+                )
+            return decoded
 
         try:
             return self._retry(_fetch)
@@ -346,6 +384,20 @@ def _require_tree_array(
     if not isinstance(tree, list) or not all(isinstance(item, dict) for item in tree):
         raise TreeEnumerationError("malformed tree response")
     return tuple(tree)
+
+
+def _require_response_sha(payload: dict[str, object]) -> str:
+    try:
+        return _require_hex_sha(payload.get("sha"))
+    except TreeEnumerationError as exc:
+        raise TreeEnumerationError("malformed tree response: invalid response SHA") from exc
+
+
+def _require_truncated(payload: dict[str, object]) -> bool:
+    truncated = payload.get("truncated")
+    if not isinstance(truncated, bool):
+        raise TreeEnumerationError("malformed tree response: invalid truncated flag")
+    return truncated
 
 
 def _validated_item(

@@ -165,6 +165,9 @@ enrichment behind the existing CLI (P5–P6).
       every distinct candidate.
       The report records the `indexed_commit` strategy and resolution time;
       deterministic report identity excludes that observation timestamp.
+      Complete report validation requires line counts derived from the
+      verified source bytes whenever matches are present; missing bounds data
+      and spans beyond those bytes are rejected fail-closed.
       Irreducible limit: a remote search index is not a pinned input. Separate
       live queries can observe an advancing index, server-side ranking changes,
       or different `incomplete_results`; reproducibility applies to a recorded,

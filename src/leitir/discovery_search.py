@@ -644,7 +644,11 @@ class GlobalSearcher:
             ),
             query_translation=query_translation,
         )
-        validate_report(report, tuple(verified), verified_line_counts)
+        validate_report(
+            report,
+            tuple(verified),
+            line_counts=verified_line_counts,
+        )
         return report
 
     def _read_content(
@@ -683,7 +687,11 @@ def validate_report(
     hits: tuple[CodeSearchHit, ...],
     line_counts: dict[tuple[str, str, str, str], int] | None = None,
 ) -> None:
-    """Reject global reports with untrusted provenance or malformed matches."""
+    """Reject global reports with untrusted provenance or malformed matches.
+
+    Reports containing matches require line counts derived from verified source
+    bytes so every reported span can be checked fail-closed.
+    """
     resolution = report.resolution
     is_global = report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
     if is_global and (
@@ -695,6 +703,8 @@ def validate_report(
         raise SearchSpecError("REJECT_SEMANTIC_DEGRADATION: missing query translation")
     if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
         return
+    if report.matches and line_counts is None:
+        raise ValueError("REJECT_MISSING_LINE_COUNTS")
     accepted = {
         (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
         for hit in hits
@@ -707,10 +717,10 @@ def validate_report(
             raise ValueError("REJECT_MOVING_REFERENCE")
         if not math.isfinite(match.score) or match.score < 0:
             raise ValueError("REJECT_INVALID_SCORE")
-        if line_counts is not None:
-            limit = line_counts.get(identity)
-            if limit is None or source.end_line > limit:
-                raise ValueError("REJECT_INVALID_SPAN")
+        assert line_counts is not None
+        limit = line_counts.get(identity)
+        if limit is None or source.end_line > limit:
+            raise ValueError("REJECT_INVALID_SPAN")
         signature = source_identity(source)
         if signature in seen:
             raise ValueError("REJECT_DUPLICATE_MATCH")

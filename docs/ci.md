@@ -22,6 +22,12 @@ allow it.
 
 Run the canary from **Actions → Live provider canary → Run workflow**. With no
 `GH_TOKEN`, its gate job succeeds and records a clear skipped message instead
-of running live tests. The live-test job has `continue-on-error: true`, is
-separate from normal CI, and is intended to remain a non-required,
-non-blocking check. Its job summary records the test outcome.
+of running live tests. The selected probes cover baseline live search,
+truncated-tree recovery, verified large-blob streaming, and index-vs-scan
+recall; the Search v2 surfaces also have repository-variable gates. Each probe
+step has `continue-on-error: true` so its classifier always runs. The classifier
+reports `pass`, `configuration-failure`, `product-failure`, `infra-failure`, or
+`skipped-not-landed`, writes the job summary, and fails closed with a non-zero
+exit for configuration or product failures on enabled surfaces. Infrastructure
+failures remain warnings. The canary is separate from normal CI and remains
+opt-in behind `LEITIR_ENABLE_LIVE_E2E=1` plus `GH_TOKEN`.

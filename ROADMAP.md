@@ -71,9 +71,9 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 
 ## Next milestones (incremental, shipped as patch releases)
 
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (24 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description. Technical upstream is met (global-discovery #44/#45–#51 complete; BTS builds on the shipped verified corpus); the v0.1.1 production-ready human gates (#42) validate already-shipped code and run in parallel, not as a hard dependency. `ready-for-agent` slices are gated on ADR-008..011 being written.
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (11 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description. Technical upstream is met (global-discovery #44/#45–#51 complete; BTS builds on the shipped verified corpus); the v0.1.1 production-ready human gates (#42) validate already-shipped code and run in parallel, not as a hard dependency. ADR-0008/0009 are accepted; ADR-0010/0011 are drafted on BTS branches.
 - **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (8 open): candidate composition (conflict matrix, architecture compatibility, duplicate abstraction, integration cost), lineage/upstream tracking, multi-language graph via tree-sitter, and occupied-recipient transplant validation.
-- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (12 open): local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. (This milestone currently holds the `ready-for-agent` issues.)
+- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete (all slices merged and independently cross-reviewed/hardened); pending release. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
 
 ## Post-production-ready (still v0.x)
 
@@ -93,4 +93,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: pick an issue from the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) labeled `ready-for-agent` or `help wanted` (Search v2 `ready-for-agent` work currently lives in [v0.1.4](https://github.com/anthonykewl20/leitir/milestone/4)).
+Humans: pick an issue from the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) labeled `ready-for-agent` or `help wanted`. The `ready-for-agent` pool is currently empty.

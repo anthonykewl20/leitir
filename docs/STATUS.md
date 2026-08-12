@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-11)
+# Leitir — Status (2026-08-13)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -21,9 +21,14 @@ global `(slug, commit_sha, path, blob_sha)` provenance validation.
 (`src/leitir/adapters/registry.py:17-59`,
 `src/leitir/adapters/languages.py:5-17`,
 `src/leitir/adapters/python_ast.py:186-226`,
-`src/leitir/adapters/_tier2/_base.py:23-99`, `src/leitir/streaming.py:37-168`,
+`src/leitir/adapters/_tier2/_base.py:27-100`, `src/leitir/streaming.py:37-168`,
 `src/leitir/tree.py:136-210`, `src/leitir/cli.py:377-405`,
 `src/leitir/discovery_search.py:671-707`.)
+
+Search v2 (v0.1.4) is implementation-complete and was independently
+cross-reviewed and hardened post-merge in PRs #109, #112, #113, #114, #115,
+#117, #120, #121, and #122. Tracking issues #108, #110, #111, #116, #118,
+and #119 are closed.
 
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
@@ -103,7 +108,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite under branch coverage: **1666 passed, 56 skipped**. The skips are
+Offline suite under branch coverage: **1917 passed, 56 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

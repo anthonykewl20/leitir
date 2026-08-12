@@ -184,7 +184,7 @@ class TestGlobalHappyPath:
         assert code == ExitCode.SUCCESS
         assert len(cs.calls) == 1
         assert cs.calls[0][1:] == (5, 1)
-        assert "language:js" in cs.calls[0][0]
+        assert "language:javascript" in cs.calls[0][0]
         assert payload["coverage"]["files_indexed"] <= 5
         assert len(payload["matches"]) <= 5
 

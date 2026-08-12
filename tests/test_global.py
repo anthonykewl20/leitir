@@ -17,6 +17,8 @@ import pytest
 from leitir.adapters import PythonAdapter
 from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.discovery_search import (
+    MAX_SEARCH_PAGES,
+    MAX_SEARCH_RESULTS,
     CodeSearchError,
     CodeSearchHit,
     CodeSearchPage,
@@ -719,6 +721,86 @@ class TestGlobalSearcher:
         assert report.coverage.files_indexed == 1
         assert report.coverage.incomplete_results is False
 
+    def test_candidate_budget_boundary_with_more_remote_results_is_incomplete(self):
+        hits = (_hit(path="one.py"), _hit(path="two.py"))
+        page = CodeSearchPage(hits=hits, total_count=3, incomplete_results=False)
+        report = GlobalSearcher(
+            code_search=FakeCodeSearch(page=page),
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=lambda slug, sha, path: _content_for(path),
+            max_results=2,
+        ).search(_spec())
+
+        assert report.coverage.files_eligible == 3
+        assert report.coverage.files_indexed == 2
+        assert report.coverage.incomplete_results is True
+
+    def test_candidate_budget_boundary_is_deterministic_across_hash_seeds(self):
+        script = textwrap.dedent(
+            """
+            import hashlib
+            from leitir.adapters import PythonAdapter
+            from leitir.discovery_search import CodeSearchHit, CodeSearchPage, GlobalSearcher
+            from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+
+            sha = "a" * 40
+            contents = {
+                "one.py": b"value = 1\\n",
+                "two.py": b"value = 2\\n",
+            }
+
+            def blob_sha(content):
+                return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\\0" + content).hexdigest()
+
+            hits = tuple(
+                CodeSearchHit(
+                    "owner/repo", path, blob_sha(content),
+                    f"https://example.test/owner/repo/blob/{sha}/{path}", sha,
+                )
+                for path, content in contents.items()
+            )
+
+            class Search:
+                def search(self, query, *, per_page=10, page=1):
+                    return CodeSearchPage(hits, 3, False)
+
+            class Tree:
+                def list_blobs(self, slug, commit_sha):
+                    return ()
+                def read_blob(self, slug, blob_sha):
+                    raise AssertionError("blob_reader should be used")
+
+            spec = SearchSpec(
+                SearchMode.GLOBAL_DISCOVERY,
+                must=(Predicate(PredicateKind.IDENTIFIER, "value"),),
+            )
+            report = GlobalSearcher(
+                Search(), Tree(), (PythonAdapter(),),
+                blob_reader=lambda slug, commit, path: contents[path],
+                max_results=2,
+                clock=lambda: "2026-08-13T00:00:00Z",
+            ).search(spec)
+            print(report.to_json())
+            """
+        )
+        outputs = []
+        for seed in ("0", "1", "42"):
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
+            env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=Path(__file__).parents[1],
+                env=env,
+                capture_output=True,
+                check=False,
+            )
+            assert completed.returncode == 0, completed.stderr.decode()
+            outputs.append(completed.stdout)
+
+        assert outputs[0] == outputs[1] == outputs[2]
+
     def test_mixed_outcomes_reconcile_coverage(self):
         hits = (
             _hit(path="unpinned.py"),
@@ -1010,6 +1092,30 @@ def test_head_resolver_keyword_is_removed():
             adapters=(PythonAdapter(),),
             head_resolver=lambda slug: SHA,
         )
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value", "maximum"),
+    [
+        ("max_results", MAX_SEARCH_RESULTS + 1, MAX_SEARCH_RESULTS),
+        ("max_pages", MAX_SEARCH_PAGES + 1, MAX_SEARCH_PAGES),
+    ],
+)
+def test_global_searcher_rejects_over_limit_budgets(keyword, value, maximum):
+    with pytest.raises(ValueError, match=rf"1 to {maximum}"):
+        GlobalSearcher(
+            FakeCodeSearch(), FakeTree(), (PythonAdapter(),), **{keyword: value}
+        )
+
+
+def test_global_searcher_accepts_boundary_budgets():
+    GlobalSearcher(
+        FakeCodeSearch(),
+        FakeTree(),
+        (PythonAdapter(),),
+        max_results=MAX_SEARCH_RESULTS,
+        max_pages=MAX_SEARCH_PAGES,
+    )
 
 
 def test_blob_reads_use_only_indexed_commit_and_matches_are_repo_scopes():

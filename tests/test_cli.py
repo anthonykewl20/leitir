@@ -435,7 +435,7 @@ def test_global_budgets_are_passed_to_factory():
     assert received == [(5, 1)]
 
 
-def test_global_language_is_copied_to_must_predicates_and_changes_digest():
+def test_global_language_is_canonicalized_in_must_predicates_and_digest():
     js = FakeGlobalSearcher()
     python = FakeGlobalSearcher()
 
@@ -453,11 +453,29 @@ def test_global_language_is_copied_to_must_predicates_and_changes_digest():
         assert code == ExitCode.SUCCESS
         return searcher.specs[0]
 
-    js_spec = run("js", js)
+    js_spec = run("JS", js)
     python_spec = run("python", python)
 
-    assert all(predicate.language == "js" for predicate in js_spec.must)
+    assert all(predicate.language == "javascript" for predicate in js_spec.must)
     assert js_spec.digest() != python_spec.digest()
+
+
+def test_global_language_aliases_produce_identical_canonical_digest():
+    specs = []
+    for language in ("js", "javascript", "JavaScript"):
+        searcher = FakeGlobalSearcher()
+        code = main(
+            ["search", "--global", "--language", language, "--must", "identifier:foo"],
+            code_search_factory=lambda _token: object(),
+            global_searcher_factory=lambda cs, ts, mr, mp: searcher,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+        assert code == ExitCode.SUCCESS
+        specs.append(searcher.specs[0])
+
+    assert {spec.must[0].language for spec in specs} == {"javascript"}
+    assert len({spec.digest() for spec in specs}) == 1
 
 
 def test_global_language_equal_to_required_predicate_remains_valid():
@@ -475,7 +493,7 @@ def test_global_language_equal_to_required_predicate_remains_valid():
     )
 
     assert code == ExitCode.SUCCESS
-    assert searcher.specs[0].must[0].language == "js"
+    assert searcher.specs[0].must[0].language == "javascript"
 
 
 @pytest.mark.parametrize(
@@ -489,6 +507,10 @@ def test_global_language_equal_to_required_predicate_remains_valid():
         ["search", "--global", "--max-pages", "-3", "--must", "identifier:x"],
         ["search", "--global", "--max-pages", "nope", "--must", "identifier:x"],
         ["search", "--global", "--max-pages", "--must", "identifier:x"],
+        ["search", "--global", "--max-results", "1001", "--must", "identifier:x"],
+        ["search", "--global", "--max-pages", "101", "--must", "identifier:x"],
+        ["search", "--global", "--language", "", "--must", "identifier:x"],
+        ["search", "--global", "--language", "  ", "--must", "identifier:x"],
         [
             "search", "--max-results", "5", "--repo", "owner/repo",
             "--commit", SHA, "--must", "identifier:x",
@@ -521,6 +543,29 @@ def test_global_only_options_reject_malformed_usage_before_transport(argv):
     )
 
     assert code == ExitCode.MALFORMED_USAGE
+
+
+def test_global_budget_boundaries_are_accepted_by_cli():
+    searcher = FakeGlobalSearcher()
+    received = []
+
+    def factory(cs, ts, max_results, max_pages):
+        received.append((max_results, max_pages))
+        return searcher
+
+    code = main(
+        [
+            "search", "--global", "--max-results", "1000", "--max-pages", "100",
+            "--must", "identifier:x",
+        ],
+        code_search_factory=lambda _token: object(),
+        global_searcher_factory=factory,
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert received == [(1000, 100)]
 
 
 def test_global_options_are_deterministic_across_pythonhashseed_values():

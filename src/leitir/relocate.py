@@ -347,11 +347,12 @@ class Relocation:
             if target.exists():
                 target.rmdir()
             os.replace(staging, target)
-            directory_fd = os.open(target.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if os.name == "posix":
+                directory_fd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise

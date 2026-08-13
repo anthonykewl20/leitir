@@ -17,6 +17,7 @@ from leitir.exec_sandbox import (
     POLICY_SCHEMA,
     ContainmentPolicy,
     ReadOnlyMount,
+    ValidationAbortEnvelope,
     donor_execution_enabled,
     prepare_execution,
     run_contained,
@@ -146,6 +147,55 @@ def test_non_linux_host_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tu
         prepare_execution(_policy(fake_nsjail))
     assert caught.value.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
     assert caught.value.evidence.detail_code == "unsupported_host"
+
+
+def test_execution_result_rendering_covers_success_and_abort() -> None:
+    abort = ValidationAbortEnvelope(
+        "leitir-validation-abort-v1",
+        "execution",
+        "donor",
+        BTSRejectReason.REJECT_EXECUTION_THREAT,
+        "wall_time_limit",
+        _digest(b"plan"),
+        3,
+        4,
+    )
+    aborted = sandbox.ExecutionResult(False, _digest(b"plan"), None, b"", b"", None, None, None, abort)
+    assert json.loads(aborted.to_json())["detail_category"] == "wall_time_limit"
+    successful = sandbox.ExecutionResult(
+        True,
+        _digest(b"plan"),
+        0,
+        b"out",
+        b"err",
+        _digest(b"out"),
+        _digest(b"err"),
+        _digest(b"result"),
+        None,
+    )
+    assert json.loads(successful.to_json())["stdout_bytes"] == 3
+
+
+@pytest.mark.parametrize(
+    ("changes", "detail"),
+    [
+        ({"schema_version": "wrong"}, "invalid_policy_schema"),
+        ({"rlimit_core_mb": 1}, "invalid_resource_limit"),
+        ({"nsjail_sha256": "bad"}, "invalid_integrity_digest"),
+        ({"nsjail_version": ""}, "missing_backend_identity"),
+        ({"cwd": "relative"}, "invalid_containment_path"),
+        ({"cwd": "/outside"}, "cwd_outside_tmpfs"),
+        ({"readonly_mounts": ()}, "empty_mount_plan"),
+        ({"environment": ("TZ=UTC", "LANG=C.UTF-8")}, "noncanonical_environment"),
+        ({"environment": ("BAD",)}, "invalid_environment"),
+    ],
+)
+def test_portable_policy_validation_rejects_malformed_fields(
+    fake_nsjail: tuple[Path, str, str], changes: dict[str, object], detail: str
+) -> None:
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(replace(_policy(fake_nsjail), **changes))
+    assert caught.value.evidence.detail_code == detail
 
 
 @pytest.mark.parametrize(

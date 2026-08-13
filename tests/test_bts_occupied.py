@@ -391,15 +391,20 @@ def test_every_occupied_digest_is_pythonhashseed_independent() -> None:
     script = """
 from tests.test_bts_occupied import _corpus, _manifest, _policy
 from leitir.occupied import derive_recipient_binding_inventory, run_occupied_corpus_gate
+import sys
 m=_manifest(('src/app.py','source',b'value = 1\\n'))
 i=derive_recipient_binding_inventory(m,_policy())
 c=_corpus()
 r=run_occupied_corpus_gate(c,lambda case: True)
-print(i.inventory_digest,c.corpus_manifest_digest,r.report_digest,sep='\\n')
+sys.stdout.buffer.write(
+    "\\n".join((i.inventory_digest,c.corpus_manifest_digest,r.report_digest)).encode("ascii") + b"\\n"
+)
 """
     outputs = []
     for seed in ("0", "1", "42"):
-        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH="src:.")
+        environment = os.environ.copy()
+        environment["PYTHONHASHSEED"] = seed
+        environment["PYTHONPATH"] = "src"
         outputs.append(
             subprocess.check_output(
                 (sys.executable, "-c", script),

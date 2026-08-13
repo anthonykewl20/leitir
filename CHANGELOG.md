@@ -79,6 +79,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - leitir doctor, version-aware update check, easy install, skill rewrite
 - leitir info one-shot context + --json for get/trust/api/examples (`corpus`)
 - load-time tree verification + bounded sampling (`materialize`)
+- occupied-recipient validation gate (#82) (`occupied`)
 - P1 deterministic search contracts + real-data e2e gate (`search`)
 - P2-P4 engine, resolvers, adapters + ADR slice revision (`search`)
 - P4+P5 deterministic CLI shell + global discovery (ADR-001) (`search`)

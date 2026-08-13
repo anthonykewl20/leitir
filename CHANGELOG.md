@@ -97,6 +97,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
+- make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)

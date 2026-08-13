@@ -737,7 +737,7 @@ def _parse_status(text: str) -> dict[str, str]:
     return {name: value.strip() for line in text.splitlines() for name, separator, value in [line.partition(":")] if separator}
 
 
-def _realized_cgroup(pid: int, reader: _AppliedStateReader) -> Path:
+def _realized_cgroup(pid: int, reader: _AppliedStateReader) -> Path:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     entries = [line.split(":", 2) for line in reader.proc_text(pid, "cgroup").splitlines()]
     unified = next((parts[2] for parts in entries if len(parts) == 3 and parts[0] == "0" and parts[1] == ""), None)
     if unified is None or not unified.startswith("/") or ".." in PurePosixPath(unified).parts:
@@ -937,17 +937,17 @@ def _require_applied_state_barrier(policy: ContainmentPolicy) -> None:
 def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     """Run ``argv`` only via the verified nsjail plan and classify its outcome."""
 
-    if platform.system() != "Linux" or not donor_execution_enabled() or plan.opt_in_satisfied is not True:
+    if platform.system() != "Linux" or not donor_execution_enabled() or plan.opt_in_satisfied is not True:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("donor execution gate or Linux containment is unavailable", "execution_precondition_failed")
-    if not argv or any(not isinstance(value, str) or not value or "\x00" in value for value in argv):
+    if not argv or any(not isinstance(value, str) or not value or "\x00" in value for value in argv):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("contained child argv is malformed", "invalid_child_argv")
     expected_digest = _digest_payload(_plan_payload(plan, include_digest=False))
-    if plan.schema_version != PLAN_SCHEMA or plan.plan_digest != expected_digest:
+    if plan.schema_version != PLAN_SCHEMA or plan.plan_digest != expected_digest:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("execution plan integrity check failed", "plan_digest_mismatch")
     _validate_policy(plan.policy)
-    if plan.policy_digest != _digest_payload(_policy_payload(plan.policy)):
+    if plan.policy_digest != _digest_payload(_policy_payload(plan.policy)):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("execution policy integrity check failed", "policy_digest_mismatch")
-    if (
+    if (  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         plan.config_text != _render_config(plan.policy)
         or plan.nsjail_path != plan.policy.nsjail_path
         or plan.nsjail_sha256 != plan.policy.nsjail_sha256
@@ -957,7 +957,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         or plan.environment != plan.policy.environment
     ):
         raise _reject("execution plan does not fully apply its policy", "policy_plan_mismatch")
-    if platform.machine() != plan.architecture:
+    if platform.machine() != plan.architecture:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("host architecture changed after plan preparation", "architecture_mismatch")
     _verify_backend(plan.policy)
     _require_applied_state_barrier(plan.policy)

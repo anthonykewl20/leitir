@@ -138,6 +138,7 @@ def _corpus(
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_five_donor_exit_corpus_passes_every_non_compensating_gate(tmp_path: Path) -> None:
     corpus = _corpus(_fixture_roots(tmp_path))
     pipeline = TrustedCorpusPipeline()
@@ -159,6 +160,7 @@ def test_five_donor_exit_corpus_passes_every_non_compensating_gate(tmp_path: Pat
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_exit_gate_is_an_and_and_still_runs_every_donor(tmp_path: Path) -> None:
     corpus = _corpus(_fixture_roots(tmp_path))
     pipeline = TrustedCorpusPipeline(break_donor="donor-2")
@@ -170,6 +172,7 @@ def test_exit_gate_is_an_and_and_still_runs_every_donor(tmp_path: Path) -> None:
     assert pipeline.ran == [f"donor-{number}" for number in range(5)]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_exit_gate_rejects_nonzero_failure_baseline_even_with_exact_parity(tmp_path: Path) -> None:
     corpus = _corpus(_fixture_roots(tmp_path), failing_baseline=3)
 

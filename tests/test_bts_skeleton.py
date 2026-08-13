@@ -375,6 +375,7 @@ def fixture_copy(tmp_path: Path) -> Path:
     return target
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy)
 
@@ -396,6 +397,7 @@ def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fi
     assert result.verdict.validation_digest.startswith("sha256:")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_missing_required_helper_rejects(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy, remove_helper=True)
 

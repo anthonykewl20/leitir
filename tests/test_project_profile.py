@@ -175,6 +175,15 @@ def test_runtime_constraint_parser_rejects_malformed_formats(path: str, content:
     assert caught.value.evidence.detail_code == "dependency_source_parse_failed_v1"
 
 
+def test_runtime_constraint_parser_rejects_non_utf8_and_malformed_constraint() -> None:
+    with pytest.raises(BTSError) as caught:
+        project_profile._runtime_constraint(RecipientManifestEntry.from_bytes("go.mod", "dependency", b"\xff"))
+    assert caught.value.evidence.detail_code == "dependency_source_parse_failed_v1"
+    with pytest.raises(BTSError) as caught:
+        project_profile._runtime_constraint(RecipientManifestEntry.from_bytes("go.mod", "dependency", b"go \x00\n"))
+    assert caught.value.evidence.detail_code == "dependency_record_malformed_v1"
+
+
 @pytest.mark.parametrize("seed", ["0", "1", "42"])
 def test_profile_digest_is_hashseed_independent(seed: str) -> None:
     script = """

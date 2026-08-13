@@ -59,6 +59,7 @@ from leitir.rerun import (
 )
 from leitir.treehash import FULL, TREE_HASH_ALGORITHM, compute_materialized_tree_hash
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / "fixtures" / "bts_skeleton"
 COMMIT_SHA = "e4a0" * 10
 DONOR_SLUG = "leitir/e4a-reviewed-fixture"
@@ -416,7 +417,11 @@ with tempfile.TemporaryDirectory() as value:
 """
     outputs = []
     for seed in ("0", "1", "42"):
-        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=os.pathsep.join(("src", ".")))
+        environment = dict(
+            os.environ,
+            PYTHONHASHSEED=seed,
+            PYTHONPATH=os.pathsep.join((str((REPO_ROOT / "src").resolve()), str(REPO_ROOT.resolve()))),
+        )
         outputs.append(subprocess.check_output((sys.executable, "-c", script), env=environment))
     assert outputs[0] == outputs[1] == outputs[2]
 

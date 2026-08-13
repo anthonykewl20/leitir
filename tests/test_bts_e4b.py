@@ -28,6 +28,7 @@ from tests.test_bts_skeleton import (
     BASELINE_OUTCOMES,
     FIXTURE,
     PASS_IDS,
+    REPO_ROOT,
     TrustedFixtureExecution,
     _digest,
     _request,
@@ -217,7 +218,11 @@ with tempfile.TemporaryDirectory() as value:
 '''
     outputs = []
     for seed in ("0", "1", "42"):
-        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=os.pathsep.join(("src", ".")))
+        environment = dict(
+            os.environ,
+            PYTHONHASHSEED=seed,
+            PYTHONPATH=os.pathsep.join((str((REPO_ROOT / "src").resolve()), str(REPO_ROOT.resolve()))),
+        )
         outputs.append(subprocess.check_output((sys.executable, "-c", script), env=environment))
     assert outputs[0] == outputs[1] == outputs[2]
 

@@ -32,7 +32,7 @@ from leitir.transplant import (
     member_payload_path,
     publish_packet,
 )
-from tests.test_bts_skeleton import FIXTURE, _digest, _run
+from tests.test_bts_skeleton import FIXTURE, REPO_ROOT, _digest, _run
 
 
 def _span(data: bytes, start_line: int, start_col: int, end_line: int, end_col: int) -> bytes:
@@ -202,6 +202,10 @@ with tempfile.TemporaryDirectory() as value:
 '''
     outputs = []
     for seed in ("0", "1", "42"):
-        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=os.pathsep.join(("src", ".")))
+        environment = dict(
+            os.environ,
+            PYTHONHASHSEED=seed,
+            PYTHONPATH=os.pathsep.join((str((REPO_ROOT / "src").resolve()), str(REPO_ROOT.resolve()))),
+        )
         outputs.append(subprocess.check_output((sys.executable, "-c", script), env=environment))
     assert outputs[0] == outputs[1] == outputs[2]

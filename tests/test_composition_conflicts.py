@@ -92,7 +92,7 @@ def test_composition_digests_are_hash_seed_independent() -> None:
     script = (
         "from tests.test_composition_conflicts import _compose; "
         "matrix, eligibility = _compose(); "
-        "print(matrix.matrix_digest, eligibility.eligibility_digest, sep='\\n')"
+        "import sys; sys.stdout.buffer.write((matrix.matrix_digest + '\\n' + eligibility.eligibility_digest + '\\n').encode('utf-8'))"
     )
     expected_matrix, expected_eligibility = _compose()
     expected = f"{expected_matrix.matrix_digest}\n{expected_eligibility.eligibility_digest}\n".encode()

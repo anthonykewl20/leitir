@@ -191,3 +191,101 @@ def test_spdx_parser_canonicalizes_precedence_and_rejects_unknown_ids() -> None:
     assert canonicalize_spdx_expression("GPL-2.0-only WITH Classpath-exception-2.0") == "GPL-2.0-only WITH Classpath-exception-2.0"
     with pytest.raises(ValueError):
         canonicalize_spdx_expression("Imaginary-9.9")
+
+
+@pytest.mark.parametrize(
+    "expression, message",
+    [
+        ("(MIT", "unclosed SPDX group"),
+        ("MIT WITH Imaginary-exception", "unknown SPDX exception"),
+        ("MIT+ WITH Classpath-exception-2.0", "WITH requires a simple license"),
+        ("MIT OR(Apache-2.0)", "operators require whitespace"),
+    ],
+)
+def test_spdx_parser_rejects_noncanonical_or_incomplete_expressions(expression: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        canonicalize_spdx_expression(expression)
+
+
+def test_reuse_annotation_materializes_all_typed_text_obligations() -> None:
+    reuse = VerifiedBytes.create(
+        "pkg/REUSE.toml",
+        b'''version = 1
+[[annotations]]
+path = "annotated.py"
+SPDX-License-Identifier = "MIT"
+SPDX-FileCopyrightText = ["Example Authors", "Additional Author"]
+SPDX-FileNotice = "Preserve this notice"
+SPDX-FileContributor = "A Contributor"
+SPDX-FileAttributionText = "An attribution"
+''',
+        "pkg",
+    )
+    source = BundledSource.create(
+        source_record_id="annotated",
+        packet_path="source/annotated.py",
+        source_path="pkg/annotated.py",
+        package_scope="pkg",
+        source_bytes=b"print('licensed by metadata')\n",
+        verified_files=(reuse,),
+    )
+
+    decision = evaluate_license_policy((source,), _recipient())
+
+    assert decision.accepted
+    assert decision.obligations_json is not None
+    payload = json.loads(decision.obligations_json)
+    text_records = [item for item in payload["obligations"] if item["kind"] in {"copyright", "notice", "contributor", "attribution"}]
+    assert sorted((item["kind"], item["normalized_text"]) for item in text_records) == [
+        ("attribution", "An attribution"),
+        ("contributor", "A Contributor"),
+        ("copyright", "Additional Author"),
+        ("copyright", "Example Authors"),
+        ("notice", "Preserve this notice"),
+    ]
+
+
+def test_dep5_copyright_and_apache_modification_are_materialized() -> None:
+    dep5 = VerifiedBytes.create(
+        "pkg/.reuse/dep5",
+        b"Files: modified.py\nCopyright: 2026 Example Authors\nLicense: Apache-2.0\n",
+        "pkg",
+    )
+    source = BundledSource.create(
+        source_record_id="modified",
+        packet_path="source/modified.py",
+        source_path="pkg/modified.py",
+        package_scope="pkg",
+        source_bytes=b"print('modified')\n",
+        verified_files=(dep5,),
+        modified_from_sha256="sha256:" + "a" * 64,
+    )
+
+    decision = evaluate_license_policy((source,), _recipient())
+
+    assert decision.accepted
+    assert decision.obligations_json is not None
+    payload = json.loads(decision.obligations_json)
+    by_kind = {item["kind"]: item for item in payload["obligations"]}
+    assert by_kind["copyright"]["normalized_text"] == "2026 Example Authors"
+    assert by_kind["modification_marking"]["original_bytes_sha256"] == "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize("notice", [b"", b"\xff"])
+def test_empty_or_non_utf8_notice_rejects_obligation_materialization(notice: bytes) -> None:
+    evidence = VerifiedBytes.create("pkg/plain.py.license", b"SPDX-License-Identifier: MIT\n", "pkg")
+    notice_file = VerifiedBytes.create("pkg/NOTICE", notice, "pkg")
+    source = BundledSource.create(
+        source_record_id="plain",
+        packet_path="source/plain.py",
+        source_path="pkg/plain.py",
+        package_scope="pkg",
+        source_bytes=b"print('plain')\n",
+        verified_files=(evidence, notice_file),
+    )
+
+    decision = evaluate_license_policy((source,), _recipient())
+
+    assert decision.status is LicenseDecisionStatus.REJECT
+    assert decision.reason is BTSRejectReason.REJECT_LICENSE_OBLIGATION_MISSING
+    assert decision.detail_code == "typed_obligation_unmaterializable"

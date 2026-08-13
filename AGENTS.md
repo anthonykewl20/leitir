@@ -2,8 +2,9 @@
 
 ## Where to find tracked work
 
-- **Current milestone: v0.1.2 (Behavioral Transplant Set)**: https://github.com/anthonykewl20/leitir/milestone/2
-- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty.** v0.1.4 (Search v2) is implementation-complete and independently cross-reviewed/hardened (all slices merged; 8 follow-up PRs). The active milestone is v0.1.2 (Behavioral Transplant Set); its code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The exit gate (#73), evaluation (#75), and Windows rerun runner (#128) remain open.
+- **Milestone status:** [v0.1.4](https://github.com/anthonykewl20/leitir/milestone/4) is 12/12 complete and pending release; [v0.1.3](https://github.com/anthonykewl20/leitir/milestone/3) is 5/8; [v0.1.2](https://github.com/anthonykewl20/leitir/milestone/2) is 22/25.
+- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty; promotion is owner-gated.** v0.1.2 has only epic #52 plus owner-external exit/evaluation gates #73 and #75 open. v0.1.3 has #82 (occupied-recipient gate; ADR-0017 ratified and implementation in flight), #81 (tree-sitter; ADR-0012 Accepted with amendments, awaiting wheel tuple/platform-hash/limit research), and v2.0 authenticity epic #40 (ADR-0018 Proposed). Production-readiness epic #42 remains open for human gates.
+- ADR-0008 through ADR-0011 are Accepted and Implemented. ADR-0012 is Accepted with amendments; ADR-0013 through ADR-0017 and ADR-0019 are Accepted; ADR-0018 is Proposed for v2.0. Issues #76/#77/#78/#79/#80 are closed via PRs #132/#137/#136/#135/#134, with shared contract unification in PR #138; #128 is closed by PR #131's three-layer Windows fix. Main now includes `composition.py`, `architecture.py`, `duplicates.py`, `lineage.py` (plus bundle v2), and `cost.py`.
 - Production-ready quality criteria stay tracked in epic #42 under the v0.1.1 milestone (all engineering issues closed; human gates remain). v0.1.2 carries the Behavioral Transplant Set (BTS) program — its exit criterion is in the milestone description. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
@@ -18,7 +19,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 2164 passed (current), 0 failed.
+- Target: 2259 passed (current), 0 failed.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

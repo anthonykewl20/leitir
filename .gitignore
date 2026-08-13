@@ -11,6 +11,8 @@ venv/
 .pytest_cache/
 .asv/
 .coverage
+# leitir materialize runtime locks
+tests/fixtures/.locks/
 # Local score outputs and volatile evidence remain ignored. The deterministic
 # dogfood evidence is tracked so a clean checkout can reproduce the published
 # assessment; pytest JUnit is intentionally regenerated on every run.

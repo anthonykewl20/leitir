@@ -310,6 +310,12 @@ class TrustedFixtureExecution:
             source_root = root / "src"
             test_file = root / "tests" / "rewritten" / "test_contract.py"
             environment = {"LANG": "C.UTF-8", "PYTHONHASHSEED": "0", "TZ": "UTC"}
+            # Windows interpreter bootstrap requires these host-startup accommodations;
+            # they are not integrity controls (issue #128).
+            if sys.platform == "win32":
+                for _name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT"):
+                    if _name in os.environ:
+                        environment[_name] = os.environ[_name]
             completed = subprocess.run(
                 (sys.executable, "-S", "-s", "-P", "-c", _RUNNER, str(source_root), str(test_file), str(self.donor_root)),
                 check=False,
@@ -375,7 +381,6 @@ def fixture_copy(tmp_path: Path) -> Path:
     return target
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy)
 
@@ -397,7 +402,6 @@ def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fi
     assert result.verdict.validation_digest.startswith("sha256:")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_missing_required_helper_rejects(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy, remove_helper=True)
 

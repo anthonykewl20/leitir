@@ -161,6 +161,20 @@ def test_runtime_constraint_parser_covers_supported_formats(path: str, content: 
     assert constraint.runtime == runtime
 
 
+@pytest.mark.parametrize(
+    ("path", "content"),
+    [
+        ("package.json", b"[]"),
+        ("Cargo.toml", b"package = 1\n"),
+        ("go.mod", b"module example.invalid/demo\ngo 1.22 extra\n"),
+    ],
+)
+def test_runtime_constraint_parser_rejects_malformed_formats(path: str, content: bytes) -> None:
+    with pytest.raises(BTSError) as caught:
+        project_profile._runtime_constraint(RecipientManifestEntry.from_bytes(path, "dependency", content))
+    assert caught.value.evidence.detail_code == "dependency_source_parse_failed_v1"
+
+
 @pytest.mark.parametrize("seed", ["0", "1", "42"])
 def test_profile_digest_is_hashseed_independent(seed: str) -> None:
     script = """

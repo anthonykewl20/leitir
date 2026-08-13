@@ -28,6 +28,7 @@ from leitir.relocate import RELOCATION_SCHEMA_VERSION, FileRole, Relocation
 from leitir.rerun import ValidationStatus
 
 BUNDLE_SCHEMA_VERSION = "leitir-transplant-bundle-v1"
+BUNDLE_V2_SCHEMA_VERSION = "leitir-transplant-bundle-v2"
 PACKET_INPUTS_SCHEMA_VERSION = "leitir-transplant-inputs-v1"
 USTAR_WRITER_ID = "leitir-canonical-ustar-v1"
 OBLIGATIONS_SLOT_SCHEMA_VERSION = "leitir-bts-obligations-slot-v1"
@@ -51,6 +52,7 @@ _REQUIRED_METADATA = frozenset(
         "validation.json",
     }
 )
+_REQUIRED_METADATA_V2 = _REQUIRED_METADATA | {"lineage.json"}
 
 
 class PacketKind(str, Enum):  # noqa: UP042 - normative ADR contract
@@ -394,7 +396,13 @@ def _member_value(member: MemberEvidence) -> dict[str, object]:
     }
 
 
-def _metadata(artifact: BTS, inputs: PacketInputs, receipt_bytes: bytes) -> dict[str, bytes]:
+def _metadata(
+    artifact: BTS,
+    inputs: PacketInputs,
+    receipt_bytes: bytes,
+    *,
+    bundle_schema_version: str = BUNDLE_SCHEMA_VERSION,
+) -> dict[str, bytes]:
     obligations = _canonical(
         {
             "packet_kind": inputs.kind.value,
@@ -419,7 +427,7 @@ def _metadata(artifact: BTS, inputs: PacketInputs, receipt_bytes: bytes) -> dict
             {
                 "capability": "review_only" if inputs.kind is PacketKind.REFERENCE else "verified_payload_receipt",
                 "inputs": _inputs_value(inputs),
-                "schema_version": BUNDLE_SCHEMA_VERSION,
+                "schema_version": bundle_schema_version,
             }
         ),
         "donor.json": _canonical(
@@ -462,10 +470,16 @@ def _files_value(files: tuple[PacketFile, ...]) -> list[dict[str, object]]:
     ]
 
 
-def _logical(inputs: PacketInputs, files: tuple[PacketFile, ...], obligations_digest: str) -> dict[str, object]:
+def _logical(
+    inputs: PacketInputs,
+    files: tuple[PacketFile, ...],
+    obligations_digest: str,
+    *,
+    bundle_schema_version: str = BUNDLE_SCHEMA_VERSION,
+) -> dict[str, object]:
     return {
         "files": _files_value(files),
-        "format": BUNDLE_SCHEMA_VERSION,
+        "format": bundle_schema_version,
         "inputs": _inputs_value(inputs),
         "integrity_model": "integrity_not_authenticity",
         "obligations_digest": obligations_digest,
@@ -620,6 +634,8 @@ def _build(
     relocation: Relocation | None,
     payloads: tuple[PacketPayload, ...],
     kind: PacketKind,
+    *,
+    lineage_bytes: bytes | None = None,
 ) -> Packet:
     artifact = _validated_bts(bts)
     receipt_bytes = _receipt_bytes(validation_receipt, artifact.bts_digest)
@@ -637,7 +653,20 @@ def _build(
         if relocation is None:
             raise TypeError("reuse packet construction requires the validated Relocation")
         ordered_payloads = _validate_payloads(artifact, validation_receipt, relocation, payloads)
-    contents = _metadata(artifact, inputs, receipt_bytes)
+    bundle_schema_version = BUNDLE_V2_SCHEMA_VERSION if lineage_bytes is not None else BUNDLE_SCHEMA_VERSION
+    required_metadata = _REQUIRED_METADATA_V2 if lineage_bytes is not None else _REQUIRED_METADATA
+    contents = _metadata(artifact, inputs, receipt_bytes, bundle_schema_version=bundle_schema_version)
+    if lineage_bytes is not None:
+        from leitir.lineage import LineageManifest
+
+        lineage = LineageManifest.from_bytes(lineage_bytes)
+        if lineage.bts_digest != artifact.bts_digest or lineage.baseline_commit_sha != inputs.donor.commit_sha:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "lineage manifest does not bind the packet BTS and immutable donor",
+                detail_code="packet_lineage_binding_v2",
+            )
+        contents["lineage.json"] = lineage.to_bytes()
     for payload in ordered_payloads:
         contents[payload.path] = payload.content
     records = tuple(
@@ -645,20 +674,20 @@ def _build(
             (
                 _packet_file(path, PacketRole.METADATA, PacketOrigin.GENERATED, content)
                 for path, content in contents.items()
-                if path in _REQUIRED_METADATA
+                if path in required_metadata
             ),
             key=lambda item: item.path.encode("utf-8"),
         )
     ) + tuple(_packet_file(item.path, item.role, item.origin, item.content) for item in ordered_payloads)
     records = tuple(sorted(records, key=lambda item: item.path.encode("utf-8")))
     obligations_digest = _sha(contents["obligations.json"])
-    logical = _logical(inputs, records, obligations_digest)
+    logical = _logical(inputs, records, obligations_digest, bundle_schema_version=bundle_schema_version)
     bundle_digest = _sha(_canonical(logical))
     bundle_json = _canonical({**logical, "bundle_digest": bundle_digest})
     contents["bundle.json"] = bundle_json
-    archive = _write_ustar({f"{_ROOT}/{path}": data for path, data in contents.items()})
+    archive = _write_ustar({f"{bundle_schema_version}/{path}": data for path, data in contents.items()})
     cls = ReferencePacket if kind is PacketKind.REFERENCE else ReusePacket
-    return cls(BUNDLE_SCHEMA_VERSION, inputs, records, obligations_digest, bundle_digest, bundle_json, archive)
+    return cls(bundle_schema_version, inputs, records, obligations_digest, bundle_digest, bundle_json, archive)
 
 
 def build_reference_packet(
@@ -685,6 +714,50 @@ def build_reuse_packet(
     """Build a source-bearing packet after COMPLETE BTS/receipt verification."""
 
     packet = _build(bts, validation_receipt, inputs, relocation, payloads, PacketKind.REUSE)
+    assert isinstance(packet, ReusePacket)
+    return packet
+
+
+def build_reference_packet_v2(
+    bts: BTSResult,
+    validation_receipt: PipelineValidationVerdict,
+    *,
+    inputs: PacketInputs,
+    lineage: object,
+) -> ReferencePacket:
+    """Build a bundle-v2 reference packet with required canonical lineage."""
+
+    from leitir.lineage import LineageManifest
+
+    if not isinstance(lineage, LineageManifest):
+        raise TypeError("lineage must be a LineageManifest")
+    packet = _build(
+        bts, validation_receipt, inputs, None, (), PacketKind.REFERENCE,
+        lineage_bytes=lineage.to_bytes(),
+    )
+    assert isinstance(packet, ReferencePacket)
+    return packet
+
+
+def build_reuse_packet_v2(
+    bts: BTSResult,
+    validation_receipt: PipelineValidationVerdict,
+    *,
+    inputs: PacketInputs,
+    relocation: Relocation,
+    payloads: tuple[PacketPayload, ...],
+    lineage: object,
+) -> ReusePacket:
+    """Build a source-bearing bundle-v2 packet with required lineage."""
+
+    from leitir.lineage import LineageManifest
+
+    if not isinstance(lineage, LineageManifest):
+        raise TypeError("lineage must be a LineageManifest")
+    packet = _build(
+        bts, validation_receipt, inputs, relocation, payloads, PacketKind.REUSE,
+        lineage_bytes=lineage.to_bytes(),
+    )
     assert isinstance(packet, ReusePacket)
     return packet
 
@@ -878,9 +951,11 @@ def load_packet(archive_bytes: bytes) -> Packet:
 
     try:
         members = _read_ustar(archive_bytes)
-        prefix = f"{_ROOT}/"
-        if not members or any(not path.startswith(prefix) for path in members):
+        roots = {path.split("/", 1)[0] for path in members}
+        if roots not in ({BUNDLE_SCHEMA_VERSION}, {BUNDLE_V2_SCHEMA_VERSION}):
             raise ValueError("packet has an invalid root")
+        bundle_schema_version = next(iter(roots))
+        prefix = f"{bundle_schema_version}/"
         contents = {path.removeprefix(prefix): data for path, data in members.items()}
         bundle_data = contents.pop("bundle.json")
         bundle = _strict_json(bundle_data)
@@ -902,7 +977,8 @@ def load_packet(archive_bytes: bytes) -> Packet:
         if set(contents) != {item.path for item in records}:
             raise ValueError("archive files do not exactly match the bundle inventory")
         metadata_paths = {item.path for item in records if item.role is PacketRole.METADATA}
-        if metadata_paths != _REQUIRED_METADATA or any(
+        required_metadata = _REQUIRED_METADATA_V2 if bundle_schema_version == BUNDLE_V2_SCHEMA_VERSION else _REQUIRED_METADATA
+        if metadata_paths != required_metadata or any(
             item.origin is not PacketOrigin.GENERATED for item in records if item.role is PacketRole.METADATA
         ):
             raise ValueError("packet does not contain the exact required generated metadata set")
@@ -914,12 +990,12 @@ def load_packet(archive_bytes: bytes) -> Packet:
             raise ValueError("packet.json is malformed")
         inputs = _inputs_from_value(packet_json["inputs"])
         expected_capability = "review_only" if inputs.kind is PacketKind.REFERENCE else "verified_payload_receipt"
-        if packet_json["schema_version"] != BUNDLE_SCHEMA_VERSION or packet_json["capability"] != expected_capability:
+        if packet_json["schema_version"] != bundle_schema_version or packet_json["capability"] != expected_capability:
             raise ValueError("packet capability or schema does not match its kind")
         obligations_digest = _require_digest(bundle["obligations_digest"], "obligations_digest")
         if obligations_digest != _sha(contents["obligations.json"]):
             raise ValueError("obligations digest mismatch")
-        logical = _logical(inputs, records, obligations_digest)
+        logical = _logical(inputs, records, obligations_digest, bundle_schema_version=bundle_schema_version)
         bundle_digest = _require_digest(bundle["bundle_digest"], "bundle_digest")
         if bundle != {**logical, "bundle_digest": bundle_digest} or bundle_digest != _sha(_canonical(logical)):
             raise ValueError("logical bundle digest mismatch")
@@ -941,6 +1017,16 @@ def load_packet(archive_bytes: bytes) -> Packet:
             or not isinstance(bts_metadata["members"], list)
         ):
             raise ValueError("BTS metadata does not match packet inputs")
+        if bundle_schema_version == BUNDLE_V2_SCHEMA_VERSION:
+            from leitir.lineage import LineageManifest
+
+            lineage = LineageManifest.from_bytes(contents["lineage.json"])
+            if (
+                lineage.bts_digest != inputs.bts_digest
+                or lineage.bts_digest != bts_metadata["bts_digest"]
+                or lineage.baseline_commit_sha != inputs.donor.commit_sha
+            ):
+                raise ValueError("lineage subject does not match packet.json, bts.json, and donor.json")
         validation = _strict_json(contents["validation.json"])
         if (
             not isinstance(validation, dict)
@@ -984,7 +1070,7 @@ def load_packet(archive_bytes: bytes) -> Packet:
                 member_paths.add(member_path)
             if member_paths != {item.path for item in records if item.role is PacketRole.MEMBER}:
                 raise ValueError("reuse packet contains a surplus member payload")
-        return cls(BUNDLE_SCHEMA_VERSION, inputs, records, obligations_digest, bundle_digest, bundle_data, archive_bytes)
+        return cls(bundle_schema_version, inputs, records, obligations_digest, bundle_digest, bundle_data, archive_bytes)
     except BTSError:
         raise
     except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
@@ -1032,6 +1118,7 @@ def publish_packet(packet: Packet, target: Path) -> None:
 
 __all__ = [
     "BUNDLE_SCHEMA_VERSION",
+    "BUNDLE_V2_SCHEMA_VERSION",
     "OBLIGATIONS_SLOT_SCHEMA_VERSION",
     "PACKET_INPUTS_SCHEMA_VERSION",
     "USTAR_WRITER_ID",
@@ -1048,7 +1135,9 @@ __all__ = [
     "ReferencePacket",
     "ReusePacket",
     "build_reference_packet",
+    "build_reference_packet_v2",
     "build_reuse_packet",
+    "build_reuse_packet_v2",
     "load_packet",
     "member_payload_path",
     "publish_packet",

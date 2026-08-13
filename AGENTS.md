@@ -3,7 +3,7 @@
 ## Where to find tracked work
 
 - **Current milestone: v0.1.2 (Behavioral Transplant Set)**: https://github.com/anthonykewl20/leitir/milestone/2
-- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty.** v0.1.4 (Search v2) is implementation-complete and independently cross-reviewed/hardened (all slices merged; 8 follow-up PRs). The active milestone is v0.1.2 (Behavioral Transplant Set); its implementation issues are `adr-required` — ADR-0008 and ADR-0009 are accepted on `main`, while ADR-0010 and ADR-0011 are drafted on BTS integration branches but not yet merged.
+- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty.** v0.1.4 (Search v2) is implementation-complete and independently cross-reviewed/hardened (all slices merged; 8 follow-up PRs). The active milestone is v0.1.2 (Behavioral Transplant Set); its code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The exit gate (#73), evaluation (#75), and Windows rerun runner (#128) remain open.
 - Production-ready quality criteria stay tracked in epic #42 under the v0.1.1 milestone (all engineering issues closed; human gates remain). v0.1.2 carries the Behavioral Transplant Set (BTS) program — its exit criterion is in the milestone description. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
@@ -18,7 +18,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 1917 passed (current), 0 failed.
+- Target: 2164 passed (current), 0 failed.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

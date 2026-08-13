@@ -26,7 +26,7 @@
 
 ## Current status
 
-v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The next thematic increment is [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2).
+v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127, but the milestone remains open for its exit gate (#73), evaluation (#75), and Windows rerun runner (#128).
 
 ## Recently shipped
 
@@ -71,7 +71,7 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 
 ## Next milestones (incremental, shipped as patch releases)
 
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (11 open): the active milestone. Exit criterion: a known Python function in a verified repo produces a Behavioral Transplant Set that relocates into an empty project and reruns the donor's pinned contract tests to exact pass/fail/skip counts. See the milestone description. Technical upstream is met (global-discovery #44/#45–#51 complete; BTS builds on the shipped verified corpus); the v0.1.1 production-ready human gates (#42) validate already-shipped code and run in parallel, not as a hard dependency. ADR-0008/0009 are accepted; ADR-0010/0011 are drafted on BTS branches.
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (4 open): the active milestone. The BTS code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The milestone exit criterion is not yet met: #73 requires at least five pinned real donors, an nsjail rootfs, and offline containment CI; #75 requires real agent tasks and published evaluation results; and the Windows rerun runner remains open in #128. The v0.1.1 production-ready human gates (#42) validate already-shipped code and run in parallel, not as a hard dependency.
 - **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (8 open): candidate composition (conflict matrix, architecture compatibility, duplicate abstraction, integration cost), lineage/upstream tracking, multi-language graph via tree-sitter, and occupied-recipient transplant validation.
 - **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete (all slices merged and independently cross-reviewed/hardened); pending release. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
 

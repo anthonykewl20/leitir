@@ -129,6 +129,45 @@ def test_unaliased_import_and_references_are_rewritten() -> None:
     assert rewritten == b"import transplant.core\nassert transplant.core.f() == 3\n"
 
 
+def test_import_rewrite_is_idempotent_on_rewritten_output() -> None:
+    source = b"def f():\n    return 3\n"
+    module_map = ModuleMap.from_pairs(("donor.mod", "transplant.core"))
+    test = ContractTest(
+        "test_x.py",
+        b"import donor.mod\nassert donor.mod.f() == 3\n",
+        "donor.tests.test_x",
+    )
+    first = relocate_tests(
+        _bts(source),
+        module_map=module_map,
+        source_files=(SourceFile("donor/mod.py", source),),
+        tests=(test,),
+    )
+    rewritten_once = next(
+        item.content for item in first.files if item.path.endswith("tests/rewritten/test_x.py")
+    )
+    second = relocate_tests(
+        _bts(source),
+        module_map=module_map,
+        source_files=(SourceFile("donor/mod.py", source),),
+        tests=(ContractTest(test.path, rewritten_once, test.module),),
+    )
+    rewritten_twice = next(
+        item.content for item in second.files if item.path.endswith("tests/rewritten/test_x.py")
+    )
+    third = relocate_tests(
+        _bts(source),
+        module_map=module_map,
+        source_files=(SourceFile("donor/mod.py", source),),
+        tests=(ContractTest(test.path, rewritten_twice, test.module),),
+    )
+
+    assert rewritten_twice == rewritten_once
+    assert b"donor.mod" not in rewritten_twice
+    assert third.to_bytes() == second.to_bytes()
+    assert third.relocation_digest == second.relocation_digest
+
+
 def test_relative_donor_import_is_normalized_and_rewritten() -> None:
     source = b"def f():\n    return 3\n"
     relocation = relocate_tests(

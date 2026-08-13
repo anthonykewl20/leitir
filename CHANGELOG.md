@@ -19,6 +19,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add --max-results, --max-pages, and --language global controls (`search`)
 - add --whole-file required-predicate mode with deduplicated file-wide evidence (`search`)
 - add a local trigram index and indexed searcher for fast regex search (`search`)
+- add BTS evaluation harness and metric definitions (E5a, #74) (`bts`)
 - add BTS walk, budget, dispositions, and digests (B5, #58) (`bts`)
 - add deterministic reuse/reference packet format (C5, #71) (`bts`)
 - add deterministic semantic example classification (C4b, #67) (`bts`)

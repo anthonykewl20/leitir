@@ -521,7 +521,7 @@ def _plan_payload(plan: ExecutionPlan, *, include_digest: bool) -> dict[str, obj
     return payload
 
 
-def _verify_backend(policy: ContainmentPolicy) -> None:
+def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     path = Path(policy.nsjail_path)
     try:
         metadata = path.stat()

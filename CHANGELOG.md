@@ -70,6 +70,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - Codeberg + Sourcehut git hosts (`corpus`)
 - deduplicate global hits by content digest and repo path (#50) (`search`)
 - dependency composition conflict matrix (#76) (`composition`)
+- duplicate-abstraction detection (#78) (`duplicates`)
 - enforce canonical predicate-language routing in scoped and global modes (`search`)
 - generate CHANGELOG from conventional commits + drift gate (`changelog`)
 - GitHub-only release pipeline + PyPI deferred path (`distribution`)

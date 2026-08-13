@@ -30,6 +30,13 @@ cross-reviewed and hardened post-merge in PRs #109, #112, #113, #114, #115,
 #117, #120, #121, and #122. Tracking issues #108, #110, #111, #116, #118,
 and #119 are closed.
 
+The Behavioral Transplant Set code landed on `main` via PR #127. ADR-0008
+through ADR-0011 are Accepted and Implemented, and issues #55, #60, #61, #62,
+#63, #64, and #72 are closed. The v0.1.2 milestone remains open: its exit gate
+(#73) still requires at least five pinned real donors, an nsjail rootfs, and
+offline containment CI; evaluation (#75) still requires real agent tasks and
+published results; and the Windows rerun runner remains open in #128.
+
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
 provenance, and collectors for engine correctness, retrieval effectiveness,
@@ -108,7 +115,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite under branch coverage: **1917 passed, 56 skipped**. The skips are
+Offline suite: **2164 passed, 61 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

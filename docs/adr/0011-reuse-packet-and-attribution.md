@@ -859,7 +859,7 @@ choices.
 - [ADR-0006 — load-time tree verification](0006-load-time-tree-verification.md)
 - [ADR-0008 — BTS foundation](0008-behavioral-transplant-set.md)
 - [ADR-0009 — transplant validation](0009-transplant-validation.md)
-- ADR-0010 — capability and suitability (pending consensus)
+- ADR-0010 — capability and suitability (Accepted and Implemented)
 - [pip reproducible builds](https://pip.pypa.io/en/stable/topics/repeatable-installs/)
 - [GNU tar reproducibility](https://www.gnu.org/software/tar/manual/html_node/Reproducibility.html)
 - [Nix content-addressed store objects](https://nix.dev/manual/nix/2.28/store/store-object/content-address)

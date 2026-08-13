@@ -50,11 +50,14 @@ sends the GitHub JSON media type and API-version header. A token is sent only
 when the configured endpoint is HTTPS on `api.github.com`.
 (`src/leitir/discovery_search.py:184-249`.)
 
-`GlobalSearcher` defaults to `max_results=30` and `max_pages=10`, requests
-`min(max_results, 100)` items per page, and stops on its candidate budget,
-GitHub's `incomplete_results`, a short/empty page, a page failure, or the page
-budget. Candidate fetch/verification attempts, including promoted candidates,
-are also bounded by `max_results`. (`src/leitir/discovery_search.py:441-519`,
+`GlobalSearcher` defaults to `max_results=30` and `max_pages=10`; both the CLI
+and constructor enforce service-aligned maxima of 1000 results and 100 pages.
+It requests `min(max_results, 100)` items per page, and stops on its candidate
+budget, GitHub's `incomplete_results`, a short/empty page, a page failure, or
+the page budget. Candidate-budget stops are reported incomplete whenever the
+remote count shows uncollected results. Candidate fetch/verification attempts,
+including promoted candidates, are also bounded by `max_results`.
+(`src/leitir/discovery_search.py:441-519`,
 `src/leitir/discovery_search.py:532-560`.)
 
 ### Query translation and language routing
@@ -64,8 +67,9 @@ endpoint cannot express. Required `REGEX` is rejected. Exact text,
 identifiers, and token sequences become GitHub terms; path and structural
 predicates become a GitHub superset followed by local filtering. `should` and
 `must_not` are local filters, while their `PATH` form is rejected. Conflicting
-required languages are rejected and a canonical language qualifier is added
-to the query. (`src/leitir/discovery_search.py:349-433`.)
+required languages are rejected and a canonical language value is stored in
+the search spec (so aliases and case variants share an identity); that
+qualifier is added to the query. (`src/leitir/discovery_search.py:349-433`.)
 
 Both search paths canonicalize language aliases and require a matching adapter.
 An unsupported required language is rejected before candidates are scanned.
@@ -118,7 +122,9 @@ tree. If GitHub marks it truncated, Leitir performs a deterministic,
 non-recursive subtree walk with depth, request, and entry budgets. Malformed
 responses, nested truncation, path collisions, and exhausted budgets fail
 closed with any blobs safely recovered so far attached to the enumeration
-error. (`src/leitir/tree.py:136-210`, `src/leitir/tree.py:308-388`.)
+error. The `list_blobs()` compatibility wrapper raises immediately when the
+recursive response is truncated; only `list_blobs_ex()` performs recovery.
+(`src/leitir/tree.py:135-251`, `src/leitir/tree.py:342-413`.)
 
 `ScopedSearcher` searches recovered blobs. Successful recovery and failed
 recovery with partial blobs both produce real matches but set coverage to
@@ -150,9 +156,9 @@ The deterministic registry contains eight languages: Python, Rust, Go,
 JavaScript, TypeScript, Java, C, and C++. (`src/leitir/adapters/registry.py:17-37`.)
 The latter five are Tier-2 regex adapters with hand-adapted patterns attributed
 to nvim-treesitter; emitted matches record `method=heuristic`.
-(`src/leitir/adapters/_tier2.py:1-7`,
-`src/leitir/adapters/_tier2.py:38-111`,
-`src/leitir/adapters/_tier2.py:197-226`.)
+(`src/leitir/adapters/_tier2/__init__.py:1-7`,
+`src/leitir/adapters/_tier2/_base.py:23-99`,
+`src/leitir/adapters/_tier2/javascript.py:1-34`.)
 
 Heuristic matching remains the default, including for Python. `--ast` replaces
 only the Python adapter with `PythonAstAdapter`; structural predicates then use
@@ -198,7 +204,7 @@ of hash iteration order for identical inputs.
 - Matching is heuristic and line-oriented by default. The Python AST adapter is
   opt-in, and the JavaScript/TypeScript/Java/C/C++ adapters remain heuristic.
   (`src/leitir/adapters/registry.py:40-59`,
-  `src/leitir/adapters/_tier2.py:38-111`.)
+  `src/leitir/adapters/_tier2/_base.py:23-99`.)
 - Large blobs are streamed and SHA-1 verified, but a line over 512 KiB, a
   verification/read failure, or whole-file mode on a large blob yields a
   partial exclusion. (`src/leitir/streaming.py:17-20`,
@@ -213,10 +219,11 @@ of hash iteration order for identical inputs.
 
 ### Verification and operations
 
-- Real-provider tests are opt-in, and the live workflow is non-blocking. The
-  dedicated search-v2 provider canary remains future work. (`docs/ci.md:3-14`,
-  `.github/workflows/live-canary.yml:43-52`,
-  `tests/test_global_e2e_live.py:1-23`.)
+- Real-provider tests are opt-in, and the live canary is fail-closed: its
+  classifier exits non-zero for configuration or product failures on enabled
+  surfaces. Search-v2 probes for baseline live search, truncated-tree recovery,
+  verified large-blob streaming, and index-vs-scan recall are wired into the
+  workflow. (`docs/ci.md`.)
 - Retry cannot remove remote-index incompleteness or service-side limits.
 
 ## 4. Improvement opportunities
@@ -229,7 +236,7 @@ global budgets. The remaining opportunities are:
 |---|---|---:|---|---|
 | Investigate migration to newer GitHub Code Search | The current transport is legacy REST `/search/code`; endpoint semantics, auth, pagination, and immutable provenance require fresh API research. (`src/leitir/discovery_search.py:184-249`) | M-L | Medium | Possible, subject to a supported API |
 | Support global `REGEX` through a bounded superset | The legacy endpoint cannot express arbitrary regex; fail-closed rejection is safer than pretending a term is equivalent. (`src/leitir/discovery_search.py:349-377`) | L / hard | High | Possible only for safely bounded subsets |
-| Add a live-search canary | Add search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming to the opt-in workflow. (`.github/workflows/live-canary.yml:43-52`, `tests/test_global_e2e_live.py:1-23`) | S | Low | Yes |
+| Completed: live-search canary (S3 slice #88; PRs #106/#121) | Search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming are in the opt-in workflow. (`docs/ci.md`) | S | Low | Yes |
 
 ## 5. References
 
@@ -239,7 +246,7 @@ global budgets. The remaining opportunities are:
 - Scoped scan and coverage: `src/leitir/engine.py`.
 - Adapter registry and implementations: `src/leitir/adapters/registry.py`,
   `src/leitir/adapters/__init__.py`, `src/leitir/adapters/python_ast.py`, and
-  `src/leitir/adapters/_tier2.py`.
+  `src/leitir/adapters/_tier2/`.
 - Large-blob streaming: `src/leitir/streaming.py`.
 - Pinned tree enumeration and reads: `src/leitir/tree.py`.
 - [GitHub REST search documentation](https://docs.github.com/en/rest/search/search)

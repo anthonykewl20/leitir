@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 from leitir import _http
 from leitir.adapters import LanguageAdapter
 from leitir.adapters.languages import canonicalize_language
+from leitir.adapters.registry import trusted_adapter_language
 from leitir.credentials import validate_secret
 from leitir.engine import _required_language, _score_content_ex, path_matches
 from leitir.materialize import _utc_now
@@ -42,6 +43,8 @@ from leitir.tree import TreeReadError, TreeSource, TreeTruncatedError
 _API = "https://api.github.com"
 _RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
+MAX_SEARCH_RESULTS = 1000
+MAX_SEARCH_PAGES = 100
 logger = logging.getLogger(__name__)
 
 
@@ -401,10 +404,15 @@ def _compile_query(
                 emitted_syntax=emitted,
             )
         )
-        pred_language = (
-            canonicalize_language(pred.language) if pred.language else None
+        pred_language = pred.language
+        canonical_language = (
+            canonicalize_language(pred_language) if pred_language else None
         )
-        if pred_language is not None and language is not None and pred_language != language:
+        if (
+            canonical_language is not None
+            and language is not None
+            and canonical_language != canonicalize_language(language)
+        ):
             raise SearchSpecError(
                 "REJECT_SEMANTIC_DEGRADATION: conflicting predicate languages"
             )
@@ -451,10 +459,22 @@ class GlobalSearcher:
         max_pages: int = 10,
         clock: Callable[[], str] | None = None,
     ) -> None:
-        if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1:
-            raise ValueError("max_results must be a positive integer")
-        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
-            raise ValueError("max_pages must be a positive integer")
+        if (
+            isinstance(max_results, bool)
+            or not isinstance(max_results, int)
+            or not 1 <= max_results <= MAX_SEARCH_RESULTS
+        ):
+            raise ValueError(
+                f"max_results must be an integer from 1 to {MAX_SEARCH_RESULTS}"
+            )
+        if (
+            isinstance(max_pages, bool)
+            or not isinstance(max_pages, int)
+            or not 1 <= max_pages <= MAX_SEARCH_PAGES
+        ):
+            raise ValueError(
+                f"max_pages must be an integer from 1 to {MAX_SEARCH_PAGES}"
+            )
         self._search = code_search
         self._tree = tree_source
         self._adapters = adapters
@@ -469,7 +489,9 @@ class GlobalSearcher:
 
         required_language = _required_language(spec)
         supported_languages = {
-            canonicalize_language(adapter.language) for adapter in self._adapters
+            language
+            for adapter in self._adapters
+            if (language := trusted_adapter_language(adapter)) is not None
         }
         if (
             required_language is not None
@@ -483,6 +505,7 @@ class GlobalSearcher:
         files_eligible = 0
         incomplete_results = False
         collected: list[CodeSearchHit] = []
+        phase_a_stopped_for_candidate_budget = False
         per_page = min(self._max_results, 100)
         content_preds = tuple(
             predicate for predicate in spec.must if predicate.kind is not PredicateKind.PATH
@@ -510,6 +533,9 @@ class GlobalSearcher:
                 for hit in provisional.candidates
             )
             if adapter_eligible >= self._max_results:
+                phase_a_stopped_for_candidate_budget = True
+                if page.total_count > len(collected):
+                    incomplete_results = True
                 break
             if page.incomplete_results:
                 break
@@ -517,6 +543,12 @@ class GlobalSearcher:
                 break
             if page_number == self._max_pages:
                 incomplete_results = True
+
+        # Preserve the reason independently of the coverage flag: reaching the
+        # candidate boundary is complete only when the remote count proves that
+        # every result was collected on the pages consumed above.
+        if phase_a_stopped_for_candidate_budget and files_eligible > len(collected):
+            incomplete_results = True
 
         # Phase B: collapse only index claims. Collapsed members are not read.
         outcome = dedup_hits(collected)
@@ -636,7 +668,11 @@ class GlobalSearcher:
             ),
             query_translation=query_translation,
         )
-        validate_report(report, tuple(verified), verified_line_counts)
+        validate_report(
+            report,
+            tuple(verified),
+            line_counts=verified_line_counts,
+        )
         return report
 
     def _read_content(
@@ -660,7 +696,9 @@ class GlobalSearcher:
         self, path: str, required_language: str | None = None
     ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            language = canonicalize_language(adapter.language)
+            language = trusted_adapter_language(adapter)
+            if language is None:
+                continue
             if (
                 required_language is None or language == required_language
             ) and adapter.eligible(path):
@@ -673,7 +711,11 @@ def validate_report(
     hits: tuple[CodeSearchHit, ...],
     line_counts: dict[tuple[str, str, str, str], int] | None = None,
 ) -> None:
-    """Reject global reports with untrusted provenance or malformed matches."""
+    """Reject global reports with untrusted provenance or malformed matches.
+
+    Reports containing matches require line counts derived from verified source
+    bytes so every reported span can be checked fail-closed.
+    """
     resolution = report.resolution
     is_global = report.coverage.status is CoverageStatus.INDETERMINATE_GLOBAL
     if is_global and (
@@ -685,6 +727,8 @@ def validate_report(
         raise SearchSpecError("REJECT_SEMANTIC_DEGRADATION: missing query translation")
     if resolution is None or resolution.strategy is not ResolutionStrategy.INDEXED_COMMIT:
         return
+    if report.matches and line_counts is None:
+        raise ValueError("REJECT_MISSING_LINE_COUNTS")
     accepted = {
         (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
         for hit in hits
@@ -697,10 +741,10 @@ def validate_report(
             raise ValueError("REJECT_MOVING_REFERENCE")
         if not math.isfinite(match.score) or match.score < 0:
             raise ValueError("REJECT_INVALID_SCORE")
-        if line_counts is not None:
-            limit = line_counts.get(identity)
-            if limit is None or source.end_line > limit:
-                raise ValueError("REJECT_INVALID_SPAN")
+        assert line_counts is not None
+        limit = line_counts.get(identity)
+        if limit is None or source.end_line > limit:
+            raise ValueError("REJECT_INVALID_SPAN")
         signature = source_identity(source)
         if signature in seen:
             raise ValueError("REJECT_DUPLICATE_MATCH")

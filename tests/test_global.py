@@ -17,6 +17,8 @@ import pytest
 from leitir.adapters import PythonAdapter
 from leitir.adapters.python_ast import PythonAstAdapter
 from leitir.discovery_search import (
+    MAX_SEARCH_PAGES,
+    MAX_SEARCH_RESULTS,
     CodeSearchError,
     CodeSearchHit,
     CodeSearchPage,
@@ -719,6 +721,86 @@ class TestGlobalSearcher:
         assert report.coverage.files_indexed == 1
         assert report.coverage.incomplete_results is False
 
+    def test_candidate_budget_boundary_with_more_remote_results_is_incomplete(self):
+        hits = (_hit(path="one.py"), _hit(path="two.py"))
+        page = CodeSearchPage(hits=hits, total_count=3, incomplete_results=False)
+        report = GlobalSearcher(
+            code_search=FakeCodeSearch(page=page),
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=lambda slug, sha, path: _content_for(path),
+            max_results=2,
+        ).search(_spec())
+
+        assert report.coverage.files_eligible == 3
+        assert report.coverage.files_indexed == 2
+        assert report.coverage.incomplete_results is True
+
+    def test_candidate_budget_boundary_is_deterministic_across_hash_seeds(self):
+        script = textwrap.dedent(
+            """
+            import hashlib
+            from leitir.adapters import PythonAdapter
+            from leitir.discovery_search import CodeSearchHit, CodeSearchPage, GlobalSearcher
+            from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+
+            sha = "a" * 40
+            contents = {
+                "one.py": b"value = 1\\n",
+                "two.py": b"value = 2\\n",
+            }
+
+            def blob_sha(content):
+                return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\\0" + content).hexdigest()
+
+            hits = tuple(
+                CodeSearchHit(
+                    "owner/repo", path, blob_sha(content),
+                    f"https://example.test/owner/repo/blob/{sha}/{path}", sha,
+                )
+                for path, content in contents.items()
+            )
+
+            class Search:
+                def search(self, query, *, per_page=10, page=1):
+                    return CodeSearchPage(hits, 3, False)
+
+            class Tree:
+                def list_blobs(self, slug, commit_sha):
+                    return ()
+                def read_blob(self, slug, blob_sha):
+                    raise AssertionError("blob_reader should be used")
+
+            spec = SearchSpec(
+                SearchMode.GLOBAL_DISCOVERY,
+                must=(Predicate(PredicateKind.IDENTIFIER, "value"),),
+            )
+            report = GlobalSearcher(
+                Search(), Tree(), (PythonAdapter(),),
+                blob_reader=lambda slug, commit, path: contents[path],
+                max_results=2,
+                clock=lambda: "2026-08-13T00:00:00Z",
+            ).search(spec)
+            print(report.to_json())
+            """
+        )
+        outputs = []
+        for seed in ("0", "1", "42"):
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
+            env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=Path(__file__).parents[1],
+                env=env,
+                capture_output=True,
+                check=False,
+            )
+            assert completed.returncode == 0, completed.stderr.decode()
+            outputs.append(completed.stdout)
+
+        assert outputs[0] == outputs[1] == outputs[2]
+
     def test_mixed_outcomes_reconcile_coverage(self):
         hits = (
             _hit(path="unpinned.py"),
@@ -1012,6 +1094,30 @@ def test_head_resolver_keyword_is_removed():
         )
 
 
+@pytest.mark.parametrize(
+    ("keyword", "value", "maximum"),
+    [
+        ("max_results", MAX_SEARCH_RESULTS + 1, MAX_SEARCH_RESULTS),
+        ("max_pages", MAX_SEARCH_PAGES + 1, MAX_SEARCH_PAGES),
+    ],
+)
+def test_global_searcher_rejects_over_limit_budgets(keyword, value, maximum):
+    with pytest.raises(ValueError, match=rf"1 to {maximum}"):
+        GlobalSearcher(
+            FakeCodeSearch(), FakeTree(), (PythonAdapter(),), **{keyword: value}
+        )
+
+
+def test_global_searcher_accepts_boundary_budgets():
+    GlobalSearcher(
+        FakeCodeSearch(),
+        FakeTree(),
+        (PythonAdapter(),),
+        max_results=MAX_SEARCH_RESULTS,
+        max_pages=MAX_SEARCH_PAGES,
+    )
+
+
 def test_blob_reads_use_only_indexed_commit_and_matches_are_repo_scopes():
     other = "b" * 40
     page = CodeSearchPage(
@@ -1062,7 +1168,7 @@ def test_validate_report_rejects_commit_not_in_hits():
     page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
     report = _searcher(page=page)[0].search(_spec())
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
-        validate_report(report, (_hit(commit_sha="b" * 40),))
+        validate_report(report, (_hit(commit_sha="b" * 40),), {})
 
 
 def test_validate_report_rejects_missing_global_resolution():
@@ -1076,7 +1182,9 @@ def test_validate_report_rejects_missing_global_resolution():
 def test_validate_report_accepts_report_pinned_to_indexed_hit():
     page = CodeSearchPage(hits=(_hit(),), total_count=1, incomplete_results=False)
     report = _searcher(page=page)[0].search(_spec())
-    validate_report(report, page.hits)
+    hit = page.hits[0]
+    identity = (hit.slug, hit.commit_sha, hit.path, hit.blob_sha)
+    validate_report(report, page.hits, {identity: _line_count(CONTENT_BYTES.decode())})
 
 
 def test_validate_report_accepts_report_with_no_matches():
@@ -1097,7 +1205,7 @@ def test_validate_report_rejects_slug_copied_from_another_hit():
     )
 
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
-        validate_report(tampered, (indexed, other))
+        validate_report(tampered, (indexed, other), {})
 
 
 def test_validate_report_rejects_commit_copied_from_another_hit():
@@ -1114,7 +1222,7 @@ def test_validate_report_rejects_commit_copied_from_another_hit():
     )
 
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
-        validate_report(tampered, (indexed, other))
+        validate_report(tampered, (indexed, other), {})
 
 
 def test_validate_report_rejects_path_copied_from_another_hit():
@@ -1129,7 +1237,7 @@ def test_validate_report_rejects_path_copied_from_another_hit():
     )
 
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
-        validate_report(tampered, (indexed, other))
+        validate_report(tampered, (indexed, other), {})
 
 
 def test_validate_report_rejects_blob_copied_from_another_hit():
@@ -1146,7 +1254,7 @@ def test_validate_report_rejects_blob_copied_from_another_hit():
     )
 
     with pytest.raises(ValueError, match="REJECT_MOVING_REFERENCE"):
-        validate_report(tampered, (indexed, other))
+        validate_report(tampered, (indexed, other), {})
 
 
 def test_validate_report_rejects_non_finite_or_negative_score():
@@ -1157,7 +1265,7 @@ def test_validate_report_rejects_non_finite_or_negative_score():
     for bad_score in (float("nan"), float("inf"), float("-inf"), -0.5):
         tampered = replace(report, matches=(replace(match, score=bad_score),))
         with pytest.raises(ValueError, match="REJECT_INVALID_SCORE"):
-            validate_report(tampered, (indexed,))
+            validate_report(tampered, (indexed,), {})
 
 
 def test_validate_report_rejects_span_beyond_verified_content():
@@ -1170,7 +1278,7 @@ def test_validate_report_rejects_span_beyond_verified_content():
     tampered = replace(
         report,
         matches=(
-            replace(match, source=replace(match.source, end_line=line_count + 1000)),
+            replace(match, source=replace(match.source, end_line=999_999)),
         ),
     )
     with pytest.raises(ValueError, match="REJECT_INVALID_SPAN"):
@@ -1186,14 +1294,38 @@ def test_validate_report_accepts_valid_report_with_line_counts():
     validate_report(report, (indexed,), {identity: line_count})
 
 
+def test_validate_report_rejects_matches_without_line_counts():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+
+    with pytest.raises(ValueError, match="REJECT_MISSING_LINE_COUNTS"):
+        validate_report(report, (indexed,))
+
+
+def test_validate_report_cannot_skip_tampered_span_by_omitting_line_counts():
+    indexed = _hit()
+    page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
+    report = _searcher(page=page)[0].search(_spec())
+    match = report.matches[0]
+    tampered = replace(
+        report,
+        matches=(replace(match, source=replace(match.source, end_line=999_999)),),
+    )
+
+    with pytest.raises(ValueError, match="REJECT_MISSING_LINE_COUNTS"):
+        validate_report(tampered, (indexed,))
+
+
 def test_validate_report_rejects_exact_duplicate_match():
     indexed = _hit()
     page = CodeSearchPage(hits=(indexed,), total_count=1, incomplete_results=False)
     report = _searcher(page=page)[0].search(_spec())
     match = report.matches[0]
     tampered = replace(report, matches=(match, match))
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
     with pytest.raises(ValueError, match="REJECT_DUPLICATE_MATCH"):
-        validate_report(tampered, (indexed,))
+        validate_report(tampered, (indexed,), {identity: _line_count(CONTENT_BYTES.decode())})
 
 
 def test_validate_report_rejects_duplicate_match_with_nudged_score():
@@ -1203,8 +1335,9 @@ def test_validate_report_rejects_duplicate_match_with_nudged_score():
     match = report.matches[0]
     nudged = replace(match, score=match.score + 1.0)
     tampered = replace(report, matches=(match, nudged))
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
     with pytest.raises(ValueError, match="REJECT_DUPLICATE_MATCH"):
-        validate_report(tampered, (indexed,))
+        validate_report(tampered, (indexed,), {identity: _line_count(CONTENT_BYTES.decode())})
 
 
 def test_validate_report_accepts_zero_score():
@@ -1213,7 +1346,8 @@ def test_validate_report_accepts_zero_score():
     report = _searcher(page=page)[0].search(_spec())
     match = report.matches[0]
     tampered = replace(report, matches=(replace(match, score=0.0),))
-    validate_report(tampered, (indexed,))
+    identity = (indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha)
+    validate_report(tampered, (indexed,), {identity: _line_count(CONTENT_BYTES.decode())})
 
 
 def test_validate_report_enforces_span_boundary_at_verified_line_count():
@@ -1280,6 +1414,7 @@ def test_validate_report_is_deterministic_across_pythonhashseed_values():
             Resolution(ResolutionStrategy.INDEXED_COMMIT, "2026-08-06T12:00:00Z"),
         )
         hits = (indexed, other)
+        line_counts = {(indexed.slug, indexed.commit_sha, indexed.path, indexed.blob_sha): 1}
         outcomes = []
         for field, value in (
             ("slug", other.slug),
@@ -1289,20 +1424,20 @@ def test_validate_report_is_deterministic_across_pythonhashseed_values():
         ):
             candidate = replace(report, matches=(replace(match, source=replace(source, **{field: value})),))
             try:
-                validate_report(candidate, hits)
+                validate_report(candidate, hits, line_counts)
             except ValueError as exc:
                 outcomes.append([field, str(exc)])
-        validate_report(report, hits)
+        validate_report(report, hits, line_counts)
         outcomes.append(["valid", "ACCEPT"])
         dup_match = replace(match, score=match.score + 0.5)
         dup_report = replace(report, matches=(match, dup_match))
         try:
-            validate_report(dup_report, hits)
+            validate_report(dup_report, hits, line_counts)
         except ValueError as exc:
             outcomes.append(["duplicate", str(exc)])
         nan_report = replace(report, matches=(replace(match, score=float("nan")),))
         try:
-            validate_report(nan_report, hits)
+            validate_report(nan_report, hits, line_counts)
         except ValueError as exc:
             outcomes.append(["nan_score", str(exc)])
         print(json.dumps(outcomes, separators=(",", ":")))

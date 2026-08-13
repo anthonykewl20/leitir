@@ -1,10 +1,4 @@
-"""Tier-2 regex adapters informed by nvim-treesitter node inventories.
-
-The inventories are hand-adapted approximations, not copied query files, based
-on https://github.com/nvim-treesitter/nvim-treesitter at revision
-c9f9ed6c1892f629ea399f4ee7905f2686fa13f2 (Apache-2.0). There is no
-tree-sitter runtime dependency.
-"""
+"""Shared implementation for tier-2 regex adapters."""
 
 from __future__ import annotations
 
@@ -12,12 +6,7 @@ import re
 from dataclasses import dataclass
 
 from leitir.adapters import AdapterMatchResult, MatchMethod, SpanMatch
-from leitir.adapters._tier2_patterns import (
-    EXPORT_CLASS,
-    EXPORT_FUNCTION,
-    EXPORT_VALUE,
-    mask_comments_and_strings,
-)
+from leitir.adapters._tier2_patterns import mask_comments_and_strings
 from leitir.search import Predicate, PredicateKind
 
 _Pattern = re.Pattern[str]
@@ -162,65 +151,3 @@ class Tier2RegexAdapter:
                 if index in hits:
                     break
         return hits
-
-
-_JS_DEFINITIONS = (
-    EXPORT_FUNCTION,
-    EXPORT_CLASS,
-    EXPORT_VALUE,
-    re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\b"),
-    re.compile(r"^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)\b"),
-    re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?="),
-    re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=.*=>"),
-    re.compile(
-        r"^\s*(?:(?:public|protected|private|static|abstract|override|readonly|async|get|set)\s+)*"
-        r"([A-Za-z_$][\w$]*|constructor)\s*\([^\r\n{};]*\)"
-        r"(?:\s*:\s*[^={;]+)?\s*\{"
-    ),
-)
-_JS_IMPORTS = (
-    re.compile(r"^\s*import\b(?:.*\bfrom\b)?"),
-    re.compile(r"\brequire\s*\("),
-)
-_JAVA_DEFINITIONS = (
-    re.compile(r"^\s*(?:(?:public|protected|private|abstract|final|static|sealed|non-sealed)\s+)*(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)\b"),
-    re.compile(r"^\s*(?:(?:public|protected|private|abstract|final|static|synchronized|native|default)\s+)*(?:<[^>]+>\s+)?[A-Za-z_$][\w$<>,.?\[\]]*\s+([A-Za-z_$][\w$]*)\s*\([^;]*\)\s*(?:throws\b[^\{]+)?\{"),
-)
-_JAVA_IMPORTS = (re.compile(r"^\s*import\s+(?:static\s+)?"),)
-_C_DEFINITIONS = (
-    re.compile(r"^\s*(?:[A-Za-z_]\w*[\s*]+)+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{"),
-    re.compile(r"^\s*(?:typedef\s+)?(?:struct|union|enum)\s+([A-Za-z_]\w*)\b"),
-    re.compile(r"^\s*typedef\b.*\b([A-Za-z_]\w*)\s*;\s*$"),
-)
-_C_IMPORTS = (re.compile(r"^\s*#\s*include\b"),)
-
-JAVASCRIPT = RegexInventory("javascript", (".js", ".mjs", ".cjs"), _JS_DEFINITIONS, (_CALL,), _JS_IMPORTS)
-TYPESCRIPT = RegexInventory("typescript", (".ts", ".tsx"), _JS_DEFINITIONS, (_CALL,), _JS_IMPORTS)
-JAVA = RegexInventory("java", (".java",), _JAVA_DEFINITIONS, (_CALL,), _JAVA_IMPORTS)
-C = RegexInventory("c", (".c", ".h"), _C_DEFINITIONS, (_CALL,), _C_IMPORTS)
-CPP = RegexInventory("cpp", (".cpp", ".cc", ".cxx", ".hpp", ".hh"), _C_DEFINITIONS, (_CALL,), _C_IMPORTS)
-
-
-class JavaScriptAdapter(Tier2RegexAdapter):
-    def __init__(self) -> None:
-        super().__init__(JAVASCRIPT)
-
-
-class TypeScriptAdapter(Tier2RegexAdapter):
-    def __init__(self) -> None:
-        super().__init__(TYPESCRIPT)
-
-
-class JavaAdapter(Tier2RegexAdapter):
-    def __init__(self) -> None:
-        super().__init__(JAVA)
-
-
-class CAdapter(Tier2RegexAdapter):
-    def __init__(self) -> None:
-        super().__init__(C)
-
-
-class CppAdapter(Tier2RegexAdapter):
-    def __init__(self) -> None:
-        super().__init__(CPP)

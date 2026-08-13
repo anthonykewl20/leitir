@@ -31,7 +31,7 @@ Strengthen `validate_report` to authorize the complete `(slug, commit, path, blo
 - [ ] Run under `PYTHONHASHSEED=0`, `1`, and `42`.
 
 ## Engineering workflow gates
-- [ ] No new dependency; suite remains >= current 1262 passed, 0 failed.
+- [ ] No new dependency; suite remains >= current 1917 passed, 0 failed.
 - [ ] `ruff`, `mypy`, scorecard decision `pass`.
 - [ ] Independent hy3 and deepseek security/integrity review.
 
@@ -69,7 +69,7 @@ The internal global searcher already has budgets, but callers cannot control the
 - [ ] Run multi-seed determinism probes.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262 passed, ruff clean, mypy clean, scorecard `pass`.
+- [ ] Suite >= current 1917 passed, ruff clean, mypy clean, scorecard `pass`.
 - [ ] Live checks remain behind `LEITIR_ENABLE_LIVE_E2E=1`; ASV not required.
 
 ## Dependencies
@@ -105,7 +105,7 @@ Python AST and Python regex must coexist with first-eligible routing. A mutable 
 - [ ] Run the existing adapter fixture suite under multiple hash seeds.
 
 ## Engineering workflow gates
-- [ ] Zero behavior change; suite >= current 1262 passed, ruff, mypy, scorecard `pass`.
+- [ ] Zero behavior change; suite >= current 1917 passed, ruff, mypy, scorecard `pass`.
 
 ## Dependencies
 Blocked by: none. Blocks: S2b, S-wholefile, S5, S6, S8.
@@ -141,7 +141,7 @@ The canary already exists but is currently not scheduled and `continue-on-error`
 - [ ] Multi-seed offline outputs are identical.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`; no ASV requirement.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`; no ASV requirement.
 
 ## Dependencies
 Blocked by: none. Extends: S7, S9, S8 when those slices land.
@@ -177,7 +177,7 @@ Current adapter selection is extension-based while `pred.language` is not indepe
 - [ ] Multi-seed deterministic routing tests.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 
 ## Dependencies
 Blocked by: S0. Updates: `docs/search-capabilities.md`.
@@ -213,7 +213,7 @@ The current `must` intersection is line-local at `engine.py:61,93`; it cannot ex
 - [ ] Multi-seed span order tests.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 
 ## Dependencies
 Blocked by: S0. Blocks: S5.
@@ -249,7 +249,7 @@ Add `list_blobs_ex()` with recovery metadata, bounded non-recursive subtree expa
 - [ ] Run multi-seed tests.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 - [ ] Independent hy3 and deepseek integrity review.
 
 ## Dependencies
@@ -287,7 +287,7 @@ Current scoped matching is heuristic. The existing AST implementation at `apisur
 - [ ] Multi-seed tests and AST-vs-regex fallback coverage.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 - [ ] ASV measurements plus independent hy3/deepseek review for semantic/integrity changes.
 
 ## Dependencies
@@ -324,7 +324,7 @@ Deep coverage currently centers on Python, Rust, and Go. Regex can widen languag
 - [ ] Multi-seed tests; no parser dependency added.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`; ASV where benchmark surface changes.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`; ASV where benchmark surface changes.
 
 ## Dependencies
 Blocked by: S0. Blocks: S9 and S8 stable adapter universe.
@@ -361,7 +361,7 @@ Implement `read_blob_stream(slug, blob_sha)` over the raw Git Blobs API with bou
 - [ ] Multi-seed span order tests and >2 MiB live canary fixture.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 - [ ] Independent hy3/deepseek security review; ASV where memory/performance is measured.
 
 ## Dependencies
@@ -404,7 +404,7 @@ This is the wide-search replacement for the unavailable advanced GitHub API. The
 - [ ] Export/import, gc, and doctor lifecycle tests; multi-seed tests.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 1262, ruff, mypy, scorecard `pass`.
+- [ ] Suite >= current 1917, ruff, mypy, scorecard `pass`.
 - [ ] Independent hy3/deepseek security/integrity review and ASV measurements for build/query costs.
 - [ ] Add versioning/operations docs and ADR-0006-compatible lock rationale.
 

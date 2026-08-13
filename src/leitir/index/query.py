@@ -10,7 +10,7 @@ from re import _parser as sre_parse  # type: ignore[attr-defined]
 from typing import Any
 
 from leitir.adapters import LanguageAdapter
-from leitir.adapters.languages import canonicalize_language
+from leitir.adapters.registry import trusted_adapter_language
 from leitir.engine import ScopedSearcher, _required_language, _score_content_ex, path_matches
 from leitir.index.postings import intersect_sorted, iter_trigrams
 from leitir.index.rank import dedupe_source_matches
@@ -138,7 +138,9 @@ class IndexedSearcher:
 
     def _adapter_for(self, path: str, required_language: str | None) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            language = canonicalize_language(adapter.language)
+            language = trusted_adapter_language(adapter)
+            if language is None:
+                continue
             if (required_language is None or language == required_language) and adapter.eligible(path):
                 return adapter
         return None
@@ -216,7 +218,11 @@ class IndexedSearcher:
         if spec.mode is not SearchMode.SCOPED_EXHAUSTIVE:
             raise ValueError("IndexedSearcher only handles scoped_exhaustive")
         required_language = _required_language(spec)
-        supported = {canonicalize_language(adapter.language) for adapter in self._adapters}
+        supported = {
+            language
+            for adapter in self._adapters
+            if (language := trusted_adapter_language(adapter)) is not None
+        }
         if required_language is not None and required_language not in supported:
             raise SearchSpecError("unsupported required predicate language")
 

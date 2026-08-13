@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from leitir.adapters import PythonAdapter, RustAdapter
 from leitir.adapters.registry import build_adapters
 from leitir.cli import ExitCode, main
 from leitir.corpus import write_sources
@@ -151,6 +152,34 @@ def test_indexed_and_exhaustive_reports_have_identical_source_identities(tmp_pat
     assert tuple(map(identity, report.matches)) == tuple(map(identity, exhaustive.matches))
     assert report.coverage.files_eligible == exhaustive.coverage.files_eligible
     assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+
+
+def test_spoofed_adapter_language_cannot_authorize_indexed_rust_path(tmp_path):
+    class SpoofedRustAdapter(RustAdapter):
+        @property
+        def language(self) -> str:
+            return "python"
+
+    files = {"src/lib.rs": b"fn target() {}\n"}
+    shelf = _corpus(tmp_path, files)
+    build_shelf_index(tmp_path, shelf)
+    adapters = (PythonAdapter(), SpoofedRustAdapter())
+    indexed = IndexedSearcher(
+        tmp_path,
+        ScopedSearcher(LocalTree(files), adapters),
+        adapters,
+    )
+    spec = SearchSpec(
+        SearchMode.SCOPED_EXHAUSTIVE,
+        must=(Predicate(PredicateKind.IDENTIFIER, "target", "python"),),
+        scopes=(RepoScope("example/demo", SHA),),
+    )
+
+    report = indexed.search(spec)
+
+    assert report.matches == ()
+    assert report.coverage.files_eligible == 0
+    assert report.coverage.files_indexed == 0
 
 
 def test_index_and_scoped_fallback_identity_collision_is_deduplicated(tmp_path, monkeypatch):
@@ -469,8 +498,7 @@ def test_index_root_symlink_path_escape_is_rejected(tmp_path):
     outside.rmdir()
 
 
-def test_candidate_verification_retains_target_lock_against_writer(tmp_path):
-    from leitir.adapters import PythonAdapter
+def test_candidate_verification_retains_target_lock_against_writer(tmp_path, monkeypatch):
     from leitir.materialize import _target_lock
 
     files = {"a.py": b"needle\n"}
@@ -481,13 +509,18 @@ def test_candidate_verification_retains_target_lock_against_writer(tmp_path):
     release = threading.Event()
     writer_acquired = threading.Event()
 
-    class BlockingPythonAdapter(PythonAdapter):
-        def find_matches_ex(self, content, predicates, *, whole_file=False):
-            scoring.set()
-            assert release.wait(timeout=2)
-            return super().find_matches_ex(content, predicates, whole_file=whole_file)
+    original_find_matches_ex = PythonAdapter.find_matches_ex
 
-    adapters = (BlockingPythonAdapter(),)
+    def blocking_find_matches_ex(self, content, predicates, *, whole_file=False):
+        scoring.set()
+        assert release.wait(timeout=2)
+        return original_find_matches_ex(
+            self, content, predicates, whole_file=whole_file
+        )
+
+    monkeypatch.setattr(PythonAdapter, "find_matches_ex", blocking_find_matches_ex)
+
+    adapters = (PythonAdapter(),)
     indexed = IndexedSearcher(tmp_path, ScopedSearcher(LocalTree(files), adapters), adapters)
     reports = []
     reader = threading.Thread(target=lambda: reports.append(indexed.search(_spec())))

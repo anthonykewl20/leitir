@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.adapters.languages import canonicalize_language
+from leitir.adapters.registry import trusted_adapter_language
 from leitir.matching import document_excluded_ex
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches
@@ -221,7 +222,9 @@ class ScopedSearcher:
 
         required_language = _required_language(spec)
         supported_languages = {
-            canonicalize_language(adapter.language) for adapter in self._adapters
+            language
+            for adapter in self._adapters
+            if (language := trusted_adapter_language(adapter)) is not None
         }
         if (
             required_language is not None
@@ -401,7 +404,9 @@ class ScopedSearcher:
         self, path: str, required_language: str | None = None
     ) -> LanguageAdapter | None:
         for adapter in self._adapters:
-            language = canonicalize_language(adapter.language)
+            language = trusted_adapter_language(adapter)
+            if language is None:
+                continue
             if (
                 required_language is None or language == required_language
             ) and adapter.eligible(path):

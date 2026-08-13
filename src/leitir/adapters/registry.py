@@ -12,6 +12,7 @@ from leitir.adapters._tier2 import (
     JavaScriptAdapter,
     TypeScriptAdapter,
 )
+from leitir.adapters.languages import canonicalize_language
 from leitir.adapters.python_ast import PythonAstAdapter
 
 _ORDERED_FACTORIES: tuple[tuple[str, Callable[[], LanguageAdapter]], ...] = (
@@ -35,6 +36,20 @@ _DEFAULT_LANGUAGES: tuple[str, ...] = (
     "c",
     "cpp",
 )
+
+
+_TRUSTED_ADAPTER_LANGUAGES: dict[type[object], str] = {
+    type(factory()): canonicalize_language(name)
+    for name, factory in _ORDERED_FACTORIES
+}
+_TRUSTED_ADAPTER_LANGUAGES[type(PythonAstAdapter(PythonAdapter()))] = canonicalize_language(
+    "python"
+)
+
+
+def trusted_adapter_language(adapter: LanguageAdapter) -> str | None:
+    """Return the registry-bound language for an exact registered adapter type."""
+    return _TRUSTED_ADAPTER_LANGUAGES.get(type(adapter))
 
 
 def build_adapters(

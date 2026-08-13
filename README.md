@@ -300,7 +300,7 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
 - BTS validation requires an explicit maintainer-reviewed, content-pinned probe set over every applicable `TESTED_BY` edge. Each probe runs in a fresh donor-absent contained child; probe failures and observed donor imports reject independently. V1 never generates semantic probes autonomously.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
-- Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. It paginates with a fixed cap and reports pin, fetch, decode, provenance, adapter, and duplicate exclusions. Duplicate candidates are collapsed from repeated repository paths and then the index's claimed blob SHA; only the elected representative (or a deterministic promoted replacement after failure) is fetched, so `deduplicated` does not claim byte verification of members that remain collapsed. The `max_results` budget bounds fetch attempts, including promoted retries within a collapsed content group. Verification failures can therefore produce an honestly incomplete report that does not include every distinct candidate.
+- Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. Its report validator requires verified source line counts whenever matches are present, so omitted bounds data and spans beyond the verified bytes are rejected fail-closed. It paginates with a fixed cap and reports pin, fetch, decode, provenance, adapter, and duplicate exclusions. Duplicate candidates are collapsed from repeated repository paths and then the index's claimed blob SHA; only the elected representative (or a deterministic promoted replacement after failure) is fetched, so `deduplicated` does not claim byte verification of members that remain collapsed. The `max_results` budget bounds fetch attempts, including promoted retries within a collapsed content group. Verification failures can therefore produce an honestly incomplete report that does not include every distinct candidate.
 - Global discovery rejects unsupported must predicates such as REGEX. Structural and
   PATH predicates use GitHub only as a candidate superset and are locally re-verified.
 - Irreducible limit: a remote search index is not itself a pinned input. Two live runs at different wall-clock times may see an advancing index, server-side ranking changes, or different `incomplete_results`; reproducibility holds for the recorded pinned hit set, not for re-querying the live index.
@@ -316,7 +316,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Scoring
 
-`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=indeterminate`, while a current-worktree offline rerun reports `decision=fail` because one fixed-gate test is skipped; neither reaches pass. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
+`tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=pass`, `complete=true`. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
 
 ## Tests
 
@@ -324,7 +324,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **1355 passed, 55 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **1917 passed, 56 skipped**.
 
 ## Repository layout
 

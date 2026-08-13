@@ -16,8 +16,8 @@ scoped exhaustiveness and indeterminate global discovery:
   Python/Rust/Go behavior as the baseline and add heuristic, nvim-treesitter-
   attributed Tier-2 adapters for JavaScript, TypeScript, Java, C, and C++.
   (`src/leitir/adapters/registry.py:17-59`,
-  `src/leitir/adapters/_tier2.py:1-7`,
-  `src/leitir/adapters/_tier2.py:197-226`.)
+  `src/leitir/adapters/_tier2/__init__.py:1-7`,
+  `src/leitir/adapters/_tier2/javascript.py:1-34`.)
 - Keep heuristic Python matching as the default; make stdlib `ast` plus
   `symtable` lexical classification opt-in through `--ast`. Parser or symbol-
   table failure is reported as partial rather than parser-backed completeness.
@@ -162,9 +162,14 @@ enrichment behind the existing CLI (P5–P6).
       The `max_results` budget bounds fetch attempts, including promoted
       retries within a collapsed content group. Verification failures can
       therefore produce an honestly incomplete report that does not include
-      every distinct candidate.
+      every distinct candidate. Candidate collection also reports incomplete
+      whenever its budget stops before the remote result count is collected;
+      result and page budgets are bounded at 1000 and 100 respectively.
       The report records the `indexed_commit` strategy and resolution time;
       deterministic report identity excludes that observation timestamp.
+      Complete report validation requires line counts derived from the
+      verified source bytes whenever matches are present; missing bounds data
+      and spans beyond those bytes are rejected fail-closed.
       Irreducible limit: a remote search index is not a pinned input. Separate
       live queries can observe an advancing index, server-side ranking changes,
       or different `incomplete_results`; reproducibility applies to a recorded,

@@ -13,6 +13,7 @@ from leitir.adapters import PythonAdapter
 from leitir.engine import ScopedSearcher
 from leitir.search import CoverageStatus, Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
 from leitir.tree import (
+    BlobEntry,
     GitHubTreeSource,
     TreeEnumerationError,
     TreeTruncatedError,
@@ -37,17 +38,30 @@ def item(path: str, kind: str, sha: str, size: int = 1) -> dict[str, object]:
 class FakeTreeSource(GitHubTreeSource):
     def __init__(
         self,
-        recursive: dict[str, object],
-        trees: dict[str, dict[str, object]] | None = None,
+        recursive: object,
+        trees: dict[str, object] | None = None,
         contents: dict[str, bytes] | None = None,
+        *,
+        complete_envelopes: bool = True,
     ) -> None:
         super().__init__(base_url="https://api.example")
-        self.recursive = recursive
-        self.trees = trees or {}
+        self.recursive = dict(recursive) if isinstance(recursive, dict) else recursive
+        self.trees = {
+            sha: dict(payload) if isinstance(payload, dict) else payload
+            for sha, payload in (trees or {}).items()
+        }
+        if complete_envelopes:
+            if isinstance(self.recursive, dict):
+                self.recursive.setdefault("sha", ROOT)
+                self.recursive.setdefault("truncated", False)
+            for sha, payload in self.trees.items():
+                if isinstance(payload, dict):
+                    payload.setdefault("sha", sha)
+                    payload.setdefault("truncated", False)
         self.contents = contents or {}
         self.requests: list[str] = []
 
-    def _get_json(self, url: str, headers: dict[str, str]) -> dict[str, object]:
+    def _get_json(self, url: str, headers: dict[str, str]) -> dict:
         self.requests.append(url)
         if url.endswith("?recursive=1"):
             return self.recursive
@@ -90,7 +104,7 @@ def test_truncated_recursive_response_recovers_all_blobs():
     assert recovered is True
 
 
-def test_compat_wrapper_truncation_raises_after_one_request():
+def test_compat_wrapper_truncation_raises_without_walking():
     source = truncated_source(
         {
             ROOT: {"tree": [item("root.py", "blob", BLOB_A), item("src", "tree", TREE_A)]},
@@ -102,6 +116,18 @@ def test_compat_wrapper_truncation_raises_after_one_request():
         source.list_blobs("owner/repo", ROOT)
     assert error.value.partial_blobs == ()
     assert len(source.requests) == 1
+
+
+def test_compat_wrapper_propagates_tree_walk_budget_error():
+    class BudgetSource(FakeTreeSource):
+        def _get_json(
+            self, url: str, headers: dict[str, str]
+        ) -> dict[str, object]:
+            raise TreeWalkBudgetError("tree walk request budget exhausted")
+
+    source = BudgetSource({"tree": []})
+    with pytest.raises(TreeWalkBudgetError, match="request budget"):
+        source.list_blobs("owner/repo", ROOT)
 
 
 def test_repeated_tree_sha_at_distinct_prefixes_uses_cache():
@@ -127,10 +153,8 @@ def test_repeated_tree_sha_and_prefix_is_visited_once():
         }
     )
 
-    blobs, recovered = source.list_blobs_ex("owner/repo", ROOT)
-
-    assert recovered is True
-    assert [blob.path for blob in blobs] == ["same/leaf.py"]
+    with pytest.raises(TreeEnumerationError, match="duplicate path"):
+        source.list_blobs_ex("owner/repo", ROOT)
 
 
 def test_nested_truncation_fails_with_validated_partial_blobs():
@@ -147,6 +171,69 @@ def test_nested_truncation_fails_with_validated_partial_blobs():
     assert [blob.path for blob in error.value.partial_blobs] == ["root.py"]
 
 
+def test_nested_non_bool_truncation_preserves_partial_blobs():
+    source = truncated_source(
+        {
+            ROOT: {
+                "tree": [
+                    item("root.py", "blob", BLOB_A),
+                    item("src", "tree", TREE_A),
+                ]
+            },
+            TREE_A: {"truncated": "false", "tree": []},
+        }
+    )
+
+    with pytest.raises(TreeEnumerationError, match="invalid truncated flag") as error:
+        source.list_blobs_ex("owner/repo", ROOT)
+    assert [blob.path for blob in error.value.partial_blobs] == ["root.py"]
+
+
+def test_missing_truncated_field_fails_closed():
+    source = FakeTreeSource(
+        {"sha": ROOT, "tree": [item("target.py", "blob", BLOB_A)]},
+        complete_envelopes=False,
+    )
+
+    with pytest.raises(TreeEnumerationError, match="invalid truncated flag"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_compat_wrapper_rejects_missing_truncated_field():
+    source = FakeTreeSource(
+        {"sha": ROOT, "tree": []}, complete_envelopes=False
+    )
+
+    with pytest.raises(TreeEnumerationError, match="invalid truncated flag"):
+        source.list_blobs("owner/repo", ROOT)
+
+
+def test_wrong_subtree_response_sha_fails_closed_with_partial_blobs():
+    source = truncated_source(
+        {
+            ROOT: {"tree": [item("root.py", "blob", BLOB_A), item("src", "tree", TREE_A)]},
+            TREE_A: {
+                "sha": TREE_B,
+                "tree": [item("target.py", "blob", BLOB_B)],
+            },
+        }
+    )
+
+    with pytest.raises(TreeEnumerationError, match="does not match requested tree") as error:
+        source.list_blobs_ex("owner/repo", ROOT)
+    assert [blob.path for blob in error.value.partial_blobs] == ["root.py"]
+
+
+def test_truncated_recovery_rejects_wrong_root_response_sha():
+    source = FakeTreeSource(
+        {"sha": TREE_A, "truncated": True, "tree": []},
+        {TREE_A: {"sha": ROOT, "truncated": False, "tree": [item("target.py", "blob", BLOB_A)]}},
+    )
+
+    with pytest.raises(TreeEnumerationError, match="does not match requested tree"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -154,6 +241,11 @@ def test_nested_truncation_fails_with_validated_partial_blobs():
         {"tree": [item("x", "blob", "bad")]},
         {},
         {"tree": [item("x", "blob", BLOB_A, -1)]},
+        {"tree": [{"path": "x", "type": "blob", "sha": BLOB_A}]},
+        {"tree": [item("../x", "blob", BLOB_A)]},
+        {"tree": [item("/x", "blob", BLOB_A)]},
+        {"tree": [item("x", "unknown", BLOB_A)]},
+        {"tree": [item("x", "blob", BLOB_A)], "truncated": "false"},
     ],
 )
 def test_malformed_tree_responses_fail_closed(payload: dict[str, object]):
@@ -206,6 +298,56 @@ def test_mid_walk_malformed_item_preserves_partial_blobs():
     with pytest.raises(TreeEnumerationError) as error:
         source.list_blobs_ex("owner/repo", ROOT)
     assert [blob.path for blob in error.value.partial_blobs] == ["a.py", "b.py"]
+
+
+@pytest.mark.parametrize("path", ["a\x00b", "a/./b", "a//b", "src/"])
+def test_malformed_paths_fail_closed(path: str):
+    source = FakeTreeSource({"tree": [item(path, "blob", BLOB_A)]})
+    with pytest.raises(TreeEnumerationError, match="malformed tree item"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_recursive_duplicate_blob_path_fails_closed():
+    source = FakeTreeSource(
+        {"tree": [item("same.py", "blob", BLOB_A), item("same.py", "blob", BLOB_B)]}
+    )
+    with pytest.raises(TreeEnumerationError, match="duplicate path in recursive tree"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_blob_and_tree_path_collision_fails_closed():
+    source = truncated_source(
+        {
+            ROOT: {
+                "tree": [
+                    item("same", "blob", BLOB_A),
+                    item("same", "tree", TREE_A),
+                ]
+            }
+        }
+    )
+    with pytest.raises(TreeEnumerationError, match="duplicate path in tree walk"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_non_hex_commit_sha_fails_closed_before_request():
+    source = FakeTreeSource({"tree": []})
+    with pytest.raises(TreeEnumerationError, match="malformed tree item"):
+        source.list_blobs_ex("owner/repo", "z" * 40)
+    assert source.requests == []
+
+
+def test_uppercase_item_sha_is_normalized():
+    source = FakeTreeSource({"tree": [item("file.py", "blob", "A" * 40)]})
+    blobs, recovered = source.list_blobs_ex("owner/repo", ROOT.upper())
+    assert recovered is False
+    assert blobs[0].blob_sha == "a" * 40
+    assert ROOT in source.requests[0]
+
+
+def test_blob_entry_rejects_non_hex_sha():
+    with pytest.raises(ValueError, match="40-char hex"):
+        BlobEntry(path="file.py", blob_sha="z" * 40, size=1)
 
 
 def test_depth_budget_exhaustion_preserves_partial_blobs(monkeypatch):
@@ -272,6 +414,46 @@ def test_tree_walk_path_collision_fails_closed():
         source.list_blobs_ex("owner/repo", ROOT)
 
 
+def test_tree_walk_cycle_fails_closed_at_depth_budget(monkeypatch):
+    monkeypatch.setattr(tree_module, "MAX_TREE_DEPTH", 2)
+    source = truncated_source(
+        {
+            ROOT: {"tree": [item("loop", "tree", TREE_A)]},
+            TREE_A: {"tree": [item("back", "tree", ROOT)]},
+        }
+    )
+
+    with pytest.raises(TreeWalkBudgetError, match="depth budget"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_non_recursive_nested_path_is_rejected():
+    source = truncated_source(
+        {ROOT: {"tree": [item("hidden/lost.py", "blob", BLOB_A)]}}
+    )
+
+    with pytest.raises(TreeEnumerationError, match="malformed tree item"):
+        source.list_blobs_ex("owner/repo", ROOT)
+
+
+def test_nested_malformed_tree_preserves_previously_recovered_blobs():
+    source = truncated_source(
+        {
+            ROOT: {
+                "tree": [
+                    item("root.py", "blob", BLOB_A),
+                    item("src", "tree", TREE_A),
+                ]
+            },
+            TREE_A: {"tree": [item("bad.py", "blob", "not-a-sha")]},
+        }
+    )
+
+    with pytest.raises(TreeEnumerationError) as error:
+        source.list_blobs_ex("owner/repo", ROOT)
+    assert [blob.path for blob in error.value.partial_blobs] == ["root.py"]
+
+
 def search_spec() -> SearchSpec:
     return SearchSpec(
         mode=SearchMode.SCOPED_EXHAUSTIVE,
@@ -325,11 +507,11 @@ def test_recovered_scoped_search_is_hash_seed_independent():
                 super().__init__(base_url="https://api.example")
             def _get_json(self, url, headers):
                 if url.endswith("?recursive=1"):
-                    return {"truncated": True, "tree": [{"path": "ignored", "type": "blob", "sha": blob_a}]}
+                    return {"sha": root, "truncated": True, "tree": [{"path": "ignored", "type": "blob", "sha": blob_a}]}
                 sha = url.rsplit("/", 1)[-1]
                 if sha == root:
-                    return {"tree": [{"path": "z.py", "type": "blob", "sha": blob_b, "size": len(data[blob_b])}, {"path": "src", "type": "tree", "sha": tree}]}
-                return {"tree": [{"path": "a.py", "type": "blob", "sha": blob_a, "size": len(data[blob_a])}]}
+                    return {"sha": root, "truncated": False, "tree": [{"path": "z.py", "type": "blob", "sha": blob_b, "size": len(data[blob_b])}, {"path": "src", "type": "tree", "sha": tree}]}
+                return {"sha": tree, "truncated": False, "tree": [{"path": "a.py", "type": "blob", "sha": blob_a, "size": len(data[blob_a])}]}
             def read_blob(self, slug, blob_sha):
                 return data[blob_sha]
 

@@ -41,6 +41,8 @@ def _tree(files: dict[str, bytes], *, overrides: dict[str, str] | None = None) -
     overrides = overrides or {}
     return json_body(
         {
+            "sha": SHA,
+            "truncated": False,
             "tree": [
                 {
                     "path": path,

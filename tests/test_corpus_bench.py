@@ -60,6 +60,8 @@ def _routes() -> dict[str, tuple[int, dict[str, str], bytes]]:
     content = b"offline benchmark proof\n"
     tree = json_body(
         {
+            "sha": SHA,
+            "truncated": False,
             "tree": [
                 {
                     "path": "proof.txt",

@@ -3,9 +3,9 @@
 ## Live-provider canary
 
 `.github/workflows/live-canary.yml` is an opt-in canary for the real-provider
-end-to-end tests. It runs the test suite on Ubuntu with
-`LEITIR_ENABLE_LIVE_E2E=1` and `LEITIR_ENABLE_SCORE_LIVE=1`; the default CI
-continues to run with both gates disabled.
+end-to-end tests. It runs the selected live canary probes on Ubuntu with
+`LEITIR_ENABLE_LIVE_E2E=1`; the default CI continues to run with that gate
+disabled.
 
 To enable the canary, add a repository Actions secret named `GH_TOKEN`. This
 is the required opt-in gate and should contain a GitHub token suitable for
@@ -22,6 +22,12 @@ allow it.
 
 Run the canary from **Actions → Live provider canary → Run workflow**. With no
 `GH_TOKEN`, its gate job succeeds and records a clear skipped message instead
-of running live tests. The live-test job has `continue-on-error: true`, is
-separate from normal CI, and is intended to remain a non-required,
-non-blocking check. Its job summary records the test outcome.
+of running live tests. The selected probes cover baseline live search,
+truncated-tree recovery, verified large-blob streaming, and index-vs-scan
+recall; the Search v2 surfaces also have repository-variable gates. Each probe
+step has `continue-on-error: true` so its classifier always runs. The classifier
+reports `pass`, `configuration-failure`, `product-failure`, `infra-failure`, or
+`skipped-not-landed`, writes the job summary, and fails closed with a non-zero
+exit for configuration or product failures on enabled surfaces. Infrastructure
+failures remain warnings. The canary is separate from normal CI and remains
+opt-in behind `LEITIR_ENABLE_LIVE_E2E=1` plus `GH_TOKEN`.

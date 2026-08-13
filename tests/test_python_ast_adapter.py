@@ -55,6 +55,9 @@ class _Tree:
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         return self._data
 
+    def read_blob_stream(self, slug: str, blob_sha: str) -> tuple[bytes, ...]:
+        return (self._data,)
+
 
 def _ast_adapter() -> PythonAstAdapter:
     return PythonAstAdapter(PythonAdapter())
@@ -176,6 +179,26 @@ def test_symtable_failure_keeps_ast_references_unknown_and_marks_partial(
     assert report.matches
 
 
+def test_deeply_nested_ast_visitor_failure_falls_back_and_marks_partial() -> None:
+    depth = 1200
+    content = "\n".join(
+        (
+            *("    " * level + f"def f{level}():" for level in range(depth)),
+            "    " * depth + "target()",
+        )
+    )
+    predicate = _predicate(PredicateKind.CALL, "target")
+
+    result = _ast_adapter().find_matches_ex(content, (predicate,))
+
+    assert result.parser_unavailable is True
+    assert result.spans
+    assert all(span.method is MatchMethod.HEURISTIC for span in result.spans)
+    report = _search(content, predicate)
+    assert report.coverage.status is CoverageStatus.PARTIAL
+    assert report.matches
+
+
 def test_symtable_helper_keeps_apisurface_json_byte_compatible(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text(
         "def public(value: int = 1) -> str:\n    return str(value)\n",
@@ -281,6 +304,51 @@ def test_imports_are_symbol_definitions() -> None:
     assert len(result.spans) == 1
     assert result.spans[0].start_line == 1
     assert result.spans[0].method is MatchMethod.AST
+
+
+def test_starred_assignment_target_is_a_symbol_definition() -> None:
+    content = "head, *rest = values\n"
+
+    for name in ("head", "rest"):
+        predicate = _predicate(PredicateKind.SYMBOL_DEFINITION, name)
+        result = _ast_adapter().find_matches_ex(content, (predicate,))
+        assert len(result.spans) == 1
+        assert result.spans[0].start_line == 1
+        assert result.spans[0].method is MatchMethod.AST
+
+    report = _search(
+        content, _predicate(PredicateKind.SYMBOL_DEFINITION, "rest")
+    )
+    assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+    assert len(report.matches) == 1
+
+
+@pytest.mark.parametrize(
+    ("content", "names"),
+    (
+        ("(a, *b, c) = xs\n", ("a", "b", "c")),
+        ("[x, *y] = ys\n", ("x", "y")),
+    ),
+)
+def test_nested_starred_assignment_targets_are_symbol_definitions(
+    content: str, names: tuple[str, ...]
+) -> None:
+    for name in names:
+        result = _ast_adapter().find_matches_ex(
+            content, (_predicate(PredicateKind.SYMBOL_DEFINITION, name),)
+        )
+        assert len(result.spans) == 1
+        assert result.spans[0].method is MatchMethod.AST
+
+
+def test_starred_call_argument_is_not_a_symbol_definition() -> None:
+    result = _ast_adapter().find_matches_ex(
+        "f(*args)\n",
+        (_predicate(PredicateKind.SYMBOL_DEFINITION, "args"),),
+    )
+
+    assert result.parser_unavailable is False
+    assert result.spans == ()
 
 
 def test_multiline_ast_node_does_not_mix_end_column_lines() -> None:

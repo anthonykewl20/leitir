@@ -13,6 +13,13 @@ import pytest
 from leitir import _http
 
 _EVENTS_KEY: pytest.StashKey[list[dict[str, str]]] = pytest.StashKey()
+_EVENT_PRIORITY = {
+    "configuration-failure": 0,
+    "product-failure": 1,
+    "infra-failure": 2,
+    "skipped-not-landed": 3,
+}
+_config: pytest.Config | None = None
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -34,17 +41,36 @@ def _write(config: pytest.Config) -> None:
     destination.write_text(json.dumps(events, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
 
-def _append(config: pytest.Config, event: dict[str, str]) -> None:
-    config.stash[_EVENTS_KEY].append(event)
+def _record(config: pytest.Config, event: dict[str, str]) -> None:
+    """Keep the most severe deterministic event for each collected node."""
+    events = config.stash[_EVENTS_KEY]
+    matching = [existing for existing in events if existing["nodeid"] == event["nodeid"]]
+    if matching:
+        best = min(
+            (*matching, event),
+            key=lambda item: (
+                _EVENT_PRIORITY[item["class"]],
+                item["surface"],
+                item["nodeid"],
+                item["class"],
+                item.get("kind", ""),
+            ),
+        )
+        events[:] = [existing for existing in events if existing["nodeid"] != event["nodeid"]]
+        events.append(best)
+    else:
+        events.append(event)
     _write(config)
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
+    global _config
+    _config = session.config
     session.config.stash[_EVENTS_KEY] = []
     declared: str | None = session.config.getoption("--live-canary-declared-test")
     enabled: str = session.config.getoption("--live-canary-enabled")
     if declared and enabled == "false":
-        _append(
+        _record(
             session.config,
             {
                 "class": "skipped-not-landed",
@@ -64,6 +90,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(marker)
 
 
+def pytest_collectreport(report: pytest.CollectReport) -> None:
+    """Fail closed when an enabled canary surface skips during collection."""
+    config = _config
+    if config is None or not report.skipped:
+        return
+    if config.getoption("--live-canary-enabled") == "true":
+        _record(
+            config,
+            {
+                "class": "configuration-failure",
+                "kind": "",
+                "nodeid": report.nodeid,
+                "surface": config.getoption("--live-canary-surface"),
+            },
+        )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item,
@@ -72,17 +115,18 @@ def pytest_runtest_makereport(
     outcome = yield
     report = outcome.get_result()
     if report.skipped and item.config.getoption("--live-canary-enabled") == "true":
-        existing = item.config.stash[_EVENTS_KEY]
-        if not any(event["nodeid"] == item.nodeid and event["class"] == "skipped-not-landed" for event in existing):
-            _append(
-                item.config,
-                {
-                    "class": "skipped-not-landed",
-                    "kind": "",
-                    "nodeid": item.nodeid,
-                    "surface": item.config.getoption("--live-canary-surface"),
-                },
-            )
+        _record(
+            item.config,
+            {
+                # Only an explicitly disabled, not-yet-landed surface may
+                # report skipped-not-landed. A selected test that skips is
+                # missing coverage and must fail closed.
+                "class": "configuration-failure",
+                "kind": "",
+                "nodeid": item.nodeid,
+                "surface": item.config.getoption("--live-canary-surface"),
+            },
+        )
 
 
 def first_network_exception(exc: BaseException) -> BaseException | None:
@@ -115,7 +159,7 @@ def pytest_exception_interact(
 ) -> None:
     del report
     event_class, kind = classify_exception(call.excinfo.value)
-    _append(
+    _record(
         node.config,
         {
             "class": event_class,

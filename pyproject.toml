@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=80", "wheel>=0.46"]
+requires = ["setuptools>=83", "wheel>=0.46"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -31,6 +31,7 @@ where = ["src"]
 leitir = [
     "benchmarks/**/*.json",
     "benchmarks/**/*.md",
+    "benchmarks/**/*.txt",
 ]
 
 [tool.ruff]

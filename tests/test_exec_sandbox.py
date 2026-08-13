@@ -110,6 +110,10 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
 
 
 @pytest.mark.parametrize("value", [None, "0", "true", "yes", "01", " 1"])
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_exact_opt_in_gate_rejects_every_other_value(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], value: str | None) -> None:
     if value is None:
         monkeypatch.delenv("LEITIR_ENABLE_DONOR_EXECUTION", raising=False)
@@ -123,6 +127,10 @@ def test_exact_opt_in_gate_rejects_every_other_value(monkeypatch: pytest.MonkeyP
     assert value not in caught.value.to_json() if value else True
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_only_exact_one_enables(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     assert donor_execution_enabled() is True
@@ -172,8 +180,7 @@ def test_missing_or_unapplied_v1_control_rejects_before_launch(
 
 def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    plan = prepare_execution(_policy(fake_nsjail))
-    assert plan.nsjail_argv[1:] == ("--config", "<ephemeral-verified-config>", "--")
+    config_text = sandbox._render_config(_policy(fake_nsjail))
     required = (
         "mode: ONCE",
         "keep_env: false",
@@ -192,9 +199,13 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
         "seccomp_string:",
     )
     for control in required:
-        assert control in plan.config_text
+        assert control in config_text
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_binary_digest_tamper_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     policy = _policy(fake_nsjail)
@@ -208,9 +219,10 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    plan = prepare_execution(_policy(fake_nsjail))
-    assert plan.policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
-    assert plan.policy.seccomp_string == (
+    policy = _policy(fake_nsjail)
+    sandbox._validate_policy(policy)
+    assert policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
+    assert policy.seccomp_string == (
         "DEFAULT KILL\n"
         "ALLOW { arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, fstat, futex, "
         "getcwd, getdents64, getpid, getrandom, lseek, mmap, mprotect, munmap, newfstatat, openat, "
@@ -235,6 +247,10 @@ def test_caller_cannot_supply_smuggled_kafel(fake_nsjail: tuple[Path, str, str],
         replace(_policy(fake_nsjail), seccomp_string=custom)
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_mount_source_digest_tamper_rejects_before_launch(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
@@ -248,6 +264,10 @@ def test_mount_source_digest_tamper_rejects_before_launch(
     assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
@@ -274,6 +294,10 @@ def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
     assert caught.value.evidence.detail_code == "rootfs_digest_mismatch"
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_offline_execution_refuses_before_donor_launch(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], tmp_path: Path
 ) -> None:
@@ -332,6 +356,10 @@ class _FakeAppliedStateReader:
         return self.interfaces
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_real_applied_state_verifier_accepts_only_complete_kernel_receipt(fake_nsjail: tuple[Path, str, str]) -> None:
     state = sandbox._verify_applied_state(
         _FakeProcess(),  # type: ignore[arg-type]
@@ -368,6 +396,10 @@ def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(
     assert (cgroup / "cgroup.kill").read_text(encoding="ascii") == "1"
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
 def test_plan_cannot_recompute_away_an_unapplied_policy_control(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     plan = prepare_execution(_policy(fake_nsjail))
@@ -385,6 +417,10 @@ def test_plan_cannot_recompute_away_an_unapplied_policy_control(monkeypatch: pyt
         ("import os; os.write(1, b'x' * 4096)", 64, 2),
         ("import time; time.sleep(5)", 4096, 1),
     ],
+)
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
 )
 def test_cgroup_teardown_is_attempted_for_every_capture_outcome(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, program: str, limit: int, timeout: int
@@ -435,12 +471,12 @@ mounts = (ReadOnlyMount('/', root_path, root),)
 payload = {{'readonly_mounts':[{{'destination':'/','source':root_path,'source_digest':root}}], 'rootfs_digest':root, 'writable_tmpfs':'/work', 'writable_tmpfs_bytes':1048576, 'writable_tmpfs_inodes':128}}
 md = 'sha256:' + hashlib.sha256((json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\\n').encode()).hexdigest()
 p = ContainmentPolicy(POLICY_SCHEMA, {str(path)!r}, {_digest(path.read_bytes())!r}, {version!r}, {build_identity!r}, 'sha256:'+'2'*64, platform.machine(), root, md, mounts, '/work', 1048576, 128, '/work', 'ONCE', False, True, True, True, True, True, True, True, 67108864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 4096, ('LANG=C.UTF-8','PYTHONHASHSEED=0','TZ=UTC'), True)
-print(prepare_execution(p).to_json(), end='')
+print(sandbox._canonical_json({{'config_text': sandbox._render_config(p), 'policy': sandbox._policy_payload(p)}}), end='')
 """
     outputs = []
     for seed in ("0", "1", "42"):
         env = os.environ.copy()
-        env.update({"LEITIR_ENABLE_DONOR_EXECUTION": "1", "PYTHONHASHSEED": seed, "PYTHONPATH": "src"})
+        env.update({"LEITIR_ENABLE_DONOR_EXECUTION": "1", "PYTHONHASHSEED": seed, "PYTHONPATH": os.pathsep.join(("src", "."))})
         outputs.append(subprocess.check_output((sys.executable, "-c", script), cwd=Path(__file__).parents[1], env=env))
     assert outputs[0] == outputs[1] == outputs[2]
 

@@ -16,6 +16,14 @@ please use [`template.md`](template.md) as the basis.
 | [0009](0009-transplant-validation.md) | Transplant validation | Accepted | 2026-08 |
 | [0010](0010-capability-and-suitability.md) | Capability and suitability | Accepted | 2026-08 |
 | [0011](0011-reuse-packet-and-attribution.md) | Reuse packet and attribution | Accepted | 2026-08 |
+| [0012](0012-polyglot-graph-via-tree-sitter.md) | Polyglot graph via tree-sitter | Accepted | 2026-08-13 |
+| [0013](0013-dependency-composition-conflict-matrix.md) | Dependency composition conflict matrix | Accepted | 2026-08-13 |
+| [0014](0014-structural-architecture-compatibility.md) | Structural architecture compatibility | Accepted | 2026-08-13 |
+| [0015](0015-duplicate-abstraction-detection.md) | Duplicate abstraction detection | Accepted | 2026-08-13 |
+| [0016](0016-lineage-and-drift-tracking.md) | Lineage and drift tracking | Accepted | 2026-08-13 |
+| [0017](0017-occupied-recipient-validation-gate.md) | Occupied-recipient validation gate | Accepted | 2026-08-13 |
+| [0018](0018-manifest-authenticity.md) | Manifest authenticity | Proposed | 2026-08-13 |
+| [0019](0019-integration-cost-evidence.md) | Integration-cost evidence | Accepted | 2026-08-13 |
 
 ## Status vocabulary
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import leitir.lockfiles as lockfiles
+import leitir.project_profile as project_profile
 from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.lockfiles import DependencyManifestPolicy
 from leitir.project_profile import (
@@ -145,6 +146,19 @@ def test_manifest_integrity_rejects_tampered_digest() -> None:
     with pytest.raises(BTSError) as caught:
         profile_project(replace(manifest, manifest_digest="sha256:" + "0" * 64), DependencyManifestPolicy(("requirements.txt",)))
     assert caught.value.evidence.detail_code == "recipient_manifest_bytes_mismatch_v1"
+
+
+@pytest.mark.parametrize(
+    ("path", "content", "runtime"),
+    [
+        ("package.json", b'{"engines":{"node":">=20"}}', "node"),
+        ("Cargo.toml", b'[package]\nrust-version="1.75"\n', "rust"),
+    ],
+)
+def test_runtime_constraint_parser_covers_supported_formats(path: str, content: bytes, runtime: str) -> None:
+    constraint = project_profile._runtime_constraint(RecipientManifestEntry.from_bytes(path, "dependency", content))
+    assert constraint is not None
+    assert constraint.runtime == runtime
 
 
 @pytest.mark.parametrize("seed", ["0", "1", "42"])

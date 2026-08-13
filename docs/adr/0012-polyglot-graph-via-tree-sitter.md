@@ -387,12 +387,47 @@ scope boundary that leaves the Python-only pipeline stages unavailable.
 ## Open Questions
 
 1. Which exact five-wheel version tuple is compatibility-tested and pinned?
+
+   **Answer (2026-08-13):** The selected 0.23-aligned tuple is
+   `tree-sitter==0.23.2`, `tree-sitter-javascript==0.23.1`,
+   `tree-sitter-typescript==0.23.2`, `tree-sitter-rust==0.23.3`, and
+   `tree-sitter-go==0.23.4`. This selection aligns the grammar and runtime ABI
+   generation targeted by the grammar authors. It is not needed to satisfy pip
+   resolution: under PEP 440, `~=X.Y` means `>=X.Y, ==X.*`, so `0.23.2`
+   satisfies both `~=0.22` and `~=0.23`; earlier claims that those constraints
+   were disjoint were incorrect. Runtime ABI fit must be self-certified by the
+   mandated package-tuple-compatibility test, which constructs `Language()` and
+   `Parser()` for every grammar. If that test fails, the fallback is the newest
+   release of each grammar on `tree-sitter==0.25.2`, conditional on passing the
+   same smoke test.
+
 2. Which wheel hashes are required for every supported Python and platform
    combination?
+
+   **Answer (2026-08-13):** All four grammar distributions publish `cp39-abi3`
+   wheels for manylinux x86_64 and aarch64, musllinux x86_64, macOS x86_64 and
+   arm64, and Windows amd64 and arm64. The runtime publishes cp311, cp312, and
+   cp313 wheels for those platforms and for musllinux aarch64. No grammar
+   distribution publishes a musllinux aarch64 wheel, so that platform fails
+   closed under section 1 with
+   `tree_sitter_platform_hash_unavailable_v1`. The authoritative SHA-256 digest
+   inventory is the to-be-committed `requirements-tree-sitter.lock`; this ADR
+   does not duplicate that artifact's 50-plus digests.
+
 3. What measured parser and query limits bound adversarial-input CPU, memory,
    nesting, error recovery, and output growth?
+
+   **Answer (2026-08-13):** This remains open. `py-tree-sitter` exposes no
+   documented caps or defaults to inherit. `GraphExtractionPolicy` limits are
+   therefore pure Leitir policy and require corpus measurement of p95 node
+   counts, query-match fan-out, and adversarial nesting before ratification.
+
 4. What exact fixtures and assertions comprise the implementation gate at
    `tests/test_graph_polyglot.py`?
+
+These answers were resolved on 2026-08-13 from PyPI metadata current on that
+date and must be re-verified whenever `requirements-tree-sitter.lock` is
+regenerated.
 
 ## Links
 

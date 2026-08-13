@@ -571,7 +571,7 @@ def _verified_regular_file_digest(path: Path) -> str:  # pragma: no cover  # exe
         os.close(descriptor)
 
 
-def _verified_directory_tree_digest(root: Path) -> str:
+def _verified_directory_tree_digest(root: Path) -> str:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     """Hash a canonical, symlink-free directory tree including entry modes."""
 
     root_metadata = root.stat(follow_symlinks=False)

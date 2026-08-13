@@ -84,6 +84,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - publish reproducible offline decision=pass (#41) (`scorecard`)
 - stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - unified credentials + private repo/registry auth (`corpus`)
+- upstream tracking, drift alerts, bundle v2 (#80) (`lineage`)
 - widen pinned search benchmark to eight languages (`bench`)
 
 ### Fixed

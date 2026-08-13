@@ -556,7 +556,7 @@ def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # e
         raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
 
 
-def _verified_regular_file_digest(path: Path) -> str:
+def _verified_regular_file_digest(path: Path) -> str:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     """Hash one regular mount source without following a terminal symlink."""
 
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))

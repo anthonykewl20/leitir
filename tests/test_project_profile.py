@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,24 @@ def test_manifest_wrapper_reuses_existing_python_parser(monkeypatch: pytest.Monk
         DependencyManifestPolicy(("requirements.txt",)),
     )
     assert called == 1
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        RecipientManifestEntry.from_bytes("go.mod", "dependency", b"module example.invalid/demo\ngo 1.22\n"),
+    ],
+)
+def test_runtime_constraints_cover_portable_manifest_formats(entry: RecipientManifestEntry) -> None:
+    profile = profile_project(_manifest(entry), DependencyManifestPolicy((entry.path,)))
+    assert len(profile.runtime_constraints) == 1
+
+
+def test_manifest_integrity_rejects_tampered_digest() -> None:
+    manifest = _manifest(_entry("requirements.txt", "safe==1.0\n"))
+    with pytest.raises(BTSError) as caught:
+        profile_project(replace(manifest, manifest_digest="sha256:" + "0" * 64), DependencyManifestPolicy(("requirements.txt",)))
+    assert caught.value.evidence.detail_code == "recipient_manifest_bytes_mismatch_v1"
 
 
 @pytest.mark.parametrize("seed", ["0", "1", "42"])

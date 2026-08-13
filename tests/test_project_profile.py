@@ -148,6 +148,15 @@ def test_manifest_integrity_rejects_tampered_digest() -> None:
     assert caught.value.evidence.detail_code == "recipient_manifest_bytes_mismatch_v1"
 
 
+def test_manifest_types_fail_closed() -> None:
+    with pytest.raises(TypeError, match="content must be bytes"):
+        RecipientManifestEntry.from_bytes("requirements.txt", "dependency", "safe==1.0")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="manifest must be"):
+        profile_project(object(), DependencyManifestPolicy(()))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="policy must be"):
+        profile_project(_manifest(), object())  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("path", "content", "runtime"),
     [

@@ -96,12 +96,17 @@ def pytest_collectreport(report: pytest.CollectReport) -> None:
     if config is None or not report.skipped:
         return
     if config.getoption("--live-canary-enabled") == "true":
+        location = report.location
+        longrepr = report.longrepr
+        nodeid = report.nodeid or (location[2] if location else "")
+        if not nodeid and isinstance(longrepr, tuple):
+            nodeid = longrepr[0]
         _record(
             config,
             {
                 "class": "configuration-failure",
                 "kind": "",
-                "nodeid": report.nodeid,
+                "nodeid": nodeid,
                 "surface": config.getoption("--live-canary-surface"),
             },
         )

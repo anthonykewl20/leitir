@@ -37,17 +37,32 @@ flowchart TD
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
 - `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
 - API surface indexes with stdlib `ast` extraction for Python and conservative JS/TS heuristics behind a plugin hook.
-- Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence.
+- Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
+- BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3
+  resolver. It emits authoritative canonical `obligations.json` and derives
+  `ATTRIBUTION.md` from that closed manifest; missing, ambiguous, deferred, or
+  recipient-incompatible evidence fails closed.
 - Deterministic trust scoring on a 0–100 scale, with factor weights (20,15,15,10,10,15,15) fixed to verification, parity, license, documentation, tests, checksum, and age (sum 100).
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.
 - Transitive dependency closure via `leitir lock` and closure metadata in manifests.
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
 - Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.
+- Deterministic ADR-0011 behavioral-transplant reference and reuse packets. V1
+  uses canonical uncompressed USTAR; references are metadata-only, while reuse
+  packets bind exact member, relocated source, original/rewritten test, adapter,
+  probe, harness, and legal-slot payload bytes.
 - Standalone ADR-002 repository self-assessment engine that drives its own
   six-dimension gate decisions without model calls; it is separate from runtime
   corpus trust scoring.
+- Manifest-bound recipient project profiles with deterministic dependency and
+  runtime evidence; malformed, omitted, or provenance-mismatched lockfile input
+  rejects instead of falling back to ambient filesystem discovery.
+- Maintainer-pinned, non-compensating BTS suitability gates: every applicable
+  required gate must pass before a candidate enters comparison. ADR-0002
+  `unknown`, `error`, and `skipped` outcomes remain distinct and never pass, and
+  behavior proof must bind the pinned behavior-contract registry.
 
 ```mermaid
 flowchart LR
@@ -89,6 +104,29 @@ leitir info npm:zod@3.22.0
 
 Leitir is distributed via GitHub. The runtime is stdlib-only (`dependencies = []`),
 so no third-party runtime dependencies are pulled in.
+
+Behavioral-transplant donor execution is default-off and Linux-only. It requires
+the exact opt-in `LEITIR_ENABLE_DONOR_EXECUTION=1` and a release-pinned external
+native **nsjail** binary and policy; missing or unverifiable containment rejects,
+with no portable or unsandboxed fallback. The current controller also refuses
+before donor launch when a backend post-install applied-state barrier cannot be
+established; opt-in alone is never treated as verification. NsJail is not a
+Python dependency.
+See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
+
+Relocated contract tests are rerun with the donor excluded by the read-only
+filesystem mount plan, not by Python import hooks. The rerun report requires the
+exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;
+the runtime import recorder remains diagnostic-only. The contained interpreter
+uses a sanitized environment with `PYTHONHASHSEED=0` and never uses `-I`.
+
+`leitir.transplant` packages only a recomputed `COMPLETE` BTS with a matching
+complete validation receipt. Loading verifies the canonical USTAR representation,
+logical bundle digest, receipt, and every payload digest. This is receipt
+verification, not self-contained baseline-plus-rerun revalidation; optional reruns
+still require the separately pinned ADR-0009 execution prerequisites. Packet hashes
+provide integrity and subject binding, not publisher authenticity. License and
+obligations records are the separately owned D1 policy boundary.
 
 From a source checkout:
 
@@ -260,6 +298,7 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
   malformed, sampled, drifted, or schema-incompatible index shelves cannot produce
   complete indexed coverage.
 - Stdlib-only runtime: core operations do not require external Python dependencies, model calls, or credentials.
+- BTS validation requires an explicit maintainer-reviewed, content-pinned probe set over every applicable `TESTED_BY` edge. Each probe runs in a fresh donor-absent contained child; probe failures and observed donor imports reject independently. V1 never generates semantic probes autonomously.
 - Optional host tokens are read from environment, used only on HTTPS, never logged, and global discovery remains `INDETERMINATE`, never exhaustive.
 - Global discovery pins every result to the immutable commit SHA exposed by the search index, verifies fetched bytes at that commit against the indexed git blob SHA, and records an `indexed_commit` resolution strategy and UTC `as_of` time. Its report validator requires verified source line counts whenever matches are present, so omitted bounds data and spans beyond the verified bytes are rejected fail-closed. It paginates with a fixed cap and reports pin, fetch, decode, provenance, adapter, and duplicate exclusions. Duplicate candidates are collapsed from repeated repository paths and then the index's claimed blob SHA; only the elected representative (or a deterministic promoted replacement after failure) is fetched, so `deduplicated` does not claim byte verification of members that remain collapsed. The `max_results` budget bounds fetch attempts, including promoted retries within a collapsed content group. Verification failures can therefore produce an honestly incomplete report that does not include every distinct candidate.
 - Global discovery rejects unsupported must predicates such as REGEX. Structural and

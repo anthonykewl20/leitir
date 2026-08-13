@@ -1,7 +1,7 @@
 # ADR-0009: Transplant validation
 
 - Status: Accepted
-- Implementation: not-started
+- Implementation: (B6, E1, S2, E2, E3, E4a, E4b complete)
 - Deciders: leitir maintainers; consensus reviewers (consensus-luna, consensus-terra)
 - Date: 2026-08-11
 - Technical Story: Epic #52; B6, E1, E2, E3, E4a, E4b, and S2 (#55, #60-#64, #73)
@@ -225,21 +225,27 @@ Both generated nsjail configs must explicitly set and the controller must verify
 - `mode: ONCE` and `keep_env: false`;
 - `clone_newnet`, `clone_newuser`, `clone_newns`, `clone_newpid`,
   `clone_newipc`, and `clone_newuts` to `true`;
-- no owned/macvlan/user network interface or route, and `iface_no_lo: false` so
-  loopback is not brought up under nsjail's config-schema semantics;
+- exactly one down `lo` interface and no route (`iface_no_lo: true` prevents
+  nsjail from bringing loopback up); every other interface or `lo` state rejects;
 - positive `cgroup_mem_max`, `cgroup_pids_max`, and
   `cgroup_cpu_ms_per_sec`, using a verified cgroup v2 hierarchy;
-- a nonempty, digest-pinned `seccomp_string` with default-deny behavior,
-  including denial of networking, mount/namespace joining, privilege,
-  ptrace, and other policy-forbidden syscalls; and
+- a `seccomp_string` generated only from Leitir's typed canonical syscall/action
+  model: one closed minimal allowlist and `DEFAULT KILL`. Caller-authored Kafel
+  (including comments, `LOG` blocks, and numeric syscall forms) is not parsed or
+  accepted; networking, socket, mount/namespace joining, privilege, ptrace, and
+  other policy-forbidden syscalls are absent from the allowlist; and
 - pinned rlimits for address space, CPU, file size, open files, processes,
   stack/core and every applicable limit, as defense in depth rather than the
   containment boundary.
 
 The controller validates namespace identities, mount table, no-new-privileges,
 dropped capabilities, nonprivileged UID/GID maps, seccomp activation, cgroup
-membership/controller values, and network-interface/route absence before
-releasing a start barrier. Failure rejects without running donor code.
+membership/controller values, and the down-loopback/no-route state before
+releasing a backend-established post-install start barrier. NsJail process-group
+observation plus `SIGSTOP` is not such a barrier and is forbidden because it is
+racy. Where the release-pinned live backend cannot supply an authoritative
+handshake, execution refuses with `applied_state_barrier_unavailable` before
+donor launch; offline inspection never emits a verified execution receipt.
 
 There are two explicit sorted mount manifests:
 
@@ -250,7 +256,17 @@ There are two explicit sorted mount manifests:
   source, rewritten tests, probes, trusted interpreter/rootfs/runner/bootstrap,
   and manifests read-only, plus a separate bounded writable tmpfs.
 
-The tmpfs is the only writable mount and supplies CWD, temporary files, result
+At rerun entry the controller re-derives the relocation digest from the complete
+canonical file and authorization records and requires exact mount-destination
+set equality with the relocation plus trusted runtime/rootfs closure. Missing
+and extra mounts both reject. Relocation and rerun also re-derive both BTS
+identity digests from a supplied `BTSResult` report/artifact pair, so a genuine
+report wrapped around substituted BTS records has no authority.
+
+The rootfs source is a directory pinned by a canonical sorted tree digest that
+includes every directory path/mode and every regular-file path/mode/SHA-256;
+symlinks and special files reject. Other read-only mount sources remain
+regular-file SHA-256 pins. The tmpfs is the only writable mount and supplies CWD, temporary files, result
 frames, and bytecode cache if enabled. Its mount/size/inode limits and post-run
 write manifest are pinned. Interpreter binaries/libraries, baseline donor bytes,
 relocated source, original/rewritten tests, probes, runner, bootstrap, and every
@@ -262,8 +278,10 @@ is visible.
 Execution additionally requires exact opt-in
 `LEITIR_ENABLE_DONOR_EXECUTION=1`; only `opt_in_satisfied` is retained. Live
 acquisition separately requires `LEITIR_ENABLE_LIVE_E2E=1`. The parent enforces
-a wall deadline and bounded stdout/stderr/frame retention, then uses cgroup v2
-`cgroup.kill` to kill the complete tree and verifies `populated 0`. Limits and
+a wall deadline and bounded stdout/stderr/frame retention, then on every outcome
+(success, crash, timeout, or truncation) uses cgroup v2 `cgroup.kill` to kill the
+complete tree and verifies `populated 0`. `killpg` is only a nonauthoritative
+fallback and therefore can never produce success. Limits and
 mount controls are non-compensating. `SECURITY.md` must document these controls
 and residual kernel/nsjail escape risk before S2 ships.
 

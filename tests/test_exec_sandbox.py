@@ -190,6 +190,10 @@ def test_execution_result_rendering_covers_success_and_abort() -> None:
         ({"environment": ("BAD",)}, "invalid_environment"),
     ],
 )
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="containment policy paths are POSIX-absolute (ADR-0009 Linux backend)",
+)
 def test_portable_policy_validation_rejects_malformed_fields(
     fake_nsjail: tuple[Path, str, str], changes: dict[str, object], detail: str
 ) -> None:
@@ -198,6 +202,10 @@ def test_portable_policy_validation_rejects_malformed_fields(
     assert caught.value.evidence.detail_code == detail
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="containment policy paths are POSIX-absolute (ADR-0009 Linux backend)",
+)
 def test_portable_policy_validation_rejects_mount_shape(fake_nsjail: tuple[Path, str, str]) -> None:
     policy = _policy(fake_nsjail)
     duplicate = replace(policy, readonly_mounts=(policy.readonly_mounts[0], policy.readonly_mounts[0]))
@@ -299,6 +307,10 @@ def test_binary_digest_tamper_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsja
     assert caught.value.evidence.detail_code == "nsjail_digest_mismatch"
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="containment policy paths are POSIX-absolute (ADR-0009 Linux backend)",
+)
 def test_seccomp_is_exact_canonical_generated_kafel(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:

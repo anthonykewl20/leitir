@@ -74,6 +74,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - generate CHANGELOG from conventional commits + drift gate (`changelog`)
 - GitHub-only release pipeline + PyPI deferred path (`distribution`)
 - Go module multi-host (gitlab/bitbucket/golang.org/x) (`corpus`)
+- integration-cost evidence (#79) (`cost`)
 - leitir doctor, version-aware update check, easy install, skill rewrite
 - leitir info one-shot context + --json for get/trust/api/examples (`corpus`)
 - load-time tree verification + bounded sampling (`materialize`)
@@ -94,6 +95,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - canonicalize predicate-vs-flag language comparison (`search`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
+- correct typing for mypy strict mode (`cost`)
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)

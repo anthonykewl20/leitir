@@ -750,7 +750,7 @@ def _realized_cgroup(pid: int, reader: _AppliedStateReader) -> Path:
     return path
 
 
-def _verify_applied_state(
+def _verify_applied_state(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     process: subprocess.Popen[bytes],
     policy: ContainmentPolicy,
     *,
@@ -814,12 +814,12 @@ def _verify_applied_state(
     return _AppliedState(child_pid, cgroup)
 
 
-def _cgroup_populated(path: Path) -> bool:
+def _cgroup_populated(path: Path) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     values = dict(line.split(maxsplit=1) for line in (path / "cgroup.events").read_text(encoding="ascii").splitlines())
     return values.get("populated") != "0"
 
 
-def _kill_cgroup_tree(path: Path) -> bool:
+def _kill_cgroup_tree(path: Path) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     try:
         (path / "cgroup.kill").write_text("1", encoding="ascii")
         deadline = time.monotonic() + 2.0
@@ -832,7 +832,7 @@ def _kill_cgroup_tree(path: Path) -> bool:
     return False
 
 
-def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | None) -> bool:
+def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | None) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if state is not None and _kill_cgroup_tree(state.cgroup_path):
         return True
     try:
@@ -842,7 +842,7 @@ def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | Non
     return False
 
 
-def _bounded_communicate(
+def _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     process: subprocess.Popen[bytes], *, limit: int, timeout: int, applied_state: _AppliedState
 ) -> _Capture:
     capture = _Capture(bytearray(), bytearray())

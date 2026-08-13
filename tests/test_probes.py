@@ -6,7 +6,7 @@ import subprocess
 import sys
 from dataclasses import replace
 
-from leitir.bts_errors import BTSRejectReason
+from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.graph.model import Edge, EdgeKind, EdgeProvenance, NodeId, NodeKind, NodeOrigin, SourceRef
 from leitir.probes import (
     PinnedProbe,
@@ -176,6 +176,68 @@ def test_observed_donor_import_rejects_even_when_probe_passes() -> None:
     report = run_probes(_set(_probe(_edge())), _relocation(), execution_policy=DonorPolicy())
     assert report.status is ProbeStatus.REJECT
     assert report.blockers[0].reason is BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED
+
+
+def test_probe_receipt_attestations_are_independent_fail_closed_blockers() -> None:
+    class UnattestedPolicy(StubExecutionPolicy):
+        def execute_probe(self, request: ProbeExecutionRequest, relocation: Relocation) -> ProbeExecutionResult:
+            result = super().execute_probe(request, relocation)
+            return replace(
+                result,
+                fresh_child_attested=False,
+                donor_absent_attested=False,
+                runtime=ProbeRuntimeEvidence(_digest(b"incomplete-runtime"), False, False),
+            )
+
+    report = run_probes(_set(_probe(_edge())), _relocation(), execution_policy=UnattestedPolicy())
+
+    assert report.status is ProbeStatus.REJECT
+    assert [(item.reason, item.detail_code) for item in report.blockers] == [
+        (BTSRejectReason.REJECT_EXECUTION_THREAT, "probe_donor_absence_v1"),
+        (BTSRejectReason.REJECT_HARD_GATE_FAILED, "probe_fresh_child_v1"),
+        (BTSRejectReason.REJECT_HARD_GATE_FAILED, "probe_runtime_recorder_v1"),
+    ]
+
+
+def test_probe_policy_rejection_becomes_bounded_abort() -> None:
+    class RejectingPolicy(StubExecutionPolicy):
+        def execute_probe(self, request: ProbeExecutionRequest, relocation: Relocation) -> ProbeExecutionResult:
+            raise BTSError(BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED, "donor import")
+
+    report = run_probes(_set(_probe(_edge())), _relocation(), execution_policy=RejectingPolicy())
+
+    assert report.status is ProbeStatus.ABORT
+    assert report.abort is not None
+    assert report.abort.reason is BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED
+    assert report.abort.detail_category == "probe_donor_import_observed"
+    assert report.abort.completed_probes == 0
+
+
+def test_probe_relocation_rejects_donor_present_mount() -> None:
+    relocation = _relocation()
+    mounts = (*relocation.rerun_mounts, MountAuthorization("donor", True, True))
+
+    report = run_probes(
+        _set(_probe(_edge())),
+        replace(relocation, rerun_mounts=tuple(sorted(mounts))),
+        execution_policy=StubExecutionPolicy(),
+    )
+
+    assert report.status is ProbeStatus.REJECT
+    assert report.blockers[0].detail_code == "probe_input_integrity_v1"
+
+
+def test_probe_set_rejects_tampered_applicability_digest() -> None:
+    probe_set = _set(_probe(_edge()))
+
+    report = run_probes(
+        replace(probe_set, applicability_digest=_digest(b"forged-applicability")),
+        _relocation(),
+        execution_policy=StubExecutionPolicy(),
+    )
+
+    assert report.status is ProbeStatus.REJECT
+    assert report.blockers[0].detail_code == "probe_input_integrity_v1"
 
 
 def test_operational_abort_is_bounded_and_nonauthorizing() -> None:

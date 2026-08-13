@@ -173,9 +173,9 @@ class DependencyDelta:
                 raise ValueError("known dependency delta requires exact before/after manifests")
         elif any(value is not None for value in values) or self.confidence is not None:
             raise ValueError("non-known dependency delta cannot carry substitute values or confidence")
-        for name, value in (("before_manifest_digest", self.before_manifest_digest), ("after_manifest_digest", self.after_manifest_digest)):
-            if value is not None:
-                _digest_text(value, name)
+        for name, digest_value in (("before_manifest_digest", self.before_manifest_digest), ("after_manifest_digest", self.after_manifest_digest)):
+            if digest_value is not None:
+                _digest_text(digest_value, name)
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -301,6 +301,8 @@ def _tuple(value: object, name: str) -> tuple[object, ...]:
 
 
 def _decode_dataclass(value: object, record_type: type[object]) -> object:
+    if not is_dataclass(record_type):
+        raise ValueError(f"{record_type.__name__} is not a dataclass type")
     if not isinstance(value, dict) or set(value) != {field.name for field in fields(record_type)}:
         raise ValueError(f"invalid closed {record_type.__name__} record")
     return record_type(**value)
@@ -311,7 +313,7 @@ def _decode_method(value: object) -> CostMethod:
         raise ValueError("invalid closed CostMethod record")
     arguments = dict(value)
     arguments["input_digests"] = _tuple(value["input_digests"], "input_digests")
-    return CostMethod(**arguments)  # type: ignore[arg-type]
+    return CostMethod(**arguments)
 
 
 def _decode_observation(value: object) -> CostObservation:
@@ -321,7 +323,7 @@ def _decode_observation(value: object) -> CostObservation:
     return CostObservation(
         CostObservationState(value["state"]), value["value"],
         None if confidence is None else CostConfidence(confidence), _decode_method(value["method"]), value["detail_code"],
-    )  # type: ignore[arg-type]
+    )
 
 
 def _decode_dependency_delta(value: object) -> DependencyDelta:
@@ -332,7 +334,7 @@ def _decode_dependency_delta(value: object) -> DependencyDelta:
     confidence = value["confidence"]
     arguments["confidence"] = None if confidence is None else CostConfidence(confidence)
     arguments["method"] = _decode_method(value["method"])
-    return DependencyDelta(**arguments)  # type: ignore[arg-type]
+    return DependencyDelta(**arguments)
 
 
 def _known(value: int, method: CostMethod, detail: str) -> CostObservation:
@@ -394,6 +396,7 @@ def collect_integration_cost_evidence(
         raise ValueError("adapter instances are not canonically ordered")
     dependency_method = CostMethod.create("leitir.dependency-delta", "1", tuple(sorted(filter(None, (recipient_profile_digest, report.analysis_digest)))))
     dependency = DependencyDelta(CostObservationState.UNKNOWN, None, None, None, None, None, 0, None, None, dependency_method)
+    changes: tuple[TestSurfaceChange, ...]
     if test_surface_changes is None:
         test_state, test_confidence, changes = CostObservationState.UNKNOWN, None, ()
     else:
@@ -402,20 +405,48 @@ def collect_integration_cost_evidence(
         _digest_text(test_plan_digest, "test_plan_digest")
         changes = tuple(sorted(test_surface_changes, key=_test_change_key))
         test_state, test_confidence = CostObservationState.KNOWN, CostConfidence.EXACT
-    values: tuple[object, ...] = (
-        COST_EVIDENCE_SCHEMA, candidate_key, report.analysis_digest, recipient_profile_digest,
-        _known(len(report.members), method, "bts_members_exact_v1"),
-        _known(report.counters.source_lines, method, "bts_source_lines_exact_v1"),
-        _known(sum(item.disposition is BTSDisposition.ADAPT for item in instances), method, "bts_adapt_instances_exact_v1"),
-        _known(sum(item.disposition is BTSDisposition.REPLACE for item in instances), method, "bts_replace_instances_exact_v1"),
-        _known(sum(item.disposition is BTSDisposition.EXTERNAL for item in instances), method, "bts_external_instances_exact_v1"),
-        _known(report.counters.external_interfaces, method, "bts_external_interfaces_exact_v1"),
-        _known(line_count, catalog_method, "adapter_template_physical_lines_exact_v1"),
-        dependency, test_state, test_confidence, changes,
+    bts_members = _known(len(report.members), method, "bts_members_exact_v1")
+    source_lines = _known(report.counters.source_lines, method, "bts_source_lines_exact_v1")
+    adapt_instances = _known(sum(item.disposition is BTSDisposition.ADAPT for item in instances), method, "bts_adapt_instances_exact_v1")
+    replace_instances = _known(sum(item.disposition is BTSDisposition.REPLACE for item in instances), method, "bts_replace_instances_exact_v1")
+    external_instances = _known(sum(item.disposition is BTSDisposition.EXTERNAL for item in instances), method, "bts_external_instances_exact_v1")
+    external_interfaces = _known(report.counters.external_interfaces, method, "bts_external_interfaces_exact_v1")
+    adapter_lines = _known(line_count, catalog_method, "adapter_template_physical_lines_exact_v1")
+    payload: dict[str, object] = {
+        "schema_version": COST_EVIDENCE_SCHEMA,
+        "candidate_key": candidate_key,
+        "bts_digest": report.analysis_digest,
+        "recipient_profile_digest": recipient_profile_digest,
+        "bts_members": bts_members,
+        "source_lines": source_lines,
+        "adapt_instances": adapt_instances,
+        "replace_instances": replace_instances,
+        "external_instances": external_instances,
+        "external_interfaces": external_interfaces,
+        "adapter_template_physical_lines": adapter_lines,
+        "dependency_delta": dependency,
+        "test_surface_state": test_state,
+        "test_surface_confidence": test_confidence,
+        "test_surface_changes": changes,
+    }
+    return IntegrationCostEvidence(
+        schema_version=COST_EVIDENCE_SCHEMA,
+        candidate_key=candidate_key,
+        bts_digest=report.analysis_digest,
+        recipient_profile_digest=recipient_profile_digest,
+        bts_members=bts_members,
+        source_lines=source_lines,
+        adapt_instances=adapt_instances,
+        replace_instances=replace_instances,
+        external_instances=external_instances,
+        external_interfaces=external_interfaces,
+        adapter_template_physical_lines=adapter_lines,
+        dependency_delta=dependency,
+        test_surface_state=test_state,
+        test_surface_confidence=test_confidence,
+        test_surface_changes=changes,
+        record_digest=_digest(payload),
     )
-    names = tuple(field.name for field in fields(IntegrationCostEvidence) if field.name != "record_digest")
-    payload = dict(zip(names, values, strict=True))
-    return IntegrationCostEvidence(*values, _digest(payload))
 
 
 def extraction_difficulty_value(evidence: IntegrationCostEvidence) -> ExtractionDifficultyValue | None:

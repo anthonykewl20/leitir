@@ -95,7 +95,7 @@ def test_composition_digests_are_hash_seed_independent() -> None:
         "import sys; sys.stdout.buffer.write((matrix.matrix_digest + '\\n' + eligibility.eligibility_digest + '\\n').encode('utf-8'))"
     )
     expected_matrix, expected_eligibility = _compose()
-    expected = f"{expected_matrix.matrix_digest}\n{expected_eligibility.eligibility_digest}\n".encode("utf-8")
+    expected = f"{expected_matrix.matrix_digest}\n{expected_eligibility.eligibility_digest}\n".encode()
     for seed in ("0", "1", "42"):
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = seed

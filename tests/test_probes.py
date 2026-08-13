@@ -210,6 +210,6 @@ print(run_probes(_set(_probe(_edge())), _relocation(), execution_policy=StubExec
     for seed in ("0", "1", "42"):
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = seed
-        environment["PYTHONPATH"] = "src:."
+        environment["PYTHONPATH"] = os.pathsep.join(("src", "."))
         outputs.append(subprocess.check_output([sys.executable, "-c", script], env=environment))
     assert outputs[0] == outputs[1] == outputs[2]

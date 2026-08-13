@@ -84,6 +84,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - publish reproducible offline decision=pass (#41) (`scorecard`)
 - stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - unified credentials + private repo/registry auth (`corpus`)
+- upstream tracking, drift alerts, bundle v2 (#80) (`lineage`)
 - widen pinned search benchmark to eight languages (`bench`)
 
 ### Fixed
@@ -117,6 +118,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
+- replace ref-name regex with linear validation (`lineage`)
 - skip directory fsync on Windows in publish_packet (#128) (`transplant`)
 - stop rewriting Tier-2 class __module__ to restore get_type_hints/getsource (`adapters`)
 - tolerate .gitattributes EOL normalization in tree verification (`corpus`)

@@ -259,6 +259,10 @@ def test_missing_dependency_rate_applicability_is_fail_closed() -> None:
         _gold(required_helpers=(), applicability=_na("helper_recall"))
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="bts-skeleton fixture containment execution is Linux-only (ADR-009)",
+)
 def test_adapter_projects_real_pipeline_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     request = _prepared_request(FIXTURE)
     pipeline = TrustedCorpusPipeline()(request)
@@ -407,6 +411,6 @@ print(BTSTimingEnvelope.empty(r.digest()).to_json())
 '''
     outputs = []
     for seed in ("0", "1", "42"):
-        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH="src:.")
+        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=os.pathsep.join(("src", ".")))
         outputs.append(subprocess.check_output((sys.executable, "-c", script), env=environment))
     assert outputs[0] == outputs[1] == outputs[2]

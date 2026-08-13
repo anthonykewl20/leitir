@@ -692,7 +692,7 @@ class _AppliedStateReader(Protocol):
     def network_interfaces(self, pid: int) -> Mapping[str, str]: ...
 
 
-class _ProcfsAppliedStateReader:
+class _ProcfsAppliedStateReader:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     def proc_text(self, pid: int, name: str) -> str:
         return _read_proc_text(pid, name)
 
@@ -710,16 +710,16 @@ class _ProcfsAppliedStateReader:
         raise OSError("namespace-scoped interface state is unavailable")
 
 
-def _read_proc_text(pid: int, name: str) -> str:
+def _read_proc_text(pid: int, name: str) -> str:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     return Path(f"/proc/{pid}/{name}").read_text(encoding="utf-8", errors="strict")
 
 
-def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:
+def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     metadata = Path(f"/proc/{pid}/ns/{namespace}").stat()
     return metadata.st_dev, metadata.st_ino
 
 
-def _discover_jailed_child(supervisor_pid: int, timeout: float = 2.0) -> int:
+def _discover_jailed_child(supervisor_pid: int, timeout: float = 2.0) -> int:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     deadline = time.monotonic() + timeout
     children_file = Path(f"/proc/{supervisor_pid}/task/{supervisor_pid}/children")
     while time.monotonic() < deadline:
@@ -961,21 +961,21 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         raise _reject("host architecture changed after plan preparation", "architecture_mismatch")
     _verify_backend(plan.policy)
     _require_applied_state_barrier(plan.policy)
-    config_fd: int | None = None
-    config_path: str | None = None
+    config_fd: int | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    config_path: str | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     try:
-        config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")
-        os.fchmod(config_fd, 0o600)
-        config_bytes = plan.config_text.encode("utf-8")
-        with os.fdopen(config_fd, "wb", closefd=True) as config_file:
-            config_fd = None
-            config_file.write(config_bytes)
-            config_file.flush()
-            os.fsync(config_file.fileno())
-        launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))
+        config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        os.fchmod(config_fd, 0o600)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        config_bytes = plan.config_text.encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        with os.fdopen(config_fd, "wb", closefd=True) as config_file:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            config_fd = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            config_file.write(config_bytes)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            config_file.flush()  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            os.fsync(config_file.fileno())  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         # Re-read all mount sources immediately before the backend can open them.
-        _verify_mount_sources(plan.policy)
-        process = subprocess.Popen(
+        _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        process = subprocess.Popen(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             launch_argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -983,27 +983,27 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             env={},
             start_new_session=True,
         )
-        child_pid = _discover_jailed_child(process.pid)
-        applied_state = _verify_applied_state(process, plan.policy, child_pid=child_pid)
-        capture = _bounded_communicate(
+        child_pid = _discover_jailed_child(process.pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        applied_state = _verify_applied_state(process, plan.policy, child_pid=child_pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        capture = _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             process,
             limit=plan.output_limit_bytes,
             timeout=plan.wall_time_seconds,
             applied_state=applied_state,
         )
-    except (OSError, subprocess.SubprocessError):
-        return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     finally:
-        if config_fd is not None:
-            os.close(config_fd)
-        if config_path is not None:
+        if config_fd is not None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            os.close(config_fd)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if config_path is not None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             try:
-                os.unlink(config_path)
-            except FileNotFoundError:
-                pass
+                os.unlink(config_path)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            except FileNotFoundError:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+                pass  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     # ADR-0009 requires immutable authorizing inputs across the complete run.
-    _verify_mount_sources(plan.policy)
-    if capture.noncanonical_kill:
+    _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(
             plan,
             "noncanonical_killpg_fallback",
@@ -1011,19 +1011,19 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             len(capture.stdout),
             len(capture.stderr),
         )
-    if capture.timed_out:
+    if capture.timed_out:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
-    if capture.truncated:
+    if capture.truncated:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
-    if capture.leaked:
+    if capture.leaked:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
-    if process.returncode != 0:
+    if process.returncode != 0:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "child_crash", BTSRejectReason.REJECT_HARD_GATE_FAILED, len(capture.stdout), len(capture.stderr))
-    stdout = bytes(capture.stdout)
-    stderr = bytes(capture.stderr)
-    stdout_digest = _digest_bytes(stdout)
-    stderr_digest = _digest_bytes(stderr)
-    result_payload = {
+    stdout = bytes(capture.stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    stderr = bytes(capture.stderr)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    stdout_digest = _digest_bytes(stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    stderr_digest = _digest_bytes(stderr)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    result_payload = {  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         "exit_code": 0,
         "schema_version": RESULT_SCHEMA,
         "stderr_bytes": len(stderr),
@@ -1032,7 +1032,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         "stdout_digest": stdout_digest,
         "subject_digest": plan.plan_digest,
     }
-    return ExecutionResult(
+    return ExecutionResult(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         completed=True,
         subject_digest=plan.plan_digest,
         exit_code=0,

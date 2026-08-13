@@ -976,20 +976,20 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         # Re-read all mount sources immediately before the backend can open them.
         _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         process = subprocess.Popen(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-            launch_argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={},
-            start_new_session=True,
+            launch_argv,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stdin=subprocess.DEVNULL,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stdout=subprocess.PIPE,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stderr=subprocess.PIPE,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            env={},  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            start_new_session=True,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
         child_pid = _discover_jailed_child(process.pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         applied_state = _verify_applied_state(process, plan.policy, child_pid=child_pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         capture = _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-            process,
-            limit=plan.output_limit_bytes,
-            timeout=plan.wall_time_seconds,
-            applied_state=applied_state,
+            process,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            limit=plan.output_limit_bytes,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            timeout=plan.wall_time_seconds,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            applied_state=applied_state,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1005,11 +1005,11 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(
-            plan,
-            "noncanonical_killpg_fallback",
-            BTSRejectReason.REJECT_EXECUTION_THREAT,
-            len(capture.stdout),
-            len(capture.stderr),
+            plan,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            "noncanonical_killpg_fallback",  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            BTSRejectReason.REJECT_EXECUTION_THREAT,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            len(capture.stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            len(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     if capture.timed_out:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
@@ -1024,22 +1024,22 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     stdout_digest = _digest_bytes(stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     stderr_digest = _digest_bytes(stderr)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     result_payload = {  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        "exit_code": 0,
-        "schema_version": RESULT_SCHEMA,
-        "stderr_bytes": len(stderr),
-        "stderr_digest": stderr_digest,
-        "stdout_bytes": len(stdout),
-        "stdout_digest": stdout_digest,
-        "subject_digest": plan.plan_digest,
+        "exit_code": 0,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "schema_version": RESULT_SCHEMA,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "stderr_bytes": len(stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "stderr_digest": stderr_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "stdout_bytes": len(stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "stdout_digest": stdout_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        "subject_digest": plan.plan_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     }
     return ExecutionResult(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        completed=True,
-        subject_digest=plan.plan_digest,
-        exit_code=0,
-        stdout=stdout,
-        stderr=stderr,
-        stdout_digest=stdout_digest,
-        stderr_digest=stderr_digest,
-        result_digest=_digest_payload(result_payload),
-        abort=None,
+        completed=True,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        subject_digest=plan.plan_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        exit_code=0,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        stdout=stdout,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        stderr=stderr,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        stdout_digest=stdout_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        stderr_digest=stderr_digest,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        result_digest=_digest_payload(result_payload),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        abort=None,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     )

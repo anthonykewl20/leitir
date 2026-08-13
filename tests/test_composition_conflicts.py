@@ -46,6 +46,14 @@ def _compose(versions: tuple[str, str] = ("1.0.0", "1.0.0")):
     return compose("recipient-project", recipient, _manifest(versions[0]), (candidate,), {candidate.candidate_key: _manifest(versions[1])}, _POLICY, _DIGEST)
 
 
+def test_shared_composition_contract_types_have_import_identity() -> None:
+    from leitir import architecture, composition, duplicates
+
+    assert architecture.EvidenceRef is composition.EvidenceRef is duplicates.EvidenceRef
+    assert architecture.CompositionCandidateRef is composition.CompositionCandidateRef is duplicates.CompositionCandidateRef
+    assert architecture.CandidateDependencyEvidence is composition.CandidateDependencyEvidence is duplicates.CandidateDependencyEvidence
+
+
 def test_happy_path_matrix_and_equal_declarations_accept() -> None:
     matrix, eligibility = _compose()
     assert matrix.conflicts == ()

@@ -13,19 +13,16 @@ import re
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from itertools import combinations, pairwise
-from typing import TypeAlias
 
 from leitir.bts import BTS, DonorSnapshot, MemberEvidence, _verified_source_digest
 from leitir.bts_errors import BTSError, BTSRejectReason
+from leitir.composition import (
+    CandidateDependencyEvidence,
+    ClosureCompleteness,
+    CompositionCandidateRef,
+    EvidenceRef,
+)
 from leitir.graph.model import SourceRef
-
-CandidateKey: TypeAlias = tuple[str | int, ...]
-
-
-class ClosureCompleteness(str, Enum):  # noqa: UP042 - ADR-0013 pins str, Enum
-    COMPLETE = "complete"
-    DIRECT_ONLY = "direct_only"
-    UNKNOWN = "unknown"
 
 
 class CompatibilityStatus(str, Enum):  # noqa: UP042 - ADR-0013 pins str, Enum
@@ -41,41 +38,6 @@ class ConflictKind(str, Enum):  # noqa: UP042 - ADR-0013 pins str, Enum
     EXACT_SEED_BYTES_DUPLICATE = "exact_seed_bytes_duplicate"
     BTS_MEMBER_SPAN_OVERLAP = "bts_member_span_overlap"
     DEPENDENCY_DECLARATION_OVERLAP = "dependency_declaration_overlap"
-
-
-@dataclass(frozen=True, slots=True)
-class CompositionCandidateRef:
-    candidate_key: CandidateKey
-    bts_digest: str
-    candidate_manifest_digest: str
-    graph_digest: str
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateDependencyEvidence:
-    subject: CompositionCandidateRef
-    ecosystem: str
-    name: str
-    version: str
-    resolved_sha: str | None
-    completeness: ClosureCompleteness
-    source_path: str
-    source_digest: str
-
-
-@dataclass(frozen=True, slots=True, order=True)
-class EvidenceRef:
-    """A content-bound composition observation.
-
-    Composition has no project-profile implementation yet, so this is the
-    narrow v1 evidence reference needed by ADR-0015: kind, immutable source
-    identity, and the digest of the observed record.
-    """
-
-    evidence_kind: str
-    source_path: str
-    source_digest: str
-    evidence_digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,7 +242,7 @@ def _assessment_key(item: DuplicateAssessment) -> tuple[object, ...]:
              overlap.union_lines, overlap.member_span_overlap_bps, overlap.evidence_digest)
             for overlap in item.member_overlaps
         ),
-        tuple((ref.evidence_kind, ref.source_path, ref.source_digest, ref.evidence_digest) for ref in item.evidence_refs),
+        tuple((ref.evidence_kind, ref.source_path, ref.source_digest, ref.rule_id, ref.evidence_digest) for ref in item.evidence_refs),
         item.assessment_digest,
     )
 
@@ -353,6 +315,7 @@ def assess_duplicates(
                     f"dependency_declaration_overlap:{left_dep.ecosystem}:{left_dep.name}:{left_dep.version}:{strength}",
                     f"{left_dep.source_path}\0{right_dep.source_path}",
                     f"{left_dep.source_digest}\0{right_dep.source_digest}",
+                    "dependency_declaration_overlap_v1",
                     _digest(payload),
                 ))
         ordered_evidence = tuple(sorted(evidence))

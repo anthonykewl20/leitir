@@ -16,6 +16,7 @@ from itertools import pairwise
 from typing import TypeAlias
 
 from leitir.bts_errors import BTSError, BTSRejectReason
+from leitir.composition import CandidateDependencyEvidence, CompositionCandidateRef, EvidenceRef
 from leitir.graph.model import Edge, EdgeKind, Graph, NodeId, NodeKind, NodeOrigin, SourceRef
 
 CATALOG_SCHEMA_VERSION = "leitir-blocking-call-catalog-v1"
@@ -38,24 +39,6 @@ class ConflictKind(str, Enum):  # noqa: UP042 - shared ADR-0013 contract
     EXACT_SEED_BYTES_DUPLICATE = "exact_seed_bytes_duplicate"
     BTS_MEMBER_SPAN_OVERLAP = "bts_member_span_overlap"
     DEPENDENCY_DECLARATION_OVERLAP = "dependency_declaration_overlap"
-
-
-@dataclass(frozen=True, slots=True)
-class CompositionCandidateRef:
-    candidate_key: tuple[str | int, ...]
-    bts_digest: str
-    candidate_manifest_digest: str
-    graph_digest: str
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceRef:
-    """Content-bound advisory observation used by the shared record contract."""
-
-    source: SourceRef
-    source_digest: str
-    rule_id: str
-    evidence_digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,7 +329,7 @@ def _edge_dict(edge: Edge) -> dict[str, object]:
 
 
 def _observation_key(item: EvidenceRef) -> tuple[object, ...]:
-    return (*_source_key(item.source), item.source_digest, item.rule_id, item.evidence_digest)
+    return (item.evidence_kind, item.source_path, item.source_digest, item.rule_id, item.evidence_digest)
 
 
 def _async_path_key(item: AsyncPathEvidence) -> tuple[object, ...]:
@@ -356,7 +339,7 @@ def _async_path_key(item: AsyncPathEvidence) -> tuple[object, ...]:
 
 def _assessment_payload(subject: CompositionCandidateRef, concurrency: str, paths: tuple[AsyncPathEvidence, ...], observations: tuple[tuple[EvidenceRef, ...], ...], status: CompatibilityStatus) -> dict[str, object]:
     def obs(values: tuple[EvidenceRef, ...]) -> list[dict[str, object]]:
-        return [{"evidence_digest": item.evidence_digest, "rule_id": item.rule_id, "source": _source_dict(item.source), "source_digest": item.source_digest} for item in values]
+        return [{"evidence_digest": item.evidence_digest, "evidence_kind": item.evidence_kind, "rule_id": item.rule_id, "source_digest": item.source_digest, "source_path": item.source_path} for item in values]
     return {"algorithm_version": ARCHITECTURE_ALGORITHM_VERSION, "async_paths": [item.evidence_digest for item in paths], "concurrency_model": concurrency, "config_observations": obs(observations[2]), "error_taxonomy_observations": obs(observations[1]), "logging_observations": obs(observations[0]), "platform_observations": obs(observations[3]), "status": status.value, "subject": _subject_dict(subject)}
 
 
@@ -372,4 +355,4 @@ def _budget_reject() -> BTSError:
     return BTSError(BTSRejectReason.REJECT_BUDGET_EXCEEDED, "architecture assessment budget exhausted", detail_code="architecture_budget_v1")
 
 
-__all__ = ["ARCHITECTURE_ALGORITHM_VERSION", "CATALOG_AUTHORITY", "CATALOG_SCHEMA_VERSION", "ArchitectureAssessment", "AsyncPathEvidence", "BlockingCallCatalog", "BlockingCallCatalogEntry", "CompatibilityStatus", "CompositionCandidateRef", "ConflictKind", "EvidenceRef", "assess_architecture", "classify_concurrency"]
+__all__ = ["ARCHITECTURE_ALGORITHM_VERSION", "CATALOG_AUTHORITY", "CATALOG_SCHEMA_VERSION", "ArchitectureAssessment", "AsyncPathEvidence", "BlockingCallCatalog", "BlockingCallCatalogEntry", "CandidateDependencyEvidence", "CompatibilityStatus", "CompositionCandidateRef", "ConflictKind", "EvidenceRef", "assess_architecture", "classify_concurrency"]

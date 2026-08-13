@@ -198,6 +198,40 @@ def test_portable_policy_validation_rejects_malformed_fields(
     assert caught.value.evidence.detail_code == detail
 
 
+def test_portable_policy_validation_rejects_mount_shape(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = _policy(fake_nsjail)
+    duplicate = replace(policy, readonly_mounts=(policy.readonly_mounts[0], policy.readonly_mounts[0]))
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(duplicate)
+    assert caught.value.evidence.detail_code == "noncanonical_mount_plan"
+    no_root = replace(policy, readonly_mounts=(replace(policy.readonly_mounts[0], destination="/input"),))
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(no_root)
+    assert caught.value.evidence.detail_code == "missing_rootfs_mount"
+
+
+def test_abort_bounds_reported_stream_lengths(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = _policy(fake_nsjail, output_limit=3)
+    draft = sandbox.ExecutionPlan(
+        sandbox.PLAN_SCHEMA,
+        policy,
+        policy.nsjail_path,
+        policy.nsjail_sha256,
+        policy.architecture,
+        (),
+        "",
+        policy.environment,
+        policy.wall_time_seconds,
+        policy.output_limit_bytes,
+        _digest(b"policy"),
+        _digest(b"plan"),
+        True,
+    )
+    result = sandbox._abort(draft, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, 99, 98)
+    assert result.abort is not None
+    assert (result.abort.stdout_bytes, result.abort.stderr_bytes) == (3, 3)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

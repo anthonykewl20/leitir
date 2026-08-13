@@ -281,8 +281,13 @@ for name in sorted(item for item in vars(module) if item.startswith("test_")) if
 builtins.__import__ = original_import
 runtime = "sha256:" + hashlib.sha256(json.dumps(sorted(set(observed)),separators=(",",":")).encode()).hexdigest()
 frame = {"donor_import_observed":any(name == "skeleton_donor" or name.startswith("skeleton_donor.") for name in observed),"outcomes":outcomes,"recorder_complete":True,"runtime_observation_digest":runtime,"schema_version":"leitir-rerun-runner-frame-v1","teardown_complete":donor_absent}
-print(json.dumps(frame,sort_keys=True,separators=(",",":")))
+sys.stdout.buffer.write(json.dumps(frame,sort_keys=True,separators=(",",":")).encode("utf-8") + b"\n")
 '''
+
+
+def test_runner_emits_canonical_frame_bytes_via_binary_stdout() -> None:
+    assert "sys.stdout.buffer.write(" in _RUNNER
+    assert "print(json.dumps" not in _RUNNER
 
 
 class TrustedFixtureExecution:

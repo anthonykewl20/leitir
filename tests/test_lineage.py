@@ -63,6 +63,13 @@ def test_manifest_construction_serialization_round_trip_and_swhid() -> None:
     assert member.source.blob_sha == _git_blob_sha(b"def answer():\n    return 42\n")
 
 
+def test_tracked_git_ref_rejects_pathological_invalid_ref_name() -> None:
+    ref_name = "refs/tags/" + ")/" * 5000 + "*"
+
+    with pytest.raises(ValueError, match="tracked_ref.ref_name"):
+        TrackedGitRef("example/donor", ref_name, BASE, "fake-git", "1")
+
+
 @pytest.mark.parametrize(
     ("resolution", "reason", "detail"),
     [

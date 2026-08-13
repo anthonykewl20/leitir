@@ -23,7 +23,18 @@ LOCATOR_VERSION = "leitir-node-source-locator-v1"
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
-_REF = re.compile(r"refs/(?:heads|tags)/[^\x00-\x20~^:?*\\]+(?:/[^\x00-\x20~^:?*\\]+)*\Z")
+
+
+def _valid_ref_name(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    parts = value.split("/")
+    if len(parts) < 3 or parts[0] != "refs" or parts[1] not in {"heads", "tags"}:
+        return False
+    return all(
+        part and all(ord(char) > 0x20 and char not in "~^:?*\\" for char in part)
+        for part in parts[2:]
+    )
 
 
 def _canonical(value: object) -> bytes:
@@ -102,7 +113,7 @@ class TrackedGitRef:
 
     def __post_init__(self) -> None:
         _text(self.repository_id, "tracked_ref.repository_id")
-        if not isinstance(self.ref_name, str) or _REF.fullmatch(self.ref_name) is None:
+        if not _valid_ref_name(self.ref_name):
             raise ValueError("tracked_ref.ref_name must be a full refs/heads/... or refs/tags/... name")
         _hex40(self.observed_commit_sha, "tracked_ref.observed_commit_sha")
         _text(self.resolver_id, "tracked_ref.resolver_id")

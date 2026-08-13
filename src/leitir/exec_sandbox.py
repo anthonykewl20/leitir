@@ -611,7 +611,7 @@ def _verified_directory_tree_digest(root: Path) -> str:
     return _digest_payload({"entries": entries, "schema_version": "leitir-directory-tree-v1"})
 
 
-def _verify_mount_sources(policy: ContainmentPolicy) -> None:
+def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     rootfs: ReadOnlyMount | None = None
     for mount in policy.readonly_mounts:
         try:

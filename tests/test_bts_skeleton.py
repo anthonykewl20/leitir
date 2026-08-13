@@ -281,8 +281,13 @@ for name in sorted(item for item in vars(module) if item.startswith("test_")) if
 builtins.__import__ = original_import
 runtime = "sha256:" + hashlib.sha256(json.dumps(sorted(set(observed)),separators=(",",":")).encode()).hexdigest()
 frame = {"donor_import_observed":any(name == "skeleton_donor" or name.startswith("skeleton_donor.") for name in observed),"outcomes":outcomes,"recorder_complete":True,"runtime_observation_digest":runtime,"schema_version":"leitir-rerun-runner-frame-v1","teardown_complete":donor_absent}
-print(json.dumps(frame,sort_keys=True,separators=(",",":")))
+sys.stdout.buffer.write(json.dumps(frame,sort_keys=True,separators=(",",":")).encode("utf-8") + b"\n")
 '''
+
+
+def test_runner_emits_canonical_frame_bytes_via_binary_stdout() -> None:
+    assert "sys.stdout.buffer.write(" in _RUNNER
+    assert "print(json.dumps" not in _RUNNER
 
 
 class TrustedFixtureExecution:
@@ -310,6 +315,12 @@ class TrustedFixtureExecution:
             source_root = root / "src"
             test_file = root / "tests" / "rewritten" / "test_contract.py"
             environment = {"LANG": "C.UTF-8", "PYTHONHASHSEED": "0", "TZ": "UTC"}
+            # Windows interpreter bootstrap requires these host-startup accommodations;
+            # they are not integrity controls (issue #128).
+            if sys.platform == "win32":
+                for _name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT"):
+                    if _name in os.environ:
+                        environment[_name] = os.environ[_name]
             completed = subprocess.run(
                 (sys.executable, "-S", "-s", "-P", "-c", _RUNNER, str(source_root), str(test_file), str(self.donor_root)),
                 check=False,
@@ -375,7 +386,6 @@ def fixture_copy(tmp_path: Path) -> Path:
     return target
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy)
 
@@ -397,7 +407,6 @@ def test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity(fi
     assert result.verdict.validation_digest.startswith("sha256:")
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_offline_missing_required_helper_rejects(fixture_copy: Path) -> None:
     result, execution = _run(fixture_copy, remove_helper=True)
 

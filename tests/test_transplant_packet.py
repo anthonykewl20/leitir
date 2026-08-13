@@ -119,7 +119,6 @@ def complete(tmp_path: Path) -> tuple[Path, object]:
     return root, result
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_reuse_packet_is_canonical_uncompressed_ustar_and_round_trips(complete: tuple[Path, object], tmp_path: Path) -> None:
     root, result = complete
     packet = build_reuse_packet(result.bts, result.verdict, inputs=_inputs(result, PacketKind.REUSE), relocation=result.relocation, payloads=_payloads(root, result))  # type: ignore[attr-defined]
@@ -144,7 +143,32 @@ def test_reuse_packet_is_canonical_uncompressed_ustar_and_round_trips(complete: 
     assert target.read_bytes() == packet.archive_bytes
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
+def test_publish_packet_skips_directory_fsync_on_windows(complete: tuple[Path, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, result = complete
+    packet = build_reuse_packet(result.bts, result.verdict, inputs=_inputs(result, PacketKind.REUSE), relocation=result.relocation, payloads=_payloads(root, result))  # type: ignore[attr-defined]
+    target = tmp_path / "packet.leitir-bts.tar"
+
+    # Windows rerun coverage for #128.
+    real_open = os.open
+    opened: list[object] = []
+
+    def _spy(path, flags, *args, **kwargs):
+        opened.append(path)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", _spy)
+    monkeypatch.setattr("leitir.transplant.Path", type(target))
+    monkeypatch.setattr(os, "name", "nt")
+    try:
+        publish_packet(packet, target)
+    finally:
+        # Restore the process-wide os module before pytest constructs paths.
+        monkeypatch.undo()
+
+    assert target.read_bytes() == packet.archive_bytes
+    assert all(Path(str(item)).resolve() != target.parent.resolve() for item in opened)
+
+
 def test_reference_packet_is_closed_metadata_only(complete: tuple[Path, object]) -> None:
     root, result = complete
     donor_bytes = (root / "skeleton_donor/policy.py").read_bytes()
@@ -169,7 +193,6 @@ def test_non_complete_bts_is_refused(complete: tuple[Path, object], status: BTSS
     assert failure.value.reason is BTSRejectReason.REJECT_HARD_GATE_FAILED
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_archive_tamper_fails_closed(complete: tuple[Path, object]) -> None:
     root, result = complete
     packet = build_reuse_packet(result.bts, result.verdict, inputs=_inputs(result, PacketKind.REUSE), relocation=result.relocation, payloads=_payloads(root, result))  # type: ignore[attr-defined]
@@ -182,7 +205,6 @@ def test_archive_tamper_fails_closed(complete: tuple[Path, object]) -> None:
     assert failure.value.reason is BTSRejectReason.REJECT_BUNDLE_INVALID
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_claim_is_receipt_verification_not_end_to_end_revalidation(complete: tuple[Path, object]) -> None:
     root, result = complete
     packet = build_reuse_packet(result.bts, result.verdict, inputs=_inputs(result, PacketKind.REUSE), relocation=result.relocation, payloads=_payloads(root, result))  # type: ignore[attr-defined]
@@ -191,7 +213,6 @@ def test_claim_is_receipt_verification_not_end_to_end_revalidation(complete: tup
     assert b'"integrity_model":"integrity_not_authenticity"' in packet.bundle_json
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="BTS contained rerun runner aborts on Windows; tracked in #128 (validated on Linux + macOS)")
 def test_archive_bytes_are_pythonhashseed_independent() -> None:
     script = r'''
 import shutil, tempfile

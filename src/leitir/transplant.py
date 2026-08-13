@@ -997,7 +997,7 @@ def load_packet(archive_bytes: bytes) -> Packet:
 
 
 def publish_packet(packet: Packet, target: Path) -> None:
-    """Atomically publish an already-built packet and fsync its directory."""
+    """Atomically publish an already-built packet and fsync its directory (directory fsync on POSIX)."""
 
     if not isinstance(packet, (ReferencePacket, ReusePacket)) or not isinstance(target, Path):
         raise TypeError("publish_packet requires a packet and pathlib.Path target")
@@ -1019,11 +1019,12 @@ def publish_packet(packet: Packet, target: Path) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, target)
-        directory_fd = os.open(target.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if os.name == "posix":
+            directory_fd = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

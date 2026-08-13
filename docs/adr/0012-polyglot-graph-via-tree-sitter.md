@@ -1,7 +1,7 @@
 # ADR-0012: Polyglot graph via tree-sitter
 
-- Status: Proposed
-- Deciders: leitir maintainers; consensus reviewers
+- Status: Accepted
+- Deciders: leitir maintainers; consensus reviewers; consensus-terra review 2026-08-13 (ACCEPT-WITH-AMENDMENTS, amendments applied same day)
 - Date: 2026-08-13
 - Technical Story: #81 — Multi-language graph via tree-sitter
 
@@ -85,6 +85,18 @@ incompatible runtime/grammar tuple cannot authorize graph production. The
 literal-invariant tests in `tests/test_score_process.py` and
 `tests/test_score_code_health.py` remain valid.
 
+The installation command for graph production and CI MUST use both
+`--require-hashes` and `--only-binary :all:`. The lock lists SHA-256 hashes for
+every accepted wheel for every supported Python/platform tag; source
+distributions and locally built wheels are not accepted graph-production
+artifacts. If the selected platform has no exact accepted wheel hash, graph
+production fails closed with
+`BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+detail_code="tree_sitter_platform_hash_unavailable_v1")`. A missing optional
+extra fails with the distinct typed unsupported-extra failure. Neither condition
+may return a no-op graph, omit the language, use a source build, or fall back to
+regex or another producer.
+
 The integration mirrors the published `py-tree-sitter` binding shape verbatim:
 
 ```python
@@ -95,10 +107,21 @@ JAVASCRIPT_LANGUAGE = Language(tsjavascript.language())
 parser = Parser(JAVASCRIPT_LANGUAGE)
 ```
 
-Each other grammar is loaded through its own wheel's `language()` function in
-the same form. Leitir does not compile grammars from ambient source, load shared
-objects by discovered path, or select an installed grammar by version
-preference.
+Each grammar is loaded through the exact factory exported by its pinned wheel;
+the factory name is a pinned `GraphExtractionPolicy.grammar_factory` field.
+JavaScript, Rust, and Go export `language()`. TypeScript exports
+`language_typescript()` and, when TSX is in scope, `language_tsx()`:
+
+```python
+import tree_sitter_typescript as tstypescript
+from tree_sitter import Language, Parser
+
+TYPESCRIPT_LANGUAGE = Language(tstypescript.language_typescript())
+parser = Parser(TYPESCRIPT_LANGUAGE)
+```
+
+Leitir does not compile grammars from ambient source, load shared objects by
+discovered path, or select an installed grammar by version preference.
 
 The tree-sitter CLI subprocess option is rejected. Its published command
 surface in `crates/cli/src/main.rs` serves grammar generation, parsing, querying,
@@ -125,8 +148,20 @@ def register_graph_extractor(
 
 Registration returns the previous producer for the normalized language, making
 test substitution and restoration explicit. Built-in producers are registered
-explicitly at package initialization. JavaScript, TypeScript, Rust, and Go use
-static modules at `src/leitir/graph/javascript.py`,
+explicitly through stdlib-only lazy thunks at package initialization.
+`leitir.graph.__init__` and every registry module MUST remain importable without
+the optional extra: they MUST NOT import a language-producer module or
+`tree_sitter`/`tree_sitter_*` binding. A language-producer module MUST import its
+native runtime and grammar binding only inside the invoked producer function,
+after the explicit language and policy checks. Registration may name a lazy
+thunk, but the thunk is invoked only by `make_graph_provider`/the returned
+`GraphProvider`. Thus `import leitir` and `import leitir.graph` succeed on a
+stdlib-only installation. Missing optional bindings at production invocation
+raise the typed failure specified in section 1; they never select an empty graph,
+regex fallback, another language producer, or an ambient host producer.
+
+JavaScript, TypeScript, Rust, and Go use static modules at
+`src/leitir/graph/javascript.py`,
 `src/leitir/graph/typescript.py`, `src/leitir/graph/rust.py`, and
 `src/leitir/graph/go.py`; there is no entry-point scanning, filesystem
 discovery, environment-selected module, host-package preference, or unpinned
@@ -141,6 +176,60 @@ def make_graph_provider(
     policy: GraphExtractionPolicy,
 ) -> Callable[[Path], Graph]: ...
 ```
+
+#### Extraction request and policy contract
+
+`GraphExtractionPolicy` and `GraphExtractionRequest` are frozen, slotted,
+closed-schema dataclasses. Unknown fields, unknown schema versions, malformed
+digests, booleans in integer fields, non-positive limits, duplicate source
+records, and unequal request/policy language values reject before native imports
+or source reads. Their normative v1 fields are:
+
+```python
+@dataclass(frozen=True, slots=True)
+class GraphExtractionPolicy:
+    schema_version: str
+    authority: str
+    policy_id: str
+    language: str
+    requirements_lock_digest: str
+    runtime_distribution: str
+    runtime_version: str
+    grammar_distribution: str
+    grammar_version: str
+    grammar_factory: str
+    grammar_abi_version: int
+    query_id: str
+    query_sha256: str
+    producer_id: str
+    producer_version: str
+    resolution_rule_version: str
+    source_selection_version: str
+    max_files: int
+    max_file_bytes: int
+    max_tree_nodes_per_file: int
+    max_query_matches: int
+    max_symbols: int
+    max_edges: int
+    max_work_units: int
+    policy_digest: str
+
+@dataclass(frozen=True, slots=True)
+class GraphExtractionRequest:
+    language: str
+    source_root: Path
+    source_files: tuple[SourceRef, ...]
+    policy: GraphExtractionPolicy
+```
+
+`source_files` is the complete, sorted, unique declared analysis scope. A
+producer reads only those verified donor-relative files and may not enumerate the
+filesystem to enlarge scope. `policy_digest` is recomputed from every policy
+field except itself. Query text is identified by exact SHA-256; runtime, grammar,
+factory, producer, resolution-rule, source-selection, query, lock, and complete
+budget identities are canonical graph inputs. Every limit is checked
+prospectively; budget exhaustion emits typed blocker evidence and cannot produce
+a complete graph.
 
 The adapter resolves exactly one explicitly registered producer, binds the
 validated snapshot, normalized language, and extraction policy, and returns the

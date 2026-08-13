@@ -13,13 +13,16 @@ import re
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from itertools import pairwise
+
 from leitir.bts import (
-    AdaptRule,
     AdapterCatalog,
+    AdaptRule,
     BTSDisposition,
     BTSReport,
     BTSStatus,
     _disposition_key,
+)
+from leitir.bts import (
     _digest as _bts_digest,
 )
 from leitir.candidates import CandidateKey
@@ -30,7 +33,7 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _MAX_COUNT = 10**9
 
 
-class CostObservationState(str, Enum):
+class CostObservationState(str, Enum):  # noqa: UP042
     KNOWN = "known"
     UNKNOWN = "unknown"
     ERROR = "error"
@@ -38,7 +41,7 @@ class CostObservationState(str, Enum):
     NOT_APPLICABLE = "not_applicable"
 
 
-class CostConfidence(str, Enum):
+class CostConfidence(str, Enum):  # noqa: UP042
     EXACT = "exact"
 
 

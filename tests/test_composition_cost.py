@@ -10,9 +10,9 @@ from dataclasses import fields, replace
 import pytest
 
 from leitir.bts import (
-    AdaptRule,
     AdapterCatalog,
     AdapterCatalogEntry,
+    AdaptRule,
     AnalysisInputs,
     BTSBudget,
     BTSDisposition,
@@ -21,8 +21,11 @@ from leitir.bts import (
     BudgetCounters,
     DispositionEvidence,
     MemberEvidence,
+)
+from leitir.bts import (
     _digest as _bts_digest,
 )
+from leitir.comparison import DependencyCostValue
 from leitir.cost import (
     COST_EVIDENCE_SCHEMA,
     CostConfidence,
@@ -31,12 +34,13 @@ from leitir.cost import (
     CostObservationState,
     DependencyDelta,
     IntegrationCostEvidence,
-    TestSurfaceChange as SurfaceChange,
     collect_integration_cost_evidence,
     dependency_cost_value,
     extraction_difficulty_value,
 )
-from leitir.comparison import DependencyCostValue
+from leitir.cost import (
+    TestSurfaceChange as SurfaceChange,
+)
 from leitir.graph.model import Edge, EdgeKind, EdgeProvenance, NodeId, NodeKind, NodeOrigin, SourceRef
 
 

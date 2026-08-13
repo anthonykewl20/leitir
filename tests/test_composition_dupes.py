@@ -353,4 +353,4 @@ with tempfile.TemporaryDirectory() as directory:
         capture_output=True,
         text=True,
     )
-    assert result.stdout.strip() == "sha256:b96f97e5bef59a1044defff960fdf15ad0f0059ba9cffdd098058e32b4cf135c"
+    assert result.stdout.strip() == "sha256:f5db67df441f9161dbf82984b76189ce34a1628e254c485537b9ce9e0086d01c"

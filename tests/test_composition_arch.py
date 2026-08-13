@@ -116,8 +116,10 @@ def test_observations_are_sorted_carried_and_verdict_neutral():
     graph = _graph((root, external), (_edge(root, external, 1),))
     catalog = BlockingCallCatalog.create("python-blocking", "1", ())
     baseline = assess_architecture(_subject(), graph, catalog)
-    later = EvidenceRef(SourceRef("o/r", "a" * 40, "z.py", "b" * 40, 2, 1, 2, 2), "sha256:2", "rule-z", "sha256:z")
-    earlier = EvidenceRef(SourceRef("o/r", "a" * 40, "a.py", "b" * 40, 1, 1, 1, 2), "sha256:1", "rule-a", "sha256:a")
+    later_source = SourceRef("o/r", "a" * 40, "z.py", "b" * 40, 2, 1, 2, 2)
+    earlier_source = SourceRef("o/r", "a" * 40, "a.py", "b" * 40, 1, 1, 1, 2)
+    later = EvidenceRef("architecture_observation", later_source.path, "sha256:2", "rule-z", "sha256:z")
+    earlier = EvidenceRef("architecture_observation", earlier_source.path, "sha256:1", "rule-a", "sha256:a")
     supplied = (later, earlier)
     observed = assess_architecture(
         _subject(),

@@ -62,6 +62,17 @@ class CompositionCandidateRef:
     graph_digest: str
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class EvidenceRef:
+    """Canonical content-bound composition observation."""
+
+    evidence_kind: str
+    source_path: str
+    source_digest: str
+    rule_id: str
+    evidence_digest: str
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateDependencyEvidence:
     subject: CompositionCandidateRef
@@ -320,5 +331,6 @@ def evaluate_eligibility(matrix: ConflictMatrix) -> CompositionEligibility:
 __all__ = [
     "CandidateDependencyEvidence", "ClosureCompleteness", "CompatibilityStatus",
     "CompositionCandidateRef", "CompositionEligibility", "CompositionEligibilityStatus",
-    "ConflictKind", "ConflictMatrix", "ConflictRecord", "compose", "evaluate_eligibility",
+    "ConflictKind", "ConflictMatrix", "ConflictRecord", "EvidenceRef", "compose",
+    "evaluate_eligibility",
 ]

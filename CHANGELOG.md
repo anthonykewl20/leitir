@@ -74,6 +74,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - generate CHANGELOG from conventional commits + drift gate (`changelog`)
 - GitHub-only release pipeline + PyPI deferred path (`distribution`)
 - Go module multi-host (gitlab/bitbucket/golang.org/x) (`corpus`)
+- integration-cost evidence (#79) (`cost`)
 - leitir doctor, version-aware update check, easy install, skill rewrite
 - leitir info one-shot context + --json for get/trust/api/examples (`corpus`)
 - load-time tree verification + bounded sampling (`materialize`)

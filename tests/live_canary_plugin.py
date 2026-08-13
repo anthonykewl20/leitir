@@ -101,7 +101,7 @@ def pytest_collectreport(report: pytest.CollectReport) -> None:
             {
                 "class": "configuration-failure",
                 "kind": "",
-                "nodeid": report.nodeid,
+                "nodeid": report.nodeid or report.location[0],
                 "surface": config.getoption("--live-canary-surface"),
             },
         )

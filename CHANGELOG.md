@@ -91,6 +91,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - upstream tracking, drift alerts, bundle v2 (#80) (`lineage`)
 - widen pinned search benchmark to eight languages (`bench`)
 
+### Changed
+- serve scoped search from verified local shelves; complete Go module, license, and API-surface support (`search`)
+
 ### Fixed
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)

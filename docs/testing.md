@@ -79,7 +79,7 @@ ruff check .
 mypy src
 ```
 
-The suite target is at least 2289 passing tests and zero failures. Live tests
+The suite target is at least 2329 passing tests and zero failures. Live tests
 remain gated by `LEITIR_ENABLE_LIVE_E2E=1`. Security, integrity, and
 materialization changes also require independent review by the required
 reviewer(s) or a human equivalent.

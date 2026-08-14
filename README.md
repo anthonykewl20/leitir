@@ -95,9 +95,6 @@ flowchart LR
 # Install the latest from GitHub
 pip install git+https://github.com/anthonykewl20/leitir.git
 
-# Or pin to a specific release tag
-pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.0
-
 # Then use the `leitir` command
 leitir info npm:zod@3.22.0
 ```
@@ -324,11 +321,11 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2164 passed, 61 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2279 passed, 61 skipped**.
 
 ## Repository layout
 
-- `src/leitir/` — kernel and corpus implementation: `resolver`, `materialize`, `parity`, `snapshot`, `sbom`, `apisurface`, `examples`, `diff`, `trust`, `lockfiles`, `cli`, plus search, ranking, and benchmark code.
+- `src/leitir/` — kernel and corpus implementation: `resolver`, `materialize`, `parity`, `snapshot`, `sbom`, `apisurface`, `examples`, `diff`, `trust`, `lockfiles`, `cli`, plus search, ranking, benchmark, composition, architecture, duplicates, lineage, cost, and occupied code.
 - `src/leitir/benchmarks/search-v1/` — deterministic ranked-search benchmark manifest.
 - `src/leitir/benchmarks/corpus-v1/` — corpus fetch-correctness benchmark manifest.
 - `tools/score_engine.py` — standalone ADR-002 scorer.
@@ -340,7 +337,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 ## Documentation
 
-- ADRs: [0001](docs/adr/0001-remove-hy3-deterministic-search.md), [0002](docs/adr/0002-deterministic-evidence-scoring-engine.md), [0003](docs/adr/0003-categorized-http-retry.md), [0004](docs/adr/0004-local-source-materialization.md), [0005](docs/adr/0005-corpus-v2-capabilities.md), [0006](docs/adr/0006-load-time-tree-verification.md)
+- [Architecture Decision Records](docs/adr/README.md)
 - [docs/STATUS.md](docs/STATUS.md)
 - [docs/scoring.md](docs/scoring.md)
 - [skills/leitir/SKILL.md](skills/leitir/SKILL.md)

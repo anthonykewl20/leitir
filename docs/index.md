@@ -25,7 +25,7 @@ plus a deterministic code-search kernel for AI coding agents.
 
 - [Current status](STATUS.md) — what is implemented and what is open
 - [GitHub search capabilities](search-capabilities.md) — wide discovery, scoped search, coverage, and limitations
-- [Roadmap](../ROADMAP.md) — v0.1.2 milestone priorities; v1.0 reserved for adoption milestone
+- [Roadmap](../ROADMAP.md) — v0.1.3/v0.1.4 milestones; v1.0 reserved for adoption
 - [Architecture Decision Records](adr/) — durable design decisions
 
 ## Development

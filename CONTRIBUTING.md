@@ -122,4 +122,5 @@ its behavior, and responding to review feedback.
 ## More project guidance
 
 - [AGENTS.md](AGENTS.md) defines the repository workflow for AI agents.
-- [ROADMAP.md](ROADMAP.md) tracks priorities toward Production-ready v1.0.
+- [ROADMAP.md](ROADMAP.md) tracks priorities toward production-ready quality
+  (achieved in 0.x); v1.0 is reserved for the 10,000-users adoption milestone.

@@ -74,5 +74,7 @@ Breaking CLI, manifest, snapshot, and compatibility changes are documented in
 and migration action. The changelog is the release-facing record; this policy
 document explains the compatibility rules and does not replace release notes.
 
-The current `[Unreleased]` entries document the snapshot v2 change,
-`--lock-sha256` requirement, and legacy cache refresh behavior.
+The current `[Unreleased]` entries document the snapshot v2 and
+`--lock-sha256` changes, legacy cache refresh behavior, the BTS program, and
+the v0.1.3 composition, architecture, duplicates, lineage, cost, and occupied
+work.

@@ -31,7 +31,7 @@ Strengthen `validate_report` to authorize the complete `(slug, commit, path, blo
 - [ ] Run under `PYTHONHASHSEED=0`, `1`, and `42`.
 
 ## Engineering workflow gates
-- [ ] No new dependency; suite remains >= current 2279 passed, 0 failed.
+- [ ] No new dependency; suite remains >= current 2289 passed, 0 failed.
 - [ ] `ruff`, `mypy`, scorecard decision `pass`.
 - [ ] Independent hy3 and deepseek security/integrity review.
 
@@ -69,7 +69,7 @@ The internal global searcher already has budgets, but callers cannot control the
 - [ ] Run multi-seed determinism probes.
 
 ## Engineering workflow gates
-- [ ] Suite >= current 2279 passed, ruff clean, mypy clean, scorecard `pass`.
+- [ ] Suite >= current 2289 passed, ruff clean, mypy clean, scorecard `pass`.
 - [ ] Live checks remain behind `LEITIR_ENABLE_LIVE_E2E=1`; ASV not required.
 
 ## Dependencies
@@ -105,7 +105,7 @@ Python AST and Python regex must coexist with first-eligible routing. A mutable 
 - [ ] Run the existing adapter fixture suite under multiple hash seeds.
 
 ## Engineering workflow gates
-- [ ] Zero behavior change; suite >= current 2279 passed, ruff, mypy, scorecard `pass`.
+- [ ] Zero behavior change; suite >= current 2289 passed, ruff, mypy, scorecard `pass`.
 
 ## Dependencies
 Blocked by: none. Blocks: S2b, S-wholefile, S5, S6, S8.

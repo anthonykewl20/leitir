@@ -136,6 +136,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
 
 ### Security
+- bind gate evidence to pinned attachment policy (`occupied`)
 - close fail-closed gap for non-dict GitHub tree payloads (`search`)
 - close integrity residuals (#28 #39) (`materialize`)
 - corpus integrity hardening (#28 #29 #30 #31 #32 #39) (`materialize`)

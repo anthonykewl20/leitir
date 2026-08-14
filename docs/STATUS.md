@@ -39,12 +39,26 @@ published results.
 
 ### v0.1.3 — composition and multi-language
 
-ADR-0013 through ADR-0017 and ADR-0019 are Accepted. Composition,
-architecture, duplicate-abstraction detection, lineage, integration-cost, and
-occupied-recipient validation landed through PRs #132–#139; #82 is closed by
-PR #139. Only #81 (tree-sitter; ADR-0012 questions answered on `main`,
-implementation not started) and epic #40 (manifest authenticity; ADR-0018
-Proposed for v2.0) remain in the milestone.
+ADR-0012 through ADR-0017 and ADR-0019 are Accepted; ADR-0012 is fully
+implemented in this PR. Its stage-1 policy/registry and stage-2 JavaScript,
+TypeScript, Rust, and Go producers live in
+`src/leitir/graph/{ts_kernel,javascript,typescript,rust,go}.py`, backed by the
+hash-locked optional `tree-sitter` extra and `requirements-tree-sitter.lock`.
+The certified tuple is `tree-sitter==0.25.2` with JavaScript 0.25.0, TypeScript
+0.23.2, Rust 0.24.2, and Go 0.25.0; it is wheel-only and fails closed on
+unsupported platforms, including musllinux-aarch64. Its 66 wheel SHA-256
+digests are installed only with `--require-hashes --only-binary :all:`; a
+missing extra rejects with `REJECT_UNSUPPORTED_EXTRA`. The 3.12/3.14
+tree-sitter CI job runs all four polyglot test files. ADR-0012's tuple ABI,
+hash/platform, and measured-limits questions are answered, with the 7,544-file
+limits evidence at `docs/evidence/oq3-tree-sitter-limits-2026-08-14.md`.
+The producers remain conservative and never guess, with per-language golden,
+tamper, determinism, and budget tests.
+Composition, architecture, duplicate-abstraction detection, lineage,
+integration-cost, and occupied-recipient validation landed through PRs
+#132–#139; #82 is closed by PR #139. Only epic #40 (manifest authenticity;
+ADR-0018 Proposed for v2.0) remains as implementation work; #148 is unblocked
+for design subject to owner promotion.
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
 
@@ -53,6 +67,12 @@ drop from a seven-minute timeout to 1.8s with 0 blob GETs; expanded first-party
 Go API extraction from 0 to 93 symbols; refreshed license detection from null to
 Apache-2.0; and made `gopkg.in` and `google.golang.org` modules resolve and
 verify through authenticated Go module zips.
+
+2026-08-14: #144 is resolved by retaining the full materialized-tree-hash
+requirement for trigram-index eligibility. The documented local-shelf exception
+continues to serve verified local bytes without weakening index eligibility.
+SumDB response reads are bounded to 1 MiB and fail closed with
+`SumDBVerificationError`.
 
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
@@ -132,9 +152,10 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2347 passed, 63 skipped**. The skips are
-opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
-`LEITIR_ENABLE_SCORE_LIVE=1`.
+Offline suite: **2408 passed, 113 skipped**. The skips are opt-in live tests
+behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1` and polyglot
+tests that require the optional tree-sitter extra; with that extra installed,
+the four polyglot test files run **105 additional tests**.
 
 ## What the scorer says about Leitir
 

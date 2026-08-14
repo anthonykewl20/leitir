@@ -79,7 +79,8 @@ ruff check .
 mypy src
 ```
 
-The suite target is at least 2347 passing tests and zero failures. Live tests
+The suite target is 2408 passed, 113 skipped, and zero failures. Installing the
+optional tree-sitter extra additionally runs 105 polyglot tests. Live tests
 remain gated by `LEITIR_ENABLE_LIVE_E2E=1`. Security, integrity, and
 materialization changes also require independent review by the required
 reviewer(s) or a human equivalent.

@@ -37,6 +37,9 @@ flowchart TD
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
 - `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
 - API surface indexes with stdlib `ast` extraction for Python, Go exported-symbol extraction, and conservative JS/TS heuristics behind a plugin hook.
+- Optional hash-locked tree-sitter graph producers for JavaScript, TypeScript,
+  Rust, and Go; graph production feeds BTS computation only, while relocation,
+  rerun, probes, and donor-line accounting remain Python-only.
 - Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
 - BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3
@@ -101,6 +104,14 @@ leitir info npm:zod@3.22.0
 
 Leitir is distributed via GitHub. The runtime is stdlib-only (`dependencies = []`),
 so no third-party runtime dependencies are pulled in.
+
+For optional JavaScript/TypeScript/Rust/Go graph production:
+
+```bash
+pip install 'leitir[tree-sitter]'
+# Checkout/CI installs use the ADR-0012 wheel-only, hash-locked tuple:
+uv pip install --require-hashes --only-binary :all: -r requirements-tree-sitter.lock
+```
 
 Behavioral-transplant donor execution is default-off and Linux-only. It requires
 the exact opt-in `LEITIR_ENABLE_DONOR_EXECUTION=1` and a release-pinned external
@@ -321,11 +332,11 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2347 passed, 63 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2408 passed, 113 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
 
 ## Repository layout
 
-- `src/leitir/` — kernel and corpus implementation: `resolver`, `materialize`, `parity`, `snapshot`, `sbom`, `apisurface`, `examples`, `diff`, `trust`, `lockfiles`, `cli`, plus search, ranking, benchmark, composition, architecture, duplicates, lineage, cost, and occupied code.
+- `src/leitir/` — kernel and corpus implementation: `resolver`, `materialize`, `parity`, `snapshot`, `sbom`, `apisurface`, `examples`, `diff`, `trust`, `lockfiles`, `cli`, plus search, ranking, benchmark, composition, architecture, duplicates, lineage, cost, occupied, and optional polyglot graph code.
 - `src/leitir/benchmarks/search-v1/` — deterministic ranked-search benchmark manifest.
 - `src/leitir/benchmarks/corpus-v1/` — corpus fetch-correctness benchmark manifest.
 - `tools/score_engine.py` — standalone ADR-002 scorer.
@@ -334,6 +345,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - `docs/` — ADRs, status, scoring docs, and historical notes.
 - `tests/` — offline suite with opt-in live gates and fixtures.
 - `requirements.txt` — pinned development/CI dependency closure, not a runtime requirement.
+- `requirements-tree-sitter.lock` — wheel-only, hash-locked optional tree-sitter tuple from ADR-0012.
 
 ## Documentation
 

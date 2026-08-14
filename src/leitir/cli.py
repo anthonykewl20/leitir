@@ -204,6 +204,31 @@ def _search_page_budget(raw: str) -> int:
     return _bounded_search_budget(raw, maximum=MAX_SEARCH_PAGES)
 
 
+def _parse_bts_compute_spec(raw: str) -> tuple[str, str, str]:
+    """Parse the exact ``owner/repo@commit`` shelf identity used by BTS."""
+
+    try:
+        slug, commit_sha = raw.rsplit("@", 1)
+        owner, repo = slug.split("/", 1)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "BTS spec must be owner/repo@40-character-lowercase-commit-sha"
+        ) from exc
+    if (
+        not owner
+        or not repo
+        or "@" in owner
+        or "@" in repo
+        or "/" in repo
+        or len(commit_sha) != 40
+        or any(character not in "0123456789abcdef" for character in commit_sha)
+    ):
+        raise argparse.ArgumentTypeError(
+            "BTS spec must be owner/repo@40-character-lowercase-commit-sha"
+        )
+    return owner, repo, commit_sha
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="leitir",
@@ -386,6 +411,62 @@ def build_parser() -> argparse.ArgumentParser:
     gc_roots = gc.add_mutually_exclusive_group()
     gc_roots.add_argument("--root", default=None, help="corpus root directory")
     gc_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+
+    bts_compute = commands.add_parser(
+        "bts-compute",
+        help="compute a Behavioral Transplant Set from an exact verified shelf",
+    )
+    bts_compute.add_argument(
+        "spec", type=_parse_bts_compute_spec, metavar="owner/repo@commit"
+    )
+    bts_roots = bts_compute.add_mutually_exclusive_group()
+    bts_roots.add_argument("--root", default=None, help="corpus root directory")
+    bts_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    bts_compute.add_argument(
+        "--language",
+        choices=("python", "javascript", "typescript", "rust", "go"),
+        default="python",
+    )
+    bts_compute.add_argument(
+        "--lock",
+        default="requirements-tree-sitter.lock",
+        help="tree-sitter requirements lock (resolved from the current directory)",
+    )
+    bts_compute.add_argument(
+        "--policy",
+        default=None,
+        help="closed-schema BTS resolution policy JSON; without it the pinned empty policy is used, so COMPLETE typically requires policy coverage for stdlib or external usage",
+    )
+    bts_compute.add_argument("--seed-module", required=True)
+    bts_compute.add_argument("--seed-name", required=True)
+    bts_compute.add_argument("--out", required=True, help="empty artifact output directory")
+    bts_compute.add_argument("--json", action="store_true", dest="as_json")
+
+    architecture = commands.add_parser(
+        "analysis-architecture",
+        help="assess a canonical graph artifact for architecture compatibility",
+    )
+    architecture.add_argument("graph", metavar="graph.json")
+    architecture.add_argument("--subject", required=True)
+    architecture.add_argument("--catalog", default=None)
+    architecture.add_argument(
+        "--declared-concurrency",
+        choices=("sync", "async", "mixed", "unknown"),
+        default=None,
+    )
+    architecture.add_argument("--json", action="store_true", dest="as_json")
+
+    lineage = commands.add_parser(
+        "analysis-lineage", help="validate a canonical lineage manifest"
+    )
+    lineage.add_argument("manifest", metavar="manifest.json")
+    lineage.add_argument("--json", action="store_true", dest="as_json")
+
+    exit_gate = commands.add_parser(
+        "exit-gate-validate", help="validate pinned exit-corpus manifest evidence"
+    )
+    exit_gate.add_argument("corpus", metavar="corpus.json")
+    exit_gate.add_argument("--json", action="store_true", dest="as_json")
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -1779,6 +1860,29 @@ def _write_summary(report: SearchReport, *, file: TextIO) -> None:
         print(f"  ... and {len(report.matches) - 10} more", file=file)
 
 
+def _write_cli_payload(payload: dict[str, object], *, as_json: bool, out: TextIO) -> None:
+    if as_json:
+        print(json.dumps(payload, sort_keys=True), file=out)
+        return
+    for key in sorted(payload):
+        value = payload[key]
+        if isinstance(value, (dict, list, tuple)):
+            rendered = json.dumps(value, sort_keys=True)
+        else:
+            rendered = str(value)
+        print(f"{key}={rendered}", file=out)
+
+
+def _write_bts_error(exc: Exception, *, as_json: bool, err: TextIO) -> None:
+    if as_json:
+        from .bts_errors import BTSError
+
+        if isinstance(exc, BTSError):
+            print(f"leitir: error: {exc.to_json().strip()}", file=err)
+            return
+    print(f"leitir: error: {redact(str(exc))}", file=err)
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -1878,6 +1982,68 @@ def main(
             f"artifact_sha256={run.digest()}",
             file=err,
         )
+        return successful()
+
+    if args.command in {
+        "bts-compute",
+        "analysis-architecture",
+        "analysis-lineage",
+        "exit-gate-validate",
+    }:
+        try:
+            if args.command == "bts-compute":
+                from .bts_cli import SeedSelector, run_bts_compute, write_artifacts
+
+                owner, repo, commit_sha = args.spec
+                artifacts = run_bts_compute(
+                    _corpus_root(args, err),
+                    owner,
+                    repo,
+                    commit_sha,
+                    language=args.language,
+                    lock_path=Path(args.lock).expanduser().absolute(),
+                    policy_path=None if args.policy is None else Path(args.policy).expanduser().absolute(),
+                    seed=SeedSelector(args.seed_module, args.seed_name),
+                )
+                output_directory = Path(args.out).expanduser().absolute()
+                write_artifacts(artifacts, output_directory)
+                if args.as_json:
+                    _write_cli_payload(artifacts.summary, as_json=True, out=out)
+                else:
+                    _write_cli_payload(artifacts.summary, as_json=False, out=err)
+                    print(
+                        f"leitir: wrote BTS artifacts to {output_directory}", file=err
+                    )
+            elif args.command == "analysis-architecture":
+                from .analysis_cli import run_architecture_assessment
+
+                payload = run_architecture_assessment(
+                    Path(args.graph),
+                    subject=args.subject,
+                    catalog_path=Path(args.catalog) if args.catalog is not None else None,
+                    declared_concurrency=args.declared_concurrency,
+                )
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            elif args.command == "analysis-lineage":
+                from .analysis_cli import validate_lineage_manifest
+
+                payload = validate_lineage_manifest(Path(args.manifest))
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            else:
+                from .exit_corpus import (
+                    cross_check_against_gate,
+                    validate_corpus_manifest,
+                )
+
+                corpus_path = Path(args.corpus)
+                payload = {
+                    "cross_check_against_gate": cross_check_against_gate(corpus_path),
+                    "validation": validate_corpus_manifest(corpus_path),
+                }
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+        except Exception as exc:
+            _write_bts_error(exc, as_json=args.as_json, err=err)
+            return int(ExitCode.CORPUS_FAILURE)
         return successful()
 
     if args.command in {

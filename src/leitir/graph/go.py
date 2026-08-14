@@ -48,7 +48,8 @@ from leitir.graph.ts_kernel import (
     walk_nodes,
 )
 
-GRAMMAR_ID = "tree-sitter-go-0.25.0-abi15-v1"
+GRAMMAR_ABI_VERSION = 15
+GRAMMAR_ID = f"tree-sitter-go-0.25.0-abi{GRAMMAR_ABI_VERSION}-v1"
 PRODUCER_ID = "leitir.graph.go"
 PRODUCER_VERSION = "stage-2-v1"
 RESOLUTION_RULE_VERSION = "go_tree_sitter_resolution_v1"
@@ -340,4 +341,4 @@ def extract_graph(request: GraphExtractionRequest) -> Graph:
     return Graph(GRAPH_SCHEMA_VERSION, tuple(nodes.values()), tuple(edges), tuple(unresolved), GraphCoverage(request.source_files, tuple(item[0] for item in parsed), tuple(blockers)))
 
 
-__all__ = ["GRAMMAR_ID", "PRODUCER_ID", "PRODUCER_VERSION", "QUERY_ID", "QUERY_TEXT", "RESOLUTION_RULE_VERSION", "extract_graph"]
+__all__ = ["GRAMMAR_ABI_VERSION", "GRAMMAR_ID", "PRODUCER_ID", "PRODUCER_VERSION", "QUERY_ID", "QUERY_TEXT", "RESOLUTION_RULE_VERSION", "extract_graph"]

@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -31,6 +32,9 @@ from leitir.search import (
 
 SHA = "a" * 40
 BLOB = "b" * 40
+_BTS_FIXTURES = Path(__file__).parent / "fixtures" / "bts_cli"
+_ANALYSIS_FIXTURES = Path(__file__).parent / "fixtures" / "analysis_cli"
+_EXIT_CORPUS_FIXTURES = Path(__file__).parent / "fixtures" / "exit_corpus"
 
 
 def test_invalid_log_level_keeps_redaction_installed(monkeypatch):
@@ -124,6 +128,180 @@ def invoke(argv, *, searcher=None, resolver=None):
         stderr=err,
     )
     return code, out.getvalue(), err.getvalue(), searcher, resolver
+
+
+def _bts_shelf(root: Path) -> None:
+    from leitir.materialize import manifest_digest_fields, target_path
+    from leitir.treehash import compute_materialized_tree_hash
+
+    target = target_path(root, "owner", "donor", SHA)
+    shutil.copytree(_BTS_FIXTURES / "donor", target)
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest = {
+        "commit_sha": SHA,
+        "fetch_method": "codeload-tarball",
+        "fetched_at": "2026-08-15T00:00:00Z",
+        "host": "github.com",
+        "owner": "owner",
+        "repo": "donor",
+        "repo_url": "https://github.com/owner/donor",
+        "source": "git-commit",
+        "parity": "exact",
+        "spec": "github:owner/donor",
+        "tag": None,
+        "verified": True,
+        "verified_at": "2026-08-15T00:00:00Z",
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (target / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_bts_compute_cli_writes_artifacts_and_rejects_bad_seed(tmp_path: Path):
+    root = tmp_path / "corpus"
+    _bts_shelf(root)
+    output = tmp_path / "artifacts"
+
+    code, stdout, _stderr, _, _ = invoke(
+        [
+            "bts-compute",
+            f"owner/donor@{SHA}",
+            "--root",
+            str(root),
+            "--seed-module",
+            "package.policy",
+            "--seed-name",
+            "package.policy.normalize_contract",
+            "--out",
+            str(output),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert json.loads(stdout)["status"] == "COMPLETE"
+    assert (output / "graph.json").is_file()
+    assert (output / "summary.json").is_file()
+
+    code, stdout, stderr, _, _ = invoke(
+        [
+            "bts-compute",
+            f"owner/donor@{SHA}",
+            "--root",
+            str(root),
+            "--seed-module",
+            "package.policy",
+            "--seed-name",
+            "missing",
+            "--out",
+            str(tmp_path / "bad-artifacts"),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["reason"] == "reject_unresolved_edge"
+    assert error["evidence"]["detail_code"] == "bts_cli_seed_not_found_v1"
+
+
+def test_bts_compute_cli_passes_policy_path_to_the_closed_schema_loader(tmp_path: Path):
+    root = tmp_path / "corpus"
+    _bts_shelf(root)
+    policy = tmp_path / "invalid-policy.json"
+    policy.write_text("{}", encoding="utf-8")
+
+    code, stdout, stderr, _, _ = invoke(
+        [
+            "bts-compute",
+            f"owner/donor@{SHA}",
+            "--root",
+            str(root),
+            "--seed-module",
+            "package.policy",
+            "--seed-name",
+            "package.policy.normalize_contract",
+            "--policy",
+            str(policy),
+            "--out",
+            str(tmp_path / "artifacts"),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["evidence"]["detail_code"] == "bts_cli_policy_invalid_v1"
+
+
+@pytest.mark.parametrize("spec", [f"own@er/donor@{SHA}", f"owner/don@or@{SHA}"])
+def test_bts_compute_cli_rejects_at_sign_in_owner_or_repo(spec: str) -> None:
+    code, _stdout, stderr, _, _ = invoke(
+        ["bts-compute", spec, "--seed-module", "package.policy", "--seed-name", "package.policy.normalize_contract", "--out", "output"]
+    )
+
+    assert code == ExitCode.MALFORMED_USAGE
+    assert stderr == ""
+
+
+def test_analysis_architecture_cli_emits_pinned_json_summary():
+    code, stdout, _stderr, _, _ = invoke(
+        [
+            "analysis-architecture",
+            str(_ANALYSIS_FIXTURES / "graph.json"),
+            "--subject",
+            "fixture-subject",
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.SUCCESS
+    payload = json.loads(stdout)
+    assert payload["schema_version"] == "leitir-analysis-cli-architecture-v1"
+    assert payload["status"] == "unknown"
+    assert payload["concurrency_model"] == "mixed"
+    assert payload["assessment_digest"] == (
+        "sha256:bd20cac703dde3f4711032892cb230d3293843866790062841c86972ac6b5ffa"
+    )
+
+
+def test_analysis_lineage_cli_emits_validation_summary():
+    code, stdout, _stderr, _, _ = invoke(
+        ["analysis-lineage", str(_ANALYSIS_FIXTURES / "lineage.json"), "--json"]
+    )
+
+    assert code == ExitCode.SUCCESS
+    assert json.loads(stdout)["member_count"] == 1
+    assert json.loads(stdout)["lineage_schema_version"] == "leitir-lineage-v1"
+
+
+def test_exit_gate_validate_cli_reports_valid_corpus_and_rejects_minimum_donors(
+    tmp_path: Path,
+):
+    valid = _EXIT_CORPUS_FIXTURES / "corpus-valid.json"
+    code, stdout, _stderr, _, _ = invoke(["exit-gate-validate", str(valid), "--json"])
+
+    assert code == ExitCode.SUCCESS
+    payload = json.loads(stdout)
+    assert payload["validation"]["case_count"] == 5
+    assert payload["cross_check_against_gate"]["valid"] is True
+
+    tampered = json.loads(valid.read_text(encoding="utf-8"))
+    tampered["cases"] = tampered["cases"][:4]
+    target = tmp_path / "four-donors.json"
+    target.write_text(
+        json.dumps(tampered, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    code, stdout, stderr, _, _ = invoke(
+        ["exit-gate-validate", str(target), "--json"]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["evidence"]["detail_code"] == "exit_corpus_min_donors_v1"
 
 
 def test_help_lists_search_without_side_effects(capsys):

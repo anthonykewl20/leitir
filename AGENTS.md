@@ -21,7 +21,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 2329 passed (current), 0 failed.
+- Target: 2347 passed (current), 0 failed.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

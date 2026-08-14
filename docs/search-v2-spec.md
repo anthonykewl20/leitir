@@ -386,7 +386,7 @@ ruff check .
 mypy src
 ```
 
-The suite must remain at or above the current 2329 passing tests with zero
+The suite must remain at or above the current 2347 passing tests with zero
 failures. The scorecard decision must be `pass`. Live tests remain gated by
 `LEITIR_ENABLE_LIVE_E2E=1`. AST default changes additionally require pinned
 benchmark digest equality and runs under multiple `PYTHONHASHSEED` values.

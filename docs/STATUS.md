@@ -132,7 +132,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2329 passed, 61 skipped**. The skips are
+Offline suite: **2347 passed, 63 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

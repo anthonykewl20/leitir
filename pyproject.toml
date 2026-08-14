@@ -70,7 +70,6 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["leitir"]
 namespace_packages = true
 explicit_package_bases = true
 mypy_path = "src"
@@ -80,7 +79,11 @@ warn_redundant_casts = true
 warn_unreachable = true
 check_untyped_defs = true
 # treat the stdlib-only runtime as the source of truth
-files = ["src/leitir"]
+files = ["src/leitir", "tools"]
+# score_engine is an independently maintained optional scorer with undeclared
+# evaluator integrations; keep the stdlib exporter type-covered without
+# claiming that its external evaluator surface is checked by this runtime gate.
+exclude = ["^tools/score_engine\\.py$"]
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

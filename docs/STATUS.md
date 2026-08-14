@@ -60,6 +60,12 @@ integration-cost, and occupied-recipient validation landed through PRs
 ADR-0018 Proposed for v2.0) remains as implementation work; #148 is unblocked
 for design subject to owner promotion.
 
+2026-08-15: #148 slices 1–3 are wired through `bts-compute`,
+`analysis-architecture`, `analysis-lineage`, and `exit-gate-validate`; the #75
+exporter and `benchmarks/bts-v1` publication target are landed. Remaining #148
+work is the S2 execution substrate, capability funnel, transplant, occupied,
+and runnable gates. The owner-external #73 and #75 residues are unchanged.
+
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
 
 2026-08-14: benchmark-driven hardening made verified local-shelf scoped search

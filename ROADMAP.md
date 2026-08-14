@@ -44,6 +44,11 @@ The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-00
   the Windows fix for #128; ADR-0012's fully implemented stage-1 policy/registry
   and stage-2 JavaScript/TypeScript/Rust/Go graph producers in this PR; and
   ADR-0013 through ADR-0019.
+- #148 slices 1–3 now expose `bts-compute`, architecture/lineage analysis, and
+  exit-corpus validation at the CLI; #75's BTS exporter and `benchmarks/bts-v1`
+  publication target are landed. Remaining #148 work is the S2 execution
+  substrate, capability funnel, transplant, occupied, and runnable gates; the
+  owner-external #73/#75 residues are unchanged.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 

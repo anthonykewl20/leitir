@@ -525,8 +525,67 @@ class TestLocalMaterializedShelf:
         assert report.matches
         assert source.read_calls == []
 
+    def test_sampled_shelf_can_complete_scoped_search_with_verified_local_blobs(
+        self, tmp_path, monkeypatch
+    ):
+        data = SAMPLE_PY.encode()
+        companion = b"sampled shelf companion\n"
+        blob_sha = _blob_sha(data)
+        monkeypatch.setattr("leitir.treehash.MAX_FILES", 1)
+        target = _write_shelf(
+            tmp_path,
+            files={
+                "Lib/urllib/parse.py": data,
+                "NOTICE.txt": companion,
+            },
+        )
+        manifest = json.loads((target / "leitir-manifest.json").read_text())
+        assert manifest["materialized_tree_hash_scope"] == "sampled"
+
+        tree_path = f"/repos/python/cpython/git/trees/{SHA}"
+        with routed_server(
+            {
+                tree_path: (
+                    200,
+                    {"Content-Type": "application/json"},
+                    json_body(
+                        {
+                            "sha": SHA,
+                            "truncated": False,
+                            "tree": [
+                                {
+                                    "path": "Lib/urllib/parse.py",
+                                    "type": "blob",
+                                    "sha": blob_sha,
+                                    "size": len(data),
+                                },
+                                {
+                                    "path": "NOTICE.txt",
+                                    "type": "blob",
+                                    "sha": _blob_sha(companion),
+                                    "size": len(companion),
+                                },
+                            ],
+                        }
+                    ),
+                )
+            }
+        ) as server:
+            source = GitHubTreeSource(base_url=server.base_url, max_attempts=1)
+            report = ScopedSearcher(
+                source, (PythonAdapter(),), corpus_root=tmp_path
+            ).search(_spec())
+
+        assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+        assert report.coverage.files_eligible == 1
+        assert report.coverage.files_indexed == 1
+        assert report.coverage.files_excluded == 0
+        assert report.matches
+        assert server.state.request_paths == [tree_path]
+
     def test_tampered_local_blob_fails_without_api_fallback(self, tmp_path, monkeypatch):
         data = SAMPLE_PY.encode()
+        monkeypatch.setattr("leitir.treehash.MAX_FILES", 1)
         source = FakeTreeSource(
             blobs={
                 "parse.py": (
@@ -536,8 +595,14 @@ class TestLocalMaterializedShelf:
             }
         )
         target = _write_shelf(
-            tmp_path, files={"Lib/urllib/parse.py": data}
+            tmp_path,
+            files={
+                "Lib/urllib/parse.py": data,
+                "NOTICE.txt": b"sampled shelf companion\n",
+            },
         )
+        manifest = json.loads((target / "leitir-manifest.json").read_text())
+        assert manifest["materialized_tree_hash_scope"] == "sampled"
         from leitir.materialize import read_valid_manifest as original
 
         def verify_then_tamper(*args, **kwargs):

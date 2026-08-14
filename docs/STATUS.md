@@ -46,6 +46,8 @@ PR #139. Only #81 (tree-sitter; ADR-0012 questions answered on `main`,
 implementation not started) and epic #40 (manifest authenticity; ADR-0018
 Proposed for v2.0) remain in the milestone.
 
+2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
+
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
 provenance, and collectors for engine correctness, retrieval effectiveness,
@@ -124,7 +126,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2279 passed, 61 skipped**. The skips are
+Offline suite: **2289 passed, 61 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

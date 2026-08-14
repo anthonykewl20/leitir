@@ -18,6 +18,7 @@ from leitir.composition import (
     CompositionCandidateRef,
     CompositionEligibilityStatus,
     ConflictKind,
+    ConflictMatrix,
     compose,
     evaluate_eligibility,
 )
@@ -114,6 +115,7 @@ def test_composition_digests_are_hash_seed_independent() -> None:
             env=environment,
             check=True,
             capture_output=True,
+            timeout=30,
         )
         assert result.stdout == expected
 
@@ -193,3 +195,62 @@ def test_omitted_known_clash_rejected() -> None:
     with pytest.raises(BTSError) as caught:
         evaluate_eligibility(without_clash)
     assert caught.value.evidence.detail_code == "composition_input_missing_v1"
+
+
+def test_stripped_and_rehashed_dependency_matrix_is_not_accepted() -> None:
+    matrix, _ = _compose()
+    from leitir.composition import _digest
+
+    stripped = replace(matrix, dependencies=(), conflicts=(), matrix_digest="")
+    stripped = replace(stripped, matrix_digest=_digest(stripped, omit=frozenset({"matrix_digest"})))
+
+    eligibility = evaluate_eligibility(stripped)
+
+    assert eligibility.status is CompositionEligibilityStatus.INDETERMINATE
+    assert eligibility.detail_code == "composition_dependency_evidence_missing_v1"
+
+
+def test_canonical_empty_matrix_accepts() -> None:
+    from leitir.composition import _digest
+
+    matrix = ConflictMatrix(
+        "leitir-composition-conflict-matrix-v1",
+        "recipient-project",
+        _ref("recipient"),
+        (),
+        (),
+        (),
+        (),
+        (),
+        _DIGEST,
+        "",
+    )
+    matrix = replace(matrix, matrix_digest=_digest(matrix, omit=frozenset({"matrix_digest"})))
+
+    eligibility = evaluate_eligibility(matrix)
+
+    assert eligibility.status is CompositionEligibilityStatus.ACCEPT
+    assert eligibility.detail_code is None
+
+
+def test_single_candidate_without_evidence_is_indeterminate() -> None:
+    from leitir.composition import _digest
+
+    matrix = ConflictMatrix(
+        "leitir-composition-conflict-matrix-v1",
+        "recipient-project",
+        _ref("recipient"),
+        (_ref("candidate"),),
+        (),
+        (),
+        (),
+        (),
+        _DIGEST,
+        "",
+    )
+    matrix = replace(matrix, matrix_digest=_digest(matrix, omit=frozenset({"matrix_digest"})))
+
+    eligibility = evaluate_eligibility(matrix)
+
+    assert eligibility.status is CompositionEligibilityStatus.INDETERMINATE
+    assert eligibility.detail_code == "composition_dependency_evidence_missing_v1"

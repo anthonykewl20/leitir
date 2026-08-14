@@ -194,6 +194,27 @@ baseline reproducibility, stale/tampered baselines, parity deltas, conflict
 matrix failures, S2 receipt failures, corpus monotonicity, ordering permutations,
 and hash-seed independence.
 
+### Trust binding
+
+`OccupiedAttachmentPolicy` is the pinned authority for this gate (the TUF-root
+analog), not an artifact being evaluated. Its `content_digest` is canonical JSON
+over every policy field other than that digest, including both role plans and the
+pinned corpus manifest digest. A policy whose fields and digest do not agree is
+rejected before it can authorize anything.
+
+Every consumed evidence artifact is bound to the current attachment: the
+recipient inventory's manifest digest must equal the attached recipient manifest,
+and the emitted BTS digest must equal the candidate/BTS attachment identity.
+The occupied-rerun receipt binds its `occupied_rerun` role, recipient manifest,
+BTS identity, test/runner/config closure, occupied mount plan, execution policy,
+and canonical outcomes. Bare outcome vectors and stale or mix-and-match receipts
+are not authorization evidence.
+
+The corpus is not permitted to ratify its own manifest digest. The corpus gate
+compares its digest to `OccupiedAttachmentPolicy.corpus_manifest_digest`, rather
+than to a caller-controlled corpus field. These bindings prevent replay,
+self-authorization, and TUF-style mix-and-match substitution.
+
 ### Positive Consequences
 
 - Attachment cannot hide recipient bindings behind lossy extraction.

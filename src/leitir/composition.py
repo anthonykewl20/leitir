@@ -100,6 +100,7 @@ class ConflictRecord:
 class ConflictMatrix:
     schema_version: str
     recipient_subject: str
+    recipient: CompositionCandidateRef
     candidates: tuple[CompositionCandidateRef, ...]
     dependencies: tuple[CandidateDependencyEvidence, ...]
     architecture: tuple[object, ...]
@@ -265,8 +266,8 @@ def compose(
                 key = ("closure", *left.candidate_key, *right.candidate_key, side, *target.candidate_key, ecosystem, path, source_digest)
                 conflicts.append(_record(left, right, ConflictKind.DEPENDENCY_DECLARATION_OVERLAP, CompatibilityStatus.UNKNOWN, key, "composition_transitive_closure_unknown_v1", key))
 
-    matrix = ConflictMatrix(COMPOSITION_MATRIX_SCHEMA, recipient_subject, ordered, tuple(sorted(dependencies, key=_dependency_key)), (), (), tuple(sorted(conflicts, key=_conflict_key)), policy_digest, "")
-    matrix = ConflictMatrix(matrix.schema_version, matrix.recipient_subject, matrix.candidates, matrix.dependencies, matrix.architecture, matrix.duplicates, matrix.conflicts, matrix.policy_digest, _digest(matrix, omit=frozenset({"matrix_digest"})))
+    matrix = ConflictMatrix(COMPOSITION_MATRIX_SCHEMA, recipient_subject, recipient, ordered, tuple(sorted(dependencies, key=_dependency_key)), (), (), tuple(sorted(conflicts, key=_conflict_key)), policy_digest, "")
+    matrix = ConflictMatrix(matrix.schema_version, matrix.recipient_subject, matrix.recipient, matrix.candidates, matrix.dependencies, matrix.architecture, matrix.duplicates, matrix.conflicts, matrix.policy_digest, _digest(matrix, omit=frozenset({"matrix_digest"})))
     return matrix, evaluate_eligibility(matrix)
 
 
@@ -275,6 +276,8 @@ def evaluate_eligibility(matrix: ConflictMatrix) -> CompositionEligibility:
         _fail("composition matrix is missing, malformed, or mismatched")
     if (
         not isinstance(matrix.candidates, tuple)
+        or not isinstance(matrix.recipient, CompositionCandidateRef)
+        or _validate_ref(matrix.recipient) != matrix.recipient
         or not all(isinstance(item, CompositionCandidateRef) for item in matrix.candidates)
         or tuple(sorted(matrix.candidates, key=lambda item: item.candidate_key)) != matrix.candidates
         or len({item.candidate_key for item in matrix.candidates}) != len(matrix.candidates)
@@ -285,8 +288,12 @@ def evaluate_eligibility(matrix: ConflictMatrix) -> CompositionEligibility:
         or not all(isinstance(item, ConflictRecord) for item in matrix.conflicts)
     ):
         _fail("composition matrix records are missing or malformed")
+    if matrix.recipient.candidate_key in {item.candidate_key for item in matrix.candidates}:
+        _fail("composition matrix recipient is substituted by a candidate")
     if tuple(sorted(matrix.conflicts, key=_conflict_key)) != matrix.conflicts:
         _fail("composition conflict records are malformed or omitted")
+    if len({_dependency_key(item) for item in matrix.dependencies}) != len(matrix.dependencies):
+        _fail("composition dependency evidence is duplicated")
     conflict_keys = tuple(item.evidence_key for item in matrix.conflicts)
     if len(conflict_keys) != len(set(conflict_keys)):
         _fail("composition conflict evidence keys are duplicated")
@@ -299,18 +306,30 @@ def evaluate_eligibility(matrix: ConflictMatrix) -> CompositionEligibility:
         and item.evidence_digest == _digest(item.evidence_key)
     }
     by_subject: dict[CompositionCandidateRef, dict[tuple[str, str], set[str]]] = {}
+    complete_subjects: set[CompositionCandidateRef] = set()
     for item in matrix.dependencies:
+        if _validate_ref(item.subject) != item.subject:
+            _fail("composition dependency subject is malformed")
+        if item.subject != matrix.recipient and item.subject not in matrix.candidates:
+            _fail("composition matrix contains substituted dependency subjects")
+        if not isinstance(item.completeness, ClosureCompleteness) or not all(
+            isinstance(value, str) and value
+            for value in (item.ecosystem, item.name, item.version, item.source_path)
+        ) or not isinstance(item.resolved_sha, (str, type(None))) or _DIGEST.fullmatch(item.source_digest) is None:
+            _fail("composition dependency evidence is malformed")
         packages = by_subject.setdefault(item.subject, {})
         packages.setdefault((item.ecosystem, item.name), set()).add(item.version)
-    subjects = tuple(sorted(by_subject, key=lambda item: item.candidate_key))
-    candidate_keys = {item.candidate_key for item in matrix.candidates}
-    recipients = tuple(item for item in subjects if item.candidate_key not in candidate_keys)
-    if len(recipients) > 1:
-        _fail("composition matrix contains substituted dependency subjects")
+        if item.completeness is ClosureCompleteness.COMPLETE:
+            complete_subjects.add(item.subject)
+    expected_subjects = (matrix.recipient, *matrix.candidates)
+    missing_subjects = tuple(item for item in expected_subjects if item not in complete_subjects)
+    # An otherwise empty matrix is the canonical expression of a recipient with
+    # no expected dependencies and no candidate attachments.  Any candidate
+    # still requires its own complete, subject-bound evidence.
+    empty_matrix = not matrix.candidates and not matrix.dependencies
     expected_clashes: set[tuple[_Key, _Key, _Key]] = set()
     pairs = list(combinations(matrix.candidates, 2))
-    if recipients:
-        pairs.extend((candidate, recipients[0]) for candidate in matrix.candidates)
+    pairs.extend((candidate, matrix.recipient) for candidate in matrix.candidates)
     for left, right in pairs:
         for identity in sorted(set(by_subject.get(left, {})) & set(by_subject.get(right, {}))):
             versions = tuple(sorted(by_subject[left][identity] | by_subject[right][identity]))
@@ -322,8 +341,11 @@ def evaluate_eligibility(matrix: ConflictMatrix) -> CompositionEligibility:
     blocking_kinds = {ConflictKind.VERSION_CLASH, ConflictKind.BLOCKING_CALL_IN_ASYNC_PATH, ConflictKind.EXACT_SEED_BYTES_DUPLICATE}
     blocking = tuple(sorted(item.evidence_key for item in matrix.conflicts if item.status is CompatibilityStatus.INCOMPATIBLE and item.kind in blocking_kinds))
     unknown = tuple(sorted(item.evidence_key for item in matrix.conflicts if item.status is CompatibilityStatus.UNKNOWN))
+    missing_keys = tuple(item.candidate_key for item in missing_subjects)
+    if missing_subjects and not empty_matrix:
+        unknown = tuple(sorted((*unknown, *missing_keys)))
     status = CompositionEligibilityStatus.REJECT if blocking else CompositionEligibilityStatus.INDETERMINATE if unknown else CompositionEligibilityStatus.ACCEPT
-    detail = "composition_conflict_v1" if blocking else "composition_evidence_unknown_v1" if unknown else None
+    detail = "composition_conflict_v1" if blocking else "composition_dependency_evidence_missing_v1" if missing_subjects and not empty_matrix else "composition_evidence_unknown_v1" if unknown else None
     result = CompositionEligibility(COMPOSITION_ELIGIBILITY_SCHEMA, matrix.matrix_digest, status, blocking, unknown, detail, "")
     return CompositionEligibility(result.schema_version, result.matrix_digest, result.status, result.blocking_conflict_keys, result.unknown_evidence_keys, result.detail_code, _digest(result, omit=frozenset({"eligibility_digest"})))
 

@@ -236,6 +236,14 @@ The separate `CompositionEligibility` gate consumes a validated matrix:
    `INDETERMINATE`; and
 3. only complete, non-conflicting required evidence produces `ACCEPT`.
 
+The matrix identifies its recipient reference explicitly. Complete,
+subject-bound dependency evidence is required for that recipient and every
+referenced candidate before `ACCEPT`; an omitted or stripped subject is
+`INDETERMINATE` with `composition_dependency_evidence_missing_v1`, never an
+empty successful closure. The sole canonical empty case is zero candidates and
+zero dependency records, which expresses a recipient with no expected
+dependencies.
+
 Advisory overlaps cannot reject. A known rejection retains all simultaneous
 unknowns, but rejection has summary precedence. A missing, malformed, mismatched,
 or omitted consumed record raises

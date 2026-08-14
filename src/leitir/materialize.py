@@ -1394,14 +1394,18 @@ def materialize_go_module_zip(
         if existing is not None and existing.get("module_path") == module and existing.get("module_version") == version:
             _refresh_license_manifest(target, existing)
             return target
-        escaped = re.sub(r"[A-Z]", lambda match: "!" + match.group().lower(), module)
-        url = f"{proxy_url.rstrip('/')}/{escaped}/@v/{version}.zip"
+        from leitir.resolver import escape_go_module_path
+
+        escaped_module = escape_go_module_path(module)
+        url = f"{proxy_url.rstrip('/')}/{escaped_module}/@v/{version}.zip"
         if on_fetch is not None:
             on_fetch()
         try:
             with _http.safe_urlopen(Request(url, headers={"User-Agent": "leitir"}), timeout=timeout) as response:
                 data = _read_bounded(response, ARCHIVE_MAX_COMPRESSED_BYTES)
-            sum_hash = SumDBClient(Path(root), base_url=sumdb_url, timeout=timeout).verify(module, version)
+            sum_hash = SumDBClient(Path(root), base_url=sumdb_url, timeout=timeout).verify(
+                module, version, escaped_module=escaped_module
+            )
         except SumDBVerificationError:
             raise
         except _http.RETRIABLE_EXCEPTIONS as exc:
@@ -1410,16 +1414,22 @@ def materialize_go_module_zip(
             raise VerificationError("Go module zip does not match sumdb h1 hash")
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                prefix = f"{module}@{version}/"
                 names = [info.filename for info in archive.infolist() if info.filename]
         except zipfile.BadZipFile as exc:
             raise VerificationError("Go module zip is malformed") from exc
-        if not names or any(not name.startswith(prefix) for name in names):
+        # Proxy and lookup URLs use the escaped module path, while standard Go
+        # proxy zips retain the canonical path in their member names. Accept the
+        # escaped form too: it is covered by the authenticated h1 and is used by
+        # compatible proxy implementations.
+        archive_root = f"{module}@{version}"
+        if not all(name.startswith(f"{archive_root}/") for name in names):
+            archive_root = f"{escaped_module}@{version}"
+        if not names or any(not name.startswith(f"{archive_root}/") for name in names):
             raise VerificationError("Go module zip has an unexpected module root")
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
         try:
-            extract_artifact(data, staging, archive_root=f"{module}@{version}")
+            extract_artifact(data, staging, archive_root=archive_root)
             now = _utc_now()
             manifest: dict[str, object] = dict(manifest_fields or {})
             manifest.update({

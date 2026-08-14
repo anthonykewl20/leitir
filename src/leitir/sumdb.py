@@ -392,10 +392,20 @@ class SumDBClient:
     def _store_head(self, head: TreeHead) -> None:
         _write_manifest(self._root / "sumdb-tree-head.json", {"size": head.size, "hash": base64.b64encode(head.hash).decode("ascii")})
 
-    def verify(self, module: str, version: str) -> str:
-        # Unlike Go proxy paths, SumDB lookup paths retain the module and version
-        # verbatim. In particular, nested module paths are not a proxy URL.
-        response = self._fetch(f"lookup/{module}@{version}")
+    def verify(
+        self, module: str, version: str, *, escaped_module: str | None = None
+    ) -> str:
+        """Return the authenticated h1 for a canonical Go module path.
+
+        Lookup URLs use Go's escaped path form.  SumDB record contents retain
+        the canonical module path, so authenticate the record prefix against
+        ``module`` rather than its wire encoding.
+        """
+        if escaped_module is None:
+            from leitir.resolver import escape_go_module_path
+
+            escaped_module = escape_go_module_path(module)
+        response = self._fetch(f"lookup/{escaped_module}@{version}")
         try:
             record, note = response.split(b"\n\n", 1)
             record_id, text = record.split(b"\n", 1)

@@ -29,6 +29,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def escape_go_module_path(module: str) -> str:
+    """Return the Go wire form of a module path.
+
+    Go proxies and the checksum database address uppercase path bytes as
+    ``!`` followed by their lowercase form.  The unescaped path remains the
+    module's canonical identity.
+    """
+    return re.sub(r"[A-Z]", lambda match: "!" + match.group().lower(), module)
+
+
 class Ecosystem(StrEnum):
     NPM = "npm"
     PYPI = "pypi"
@@ -1776,7 +1786,7 @@ class GoResolver:
 
     @staticmethod
     def _escape_module(module: str) -> str:
-        return re.sub(r"[A-Z]", lambda m: "!" + m.group().lower(), module)
+        return escape_go_module_path(module)
 
 
 class NpmResolver:

@@ -52,9 +52,9 @@ def _artifact(data: bytes) -> ArtifactInfo:
     )
 
 
-def _go_zip(module: str, version: str) -> bytes:
+def _go_zip(module: str, version: str, *, root: str | None = None) -> bytes:
     output = io.BytesIO()
-    root = f"{module}@{version}"
+    root = root or f"{module}@{version}"
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr(f"{root}/", b"")
         archive.writestr(f"{root}/go.mod", f"module {module}\n".encode())
@@ -156,8 +156,9 @@ def test_go_module_zip_shelves_authenticated_proxy_artifact(tmp_path, monkeypatc
         def __init__(self, *args, **kwargs):
             pass
 
-        def verify(self, requested_module, requested_version):
+        def verify(self, requested_module, requested_version, *, escaped_module=None):
             assert (requested_module, requested_version) == (module, version)
+            assert escaped_module == module
             return _go_zip_h1(data)
 
     monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
@@ -190,6 +191,38 @@ def test_go_module_zip_shelves_authenticated_proxy_artifact(tmp_path, monkeypatc
     }
 
 
+def test_go_module_zip_uses_escaped_wire_path_and_root(tmp_path, monkeypatch):
+    module = "github.com/BurntSushi/toml"
+    version = "v1.2.0"
+    escaped_module = "github.com/!burnt!sushi/toml"
+    data = _go_zip(module, version, root=f"{escaped_module}@{version}")
+
+    class SumDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self, requested_module, requested_version, *, escaped_module=None):
+            assert (requested_module, requested_version) == (module, version)
+            assert escaped_module == "github.com/!burnt!sushi/toml"
+            return _go_zip_h1(data)
+
+    monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
+    with scripted_server([(200, {}, data)]) as server:
+        target = materialize_go_module_zip(
+            tmp_path,
+            f"go:{module}@{version}",
+            RepoScope("module/" + "d" * 40, "d" * 40),
+            module,
+            version,
+            server.base_url,
+        )
+
+    manifest = json.loads((target / MANIFEST_NAME).read_text())
+    assert server.state.request_paths == [f"/github.com/!burnt!sushi/toml/@v/{version}.zip"]
+    assert (target / "demo.go").read_bytes() == b"package demo\n"
+    assert manifest["module_path"] == module
+
+
 def test_go_module_sumdb_mismatch_leaves_nothing_shelved(tmp_path, monkeypatch):
     module = "example.com/demo"
     version = "v1.2.3"
@@ -199,7 +232,7 @@ def test_go_module_sumdb_mismatch_leaves_nothing_shelved(tmp_path, monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def verify(self, *args):
+        def verify(self, *args, **kwargs):
             return "h1:invalid"
 
     monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)

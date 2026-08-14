@@ -194,12 +194,12 @@ def test_lookup_record_inclusion_is_verified_against_historical_fixture_tiles(tm
     assert client.verify(MODULE, VERSION) == "h1:fixture="
 
 
-def test_lookup_uses_verbatim_multi_slash_module_path(tmp_path):
-    module = "google.golang.org/genproto/googleapis/rpc"
-    version = "v0.0.0-20240429193739-8cf5692501f6"
+def test_lookup_uses_case_escaped_module_path(tmp_path):
+    module = "github.com/BurntSushi/toml"
+    version = "v1.2.0"
     with scripted_server([(200, {}, b"")]) as server:
         client = SumDBClient(tmp_path, base_url=server.base_url)
         with pytest.raises(SumDBVerificationError, match="lookup record"):
             client.verify(module, version)
 
-    assert server.state.request_paths == [f"/lookup/{module}@{version}"]
+    assert server.state.request_paths == [f"/lookup/github.com/!burnt!sushi/toml@{version}"]

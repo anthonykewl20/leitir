@@ -137,13 +137,18 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: requirements.txt
+      - name: Create isolated parser environment
+        run: uv venv .tree-sitter-venv
+      - name: Install hash-locked tree-sitter wheels
+        run: >-
+          uv pip install --python .tree-sitter-venv/bin/python
+          --require-hashes --only-binary :all: -r requirements-tree-sitter.lock
       - name: Measure offline line and branch coverage
         env:
           PYTHONPATH: src
-        run: >-
-          uv run --no-project --with-requirements requirements.txt --with coverage==7.15.2
-          python -m coverage run --branch --source=leitir -m pytest -q
-          -p no:cacheprovider
+        run: |
+          source .tree-sitter-venv/bin/activate
+          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 python -m coverage run --branch --source=leitir -m pytest -q -p no:cacheprovider
       - name: Write coverage reports
         run: |
           uv run --no-project --with coverage==7.15.2 python -m coverage report --precision=2 --fail-under=82.5

@@ -174,7 +174,7 @@ def test_import_is_stdlib_only_in_a_clean_subprocess() -> None:
     script = "import sys; import leitir; import leitir.graph; assert not any(name == 'tree_sitter' or name.startswith('tree_sitter_') for name in sys.modules); print('ok')"
     environment = {"PYTHONPATH": str(Path(__file__).parents[1] / "src")}
 
-    assert subprocess.check_output([sys.executable, "-S", "-c", script], env=environment) == b"ok\n"
+    assert subprocess.check_output([sys.executable, "-S", "-c", script], env=environment).replace(b"\r\n", b"\n") == b"ok\n"
 
 
 def test_tree_sitter_extra_is_exact_and_runtime_dependencies_stay_empty() -> None:
@@ -513,8 +513,8 @@ def test_scope_construction_is_byte_identical_across_hash_seeds(seed: str) -> No
         """
     )
     environment = {**os.environ, "PYTHONHASHSEED": seed}
-    actual = subprocess.check_output([sys.executable, "-c", script], env=environment)
-    baseline = subprocess.check_output([sys.executable, "-c", script], env={**os.environ, "PYTHONHASHSEED": "0"})
+    actual = subprocess.check_output([sys.executable, "-c", script], env=environment).replace(b"\r\n", b"\n")
+    baseline = subprocess.check_output([sys.executable, "-c", script], env={**os.environ, "PYTHONHASHSEED": "0"}).replace(b"\r\n", b"\n")
     assert actual == baseline == b'["src/a.js","src/z.js"]\n'
 
 

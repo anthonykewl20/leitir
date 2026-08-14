@@ -18,6 +18,7 @@ from leitir.materialize import (
     _fsync_directory,
     _target_lock,
     materialize_artifact,
+    materialize_go_module_zip,
     materialize_repo,
     read_valid_manifest,
     target_path,
@@ -192,8 +193,12 @@ def record_trust(
         )
         if manifest is None:
             raise ValueError(f"source changed during trust verification: {spec}")
+        from leitir.sbom import license_manifest_fields
+
+        license_fields = license_manifest_fields(manifest, target)
+        manifest.update(license_fields)
         result = compute_trust(manifest, target)
-        update_manifest(target, result.as_dict())
+        update_manifest(target, {**license_fields, **result.as_dict()})
     return entry, result, target
 
 
@@ -457,7 +462,7 @@ def materialize_source(
     if isinstance(resolved, ResolvedPackage):
         scope = resolved.scope
         host = resolved.host
-        if repository_resolver is None and host != "github.com":
+        if repository_resolver is None and host in {"gitlab.com", "bitbucket.org"}:
             from leitir.resolver import BitbucketResolver, GitLabResolver
 
             repository_resolver = (
@@ -493,7 +498,26 @@ def materialize_source(
         artifact = (
             resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
         )
-    if artifact is not None:
+    if isinstance(resolved, ResolvedPackage) and resolved.go_module_zip:
+        if resolved.go_proxy_url is None:
+            raise RuntimeError("Go module zip resolution has no proxy URL")
+        requested_sumdb_url = fetch_options.get("sumdb_url", "https://sum.golang.org")
+        requested_timeout = fetch_options.get("timeout", 30)
+        if not isinstance(requested_sumdb_url, str) or not isinstance(requested_timeout, int):
+            raise TypeError("Go module zip fetch options have invalid types")
+        target = materialize_go_module_zip(
+            corpus_root,
+            spec,
+            scope,
+            resolved.ref.name,
+            resolved.ref.version,
+            resolved.go_proxy_url,
+            sumdb_url=requested_sumdb_url,
+            timeout=requested_timeout,
+            manifest_fields=manifest_fields,
+            on_fetch=on_fetch,
+        )
+    elif artifact is not None:
         try:
             target = materialize_artifact(
                 corpus_root,
@@ -746,12 +770,16 @@ def remove_source(
 ) -> bool:
     """Remove one commit or a repository, update the index, and prune parents."""
     corpus_root = resolve_root(root)
-    probe_sha = commit_sha or ("0" * 40)
-    repo_path = target_path(corpus_root, owner, repo, probe_sha, host=host).parent
+    if host == "go-module-zip":
+        repo_path = corpus_root / "repos" / host / owner
+        removal_path = repo_path / repo
+    else:
+        probe_sha = commit_sha or ("0" * 40)
+        repo_path = target_path(corpus_root, owner, repo, probe_sha, host=host).parent
+        removal_path = repo_path / commit_sha if commit_sha else repo_path
     if host == "gitlab.com":
         parts = f"{owner}/{repo}".split("/")
         owner, repo = "/".join(parts[:-1]), parts[-1]
-    removal_path = repo_path / commit_sha if commit_sha else repo_path
     existed = removal_path.exists()
     if existed:
         shutil.rmtree(removal_path)

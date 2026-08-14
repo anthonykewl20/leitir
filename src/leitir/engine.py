@@ -8,14 +8,26 @@ coverage accounting.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
-from collections.abc import Callable, Sequence
+import stat
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
+from typing import cast
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.adapters.languages import canonicalize_language
 from leitir.adapters.registry import trusted_adapter_language
 from leitir.matching import document_excluded_ex
-from leitir.materialize import _utc_now
+from leitir.materialize import (
+    VerificationError,
+    _target_lock,
+    _utc_now,
+    read_valid_manifest,
+    target_path,
+)
 from leitir.ranking import order_source_matches
 from leitir.search import (
     Coverage,
@@ -35,6 +47,115 @@ from leitir.streaming import score_blob_stream
 from leitir.tree import BlobEntry, TreeEnumerationError, TreeSource
 
 MAX_BLOB_SIZE = 2 * 1024 * 1024
+
+
+class _LocalShelfReader:
+    def __init__(self, target: Path) -> None:
+        self._target = target
+
+    def read(self, blob: BlobEntry) -> bytes:
+        return b"".join(self.stream(blob))
+
+    def stream(self, blob: BlobEntry) -> Iterator[bytes]:
+        path, metadata = self._path(blob)
+        data_size = 0
+        digest = hashlib.sha1(
+            b"blob " + str(blob.size).encode("ascii") + b"\0"
+        )
+        try:
+            if stat.S_ISLNK(metadata.st_mode):
+                link = os.readlink(os.fsencode(path))
+                data = link if isinstance(link, bytes) else os.fsencode(link)
+                current = path.lstat()
+                if not stat.S_ISLNK(current.st_mode) or not self._same_inode(
+                    metadata, current
+                ):
+                    raise VerificationError(
+                        f"local blob changed while reading: {blob.path}"
+                    )
+                data_size += len(data)
+                digest.update(data)
+                yield data
+            elif stat.S_ISREG(metadata.st_mode):
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(path, flags)
+                try:
+                    current = os.fstat(fd)
+                    if not stat.S_ISREG(current.st_mode) or not self._same_inode(
+                        metadata, current
+                    ):
+                        raise VerificationError(
+                            f"local blob changed while opening: {blob.path}"
+                        )
+                    with os.fdopen(fd, "rb") as handle:
+                        fd = -1
+                        while chunk := handle.read(64 * 1024):
+                            data_size += len(chunk)
+                            digest.update(chunk)
+                            yield chunk
+                finally:
+                    if fd >= 0:
+                        os.close(fd)
+            else:
+                raise VerificationError(f"local blob is not a file: {blob.path}")
+        except OSError as exc:
+            raise VerificationError(
+                f"cannot safely read local blob: {blob.path}"
+            ) from exc
+
+        if data_size != blob.size:
+            raise VerificationError(f"local blob size mismatch: {blob.path}")
+        if digest.hexdigest() == blob.blob_sha:
+            return
+        raise VerificationError(f"local blob digest mismatch: {blob.path}")
+
+    def _path(self, blob: BlobEntry) -> tuple[Path, os.stat_result]:
+        relative = Path(blob.path)
+        if (
+            not blob.path
+            or "\0" in blob.path
+            or relative.is_absolute()
+            or not relative.parts
+            or ".." in relative.parts
+        ):
+            raise VerificationError(f"local blob path is invalid: {blob.path!r}")
+        current = self._target
+        for index, part in enumerate(relative.parts):
+            current /= part
+            try:
+                metadata = current.lstat()
+            except OSError as exc:
+                raise VerificationError(
+                    f"cannot safely stat local blob: {blob.path}"
+                ) from exc
+            if index < len(relative.parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
+                raise VerificationError(
+                    f"local blob parent is not a directory: {blob.path}"
+                )
+        if stat.S_ISLNK(metadata.st_mode):
+            if blob.mode is not None and not blob.mode.startswith("120000"):
+                raise VerificationError(f"local blob mode mismatch: {blob.path}")
+        elif stat.S_ISREG(metadata.st_mode):
+            if blob.mode is not None and not blob.mode.startswith("100"):
+                raise VerificationError(f"local blob mode mismatch: {blob.path}")
+        else:
+            raise VerificationError(f"local blob is not a file: {blob.path}")
+        return current, metadata
+
+    @staticmethod
+    def _same_inode(before: os.stat_result, after: os.stat_result) -> bool:
+        return before.st_dev == after.st_dev and before.st_ino == after.st_ino
+
+
+class _LocalBlobStream:
+    def __init__(self, reader: _LocalShelfReader, blob: BlobEntry) -> None:
+        self._reader = reader
+        self._blob = blob
+
+    def read_blob_stream(self, slug: str, blob_sha: str) -> Iterator[bytes]:
+        if blob_sha != self._blob.blob_sha:
+            raise VerificationError("local blob stream identity mismatch")
+        yield from self._reader.stream(self._blob)
 
 
 def _required_language(spec: SearchSpec) -> str | None:
@@ -206,10 +327,13 @@ class ScopedSearcher:
         tree_source: TreeSource,
         adapters: tuple[LanguageAdapter, ...],
         max_blob_size: int = MAX_BLOB_SIZE,
+        corpus_root: str | os.PathLike[str] | None = None,
     ) -> None:
         self._tree = tree_source
         self._adapters = adapters
         self._max_blob_size = max_blob_size
+        selected_root = corpus_root or os.environ.get("LEITIR_HOME") or "~/.leitir"
+        self._corpus_root = Path(selected_root).expanduser().absolute()
         retry = getattr(tree_source, "_retry", None)
         self._retry: Callable[
             [Callable[[], tuple[list[SourceMatch], bool]]],
@@ -248,9 +372,15 @@ class ScopedSearcher:
                 blobs = exc.partial_blobs
                 recovered = False
                 enumeration_excluded = 1
-            eligible, indexed, excluded, matches, partial = self._search_scope(
-                scope.slug, scope.commit_sha, blobs, spec, required_language
-            )
+            with self._local_shelf(scope.slug, scope.commit_sha) as local_shelf:
+                eligible, indexed, excluded, matches, partial = self._search_scope(
+                    scope.slug,
+                    scope.commit_sha,
+                    blobs,
+                    spec,
+                    required_language,
+                    local_shelf,
+                )
             total_eligible += eligible
             total_indexed += indexed
             total_excluded += excluded + enumeration_excluded
@@ -287,6 +417,7 @@ class ScopedSearcher:
         blobs: tuple[BlobEntry, ...],
         spec: SearchSpec,
         required_language: str | None,
+        local_shelf: _LocalShelfReader | None,
     ) -> tuple[int, int, int, list[SourceMatch], bool]:
         path_preds = [
             p for p in spec.must if p.kind is PredicateKind.PATH
@@ -329,7 +460,12 @@ class ScopedSearcher:
                         was_excluded,
                         parser_unavailable,
                     ) = score_blob_stream(
-                        self._tree,
+                        cast(
+                            TreeSource,
+                            _LocalBlobStream(local_shelf, blob)
+                            if local_shelf is not None
+                            else self._tree,
+                        ),
                         blob,
                         slug=slug,
                         commit_sha=commit_sha,
@@ -338,6 +474,8 @@ class ScopedSearcher:
                         spec=spec,
                         retry=self._retry,
                     )
+                except VerificationError:
+                    raise
                 except Exception:
                     was_excluded = True
                     parser_unavailable = False
@@ -354,7 +492,13 @@ class ScopedSearcher:
                 continue
 
             try:
-                data = self._tree.read_blob(slug, blob.blob_sha)
+                data = (
+                    local_shelf.read(blob)
+                    if local_shelf is not None
+                    else self._tree.read_blob(slug, blob.blob_sha)
+                )
+            except VerificationError:
+                raise
             except Exception:
                 files_excluded += 1
                 partial = True
@@ -399,6 +543,33 @@ class ScopedSearcher:
             matches.extend(blob_matches)
 
         return files_eligible, files_indexed, files_excluded, matches, partial
+
+    @contextmanager
+    def _local_shelf(
+        self, slug: str, commit_sha: str
+    ) -> Iterator[_LocalShelfReader | None]:
+        owner, separator, repo = slug.rpartition("/")
+        if not separator or not owner or not repo:
+            yield None
+            return
+        try:
+            target = target_path(
+                self._corpus_root, owner, repo, commit_sha, host="github.com"
+            )
+        except ValueError:
+            yield None
+            return
+        if not target.exists() or target.is_symlink():
+            yield None
+            return
+        with _target_lock(self._corpus_root, target, commit_sha):
+            manifest = read_valid_manifest(
+                target, owner, repo, commit_sha, host="github.com"
+            )
+            if manifest is None:
+                yield None
+                return
+            yield _LocalShelfReader(target)
 
     def _adapter_for(
         self, path: str, required_language: str | None = None

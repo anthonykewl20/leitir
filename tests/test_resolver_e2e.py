@@ -7,6 +7,9 @@ produces correct, immutable provenance for all three ecosystems.
 
 from __future__ import annotations
 
+import io
+import json
+
 import fixtures_resolver as fx
 import pytest
 
@@ -202,8 +205,13 @@ class TestSadPaths:
         with pytest.raises(ResolutionError):
             resolver.resolve_tag_to_sha("psf/requests", "v99.99.99")
 
-    def test_go_unsupported_vanity_module_raises(self):
-        resolver = GoResolver(tag_resolver=FakeTagResolver())
+    def test_go_vanity_module_uses_proxy_zip_source(self, monkeypatch):
+        monkeypatch.setattr(
+            "leitir._http.safe_urlopen",
+            lambda _request, timeout: io.BytesIO(json.dumps({"Version": "v0.1.0"}).encode()),
+        )
+        resolver = GoResolver(tag_resolver=FakeTagResolver(), base_url="https://proxy.test")
         ref = PackageRef(Ecosystem.GO, "gonum.org/v1/gonum", "v0.1.0")
-        with pytest.raises(ResolutionError, match="unsupported Go module host"):
-            resolver.resolve(ref)
+        result = resolver.resolve(ref)
+        assert result.host == "go-module-zip"
+        assert result.go_module_zip is True

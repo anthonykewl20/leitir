@@ -7,6 +7,7 @@ import io
 import json
 import threading
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -557,6 +558,39 @@ def test_remove_and_clean_fabricated_corpus(tmp_path, monkeypatch):
     assert not (tmp_path / "repos").exists()
     assert not (tmp_path / "sources.json").exists()
     assert not (tmp_path / "POINTERS.md").exists()
+
+
+def test_remove_go_module_zip_uses_resolved_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+    source = tmp_path / "repos" / "go-module-zip" / "module" / SHA
+    source.mkdir(parents=True)
+    write_sources(
+        tmp_path,
+        [{
+            "name": "example.com/module",
+            "host": "go-module-zip",
+            "owner": "module",
+            "repo": SHA,
+            "commit_sha": SHA,
+            "path": source.relative_to(tmp_path).as_posix(),
+            "fetched_at": "2026-08-03T00:00:00Z",
+        }],
+    )
+    resolved = SimpleNamespace(
+        scope=RepoScope(f"module/{SHA}", SHA), host="go-module-zip"
+    )
+    monkeypatch.setattr(
+        "leitir.cli._resolve_corpus_spec",
+        lambda *_args: (resolved, None, None, None),
+    )
+
+    code, out, err = _invoke(["remove", "go:example.com/module@v1.0.0"])
+
+    assert code == ExitCode.SUCCESS
+    assert out == ""
+    assert "removed" in err
+    assert not source.exists()
+    assert json.loads((tmp_path / "sources.json").read_text(encoding="utf-8")) == []
 
 
 def test_import_requires_and_forwards_trusted_lock_digest(tmp_path, monkeypatch):

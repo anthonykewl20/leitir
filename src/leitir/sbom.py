@@ -76,6 +76,25 @@ _ALIASES = {
     "MIT License": "MIT",
     "The Unlicense": "Unlicense",
 }
+_LICENSE_CONTENTS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
+    (
+        "Apache-2.0",
+        re.compile(rb"Apache\s+License\s+Version\s+2\.0,\s+January\s+2004"),
+    ),
+    (
+        "BSD-3-Clause",
+        re.compile(
+            rb"Neither\s+the\s+name\s+of\s+the\s+copyright\s+holder\s+nor\s+the\s+names\s+of\s+its\s+contributors\s+may\s+be\s+used\s+to\s+endorse\s+or\s+promote\s+products\s+derived\s+from\s+this\s+software\s+without\s+specific\s+prior\s+written\s+permission\."
+        ),
+    ),
+    (
+        "MIT",
+        re.compile(
+            rb"Permission\s+is\s+hereby\s+granted,\s+free\s+of\s+charge,\s+to\s+any\s+person\s+obtaining\s+a\s+copy"
+        ),
+    ),
+)
+_COPYRIGHT_NAME = "copyright"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,28 +211,141 @@ def _filename_license(name: str) -> str | None:
     return None
 
 
+def _content_licenses(data: bytes) -> set[str]:
+    results: set[str] = set()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeError:
+        text = ""
+    for marker in _SPDX_MARKER.finditer(text[:262144]):
+        expression = _spdx_expression(marker.group(1).strip())
+        if expression is not None:
+            results.add(expression)
+    for identifier, pattern in _LICENSE_CONTENTS:
+        if pattern.search(data) is not None:
+            results.add(identifier)
+    return results
+
+
+def _stored_license(manifest: dict[str, object]) -> LicenseResult | None:
+    if not {"license_identifier", "license_method", "license_confidence"}.issubset(manifest):
+        return None
+    identifier = manifest.get("license_identifier")
+    method = manifest.get("license_method")
+    confidence = manifest.get("license_confidence")
+    if (
+        identifier is None
+        and method == "unknown"
+        and confidence == "low"
+    ):
+        return LicenseResult(None, "unknown", "low")
+    if (
+        isinstance(identifier, str)
+        and _spdx_expression(identifier) is not None
+        and isinstance(method, str)
+        and method in {"manifest", "license-file", "copying-file", "filename"}
+        and confidence in {"high", "medium", "low"}
+    ):
+        return LicenseResult(identifier, method, confidence)
+    return None
+
+
+def infer_repository_license(target_path: Path) -> LicenseResult:
+    """Infer one repository-level license from its exact root evidence files."""
+
+    try:
+        files = sorted(
+            (
+                path
+                for path in Path(target_path).iterdir()
+                if path.is_file()
+                and (
+                    _LICENSE_NAMES.fullmatch(path.name)
+                    or _COPYING_NAMES.fullmatch(path.name)
+                    or path.name.casefold() == _COPYRIGHT_NAME
+                )
+            ),
+            key=lambda path: path.name,
+        )
+    except OSError:
+        return LicenseResult(None, "unknown", "low")
+    if not files:
+        return LicenseResult(None, "unknown", "low")
+    identifiers: set[str] = set()
+    methods: list[str] = []
+    for path in files:
+        try:
+            detected = _content_licenses(path.read_bytes())
+        except OSError:
+            return LicenseResult(None, "unknown", "low")
+        if not detected:
+            inferred = _filename_license(path.name)
+            if inferred is not None:
+                detected = {inferred}
+        if len(detected) != 1:
+            return LicenseResult(None, "unknown", "low")
+        identifiers.update(detected)
+        methods.append(
+            "copying-file" if path.name.casefold().startswith("copying") else "license-file"
+        )
+    if len(identifiers) != 1:
+        return LicenseResult(None, "unknown", "low")
+    return LicenseResult(next(iter(identifiers)), methods[0], "high")
+
+
 def infer_license(manifest: dict[str, object], target_path: Path) -> LicenseResult:
     """Infer a license through metadata, explicit file content, then filename."""
 
+    stored = _stored_license(manifest)
+    if stored is not None:
+        return stored
     declared = _manifest_license(manifest)
     if declared is not None:
         return LicenseResult(declared, "manifest", "high")
     files = _license_files(Path(target_path))
+    evidence: list[tuple[str, str, str]] = []
     for path in files:
         try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+            detected = _content_licenses(path.read_bytes())
+        except OSError:
             continue
-        marker = _SPDX_MARKER.search(text[:262144])
-        expression = _spdx_expression(marker.group(1).strip()) if marker else None
-        if expression is not None:
-            method = "copying-file" if _COPYING_NAMES.fullmatch(path.name) else "license-file"
-            return LicenseResult(expression, method, "high")
-    for path in files:
-        inferred = _filename_license(path.name)
-        if inferred is not None:
-            return LicenseResult(inferred, "filename", "medium")
-    return LicenseResult(None, "unknown", "low")
+        if not detected:
+            inferred = _filename_license(path.name)
+            if inferred is not None:
+                detected = {inferred}
+                evidence.append((inferred, "filename", "medium"))
+                continue
+        if len(detected) != 1:
+            return LicenseResult(None, "unknown", "low")
+        identifier = next(iter(detected))
+        method = "copying-file" if _COPYING_NAMES.fullmatch(path.name) else "license-file"
+        evidence.append((identifier, method, "high"))
+    identifiers = {identifier for identifier, _method, _confidence in evidence}
+    if len(identifiers) != 1:
+        return LicenseResult(None, "unknown", "low")
+    high_confidence = next(
+        (item for item in evidence if item[2] == "high"), None
+    )
+    identifier, method, confidence = high_confidence or evidence[0]
+    return LicenseResult(identifier, method, confidence)
+
+
+def license_manifest_fields(manifest: dict[str, object], target_path: Path) -> dict[str, object]:
+    """Return the cached license evidence fields for one materialized shelf."""
+
+    uncached = dict(manifest)
+    for field in ("license_identifier", "license_method", "license_confidence"):
+        uncached.pop(field, None)
+    result = (
+        infer_repository_license(target_path)
+        if uncached.get("source") == "git-commit"
+        else infer_license(uncached, target_path)
+    )
+    return {
+        "license_identifier": result.identifier,
+        "license_method": result.method,
+        "license_confidence": result.confidence,
+    }
 
 
 def _safe(value: str) -> str:
@@ -443,4 +575,10 @@ def generate_sbom(
     return _spdx(packages, dependencies) if format == "spdx" else _cyclonedx(packages, dependencies)
 
 
-__all__ = ["LicenseResult", "generate_sbom", "infer_license"]
+__all__ = [
+    "LicenseResult",
+    "generate_sbom",
+    "infer_license",
+    "infer_repository_license",
+    "license_manifest_fields",
+]

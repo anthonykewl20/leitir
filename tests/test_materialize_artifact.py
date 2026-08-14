@@ -6,12 +6,20 @@ import io
 import json
 import os
 import tarfile
+import zipfile
 
 import pytest
 from _http_server import scripted_server
 
 from leitir.corpus import materialize_source
-from leitir.materialize import MANIFEST_NAME, materialize_artifact, materialize_github_repo
+from leitir.materialize import (
+    MANIFEST_NAME,
+    VerificationError,
+    _go_zip_h1,
+    materialize_artifact,
+    materialize_github_repo,
+    materialize_go_module_zip,
+)
 from leitir.parity import ArtifactInfo, ChecksumMismatchError, RegistryArtifactFetcher
 from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRef, ResolvedPackage
 from leitir.search import RepoScope
@@ -42,6 +50,17 @@ def _artifact(data: bytes) -> ArtifactInfo:
         digest.hex(),
         checksum,
     )
+
+
+def _go_zip(module: str, version: str) -> bytes:
+    output = io.BytesIO()
+    root = f"{module}@{version}"
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(f"{root}/", b"")
+        archive.writestr(f"{root}/go.mod", f"module {module}\n".encode())
+        archive.writestr(f"{root}/demo.go", b"package demo\n")
+        archive.writestr(f"{root}/LICENSE", b"SPDX-License-Identifier: MIT\n")
+    return output.getvalue()
 
 
 def _resolved(artifact: ArtifactInfo | None) -> ResolvedPackage:
@@ -124,6 +143,76 @@ def test_checksum_mismatch_leaves_nothing_shelved(tmp_path):
             artifact,
             fetcher=RegistryArtifactFetcher(get_bytes=lambda _url: data),
         )
+
+    assert not (tmp_path / "repos").exists()
+
+
+def test_go_module_zip_shelves_authenticated_proxy_artifact(tmp_path, monkeypatch):
+    module = "example.com/demo"
+    version = "v1.2.3"
+    data = _go_zip(module, version)
+
+    class SumDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self, requested_module, requested_version):
+            assert (requested_module, requested_version) == (module, version)
+            return _go_zip_h1(data)
+
+    monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
+    with scripted_server([(200, {}, data)]) as server:
+        target = materialize_go_module_zip(
+            tmp_path,
+            f"go:{module}@{version}",
+            RepoScope("module/" + "b" * 40, "b" * 40),
+            module,
+            version,
+            server.base_url,
+        )
+
+    manifest = json.loads((target / MANIFEST_NAME).read_text())
+    assert (target / "demo.go").read_bytes() == b"package demo\n"
+    assert target.parts[-2:] == ("module", "b" * 40)
+    assert not (target / ("b" * 40)).exists()
+    assert manifest["source"] == "go-module-zip"
+    assert manifest["module_path"] == module
+    assert manifest["module_version"] == version
+    assert manifest["zip_sha256"] == hashlib.sha256(data).hexdigest()
+    assert manifest["sumdb_h1"] == _go_zip_h1(data)
+    assert {
+        field: manifest[field]
+        for field in ("license_identifier", "license_method", "license_confidence")
+    } == {
+        "license_identifier": "MIT",
+        "license_method": "license-file",
+        "license_confidence": "high",
+    }
+
+
+def test_go_module_sumdb_mismatch_leaves_nothing_shelved(tmp_path, monkeypatch):
+    module = "example.com/demo"
+    version = "v1.2.3"
+    data = _go_zip(module, version)
+
+    class SumDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self, *args):
+            return "h1:invalid"
+
+    monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
+    with scripted_server([(200, {}, data)]) as server:
+        with pytest.raises(VerificationError, match="sumdb h1"):
+            materialize_go_module_zip(
+                tmp_path,
+                f"go:{module}@{version}",
+                RepoScope("module/" + "c" * 40, "c" * 40),
+                module,
+                version,
+                server.base_url,
+            )
 
     assert not (tmp_path / "repos").exists()
 

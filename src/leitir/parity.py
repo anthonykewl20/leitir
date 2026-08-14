@@ -19,6 +19,9 @@ from leitir import _http
 from leitir.credentials import Credentials
 from leitir.materialize import (
     ARCHIVE_MAX_COMPRESSED_BYTES,
+    ARCHIVE_MAX_MEMBER_BYTES,
+    ARCHIVE_MAX_MEMBERS,
+    ARCHIVE_MAX_TOTAL_BYTES,
     MANIFEST_NAME,
     UnsafeArchiveError,
     _extract_tarball,
@@ -140,15 +143,24 @@ def artifact_from_metadata(
     return None
 
 
-def _extract_zip(data: bytes, destination: Path) -> None:
+def _extract_zip(data: bytes, destination: Path, archive_root: str | None = None) -> None:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         infos = archive.infolist()
         if not infos:
             raise UnsafeArchiveError("archive is empty")
         paths: list[tuple[zipfile.ZipInfo, PurePosixPath | None]] = []
         roots: set[str] = set()
+        expected = PurePosixPath(archive_root).parts if archive_root is not None else ()
         seen: set[PurePosixPath] = set()
+        total_size = 0
         for info in infos:
+            if len(paths) >= ARCHIVE_MAX_MEMBERS:
+                raise UnsafeArchiveError("archive contains too many members")
+            if info.file_size < 0 or info.file_size > ARCHIVE_MAX_MEMBER_BYTES:
+                raise UnsafeArchiveError("archive member exceeds size limit")
+            total_size += info.file_size
+            if total_size > ARCHIVE_MAX_TOTAL_BYTES:
+                raise UnsafeArchiveError("archive exceeds total size limit")
             # ZipInfo normalizes the platform separator in ``filename``.  On
             # Windows that can conceal a raw backslash-bearing member, so
             # validate the pre-normalization archive name instead.
@@ -161,8 +173,13 @@ def _extract_zip(data: bytes, destination: Path) -> None:
             parts = tuple(part for part in path.parts if part not in ("", "."))
             if not parts:
                 raise UnsafeArchiveError("invalid archive member path")
-            roots.add(parts[0])
-            relative = PurePosixPath(*parts[1:]) if len(parts) > 1 else None
+            if expected:
+                if parts[: len(expected)] != expected:
+                    raise UnsafeArchiveError("archive does not have the expected module root")
+                relative = PurePosixPath(*parts[len(expected) :]) if len(parts) > len(expected) else None
+            else:
+                roots.add(parts[0])
+                relative = PurePosixPath(*parts[1:]) if len(parts) > 1 else None
             if relative == PurePosixPath(MANIFEST_NAME):
                 raise UnsafeArchiveError("archive contains Leitir's reserved manifest path")
             if relative is not None and relative in seen:
@@ -173,7 +190,7 @@ def _extract_zip(data: bytes, destination: Path) -> None:
             if mode not in (0, 0o040000, 0o100000):
                 raise UnsafeArchiveError("archive contains a link or special file")
             paths.append((info, relative))
-        if len(roots) != 1:
+        if not expected and len(roots) != 1:
             raise UnsafeArchiveError("archive does not have the expected single top-level directory")
         destination.mkdir(parents=True, exist_ok=True)
         for info, relative in paths:
@@ -190,10 +207,12 @@ def _extract_zip(data: bytes, destination: Path) -> None:
                     shutil.copyfileobj(source, target)
 
 
-def extract_artifact(data: bytes, destination: Path) -> None:
+def extract_artifact(
+    data: bytes, destination: Path, *, archive_root: str | None = None
+) -> None:
     """Safely extract a registry tarball or zip, stripping its root directory."""
     if zipfile.is_zipfile(io.BytesIO(data)):
-        _extract_zip(data, destination)
+        _extract_zip(data, destination, archive_root)
     else:
         _extract_tarball(data, destination, "artifact", "0" * 40)
 

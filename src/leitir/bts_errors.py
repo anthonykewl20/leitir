@@ -12,6 +12,7 @@ class BTSRejectReason(str, Enum):  # noqa: UP042 - shared contract requires str,
 
     REJECT_UNRESOLVED_EDGE = "reject_unresolved_edge"
     REJECT_UNSUPPORTED_CONSTRUCT = "reject_unsupported_construct"
+    REJECT_UNSUPPORTED_EXTRA = "reject_unsupported_extra"
     REJECT_PROVENANCE_MISMATCH = "reject_provenance_mismatch"
     REJECT_MOVING_REFERENCE = "reject_moving_reference"
     REJECT_DONOR_IMPORT_OBSERVED = "reject_donor_import_observed"

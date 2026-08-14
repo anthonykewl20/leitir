@@ -21,6 +21,10 @@ _D = (-121665 * pow(121666, _P - 2, _P)) % _P
 _I = pow(2, (_P - 1) // 4, _P)
 _BY = (4 * pow(5, _P - 2, _P)) % _P
 _TILE_HEIGHT = 8
+# Full tiles are 2**8 SHA-256 hashes (8 KiB); lookup records and both lookup
+# and latest signed tree heads are short text.  This leaves ample room for
+# valid protocol responses while bounding allocations from an untrusted mirror.
+_MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 class SumDBVerificationError(MaterializationError):
@@ -259,7 +263,10 @@ class SumDBClient:
                 Request(f"{self._base_url}/{path}", headers={"User-Agent": "leitir"}),
                 timeout=self._timeout,
             ) as response:
-                return response.read()
+                data = response.read(_MAX_RESPONSE_BYTES + 1)
+                if len(data) > _MAX_RESPONSE_BYTES:
+                    raise SumDBVerificationError("sumdb response exceeds size limit")
+                return data
 
         try:
             return _http.retry_http(request)

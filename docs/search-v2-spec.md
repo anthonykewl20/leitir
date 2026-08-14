@@ -40,7 +40,11 @@ Research evidence: `docs/research/search-upgrade-research.md:8-28,269-287`.
 
 1. A result is valid only with immutable `(slug, commit, path, blob)` identity.
 2. Missing, malformed, mismatched, stale, sampled, or unverified integrity
-   evidence rejects or becomes uncovered; it never becomes complete.
+   evidence rejects or becomes uncovered; it never becomes complete for
+   indexed-search eligibility. A direct local-shelf scoped search may report
+   complete only when every served local blob is byte-verified against the
+   pinned upstream tree listing (size and git blob SHA equality); any mismatch
+   is a hard failure with no API fallback.
 3. Every set and path traversal has an explicit sorted order.
 4. Parser failure, transport failure, budget exhaustion, and unsupported
    unbounded matching are visible as partial coverage.

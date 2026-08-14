@@ -1,0 +1,3 @@
+package side
+
+func Init() {}

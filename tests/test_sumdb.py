@@ -203,3 +203,42 @@ def test_lookup_uses_case_escaped_module_path(tmp_path):
             client.verify(module, version)
 
     assert server.state.request_paths == [f"/lookup/github.com/!burnt!sushi/toml@{version}"]
+
+
+def test_fetch_accepts_full_width_tile_response(tmp_path):
+    tile = sumdb._Tile(0, 0, 1 << sumdb._TILE_HEIGHT)
+    body = b"x" * (tile.width * 32)
+    with scripted_server([(200, {}, body)]) as server:
+        client = SumDBClient(tmp_path, base_url=server.base_url)
+
+        assert client._tile(tile) == body
+
+    assert server.state.request_paths == ["/tile/8/0/000"]
+
+
+def test_fetch_accepts_response_at_size_limit(tmp_path):
+    body = b"x" * sumdb._MAX_RESPONSE_BYTES
+    with scripted_server([(200, {}, body)]) as server:
+        client = SumDBClient(tmp_path, base_url=server.base_url)
+
+        assert client._fetch("latest") == body
+
+
+def test_fetch_rejects_response_larger_than_size_limit(tmp_path):
+    body = b"x" * (sumdb._MAX_RESPONSE_BYTES + 1)
+    with scripted_server([(200, {}, body)]) as server:
+        client = SumDBClient(tmp_path, base_url=server.base_url)
+
+        with pytest.raises(SumDBVerificationError, match="response exceeds size limit"):
+            client._fetch("latest")
+
+
+def test_partial_tile_oversize_response_does_not_trigger_full_tile_fallback(tmp_path):
+    body = b"x" * (sumdb._MAX_RESPONSE_BYTES + 1)
+    with scripted_server([(200, {}, body)]) as server:
+        client = SumDBClient(tmp_path, base_url=server.base_url)
+
+        with pytest.raises(SumDBVerificationError, match="response exceeds size limit"):
+            client._tile(sumdb._Tile(0, 0, 2))
+
+    assert server.state.request_paths == ["/tile/8/0/000.p/2"]

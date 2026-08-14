@@ -75,6 +75,54 @@ jobs:
           python -m pytest tests/test_treehash.py tests/test_materialize.py
           tests/test_parity.py tests/test_snapshot.py -q
 
+  tree-sitter-extra:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-tree-sitter.lock
+      - name: Create isolated parser environment
+        run: uv venv .tree-sitter-venv
+      - name: Install hash-locked tree-sitter wheels
+        run: >-
+          uv pip install --python .tree-sitter-venv/bin/python
+          --require-hashes --only-binary :all: -r requirements-tree-sitter.lock
+      - name: Smoke-test certified runtime and grammar tuple
+        run: |
+          .tree-sitter-venv/bin/python - <<'PY'
+          import tree_sitter_go as tsgo
+          import tree_sitter_javascript as tsjavascript
+          import tree_sitter_rust as tsrust
+          import tree_sitter_typescript as tstypescript
+          from tree_sitter import Language, Parser
+
+          cases = (
+              (tsjavascript.language, b"function value() {}"),
+              (tstypescript.language_typescript, b"function value(): void {}"),
+              (tsrust.language, b"fn value() {}"),
+              (tsgo.language, b"package value\nfunc main() {}"),
+          )
+          for factory, source in cases:
+              parser = Parser(Language(factory()))
+              tree = parser.parse(source)
+              assert not tree.root_node.has_error
+          PY
+      - name: Run polyglot graph scaffolding tests with the enabled extra
+        run: |
+          source .tree-sitter-venv/bin/activate
+          PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
+
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -89,13 +137,18 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: requirements.txt
+      - name: Create isolated parser environment
+        run: uv venv .tree-sitter-venv
+      - name: Install hash-locked tree-sitter wheels
+        run: >-
+          uv pip install --python .tree-sitter-venv/bin/python
+          --require-hashes --only-binary :all: -r requirements-tree-sitter.lock
       - name: Measure offline line and branch coverage
         env:
           PYTHONPATH: src
-        run: >-
-          uv run --no-project --with-requirements requirements.txt --with coverage==7.15.2
-          python -m coverage run --branch --source=leitir -m pytest -q
-          -p no:cacheprovider
+        run: |
+          source .tree-sitter-venv/bin/activate
+          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 python -m coverage run --branch --source=leitir -m pytest -q -p no:cacheprovider
       - name: Write coverage reports
         run: |
           uv run --no-project --with coverage==7.15.2 python -m coverage report --precision=2 --fail-under=82.5
@@ -202,6 +255,7 @@ jobs:
     needs:
       - test
       - determinism
+      - tree-sitter-extra
       - coverage
       - package
       - lint

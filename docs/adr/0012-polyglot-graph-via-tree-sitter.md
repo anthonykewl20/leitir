@@ -257,13 +257,17 @@ A producer emits a resolved `Edge` only when all of the following are proved:
    `SourceRef` provenance.
 
 Every dynamic import or `require`, re-export or star import, property or
-optional-chain dispatch, Rust macro or trait/`impl` selection, Go interface
-dispatch, build tag or conditional compilation, glob import, computed name, and
-other unmodeled construct emits both an `UnresolvedEdge` and an
+optional-chain dispatch **in call position**, Rust macro or trait/`impl`
+selection, Go interface dispatch, build tag or conditional compilation, glob
+import, computed name, and other unmodeled construct emits both an `UnresolvedEdge` and an
 `ExtractionBlocker`. It is never silently omitted, resolved by matching text,
 or passed to the regex tier-2 extractor. Parse errors, error nodes, missing
 coverage, budget exhaustion, and query/grammar identity mismatch likewise cannot
 produce a complete graph.
+
+Bare non-call property/member reads are outside the v1 subset and emit no
+evidence; this is a deliberate documented limitation, not a claim of dispatch
+coverage.
 
 Coordinates remain byte-based. Producers preserve tree-sitter
 `Node.start_byte`, `Node.end_byte`, `Node.start_point`, and `Node.end_point`, and
@@ -388,39 +392,55 @@ scope boundary that leaves the Python-only pipeline stages unavailable.
 
 1. Which exact five-wheel version tuple is compatibility-tested and pinned?
 
-   **Answer (2026-08-13):** The selected 0.23-aligned tuple is
-   `tree-sitter==0.23.2`, `tree-sitter-javascript==0.23.1`,
-   `tree-sitter-typescript==0.23.2`, `tree-sitter-rust==0.23.3`, and
-   `tree-sitter-go==0.23.4`. This selection aligns the grammar and runtime ABI
-   generation targeted by the grammar authors. It is not needed to satisfy pip
-   resolution: under PEP 440, `~=X.Y` means `>=X.Y, ==X.*`, so `0.23.2`
-   satisfies both `~=0.22` and `~=0.23`; earlier claims that those constraints
-   were disjoint were incorrect. Runtime ABI fit must be self-certified by the
-   mandated package-tuple-compatibility test, which constructs `Language()` and
-   `Parser()` for every grammar. If that test fails, the fallback is the newest
-   release of each grammar on `tree-sitter==0.25.2`, conditional on passing the
-   same smoke test.
+   **Answer (updated 2026-08-14):** The originally selected 0.23-aligned tuple
+   failed the mandated package-tuple compatibility self-certification with
+   `ValueError: Incompatible Language version 15. Must be between 13 and 14`
+   (grammar ABI 15 versus runtime 0.23.2 maximum 14); it also has no cp314
+   runtime wheel. Per the pre-authorized fallback, the certified tuple is
+   `tree-sitter==0.25.2`, `tree-sitter-javascript==0.25.0`,
+   `tree-sitter-typescript==0.23.2`, `tree-sitter-rust==0.24.2`, and
+   `tree-sitter-go==0.25.0`. It was smoke-tested on 2026-08-14 on CPython 3.12
+   and 3.14. Musllinux-aarch64 remains fail-closed for the runtime and
+   `tree-sitter-typescript`; `requirements-tree-sitter.lock` carries the
+   authoritative 66 wheel digests.
 
 2. Which wheel hashes are required for every supported Python and platform
    combination?
 
-   **Answer (2026-08-13):** All four grammar distributions publish `cp39-abi3`
-   wheels for manylinux x86_64 and aarch64, musllinux x86_64, macOS x86_64 and
-   arm64, and Windows amd64 and arm64. The runtime publishes cp311, cp312, and
-   cp313 wheels for those platforms and for musllinux aarch64. No grammar
-   distribution publishes a musllinux aarch64 wheel, so that platform fails
-   closed under section 1 with
-   `tree_sitter_platform_hash_unavailable_v1`. The authoritative SHA-256 digest
-   inventory is the to-be-committed `requirements-tree-sitter.lock`; this ADR
-   does not duplicate that artifact's 50-plus digests.
+   **Answer (updated 2026-08-14):** The authoritative 66-digest inventory is
+   `requirements-tree-sitter.lock`; this ADR does not duplicate it. Under the
+   certified tuple, musllinux-aarch64 has no accepted runtime or
+   `tree-sitter-typescript` wheel and therefore fails closed under section 1
+   with `tree_sitter_platform_hash_unavailable_v1`.
 
 3. What measured parser and query limits bound adversarial-input CPU, memory,
    nesting, error recovery, and output growth?
 
-   **Answer (2026-08-13):** This remains open. `py-tree-sitter` exposes no
-   documented caps or defaults to inherit. `GraphExtractionPolicy` limits are
-   therefore pure Leitir policy and require corpus measurement of p95 node
-   counts, query-match fan-out, and adversarial nesting before ratification.
+   **Answer (measured 2026-08-14):**
+   [`docs/evidence/oq3-tree-sitter-limits-2026-08-14.md`](../evidence/oq3-tree-sitter-limits-2026-08-14.md)
+   records the complete reproducible measurement report: 7,544 real files from
+   14 verified local-shelf repositories, using the certified CPython 3.12
+   tuple. The ratified policy limits are:
+
+   | Limit | Ratified value | Derivation |
+   |---|---:|---|
+   | `max_files` | 2,000 | ceil(1,677 observed scope p95 × 1.2) |
+   | `max_file_bytes` | 2,097,152 | p99 bytes × 5.5; rejects 0.08%, generated-only |
+   | `max_tree_nodes_per_file` | 250,000 | p99 nodes × 1.47; rejects 0.29%, generated-only |
+   | `max_query_matches` | 1,100,000 | ceil(2,000 × p95 263 × 2), rounded |
+   | `max_symbols` | 200,000 | ceil(2,000 × p95 48 × 2), rounded |
+   | `max_edges` | 900,000 | ceil(2,000 × p95 204 × 2), rounded |
+   | `max_work_units` | 10,000 | five-fold per-file headroom |
+
+   Adversarial nesting was linear through depth 100,000, with zero crashes,
+   timeouts, or ERROR nodes; worst parse time was 216 ms. Seeded error recovery
+   through 50% delimiter corruption had no hangs or crashes and bounded growth.
+   A per-file depth cap is deliberately rejected: bytes and all-node caps bind
+   the exposure directly, while depth is not a crash vector in the certified
+   tuple. The kernel now counts nodes with an early-abort streaming traversal,
+   avoiding tuple materialization at about 240 B/node (roughly 1 GiB transient
+   allocation for a bytes-compliant adversarial input), and sets native
+   `QueryCursor.match_limit` to the request's query-match cap.
 
 4. What exact fixtures and assertions comprise the implementation gate at
    `tests/test_graph_polyglot.py`?
@@ -428,6 +448,112 @@ scope boundary that leaves the Python-only pipeline stages unavailable.
 These answers were resolved on 2026-08-13 from PyPI metadata current on that
 date and must be re-verified whenever `requirements-tree-sitter.lock` is
 regenerated.
+
+## Implementation notes (stage 1)
+
+- The composition adapter binds to the implemented `DonorSnapshot` type from
+  ADR-0008; `ValidatedDonorSnapshot` is not a separate runtime type.
+- The lazy boundary reports
+  `tree_sitter_producer_unimplemented_v1` after the optional-extra check until
+  stage 2 supplies the four language producer modules.
+- Platform-lock preflight is a pure lock-text check for the complete pinned
+  tuple and hashes. Pip with `--require-hashes --only-binary :all:` remains the
+  install-time platform-resolution authority.
+- `make_graph_provider(..., requirements_lock_text=...)` imports the built-in
+  producer's stdlib-safe module and verifies its policy identity before any
+  native optional-extra import. The production order is validation →
+  producer-identity → extra → lock → digest → coverage → extract. Runtime and
+  grammar distribution fields are exact pins (`tree-sitter` and
+  `tree-sitter-{language}`), not caller-selected metadata lookup names.
+- Scope declaration uses explicit `os.walk(..., followlinks=False)` traversal
+  and rejects every file or directory symlink with
+  `tree_sitter_source_symlink_v1`; it never relies on implicit `rglob` behavior.
+- Measured with the certified CPython 3.12 wheels: runtime ABI range is 13–15;
+  JavaScript, TypeScript, Rust, and Go grammar ABIs are respectively 15, 14, 15,
+  and 15.
+
+## Implementation notes (stage 2)
+
+- The import-safe shared kernel and JavaScript producer pin exact query text and
+  its SHA-256 before native loading, verify the loaded grammar ABI, count all
+  tree nodes (named and unnamed), and fail typed on every ratified budget.
+- Tree-sitter byte spans are converted directly to ADR-0008 one-based lines and
+  zero-based UTF-8 byte columns. Parse-error files yield blocker-only evidence
+  and are excluded from `parsed_files`.
+- JavaScript module identities are normalized donor-relative POSIX paths with
+  their final extension removed.
+- Pinned query text is a canonical identity, budget, and canonical-input
+  artifact; extraction walks validated AST node types rather than query
+  captures. Behavior tests bound drift between the query's covered shapes and
+  traversal types.
+- A work unit is one declared file's parse, AST walk, and query. OQ3's five-fold
+  `max_work_units` headroom remains adequate while units stay per-file.
+- JavaScript and TypeScript emit `INSTANTIATES` for exactly-one resolved bare
+  `new` constructors (including static imported bindings). Member/computed
+  constructors and unresolved/ambiguous identifiers emit paired typed evidence.
+  `throw new` shares the same constructor resolver but remains `RAISES` evidence.
+- JavaScript and TypeScript `IMPORTS` provenance uses the import statement for
+  both site and binding; specifier spans are retained only for local bindings.
+- TypeScript maps interfaces to `CLASS`, marks interface-target inheritance as
+  `protocol_base`, statically binds `import type`, and treats `.tsx` parse errors
+  as blocker-only evidence under the parse-error policy.
+- Rust uses per-file modules and a declared-scope-only crate model. `main.rs` or
+  `lib.rs` in directory `D` is a root with empty semantic module path and
+  `crate` anchored at `D`; another file uses the nearest ancestor directory
+  containing a declared root file. `foo.rs` is its stem and `mod.rs` its
+  directory relative to that root. No Cargo metadata or undeclared filesystem
+  path is read. With no declared ancestor root, `crate` and `super` resolution
+  reject as `tree_sitter_unresolved_import_v1`; `super` that would pop above a
+  known root rejects as `tree_sitter_super_above_crate_root_v1`, never as a
+  donor-root-relative fabricated edge. A directory declaring both roots is a
+  valid bin+lib root boundary,
+  emits `impl Trait for Type` as protocol-base `INHERITS`, and intentionally
+  emits no `RAISES` edges. A grammar-proved `use_as_clause` binds its alias name
+  to the original exported leaf; any unrecognized alias shape rejects the whole
+   use statement with paired alias-import evidence rather than guessing.
+- Rust splits a literal use at its longest file-backed module prefix: a full
+  file path binds only that module, while an item binding requires its direct
+  parent module and exactly one matching definition. Thus a module alias can
+  never manufacture a callable edge. `tree_sitter_alias_import_v1` remains a
+  defensive path because the certified grammar exposes no additional real alias
+  leaf shape beyond `use_as_clause`.
+- JavaScript and TypeScript build one file-local lexical binding index before
+  resolving references. Function/method/arrow, class-body, catch, static-block,
+  and every statement-block scope retain parameters, declarations, and named
+  expression own-names; lookup walks only parent scope links. A shadowed name
+  emits paired `tree_sitter_shadowed_binding_v1` evidence, including a bare
+  root block or an inner nested block, rather than fabricating an imported edge.
+- The certified 2026-08-14 JavaScript/TypeScript grammar probe also pins
+  `generator_function_declaration` (and expression-form
+  `generator_function`) as function scopes, plus TypeScript
+  `abstract_class_declaration`, `enum_declaration`, `internal_module`, and
+  `module` as runtime value declarations. Loop declarations use their emitted
+  `for_in_statement`/`for_statement` scope; enum member property identifiers do
+  not become bare lexical bindings. This audited index rejects a shadowed import
+  rather than emitting a fabricated call edge.
+- JavaScript side-effect imports with a static literal emit an `IMPORTS` edge
+  without a local name binding. Go owner containment additionally requires the
+  definition and reference to be from the same file, even within one package.
+- Producers re-read through one kernel helper that verifies the freshly read
+  git blob SHA-1 against each declared `SourceRef`; changed bytes reject with
+  `tree_sitter_source_bytes_changed_v1` before parsing.
+- Built-in producers check policy producer id/version/resolution-rule constants
+  before native loading, and verify installed runtime and grammar distribution
+  versions with `importlib.metadata`; mismatches reject with the corresponding
+  producer/runtime/grammar provenance detail. Explicit
+  `register_graph_extractor` replacements remain deliberate test/plugin
+  authority, as with the API-surface seam, and are not built-in producers.
+- `max_edges` counts every resolved `Edge` and every `UnresolvedEdge`, so a
+  blocker pair cannot evade the request-wide output budget. The tree-sitter CI
+  matrix runs all four polyglot graph test modules while retaining its wheel
+  smoke step.
+- Go uses package-directory module identities with canonical first-file
+  provenance, exact-relative import resolution, embedding `INHERITS`, blank
+  imports as `IMPORTS` without name bindings, blocks dot imports, and never
+  emits `RAISES` for `panic`.
+- Stage 2 is complete for all four languages. Its gate is
+  `tests/test_graph_polyglot.py` plus
+  `tests/test_graph_polyglot_{typescript,rust,go}.py`.
 
 ## Links
 

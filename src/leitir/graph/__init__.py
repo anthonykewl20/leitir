@@ -18,7 +18,9 @@ from leitir.graph.model import (
     UnresolvedEdge,
     build_from_api_index,
 )
+from leitir.graph.policy import GraphExtractionPolicy, GraphExtractionRequest
 from leitir.graph.python import GRAMMAR_ID, StaticExtraction, extract_static_edges
+from leitir.graph.registry import GraphExtractor, make_graph_provider, register_graph_extractor
 
 __all__ = [
     "GRAMMAR_ID",
@@ -29,6 +31,9 @@ __all__ = [
     "ExtractionBlocker",
     "Graph",
     "GraphCoverage",
+    "GraphExtractionPolicy",
+    "GraphExtractionRequest",
+    "GraphExtractor",
     "Node",
     "NodeId",
     "NodeKind",
@@ -38,4 +43,6 @@ __all__ = [
     "UnresolvedEdge",
     "build_from_api_index",
     "extract_static_edges",
+    "make_graph_provider",
+    "register_graph_extractor",
 ]

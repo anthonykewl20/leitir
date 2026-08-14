@@ -321,7 +321,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2329 passed, 61 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2347 passed, 63 skipped**.
 
 ## Repository layout
 

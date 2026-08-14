@@ -66,12 +66,14 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - ADR-005 C9 version diffing (`corpus`)
 - ASV performance benchmark suite + scorecard performance dimension (`perf`)
 - bind BTS digests to the authoritative verified donor tree (B5b, #59) (`bts`)
+- BTS eval publication target, exporter, anti-gaming gate (#75) (`bench`)
 - changesets-style tag inference and subpath-aware get (`corpus`)
 - Codeberg + Sourcehut git hosts (`corpus`)
 - deduplicate global hits by content digest and repo path (#50) (`search`)
 - dependency composition conflict matrix (#76) (`composition`)
 - duplicate-abstraction detection (#78) (`duplicates`)
 - enforce canonical predicate-language routing in scoped and global modes (`search`)
+- exit-corpus pinning manifest and validation harness (#73) (`gate`)
 - generate CHANGELOG from conventional commits + drift gate (`changelog`)
 - GitHub-only release pipeline + PyPI deferred path (`distribution`)
 - Go module multi-host (gitlab/bitbucket/golang.org/x) (`corpus`)
@@ -91,6 +93,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - unified credentials + private repo/registry auth (`corpus`)
 - upstream tracking, drift alerts, bundle v2 (#80) (`lineage`)
 - widen pinned search benchmark to eight languages (`bench`)
+- wire BTS compute and analysis surfaces (#148) (`cli`)
 
 ### Changed
 - serve scoped search from verified local shelves; complete Go module, license, and API-surface support (`search`)

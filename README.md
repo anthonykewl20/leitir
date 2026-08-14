@@ -218,6 +218,10 @@ flowchart LR
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
 - `diff`: compare two resolved versions with file and API-symbol deltas.
+- `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
+- `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph; for example, `leitir analysis-architecture graph.json --subject widget --json`.
+- `analysis-lineage manifest.json`: validate a canonical lineage manifest; for example, `leitir analysis-lineage lineage.json --json`.
+- `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check; for example, `leitir exit-gate-validate benchmarks/bts-v1/corpus.json --json`. Its optional public self-hash is reported only as `content_binding`; external ratification authority is deferred in v1, so `ratified` is always `false`.
 
 ### Closure and reproducibility
 - `lock`: materialize the project's transitive dependency closure.

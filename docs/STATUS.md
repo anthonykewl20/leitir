@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-13)
+# Leitir — Status (2026-08-14)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -35,7 +35,16 @@ through ADR-0011 are Accepted and Implemented, and issues #55, #60, #61, #62,
 #63, #64, and #72 are closed. The v0.1.2 milestone remains open: its exit gate
 (#73) still requires at least five pinned real donors, an nsjail rootfs, and
 offline containment CI; evaluation (#75) still requires real agent tasks and
-published results; and the Windows rerun runner remains open in #128.
+published results.
+
+### v0.1.3 — composition and multi-language
+
+ADR-0013 through ADR-0017 and ADR-0019 are Accepted. Composition,
+architecture, duplicate-abstraction detection, lineage, integration-cost, and
+occupied-recipient validation landed through PRs #132–#139; #82 is closed by
+PR #139. Only #81 (tree-sitter; ADR-0012 questions answered on `main`,
+implementation not started) and epic #40 (manifest authenticity; ADR-0018
+Proposed for v2.0) remain in the milestone.
 
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
@@ -115,7 +124,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2164 passed, 61 skipped**. The skips are
+Offline suite: **2279 passed, 61 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

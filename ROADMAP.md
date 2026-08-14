@@ -11,7 +11,6 @@
 **Current (pre-public-release): GitHub-only.**
 
 - Install: `pip install git+https://github.com/anthonykewl20/leitir.git`
-- Pinned install: `pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.0`
 - Release artifacts: GitHub Releases (auto-built wheel + sdist via `.github/workflows/release.yml` on `v*` tag push)
 - Update notifications: poll GitHub Releases API on a 24h cache; works as soon as the first `v*` tag is pushed
 
@@ -26,9 +25,9 @@
 
 ## Current status
 
-v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). Implementation-complete; design-stage software. **Not production-ready.** The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127, but the milestone remains open for its exit gate (#73), evaluation (#75), and Windows rerun runner (#128).
+The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI); the project remains design-stage software and **not production-ready**. The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127, but the milestone remains open for epic #52, its exit gate (#73), and evaluation (#75).
 
-## Recently shipped
+## Initially implemented (v0.1.0 scope)
 
 - v0.1.0: ADR-006 load-time tree verification (#17, #18, #19, #20 — all closed)
 - ADR-005: corpus-v2 capabilities (C1-C10 complete)
@@ -36,6 +35,13 @@ v0.1.0 shipped (load-time tree verification, ADR-006, process/docs scaffolding, 
 - ADR-003: categorized HTTP retry
 - ADR-002: deterministic evidence scoring engine (standalone repository scorer)
 - ADR-001: deterministic code-search kernel
+
+## Recently landed
+
+- v0.1.2 BTS program via PR #127, implementing ADR-0008 through ADR-0011.
+- v0.1.3 composition and multi-language wave via PRs #131–#139: composition,
+  architecture, duplicates, lineage, cost, and occupied-recipient validation;
+  the Windows fix for #128; ADR-0012 amendments; and ADR-0013 through ADR-0019.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
@@ -71,9 +77,9 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 
 ## Next milestones (incremental, shipped as patch releases)
 
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (4 open): the active milestone. The BTS code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The milestone exit criterion is not yet met: #73 requires at least five pinned real donors, an nsjail rootfs, and offline containment CI; #75 requires real agent tasks and published evaluation results; and the Windows rerun runner remains open in #128. The v0.1.1 production-ready human gates (#42) validate already-shipped code and run in parallel, not as a hard dependency.
-- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (8 open): candidate composition (conflict matrix, architecture compatibility, duplicate abstraction, integration cost), lineage/upstream tracking, multi-language graph via tree-sitter, and occupied-recipient transplant validation.
-- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete (all slices merged and independently cross-reviewed/hardened); pending release. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (3 open; 22/25 complete): the BTS code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The remaining work is epic #52, exit gate #73 (at least five pinned real donors, an nsjail rootfs, and offline containment CI), and evaluation #75 (real agent tasks and published results). The v0.1.1 production-ready human gates (#42) validate already-landed code and run in parallel, not as a hard dependency.
+- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (6/8 complete): #76, #77, #78, #79, #80, and #82 closed via PRs #132, #137, #136, #135, #134, and #139. Only #81 (tree-sitter; ADR-0012 questions answered, implementation not started) and epic #40 (manifest authenticity; ADR-0018 Proposed for v2.0) remain.
+- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete on `main` (all slices merged and independently cross-reviewed/hardened), but no release has been cut. This is a pre-first-release repository with zero `v*` tags, and `pyproject.toml` remains at 0.1.1; cutting the release requires the owner-held version bump, tag, and push. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
 
 ## Post-production-ready (still v0.x)
 
@@ -93,4 +99,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: pick an issue from the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) labeled `ready-for-agent` or `help wanted`. The `ready-for-agent` pool is currently empty.
+Humans: the next dispatchable work is v0.1.3 issue #81 (tree-sitter), but promotion is owner-gated and the global `ready-for-agent` pool is currently empty. Check the [v0.1.3 milestone](https://github.com/anthonykewl20/leitir/milestone/3) for current status.

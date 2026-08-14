@@ -180,6 +180,29 @@ class TestResolvedPackage:
             {"urls": [{"upload_time_iso_8601": "2026-08-08T12:34:56"}]}
         ) is None
 
+    @pytest.mark.parametrize(
+        ("host", "go_module_zip", "go_proxy_url", "message"),
+        [
+            ("unsupported.example", False, None, "unsupported repository host"),
+            ("github.com", True, None, "provenance must use"),
+            ("go-module-zip", True, "ftp://proxy.example", "requires an HTTPS"),
+            ("github.com", False, "https://proxy.example", "must not have"),
+        ],
+    )
+    def test_go_zip_provenance_contract_rejects_inconsistent_fields(
+        self, host, go_module_zip, go_proxy_url, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            ResolvedPackage(
+                PackageRef(Ecosystem.GO, "example.com/demo", "v1.0.0"),
+                RepoScope("example/demo", SHA),
+                "v1.0.0",
+                "https://pkg.go.dev/example.com/demo@v1.0.0",
+                host=host,
+                go_module_zip=go_module_zip,
+                go_proxy_url=go_proxy_url,
+            )
+
 
 def test_github_commit_timestamp_comes_from_committer_metadata(monkeypatch):
     timestamp = "2026-08-08T12:34:56Z"
@@ -347,14 +370,30 @@ class TestGoMultiHostResolution:
         ]
 
     @pytest.mark.parametrize("module", ["gopkg.in/yaml.v3", "gonum.org/v1/gonum"])
-    def test_unsupported_vanity_host_fails_before_network(self, monkeypatch, module):
-        def unexpected(*args, **kwargs):
-            raise AssertionError("network must not be used")
+    def test_vanity_host_uses_authenticated_proxy_zip_source(self, monkeypatch, module):
+        result = _go_resolver(monkeypatch, module, {})
 
-        monkeypatch.setattr("leitir._http.safe_urlopen", unexpected)
-        resolver = GoResolver(RecordingRepoResolver())
-        with pytest.raises(ResolutionError, match="unsupported Go module host"):
-            resolver.resolve(PackageRef(Ecosystem.GO, module, "v1.2.3"))
+        assert result.host == "go-module-zip"
+        assert result.go_module_zip is True
+        assert result.go_proxy_url == "https://proxy.test"
+
+    def test_github_major_suffix_is_not_a_subpath(self, monkeypatch):
+        result = _go_resolver(
+            monkeypatch,
+            "github.com/lxc/incus/v6",
+            {"github.com": RecordingRepoResolver()},
+        )
+
+        assert result.subpath is None
+
+    def test_github_monorepo_subpath_is_preserved(self, monkeypatch):
+        result = _go_resolver(
+            monkeypatch,
+            "github.com/owner/repo/sub",
+            {"github.com": RecordingRepoResolver()},
+        )
+
+        assert result.subpath == "sub"
 
 
 @pytest.mark.skipif(

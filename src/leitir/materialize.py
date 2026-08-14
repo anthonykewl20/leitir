@@ -10,6 +10,7 @@ recorded distinctly so partial verification is never represented as complete.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -21,6 +22,7 @@ import stat
 import tarfile
 import tempfile
 import threading
+import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -48,6 +50,7 @@ _HOST_METADATA = {
     "bitbucket.org": ("bitbucket-archive", "https://bitbucket.org"),
     "codeberg.org": ("codeberg-archive", "https://codeberg.org"),
     "git.sr.ht": ("sourcehut-archive", "https://git.sr.ht"),
+    "go-module-zip": ("go-module-zip", ""),
 }
 MANIFEST_NAME = "leitir-manifest.json"
 VERIFY_MAX_FILES = 1_000
@@ -344,6 +347,15 @@ def update_manifest(
     return payload
 
 
+def _refresh_license_manifest(target: Path, manifest: dict[str, object]) -> dict[str, object]:
+    from leitir.sbom import license_manifest_fields
+
+    fields = license_manifest_fields(manifest, target)
+    if all(manifest.get(key) == value for key, value in fields.items()):
+        return manifest
+    return update_manifest(target, fields)
+
+
 def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
     """Return whether the selected Git tree has a top-level tests directory."""
     tree = target / subpath if subpath else target
@@ -465,7 +477,8 @@ def _read_valid_manifest(
         return None
     if not isinstance(payload.get("spec"), str) or not payload["spec"]:
         return None
-    if payload.get("repo_url") != f"{canonical_base}/{owner}/{repo}":
+    expected_url = None if host == "go-module-zip" else f"{canonical_base}/{owner}/{repo}"
+    if payload.get("repo_url") != expected_url:
         return None
     if not isinstance(payload.get("fetched_at"), str) or not payload["fetched_at"]:
         return None
@@ -484,7 +497,7 @@ def _read_valid_manifest(
         return None
     if verified is False and payload.get("verified_at") is not None:
         return None
-    if source is not None and source not in {"registry-artifact", "git-commit"}:
+    if source is not None and source not in {"registry-artifact", "git-commit", "go-module-zip"}:
         return None
     if (
         "has_tests" in payload
@@ -505,6 +518,18 @@ def _read_valid_manifest(
             return None
     elif any(field in payload for field in artifact_fields):
         return None
+    if source == "go-module-zip":
+        required = ("module_path", "module_version", "proxy_url", "zip_sha256", "sumdb_h1")
+        if host != "go-module-zip" or fetch_method != "go-module-zip":
+            return None
+        if not all(isinstance(payload.get(field), str) and payload[field] for field in required):
+            return None
+        if not str(payload["proxy_url"]).startswith(("https://", "http://127.0.0.1", "http://localhost")):
+            return None
+        if not re.fullmatch(r"[0-9a-f]{64}", str(payload["zip_sha256"])):
+            return None
+        if not str(payload["sumdb_h1"]).startswith("h1:"):
+            return None
     if "parity" in payload and payload.get("parity") not in {
         "exact",
         "drift",
@@ -1174,6 +1199,7 @@ def _materialize_hosted_repo_locked(
         if existing.get("source") is None:
             existing["source"] = "git-commit"
             _write_manifest(target / MANIFEST_NAME, existing)
+        existing = _refresh_license_manifest(target, existing)
         if not verify:
             if "verified" not in existing:
                 existing.update(verified=False, verified_at=None)
@@ -1267,6 +1293,7 @@ def _materialize_hosted_repo_locked(
         tree_digest, tree_scope = compute_materialized_tree_hash(staging)
         manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
+        _refresh_license_manifest(staging, manifest)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, commit_sha, host=host)
@@ -1301,6 +1328,151 @@ def _materialize_hosted_repo_locked(
             f"materialization failed for {owner}/{repo}@{commit_sha}: "
             f"{_failure_detail(exc)}"
         ) from exc
+
+
+def _go_zip_h1(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = sorted(
+                (info for info in archive.infolist() if not info.is_dir()),
+                key=lambda info: info.filename,
+            )
+            if (
+                len(entries) > ARCHIVE_MAX_MEMBERS
+                or len({info.filename for info in entries}) != len(entries)
+            ):
+                raise ValueError
+            summary = hashlib.sha256()
+            total_size = 0
+            for info in entries:
+                if "\n" in info.filename:
+                    raise ValueError
+                if info.file_size < 0 or info.file_size > ARCHIVE_MAX_MEMBER_BYTES:
+                    raise ValueError
+                total_size += info.file_size
+                if total_size > ARCHIVE_MAX_TOTAL_BYTES:
+                    raise ValueError
+                with archive.open(info) as handle:
+                    digest = hashlib.sha256()
+                    while chunk := handle.read(64 * 1024):
+                        digest.update(chunk)
+                    digest_hex = digest.hexdigest()
+                summary.update(f"{digest_hex}  {info.filename}\n".encode())
+            return "h1:" + base64.b64encode(summary.digest()).decode("ascii")
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise VerificationError("Go module zip is malformed") from exc
+
+
+def materialize_go_module_zip(
+    root: str | os.PathLike[str],
+    spec: str,
+    scope: RepoScope,
+    module: str,
+    version: str,
+    proxy_url: str,
+    *,
+    sumdb_url: str = "https://sum.golang.org",
+    timeout: int = 30,
+    manifest_fields: Mapping[str, object] | None = None,
+    on_fetch: Callable[[], None] | None = None,
+) -> Path:
+    """Authenticate, download, and shelf a Go proxy module zip."""
+    from urllib.request import Request
+
+    from leitir.parity import extract_artifact
+    from leitir.sumdb import SumDBClient, SumDBVerificationError
+
+    if not proxy_url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+        raise ValueError("Go proxy URL must use HTTPS or a local test endpoint")
+    owner, repo = scope.slug.split("/", 1)
+    # A Go module's synthetic scope has the content hash as both its repository
+    # name and commit. Do not expose that implementation detail as duplicate
+    # shelf directories: module content belongs directly under its one hash.
+    target = Path(root) / "repos" / "go-module-zip" / owner / scope.commit_sha
+    with _target_lock(Path(root), target, scope.commit_sha):
+        existing = read_valid_manifest(target, owner, repo, scope.commit_sha, host="go-module-zip") if target.is_dir() else None
+        if existing is not None and existing.get("module_path") == module and existing.get("module_version") == version:
+            _refresh_license_manifest(target, existing)
+            return target
+        from leitir.resolver import escape_go_module_path
+
+        escaped_module = escape_go_module_path(module)
+        url = f"{proxy_url.rstrip('/')}/{escaped_module}/@v/{version}.zip"
+        if on_fetch is not None:
+            on_fetch()
+        try:
+            with _http.safe_urlopen(Request(url, headers={"User-Agent": "leitir"}), timeout=timeout) as response:
+                data = _read_bounded(response, ARCHIVE_MAX_COMPRESSED_BYTES)
+            sum_hash = SumDBClient(Path(root), base_url=sumdb_url, timeout=timeout).verify(
+                module, version, escaped_module=escaped_module
+            )
+        except SumDBVerificationError:
+            raise
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise ArtifactRetrievalError(f"Go module zip retrieval failed for {spec}: {_http.describe_failure(exc)}") from exc
+        if _go_zip_h1(data) != sum_hash:
+            raise VerificationError("Go module zip does not match sumdb h1 hash")
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = [info.filename for info in archive.infolist() if info.filename]
+        except zipfile.BadZipFile as exc:
+            raise VerificationError("Go module zip is malformed") from exc
+        # Proxy and lookup URLs use the escaped module path, while standard Go
+        # proxy zips retain the canonical path in their member names. Accept the
+        # escaped form too: it is covered by the authenticated h1 and is used by
+        # compatible proxy implementations.
+        archive_root = f"{module}@{version}"
+        if not all(name.startswith(f"{archive_root}/") for name in names):
+            archive_root = f"{escaped_module}@{version}"
+        if not names or any(not name.startswith(f"{archive_root}/") for name in names):
+            raise VerificationError("Go module zip has an unexpected module root")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.tmp-{os.getpid()}-", dir=target.parent))
+        try:
+            extract_artifact(data, staging, archive_root=archive_root)
+            now = _utc_now()
+            manifest: dict[str, object] = dict(manifest_fields or {})
+            manifest.update({
+                "spec": spec,
+                "host": "go-module-zip",
+                "owner": owner,
+                "repo": repo,
+                "commit_sha": scope.commit_sha,
+                "tag": version,
+                "repo_url": None,
+                "fetched_at": now,
+                "fetch_method": "go-module-zip",
+                "subpath": None,
+                "verified": True,
+                "verified_at": now,
+                "verification_notes": [],
+                "source": "go-module-zip",
+                "has_tests": has_top_level_tests(staging),
+                "module_path": module,
+                "module_version": version,
+                "proxy_url": proxy_url,
+                "zip_sha256": hashlib.sha256(data).hexdigest(),
+                "sumdb_h1": sum_hash,
+            })
+            digest, digest_scope = compute_materialized_tree_hash(staging)
+            manifest.update(manifest_digest_fields(digest, scope=digest_scope))
+            _write_manifest(staging / MANIFEST_NAME, manifest)
+            _refresh_license_manifest(staging, manifest)
+            if target.exists():
+                backup = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent))
+                backup.rmdir()
+                os.replace(target, backup)
+            else:
+                backup = None
+            os.replace(staging, target)
+            _fsync_directory(target.parent)
+            if backup is not None:
+                _remove_path(backup)
+            return target
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            _prune_empty(target.parent, Path(root))
+            raise
 
 
 def materialize_artifact(
@@ -1380,6 +1552,7 @@ def _materialize_artifact_locked(
         artifact_kind=artifact.artifact_kind,
         artifact_checksum=artifact.checksum,
     ):
+        _refresh_license_manifest(target, existing)
         _assert_target_confinement(Path(root), target)
         return target
 
@@ -1442,6 +1615,7 @@ def _materialize_artifact_locked(
         tree_digest, tree_scope = compute_materialized_tree_hash(staging)
         manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
         _write_manifest(staging / MANIFEST_NAME, manifest)
+        _refresh_license_manifest(staging, manifest)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, scope.commit_sha)

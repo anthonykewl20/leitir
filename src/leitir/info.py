@@ -18,7 +18,7 @@ from .corpus import (
     write_examples_index,
 )
 from .examples import EXAMPLES_SCHEMA_VERSION, extract_examples, valid_serialized_classification
-from .materialize import update_manifest
+from .materialize import _refresh_license_manifest, _target_lock, update_manifest
 from .sbom import infer_license
 from .trust import compute_trust
 
@@ -224,14 +224,24 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
 
         regenerate_pointers(root)
 
-    cached_trust = _cached_trust(manifest)
-    if cached_trust is None:
-        trust = compute_trust(manifest, target)
-        trust_score = trust.score
-        trust_breakdown = [dict(item) for item in trust.breakdown]
-        manifest = update_manifest(target, trust.as_dict())
-    else:
-        trust_score, trust_breakdown = cached_trust
+    with _target_lock(root, target, str(entry["commit_sha"])):
+        original_license = tuple(
+            manifest.get(field)
+            for field in ("license_identifier", "license_method", "license_confidence")
+        )
+        manifest = _refresh_license_manifest(target, manifest)
+        license_updated = original_license != tuple(
+            manifest.get(field)
+            for field in ("license_identifier", "license_method", "license_confidence")
+        )
+        cached_trust = _cached_trust(manifest)
+        if cached_trust is None or license_updated:
+            trust = compute_trust(manifest, target)
+            trust_score = trust.score
+            trust_breakdown = [dict(item) for item in trust.breakdown]
+            manifest = update_manifest(target, trust.as_dict())
+        else:
+            trust_score, trust_breakdown = cached_trust
 
     license_result = infer_license(manifest, target)
     raw_snippets = examples_index.get("snippets")

@@ -15,11 +15,18 @@ import sys
 import textwrap
 from collections.abc import Iterator
 from itertools import permutations
+from pathlib import Path
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.adapters import PythonAdapter, RustAdapter, SpanMatch
 from leitir.engine import ScopedSearcher, score_content
+from leitir.materialize import (
+    VerificationError,
+    manifest_digest_fields,
+    target_path,
+)
 from leitir.search import (
     CoverageStatus,
     Predicate,
@@ -29,7 +36,7 @@ from leitir.search import (
     SearchSpec,
     SearchSpecError,
 )
-from leitir.tree import BlobEntry, TreeSource
+from leitir.tree import BlobEntry, GitHubTreeSource, TreeSource
 
 SHA = "a" * 40
 
@@ -120,6 +127,39 @@ def _spec(**overrides) -> SearchSpec:
     )
     base.update(overrides)
     return SearchSpec(**base)
+
+
+def _write_shelf(
+    root: Path, *, files: dict[str, bytes], commit_sha: str = SHA
+) -> Path:
+    from leitir.treehash import compute_materialized_tree_hash
+
+    target = target_path(root, "python", "cpython", commit_sha)
+    target.mkdir(parents=True)
+    for relative, data in files.items():
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest = {
+        "commit_sha": commit_sha,
+        "fetch_method": "codeload-tarball",
+        "fetched_at": "2026-08-14T00:00:00Z",
+        "host": "github.com",
+        "owner": "python",
+        "repo": "cpython",
+        "repo_url": "https://github.com/python/cpython",
+        "source": "git-commit",
+        "spec": "github:python/cpython",
+        "tag": None,
+        "verified": True,
+        "verified_at": "2026-08-14T00:00:00Z",
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (target / "leitir-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return target
 
 
 class TestHappyPath:
@@ -426,6 +466,194 @@ class TestSadPaths:
         assert report.matches == ()
         assert report.coverage.files_eligible == 0
         assert report.coverage.files_indexed == 0
+        assert source.read_calls == []
+
+
+class TestLocalMaterializedShelf:
+    def test_valid_shelf_avoids_blob_http_gets(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        blob_sha = _blob_sha(data)
+        _write_shelf(tmp_path, files={"Lib/urllib/parse.py": data})
+        tree_path = f"/repos/python/cpython/git/trees/{SHA}"
+        with routed_server(
+            {
+                tree_path: (
+                    200,
+                    {"Content-Type": "application/json"},
+                    json_body(
+                        {
+                            "sha": SHA,
+                            "truncated": False,
+                            "tree": [
+                                {
+                                    "path": "Lib/urllib/parse.py",
+                                    "type": "blob",
+                                    "sha": blob_sha,
+                                    "size": len(data),
+                                }
+                            ],
+                        }
+                    ),
+                )
+            }
+        ) as server:
+            source = GitHubTreeSource(base_url=server.base_url, max_attempts=1)
+            report = ScopedSearcher(
+                source, (PythonAdapter(),), corpus_root=tmp_path
+            ).search(_spec())
+
+        assert report.matches
+        assert server.state.request_paths == [tree_path]
+
+    def test_valid_shelf_serves_regular_blob_without_api_read(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("Lib/urllib/parse.py", _blob_sha(data), len(data)),
+                    data,
+                )
+            }
+        )
+        _write_shelf(tmp_path, files={"Lib/urllib/parse.py": data})
+
+        report = ScopedSearcher(
+            source, (PythonAdapter(),), corpus_root=tmp_path
+        ).search(_spec())
+
+        assert report.coverage.status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+        assert report.matches
+        assert source.read_calls == []
+
+    def test_tampered_local_blob_fails_without_api_fallback(self, tmp_path, monkeypatch):
+        data = SAMPLE_PY.encode()
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("Lib/urllib/parse.py", _blob_sha(data), len(data)),
+                    data,
+                )
+            }
+        )
+        target = _write_shelf(
+            tmp_path, files={"Lib/urllib/parse.py": data}
+        )
+        from leitir.materialize import read_valid_manifest as original
+
+        def verify_then_tamper(*args, **kwargs):
+            manifest = original(*args, **kwargs)
+            (target / "Lib/urllib/parse.py").write_bytes(b"tampered\n")
+            return manifest
+
+        monkeypatch.setattr("leitir.engine.read_valid_manifest", verify_then_tamper)
+
+        with pytest.raises(VerificationError, match="local blob"):
+            ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(
+                _spec()
+            )
+
+        assert source.read_calls == []
+
+    def test_symlink_blob_uses_link_text_bytes(self, tmp_path):
+        link_text = b"needle"
+        target = _write_shelf(tmp_path, files={})
+        (target / "link.py").symlink_to(link_text.decode())
+        from leitir.treehash import compute_materialized_tree_hash
+
+        digest, scope = compute_materialized_tree_hash(target)
+        manifest_path = target / "leitir-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(manifest_digest_fields(digest, scope=scope))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        source = FakeTreeSource(
+            blobs={
+                "link.py": (
+                    BlobEntry(
+                        "link.py", _blob_sha(link_text), len(link_text), "120000"
+                    ),
+                    b"api bytes must not be read",
+                )
+            }
+        )
+
+        report = ScopedSearcher(
+            source, (PythonAdapter(),), corpus_root=tmp_path
+        ).search(
+            _spec(must=(Predicate(PredicateKind.EXACT_TEXT, "needle"),))
+        )
+
+        assert report.matches
+        assert source.read_calls == []
+
+    def test_oversized_local_blob_uses_verified_stream(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("Lib/urllib/parse.py", _blob_sha(data), len(data)),
+                    data,
+                )
+            }
+        )
+        _write_shelf(tmp_path, files={"Lib/urllib/parse.py": data})
+
+        report = ScopedSearcher(
+            source, (PythonAdapter(),), max_blob_size=10, corpus_root=tmp_path
+        ).search(_spec())
+
+        assert report.matches
+        assert source.read_calls == []
+
+    def test_missing_shelf_uses_api_blob_path(self, tmp_path):
+        source = _fake_source()
+
+        report = ScopedSearcher(
+            source, (PythonAdapter(),), corpus_root=tmp_path
+        ).search(_spec())
+
+        assert report.matches
+        assert source.read_calls == [PY_BLOB_SHA]
+
+    def test_invalid_shelf_uses_api_blob_path(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("Lib/urllib/parse.py", _blob_sha(data), len(data)),
+                    data,
+                )
+            }
+        )
+        target = _write_shelf(
+            tmp_path, files={"Lib/urllib/parse.py": data}
+        )
+        (target / "Lib/urllib/parse.py").write_bytes(b"invalid shelf\n")
+
+        report = ScopedSearcher(
+            source, (PythonAdapter(),), corpus_root=tmp_path
+        ).search(_spec())
+
+        assert report.matches
+        assert source.read_calls == [_blob_sha(data)]
+
+    def test_local_shelf_report_is_deterministic(self, tmp_path, monkeypatch):
+        data = SAMPLE_PY.encode()
+        source = FakeTreeSource(
+            blobs={
+                "parse.py": (
+                    BlobEntry("Lib/urllib/parse.py", _blob_sha(data), len(data)),
+                    data,
+                )
+            }
+        )
+        _write_shelf(tmp_path, files={"Lib/urllib/parse.py": data})
+        monkeypatch.setattr("leitir.engine._utc_now", lambda: "2026-08-14T00:00:00Z")
+        searcher = ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path)
+
+        first = searcher.search(_spec())
+        second = searcher.search(_spec())
+
+        assert first.to_dict() == second.to_dict()
         assert source.read_calls == []
 
 

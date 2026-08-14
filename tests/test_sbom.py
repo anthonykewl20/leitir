@@ -23,6 +23,15 @@ def test_copying_content_scan(tmp_path):
     assert infer_license({}, tmp_path).method == "copying-file"
 
 
+def test_conflicting_license_file_content_is_unknown(tmp_path):
+    (tmp_path / "LICENSE").write_text("SPDX-License-Identifier: MIT\n")
+    (tmp_path / "COPYING").write_text("SPDX-License-Identifier: GPL-3.0-only\n")
+
+    result = infer_license({}, tmp_path)
+
+    assert (result.identifier, result.method, result.confidence) == (None, "unknown", "low")
+
+
 def test_filename_heuristic_and_unknown(tmp_path):
     (tmp_path / "LICENSE-MIT").write_text("license text without a machine identifier")
     result = infer_license({}, tmp_path)
@@ -37,4 +46,4 @@ def test_license_inference_is_deterministic(tmp_path):
     (tmp_path / "z" / "LICENSE").write_text("SPDX-License-Identifier: MIT")
     (tmp_path / "LICENSE").write_text("SPDX-License-Identifier: ISC")
     assert infer_license({}, tmp_path) == infer_license({}, tmp_path)
-    assert infer_license({}, tmp_path).identifier == "ISC"
+    assert infer_license({}, tmp_path).identifier is None

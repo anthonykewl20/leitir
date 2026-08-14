@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 from leitir.corpus import write_sources
@@ -240,3 +241,21 @@ def test_build_info_renders_missing_analysis_honestly(tmp_path):
     assert document["api"]["top_symbols"] == []
     assert document["examples"]["count"] == 0
     assert document["examples"]["top"] == []
+
+
+def test_build_info_locks_license_and_trust_manifest_updates(tmp_path, monkeypatch):
+    import leitir.info as info
+
+    target = _source(tmp_path)
+    calls: list[tuple[object, object, object]] = []
+
+    @contextmanager
+    def tracking_lock(root, locked_target, commit_sha):
+        calls.append((root, locked_target, commit_sha))
+        yield
+
+    monkeypatch.setattr(info, "_target_lock", tracking_lock)
+
+    build_info(SPEC, corpus_root=tmp_path)
+
+    assert calls == [(tmp_path, target, SHA)]

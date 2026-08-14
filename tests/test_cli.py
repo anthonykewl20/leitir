@@ -12,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.cli import ExitCode, main
 from leitir.search import (
@@ -174,6 +175,83 @@ def test_explicit_scope_wires_spec_to_searcher():
     assert spec.must[0].kind is PredicateKind.SYMBOL_DEFINITION
     assert spec.must[0].value == "urlencode"
     assert spec.must[0].language == "python"
+
+
+def test_search_uses_passed_root_for_verified_local_shelf(tmp_path: Path):
+    import hashlib
+
+    from leitir.materialize import manifest_digest_fields, target_path
+    from leitir.tree import GitHubTreeSource
+    from leitir.treehash import compute_materialized_tree_hash
+
+    data = b"def urlencode(query):\n    return str(query)\n"
+    blob_sha = hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+    shelf = target_path(tmp_path, "python", "cpython", SHA)
+    shelf.mkdir(parents=True)
+    path = shelf / "Lib/urllib/parse.py"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(data)
+    digest, scope = compute_materialized_tree_hash(shelf)
+    manifest = {
+        "commit_sha": SHA,
+        "fetch_method": "codeload-tarball",
+        "fetched_at": "2026-08-14T00:00:00Z",
+        "host": "github.com",
+        "owner": "python",
+        "repo": "cpython",
+        "repo_url": "https://github.com/python/cpython",
+        "source": "git-commit",
+        "spec": "github:python/cpython",
+        "tag": None,
+        "verified": True,
+        "verified_at": "2026-08-14T00:00:00Z",
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (shelf / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    tree_path = f"/repos/python/cpython/git/trees/{SHA}"
+    with routed_server(
+        {
+            tree_path: (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(
+                    {
+                        "sha": SHA,
+                        "truncated": False,
+                        "tree": [
+                            {
+                                "path": "Lib/urllib/parse.py",
+                                "type": "blob",
+                                "sha": blob_sha,
+                                "size": len(data),
+                            }
+                        ],
+                    }
+                ),
+            )
+        }
+    ) as server:
+        code = main(
+            [
+                "search",
+                "--repo",
+                "python/cpython",
+                "--commit",
+                SHA,
+                "--must",
+                "identifier:urlencode",
+                "--root",
+                str(tmp_path),
+            ],
+            tree_source_factory=lambda _token: GitHubTreeSource(
+                base_url=server.base_url, max_attempts=1
+            ),
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+
+    assert code == ExitCode.SUCCESS
+    assert server.state.request_paths == [tree_path]
 
 
 def test_package_resolution_wires_resolver_then_searcher():

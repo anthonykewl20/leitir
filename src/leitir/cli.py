@@ -600,7 +600,9 @@ def _build_default_resolver(token: str | None) -> object:
 
 
 def _build_default_searcher(
-    tree_source: object, ast_python: bool = False
+    tree_source: object,
+    ast_python: bool = False,
+    corpus_root: str | os.PathLike[str] | None = None,
 ) -> object:
     from .adapters.registry import build_adapters
     from .engine import ScopedSearcher
@@ -609,6 +611,7 @@ def _build_default_searcher(
     return ScopedSearcher(
         tree_source=cast(TreeSource, tree_source),
         adapters=build_adapters(ast_python=ast_python),
+        corpus_root=corpus_root,
     )
 
 
@@ -1161,6 +1164,7 @@ def _run_corpus_command(
             return int(ExitCode.SUCCESS)
         if args.command == "remove":
             parsed = parse_corpus_spec(args.spec)
+            materialize_host = parsed.host or "github.com"
             if parsed.ecosystem is None and parsed.ref_kind == "head":
                 owner, repo = parsed.name.split("/", 1)
                 sha = None
@@ -1174,8 +1178,10 @@ def _run_corpus_command(
                 typed_scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 owner, repo = typed_scope.slug.split("/", 1)
                 sha = typed_scope.commit_sha
+                if parsed.ecosystem is not None:
+                    materialize_host = getattr(resolved, "host", "github.com")
             removed = remove_source(
-                root, owner, repo, sha, host=parsed.host or "github.com"
+                root, owner, repo, sha, host=materialize_host
             )
             print(
                 f"leitir: {'removed' if removed else 'not found'} {args.spec}", file=err
@@ -2001,11 +2007,24 @@ def main(
             )
 
             tree_source = tree_source_factory(token)
+            corpus_root = (
+                _corpus_root(args, err) if args.root is not None or args.local else None
+            )
             searcher = cast(
                 _Searcher,
-                searcher_factory(tree_source, ast_python=True)
-                if args.ast
-                else searcher_factory(tree_source),
+                (
+                    searcher_factory(
+                        tree_source, ast_python=True, corpus_root=corpus_root
+                    )
+                    if args.ast
+                    else searcher_factory(tree_source, corpus_root=corpus_root)
+                )
+                if corpus_root is not None
+                else (
+                    searcher_factory(tree_source, ast_python=True)
+                    if args.ast
+                    else searcher_factory(tree_source)
+                ),
             )
             if args.use_index or args.require_index:
                 from .adapters.registry import build_adapters

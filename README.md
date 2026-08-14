@@ -36,7 +36,7 @@ flowchart TD
 - Explicit artifact parity as `exact`, `drift`, or `unknown` recorded in manifests.
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
 - `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
-- API surface indexes with stdlib `ast` extraction for Python and conservative JS/TS heuristics behind a plugin hook.
+- API surface indexes with stdlib `ast` extraction for Python, Go exported-symbol extraction, and conservative JS/TS heuristics behind a plugin hook.
 - Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
 - BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3
@@ -176,7 +176,7 @@ flowchart LR
 ## Commands
 
 ### Search and benchmark
-- `search`: resolve spec+predicate scope and return provenance-bound results.
+- `search`: resolve spec+predicate scope and return provenance-bound results; scoped search serves matching verified local shelves without per-file API fetches.
 - `index [scope ...] [--root ROOT|--local]`: explicitly build deterministic local
   trigram indexes for eligible materialized shelves. A shelf is eligible only with
   `source=git-commit`, `parity=exact`, and a full materialized-tree hash.
@@ -321,7 +321,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2289 passed, 61 skipped**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2329 passed, 61 skipped**.
 
 ## Repository layout
 

@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.request import urlopen
 
 import fixtures_resolver as fx
 import pytest
 
-from leitir.materialize import materialize_github_repo, materialize_repo
+from leitir.materialize import _go_zip_h1, materialize_github_repo, materialize_go_module_zip, materialize_repo
 from leitir.resolver import BitbucketResolver, GitLabResolver
 from leitir.search import RepoScope
 
@@ -23,6 +24,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
+GO_MODULE = "github.com/BurntSushi/toml"
+GO_VERSION = "v1.2.0"
+GO_H1 = "h1:Rt8g24XnyGTyglgET/PRUNlrUeu9F5L+7FilkXfZgs0="
 
 
 def _anonymous_bitbucket_rate_limit(exc):
@@ -95,3 +99,26 @@ def test_materializes_pinned_bitbucket_repository(tmp_path):
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["host"] == "bitbucket.org"
     assert manifest["verified"] in (True, "sampled")
+
+
+def test_go_module_zip_h1_matches_pinned_sumdb_record():
+    with urlopen(
+        "https://proxy.golang.org/github.com/%21burnt%21sushi/toml/@v/v1.2.0.zip"
+    ) as response:
+        assert _go_zip_h1(response.read()) == GO_H1
+
+
+def test_materializes_pinned_uppercase_go_module(tmp_path):
+    target = materialize_go_module_zip(
+        tmp_path,
+        f"go:{GO_MODULE}@{GO_VERSION}",
+        RepoScope("module/" + "a" * 40, "a" * 40),
+        GO_MODULE,
+        GO_VERSION,
+        "https://proxy.golang.org",
+    )
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+
+    assert (target / "decode.go").is_file()
+    assert manifest["module_path"] == GO_MODULE
+    assert manifest["sumdb_h1"] == GO_H1

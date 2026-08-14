@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import leitir.parity as parity
 from leitir.materialize import MANIFEST_NAME, UnsafeArchiveError
 from leitir.parity import (
     ArtifactInfo,
@@ -66,6 +67,23 @@ def test_extract_artifact_rejects_unsafe_zip_members(
 ) -> None:
     with pytest.raises(UnsafeArchiveError, match=message):
         extract_artifact(archive, tmp_path / "output")
+
+
+def test_extract_artifact_rejects_zip_member_over_size_limit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(parity, "ARCHIVE_MAX_MEMBER_BYTES", 3)
+
+    with pytest.raises(UnsafeArchiveError, match="member exceeds size limit"):
+        extract_artifact(_zip((("root/file.txt", b"four", None),)), tmp_path / "output")
+
+
+def test_extract_artifact_rejects_zip_over_member_count_limit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(parity, "ARCHIVE_MAX_MEMBERS", 1)
+
+    with pytest.raises(UnsafeArchiveError, match="too many members"):
+        extract_artifact(
+            _zip((("root/one.txt", b"one", None), ("root/two.txt", b"two", None))),
+            tmp_path / "output",
+        )
 
 
 @pytest.mark.parametrize(

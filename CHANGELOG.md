@@ -91,6 +91,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - upstream tracking, drift alerts, bundle v2 (#80) (`lineage`)
 - widen pinned search benchmark to eight languages (`bench`)
 
+### Changed
+- serve scoped search from verified local shelves; complete Go module, license, and API-surface support (`search`)
+
 ### Fixed
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
@@ -98,6 +101,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - canonicalize predicate-vs-flag language comparison (`search`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
+- consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - correct typing for mypy strict mode (`cost`)
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)

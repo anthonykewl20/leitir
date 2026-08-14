@@ -4,13 +4,21 @@ Extractors are registered by language with :func:`register_extractor`.  A
 parser-backed JavaScript or TypeScript plugin can replace the built-in
 heuristic by registering a callable accepting ``(target_path, language)`` and
 returning the same ``ApiIndex`` dictionary contract.
+
+Go's exported types and interfaces resolve to the fixed four-kind schema's
+``class`` kind, while exported ``const`` and ``var`` declarations resolve to
+``constant``.  Go alone excludes ``vendor`` and ``testdata`` trees because
+those names are its standard third-party and test-data layout; Python,
+JavaScript, and TypeScript keep their existing path semantics.
 """
 
 from __future__ import annotations
 
 import ast
 import logging
+import re
 import tokenize
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +69,17 @@ class ApiDiff:
 _PYTHON_EXTENSIONS = {".py"}
 _JAVASCRIPT_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs"}
 _TYPESCRIPT_EXTENSIONS = {".ts", ".tsx", ".mts", ".cts"}
+_GO_EXTENSIONS = {".go"}
+_GO_IDENTIFIER = r"(?P<name>[^\W\d]\w*)"
+_GO_FUNCTION = re.compile(
+    rf"^\s*func\s+(?:\(\s*(?P<receiver>[^)]*)\)\s+)?{_GO_IDENTIFIER}"
+)
+_GO_TYPE = re.compile(rf"^\s*type\s+{_GO_IDENTIFIER}\b")
+_GO_VALUE = re.compile(rf"^\s*(?:const|var)\s+{_GO_IDENTIFIER}\b")
+_GO_GROUP_VALUE = re.compile(rf"^\s*{_GO_IDENTIFIER}\b")
+_GO_INTERFACE_METHOD = re.compile(rf"^\s*{_GO_IDENTIFIER}\s*\(")
+
+
 def _empty_index() -> ApiIndex:
     return {"schema_version": 1, "methods": [], "modules": [], "symbols": []}
 
@@ -245,6 +264,284 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
     return _finish(modules, symbols)
 
 
+def _go_code_lines(source: str) -> list[str]:
+    output: list[str] = []
+    state = "code"
+    escaped = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "code":
+            if character == "/" and following == "/":
+                output.extend((" ", " "))
+                state = "line_comment"
+                index += 2
+                continue
+            if character == "/" and following == "*":
+                output.extend((" ", " "))
+                state = "block_comment"
+                index += 2
+                continue
+            if character == '"':
+                output.append(" ")
+                state = "quoted"
+            elif character == "'":
+                output.append(" ")
+                state = "rune"
+            elif character == "`":
+                output.append(" ")
+                state = "raw"
+            else:
+                output.append(character)
+        elif state == "line_comment":
+            output.append("\n" if character == "\n" else " ")
+            if character == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if character == "*" and following == "/":
+                output.extend((" ", " "))
+                state = "code"
+                index += 2
+                continue
+            output.append("\n" if character == "\n" else " ")
+        elif state == "raw":
+            output.append("\n" if character == "\n" else " ")
+            if character == "`":
+                state = "code"
+        else:
+            output.append("\n" if character == "\n" else " ")
+            if character == "\\" and not escaped:
+                escaped = True
+            elif character in {'"', "'"} and not escaped:
+                state = "code"
+            else:
+                escaped = False
+        index += 1
+    return "".join(output).splitlines()
+
+
+def _go_exported(name: str) -> bool:
+    return bool(name) and unicodedata.category(name[0]) == "Lu"
+
+
+def _go_compact(value: str) -> str:
+    return (
+        " ".join(value.split())
+        .replace("( ", "(")
+        .replace(" )", ")")
+        .replace("[ ", "[")
+        .replace(" ]", "]")
+    )
+
+
+def _go_signature(
+    lines: list[str], start: int, offset: int, *, stop_at_line_end: bool = False
+) -> str | None:
+    fragments: list[str] = []
+    parentheses = 0
+    brackets = 0
+    for line_number in range(start, len(lines)):
+        fragment = lines[line_number][offset:] if line_number == start else lines[line_number]
+        for position, character in enumerate(fragment):
+            if character == "(":
+                parentheses += 1
+            elif character == ")":
+                parentheses -= 1
+            elif character == "[":
+                brackets += 1
+            elif character == "]":
+                brackets -= 1
+            elif character == "{" and parentheses == 0 and brackets == 0:
+                fragments.append(fragment[:position])
+                value = _go_compact(" ".join(fragments))
+                return value or None
+        fragments.append(fragment)
+        if stop_at_line_end and parentheses == 0 and brackets == 0:
+            value = _go_compact(" ".join(fragments))
+            return value or None
+    value = _go_compact(" ".join(fragments))
+    return value or None
+
+
+def _go_receiver_type(receiver: str) -> str:
+    value = receiver.split()[-1] if receiver.split() else ""
+    value = value.lstrip("*")
+    return value.split("[", 1)[0].rsplit(".", 1)[-1]
+
+
+def _go_type_signature(line: str, offset: int) -> str | None:
+    value = line[offset:].split("{", 1)[0].strip()
+    compact = _go_compact(value)
+    return compact or None
+
+
+def _go_extractor(target_path: Path, language: str) -> ApiIndex:
+    modules: list[dict[str, object]] = []
+    symbols: list[dict[str, object]] = []
+    try:
+        files = sorted(
+            (
+                path
+                for path in target_path.rglob("*")
+                if path.is_file()
+                and path.suffix.casefold() in _GO_EXTENSIONS
+                and not any(part in {"vendor", "testdata"} for part in path.relative_to(target_path).parts)
+            ),
+            key=lambda path: path.relative_to(target_path).as_posix(),
+        )
+    except OSError:
+        files = []
+    for path in files:
+        relative = path.relative_to(target_path).as_posix()
+        try:
+            lines = _go_code_lines(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            continue
+        module = _javascript_module(relative)
+        modules.append({"name": module, "path": relative, "docstring": None, "method": "heuristic"})
+        brace_depth = 0
+        group: str | None = None
+        interface_name: str | None = None
+        interface_depth = 0
+        for number, line in enumerate(lines, 1):
+            stripped = line.strip()
+            delta = line.count("{") - line.count("}")
+            if interface_name is not None and brace_depth == interface_depth:
+                method_match = _GO_INTERFACE_METHOD.match(line)
+                if method_match and _go_exported(method_match["name"]):
+                    name = method_match["name"]
+                    symbols.append(
+                        _symbol(
+                            kind="method",
+                            name=name,
+                            qualified_name=f"{module}.{interface_name}.{name}",
+                            module=module,
+                            path=relative,
+                            line=number,
+                            signature=_go_signature(
+                                lines,
+                                number - 1,
+                                method_match.end() - 1,
+                                stop_at_line_end=True,
+                            ),
+                            docstring=None,
+                            method="heuristic",
+                        )
+                    )
+            elif group is not None:
+                if brace_depth == 0 and stripped == ")":
+                    group = None
+                elif brace_depth == 0 and group in {"const", "var"}:
+                    value_match = _GO_GROUP_VALUE.match(line)
+                    if value_match and _go_exported(value_match["name"]):
+                        name = value_match["name"]
+                        symbols.append(
+                            _symbol(
+                                kind="constant",
+                                name=name,
+                                qualified_name=f"{module}.{name}",
+                                module=module,
+                                path=relative,
+                                line=number,
+                                signature=_go_type_signature(line, value_match.end()),
+                                docstring=None,
+                                method="heuristic",
+                            )
+                        )
+                elif brace_depth == 0 and group == "type":
+                    type_match = _GO_GROUP_VALUE.match(line)
+                    if type_match and _go_exported(type_match["name"]):
+                        name = type_match["name"]
+                        symbols.append(
+                            _symbol(
+                                kind="class",
+                                name=name,
+                                qualified_name=f"{module}.{name}",
+                                module=module,
+                                path=relative,
+                                line=number,
+                                signature=_go_type_signature(line, type_match.end()),
+                                docstring=None,
+                                method="heuristic",
+                            )
+                        )
+                        type_tail = line[type_match.end():]
+                        if re.match(r"\s*(?:\[[^]]*\]\s*)?interface\b", type_tail) and delta > 0:
+                            interface_name = name
+                            interface_depth = brace_depth + delta
+            elif brace_depth == 0:
+                group_match = re.match(r"^(const|type|var)\s*\(\s*$", stripped)
+                if group_match:
+                    group = group_match[1]
+                else:
+                    function_match = _GO_FUNCTION.match(line)
+                    type_match = _GO_TYPE.match(line)
+                    value_match = _GO_VALUE.match(line)
+                    if function_match and _go_exported(function_match["name"]):
+                        name = function_match["name"]
+                        receiver = function_match["receiver"]
+                        receiver_type = _go_receiver_type(receiver) if receiver else ""
+                        kind = "method" if receiver_type else "function"
+                        qualified_name = (
+                            f"{module}.{receiver_type}.{name}"
+                            if receiver_type
+                            else f"{module}.{name}"
+                        )
+                        symbols.append(
+                            _symbol(
+                                kind=kind,
+                                name=name,
+                                qualified_name=qualified_name,
+                                module=module,
+                                path=relative,
+                                line=number,
+                                signature=_go_signature(lines, number - 1, function_match.end()),
+                                docstring=None,
+                                method="heuristic",
+                            )
+                        )
+                    elif type_match and _go_exported(type_match["name"]):
+                        name = type_match["name"]
+                        symbols.append(
+                            _symbol(
+                                kind="class",
+                                name=name,
+                                qualified_name=f"{module}.{name}",
+                                module=module,
+                                path=relative,
+                                line=number,
+                                signature=_go_type_signature(line, type_match.end()),
+                                docstring=None,
+                                method="heuristic",
+                            )
+                        )
+                        type_tail = line[type_match.end():]
+                        if re.match(r"\s*(?:\[[^]]*\]\s*)?interface\b", type_tail) and delta > 0:
+                            interface_name = name
+                            interface_depth = brace_depth + delta
+                    elif value_match and _go_exported(value_match["name"]):
+                        name = value_match["name"]
+                        symbols.append(
+                            _symbol(
+                                kind="constant",
+                                name=name,
+                                qualified_name=f"{module}.{name}",
+                                module=module,
+                                path=relative,
+                                line=number,
+                                signature=_go_type_signature(line, value_match.end()),
+                                docstring=None,
+                                method="heuristic",
+                            )
+                        )
+            brace_depth += delta
+            if interface_name is not None and brace_depth < interface_depth:
+                interface_name = None
+                interface_depth = 0
+    return _finish(modules, symbols)
+
+
 def _finish(modules: list[dict[str, object]], symbols: list[dict[str, object]]) -> ApiIndex:
     modules.sort(key=lambda item: (str(item["path"]), str(item["name"])))
     symbols.sort(
@@ -259,6 +556,7 @@ def _finish(modules: list[dict[str, object]], symbols: list[dict[str, object]]) 
 
 
 _EXTRACTORS: dict[str, Extractor] = {
+    "go": _go_extractor,
     "python": _python_extractor,
     "javascript": _javascript_extractor,
     "typescript": _javascript_extractor,
@@ -291,7 +589,7 @@ def extract_api_surface(target_path: str | Path, language_hint: str | None = Non
         language = _language(language_hint)
         languages: tuple[str, ...] = ("javascript", "typescript") if language == "npm" else (language,)
     else:
-        languages = ("python", "javascript", "typescript")
+        languages = ("go", "python", "javascript", "typescript")
     indexes = []
     for language in languages:
         extractor = _EXTRACTORS.get(language)

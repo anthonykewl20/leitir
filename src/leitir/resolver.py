@@ -8,6 +8,7 @@ RepoScope, and the result is verifiable against the registry and GitHub.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -26,6 +27,16 @@ if TYPE_CHECKING:
     from leitir.parity import ArtifactInfo
 
 logger = logging.getLogger(__name__)
+
+
+def escape_go_module_path(module: str) -> str:
+    """Return the Go wire form of a module path.
+
+    Go proxies and the checksum database address uppercase path bytes as
+    ``!`` followed by their lowercase form.  The unescaped path remains the
+    module's canonical identity.
+    """
+    return re.sub(r"[A-Z]", lambda match: "!" + match.group().lower(), module)
 
 
 class Ecosystem(StrEnum):
@@ -72,6 +83,8 @@ class ResolvedPackage:
     artifact: ArtifactInfo | None = None
     host: str = "github.com"
     published_at: str | None = None
+    go_module_zip: bool = False
+    go_proxy_url: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, PackageRef):
@@ -93,8 +106,17 @@ class ResolvedPackage:
             for url in self.docs_urls
         ):
             raise ValueError("docs_urls must be a tuple of HTTP(S) URLs")
-        if self.host not in {"github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"}:
+        if self.host not in {"github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht", "go-module-zip"}:
             raise ValueError(f"unsupported repository host {self.host!r}")
+        if self.go_module_zip != (self.host == "go-module-zip"):
+            raise ValueError("go module zip provenance must use go-module-zip host")
+        if self.go_module_zip and (
+            not isinstance(self.go_proxy_url, str)
+            or not self.go_proxy_url.startswith(("https://", "http://127.0.0.1", "http://localhost"))
+        ):
+            raise ValueError("go module zip provenance requires an HTTPS or local proxy URL")
+        if not self.go_module_zip and self.go_proxy_url is not None:
+            raise ValueError("repository source must not have a Go proxy URL")
         if self.published_at is not None and not _valid_published_at(
             self.published_at
         ):
@@ -1608,7 +1630,6 @@ class GoResolver:
 
         module = ref.name
         host, candidates = self._repository_candidates(module)
-        resolver = self._repository_resolvers[host]
 
         escaped = self._escape_module(module)
         version = ref.version
@@ -1628,6 +1649,25 @@ class GoResolver:
                 f"Go proxy lookup failed for {module}@{version}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
+
+        if host == "go-module-zip":
+            source_id = hashlib.sha1(f"{module}@{version}".encode()).hexdigest()
+            scope = RepoScope(f"module/{source_id}", source_id)
+            from leitir.docpointers import extract_docs_urls
+
+            return ResolvedPackage(
+                ref=ref,
+                scope=scope,
+                tag=version,
+                registry_url=f"https://pkg.go.dev/{module}@{version}",
+                docs_urls=tuple(
+                    extract_docs_urls(ref.ecosystem, name=module, version=version)
+                ),
+                host=host,
+                go_module_zip=True,
+                go_proxy_url=self._base_url,
+            )
+        resolver = self._repository_resolvers[host]
 
         tag = version
         pseudo = self._PSEUDO_VERSION.fullmatch(version)
@@ -1697,10 +1737,13 @@ class GoResolver:
         if module_host == "golang.org":
             if len(parts) < 3 or parts[1] != "x":
                 raise ResolutionError(f"unsupported Go module host {parts[0]!r}")
-            subpath = "/".join(parts[3:]) or None
+            remainder = parts[3:]
+            if len(remainder) == 1 and re.fullmatch(r"v[2-9][0-9]*", remainder[0]):
+                remainder = []
+            subpath = "/".join(remainder) or None
             return "github.com", ((f"golang/{parts[2]}", subpath),)
         if module_host not in {"github.com", "gitlab.com", "bitbucket.org"}:
-            raise ResolutionError(f"unsupported Go module host {parts[0]!r}")
+            return "go-module-zip", ()
         if len(parts) < 3:
             raise ResolutionError(f"invalid Go module path {module!r}")
         if module_host == "gitlab.com":
@@ -1709,7 +1752,10 @@ class GoResolver:
                 for end in range(len(parts), 2, -1)
             )
         slug = f"{parts[1]}/{parts[2]}"
-        subpath = "/".join(parts[3:]) or None
+        remainder = parts[3:]
+        if len(remainder) == 1 and re.fullmatch(r"v[2-9][0-9]*", remainder[0]):
+            remainder = []
+        subpath = "/".join(remainder) or None
         return module_host, ((slug, subpath),)
 
     def latest_version(self, name: str) -> str:
@@ -1740,7 +1786,7 @@ class GoResolver:
 
     @staticmethod
     def _escape_module(module: str) -> str:
-        return re.sub(r"[A-Z]", lambda m: "!" + m.group().lower(), module)
+        return escape_go_module_path(module)
 
 
 class NpmResolver:

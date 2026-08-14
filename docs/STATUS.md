@@ -48,6 +48,12 @@ Proposed for v2.0) remain in the milestone.
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
 
+2026-08-14: benchmark-driven hardening made verified local-shelf scoped search
+drop from a seven-minute timeout to 1.8s with 0 blob GETs; expanded first-party
+Go API extraction from 0 to 93 symbols; refreshed license detection from null to
+Apache-2.0; and made `gopkg.in` and `google.golang.org` modules resolve and
+verify through authenticated Go module zips.
+
 **ADR-002 is complete.** Slices S1-S9 are landed. The
 scoring engine has typed contracts and a non-compensating gate, canonical
 provenance, and collectors for engine correctness, retrieval effectiveness,
@@ -126,7 +132,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2289 passed, 61 skipped**. The skips are
+Offline suite: **2329 passed, 61 skipped**. The skips are
 opt-in live tests behind `LEITIR_ENABLE_LIVE_E2E=1` /
 `LEITIR_ENABLE_SCORE_LIVE=1`.
 

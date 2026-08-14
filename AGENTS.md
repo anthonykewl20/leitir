@@ -7,6 +7,7 @@
 - The occupied gate's trust binding follows ADR-0017: policy-pinned authority, occupied rerun receipts, and complete dependency evidence are required for composition acceptance.
 - ADR-0008 through ADR-0011 are Accepted and Implemented. ADR-0012 is Accepted with amendments; ADR-0013 through ADR-0017 and ADR-0019 are Accepted; ADR-0018 is Proposed for v2.0. Issues #76/#77/#78/#79/#80 are closed via PRs #132/#137/#136/#135/#134, with shared contract unification in PR #138; #128 is closed by PR #131's three-layer Windows fix. Main now includes `composition.py`, `architecture.py`, `duplicates.py`, `lineage.py` (plus bundle v2), `cost.py`, and `occupied.py`.
 - Production-ready quality criteria stay tracked in epic #42 under the v0.1.1 milestone (all engineering issues closed; human gates remain). v0.1.2 carries the Behavioral Transplant Set (BTS) program — its exit criterion is in the milestone description. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
+- The 2026-08-14 live-benchmark hardening added verified local-shelf search, Go API surface and license detection, and `go-module-zip` with SumDB authentication per ADR-0020 (issues #143–#148).
 
 ## Conventions (non-negotiable)
 
@@ -20,7 +21,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 2289 passed (current), 0 failed.
+- Target: 2329 passed (current), 0 failed.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import leitir.trust as trust_module
-from leitir.trust import _factor, compute_trust
+from leitir.trust import _factor, _parity, _parse_timestamp, _verification, compute_trust
 
 
 def _by_factor(result):
@@ -203,3 +203,26 @@ def test_factor_rejects_non_integer_and_non_finite_scores(invalid):
 def test_factor_clamps_out_of_range_integer_scores():
     assert _factor("age", -1, {})["score"] == 0
     assert _factor("age", 101, {})["score"] == 100
+
+
+@pytest.mark.parametrize(
+    ("manifest", "score", "state"),
+    [
+        ({"verified": "sampled"}, 70, "sampled"),
+        ({"verified": "archive-only"}, 40, "archive-only"),
+        ({"verified": "invalid"}, 50, "unknown"),
+    ],
+)
+def test_verification_distinguishes_supported_and_invalid_cached_states(
+    manifest, score, state
+):
+    factor = _verification(manifest)
+
+    assert factor["score"] == score
+    assert factor["evidence"]["state"] == state
+
+
+def test_parity_invalid_state_and_invalid_timestamps_are_neutral():
+    assert _parity({"parity": "not-a-parity-state"})["evidence"]["state"] == "unknown"
+    assert _parse_timestamp("not-a-timestamp") is None
+    assert _parse_timestamp("2026-01-01T00:00:00") is None

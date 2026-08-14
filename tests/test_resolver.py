@@ -180,6 +180,29 @@ class TestResolvedPackage:
             {"urls": [{"upload_time_iso_8601": "2026-08-08T12:34:56"}]}
         ) is None
 
+    @pytest.mark.parametrize(
+        ("host", "go_module_zip", "go_proxy_url", "message"),
+        [
+            ("unsupported.example", False, None, "unsupported repository host"),
+            ("github.com", True, None, "provenance must use"),
+            ("go-module-zip", True, "ftp://proxy.example", "requires an HTTPS"),
+            ("github.com", False, "https://proxy.example", "must not have"),
+        ],
+    )
+    def test_go_zip_provenance_contract_rejects_inconsistent_fields(
+        self, host, go_module_zip, go_proxy_url, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            ResolvedPackage(
+                PackageRef(Ecosystem.GO, "example.com/demo", "v1.0.0"),
+                RepoScope("example/demo", SHA),
+                "v1.0.0",
+                "https://pkg.go.dev/example.com/demo@v1.0.0",
+                host=host,
+                go_module_zip=go_module_zip,
+                go_proxy_url=go_proxy_url,
+            )
+
 
 def test_github_commit_timestamp_comes_from_committer_metadata(monkeypatch):
     timestamp = "2026-08-08T12:34:56Z"

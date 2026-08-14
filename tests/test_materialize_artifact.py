@@ -223,6 +223,123 @@ def test_go_module_zip_uses_escaped_wire_path_and_root(tmp_path, monkeypatch):
     assert manifest["module_path"] == module
 
 
+def test_materialize_source_uses_go_zip_and_refreshes_its_cache(tmp_path, monkeypatch):
+    module = "example.com/demo"
+    version = "v1.2.3"
+    data = _go_zip(module, version)
+    source_id = "f" * 40
+    resolved = ResolvedPackage(
+        PackageRef(Ecosystem.GO, module, version),
+        RepoScope(f"module/{source_id}", source_id),
+        version,
+        f"https://pkg.go.dev/{module}@{version}",
+        host="go-module-zip",
+        go_module_zip=True,
+        go_proxy_url="http://127.0.0.1",
+    )
+
+    class SumDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self, *args, **kwargs):
+            return _go_zip_h1(data)
+
+    monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
+    fetched: list[None] = []
+    with scripted_server([(200, {}, data)]) as server:
+        resolved = ResolvedPackage(
+            resolved.ref,
+            resolved.scope,
+            resolved.tag,
+            resolved.registry_url,
+            host=resolved.host,
+            go_module_zip=True,
+            go_proxy_url=server.base_url,
+        )
+        first = materialize_source(
+            f"go:{module}@{version}", resolved, root=tmp_path, on_fetch=lambda: fetched.append(None)
+        )
+        second = materialize_source(
+            f"go:{module}@{version}", resolved, root=tmp_path, on_fetch=lambda: fetched.append(None)
+        )
+
+    assert first == second
+    assert server.state.request_paths == [f"/{module}/@v/{version}.zip"]
+    assert fetched == [None]
+    assert json.loads((first / MANIFEST_NAME).read_text())["source"] == "go-module-zip"
+
+
+@pytest.mark.parametrize("option", [{"sumdb_url": object()}, {"timeout": "30"}])
+def test_go_zip_materialization_rejects_invalid_fetch_option_types(tmp_path, option):
+    module = "example.com/demo"
+    version = "v1.2.3"
+    source_id = "a" * 40
+    resolved = ResolvedPackage(
+        PackageRef(Ecosystem.GO, module, version),
+        RepoScope(f"module/{source_id}", source_id),
+        version,
+        f"https://pkg.go.dev/{module}@{version}",
+        host="go-module-zip",
+        go_module_zip=True,
+        go_proxy_url="https://proxy.example",
+    )
+
+    with pytest.raises(TypeError, match="fetch options"):
+        materialize_source(f"go:{module}@{version}", resolved, root=tmp_path, **option)
+
+    assert not (tmp_path / "repos").exists()
+
+
+@pytest.mark.parametrize(
+    ("member", "limits"),
+    [
+        ("duplicate", {"ARCHIVE_MAX_MEMBERS": 0}),
+        ("bad\nname", {}),
+        ("large", {"ARCHIVE_MAX_MEMBER_BYTES": 1}),
+        ("total", {"ARCHIVE_MAX_TOTAL_BYTES": 1}),
+    ],
+)
+def test_go_zip_h1_rejects_malformed_or_limit_exceeding_members(
+    monkeypatch, member, limits
+):
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr(member, b"payload")
+    for name, value in limits.items():
+        monkeypatch.setattr(f"leitir.materialize.{name}", value)
+
+    with pytest.raises(VerificationError, match="malformed"):
+        _go_zip_h1(data.getvalue())
+
+
+def test_go_module_zip_rejects_an_unexpected_authenticated_root(tmp_path, monkeypatch):
+    module = "example.com/demo"
+    version = "v1.2.3"
+    data = _go_zip(module, version, root="unexpected")
+
+    class SumDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self, *args, **kwargs):
+            return _go_zip_h1(data)
+
+    monkeypatch.setattr("leitir.sumdb.SumDBClient", SumDB)
+    with scripted_server([(200, {}, data)]) as server:
+        with pytest.raises(VerificationError, match="unexpected module root"):
+            materialize_go_module_zip(
+                tmp_path,
+                f"go:{module}@{version}",
+                RepoScope("module/" + "1" * 40, "1" * 40),
+                module,
+                version,
+                server.base_url,
+            )
+
+    assert not (tmp_path / "repos").exists()
+
+
 def test_go_module_sumdb_mismatch_leaves_nothing_shelved(tmp_path, monkeypatch):
     module = "example.com/demo"
     version = "v1.2.3"

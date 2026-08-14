@@ -38,6 +38,7 @@ from leitir.rerun import OutcomeCounts, TestOutcome, TestOutcomeEvidence
 OCCUPIED_POLICY_SCHEMA_VERSION = "leitir-occupied-attachment-policy-v1"
 OCCUPIED_INVENTORY_SCHEMA_VERSION = "leitir-recipient-binding-inventory-v1"
 RECIPIENT_BASELINE_SCHEMA_VERSION = "leitir-recipient-baseline-v1"
+OCCUPIED_RERUN_SCHEMA_VERSION = "leitir-occupied-rerun-v1"
 OCCUPIED_CORPUS_SCHEMA_VERSION = "leitir-occupied-corpus-v1"
 OCCUPIED_GATE_SCHEMA_VERSION = "leitir-occupied-gate-v1"
 MINIMUM_OCCUPIED_CASES = 5
@@ -215,6 +216,68 @@ class OccupiedAttachmentPolicy:
             raise ValueError("occupied roles require distinct mount plans")
         if self.recipient_baseline_execution_policy_digest == self.occupied_rerun_execution_policy_digest:
             raise ValueError("occupied roles require distinct execution policies")
+        if self.content_digest != _canonical_digest(self, omit=frozenset({"content_digest"})):
+            raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied attachment policy content digest mismatch", "occupied_policy_content_digest_mismatch_v1")
+
+    @classmethod
+    def pin(
+        cls,
+        authority: str,
+        policy_id: str,
+        policy_version: str,
+        supported_languages: tuple[str, ...],
+        recipient_manifest_schema: str,
+        inventory_rule_id: str,
+        inventory_rule_version: str,
+        collision_detail_registry_digest: str,
+        conflict_policy_digest: str,
+        recipient_baseline_mount_plan_digest: str,
+        occupied_rerun_mount_plan_digest: str,
+        recipient_baseline_execution_policy_digest: str,
+        occupied_rerun_execution_policy_digest: str,
+        corpus_manifest_digest: str,
+    ) -> OccupiedAttachmentPolicy:
+        """Create a policy whose digest covers every authorizing field."""
+
+        draft = cls.__new__(cls)
+        values: tuple[object, ...] = (
+            OCCUPIED_POLICY_SCHEMA_VERSION,
+            authority,
+            policy_id,
+            policy_version,
+            supported_languages,
+            recipient_manifest_schema,
+            inventory_rule_id,
+            inventory_rule_version,
+            collision_detail_registry_digest,
+            conflict_policy_digest,
+            recipient_baseline_mount_plan_digest,
+            occupied_rerun_mount_plan_digest,
+            recipient_baseline_execution_policy_digest,
+            occupied_rerun_execution_policy_digest,
+            corpus_manifest_digest,
+            "sha256:" + "0" * 64,
+        )
+        for field, value in zip(fields(cls), values, strict=True):
+            object.__setattr__(draft, field.name, value)
+        return cls(
+            draft.schema_version,
+            draft.authority,
+            draft.policy_id,
+            draft.policy_version,
+            draft.supported_languages,
+            draft.recipient_manifest_schema,
+            draft.inventory_rule_id,
+            draft.inventory_rule_version,
+            draft.collision_detail_registry_digest,
+            draft.conflict_policy_digest,
+            draft.recipient_baseline_mount_plan_digest,
+            draft.occupied_rerun_mount_plan_digest,
+            draft.recipient_baseline_execution_policy_digest,
+            draft.occupied_rerun_execution_policy_digest,
+            draft.corpus_manifest_digest,
+            _canonical_digest(draft, omit=frozenset({"content_digest"})),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +302,87 @@ class RecipientBindingInventory:
             raise ValueError("recipient module paths must be sorted and unique")
         if self.inventory_digest != _canonical_digest(self, omit=frozenset({"inventory_digest"})):
             raise ValueError("recipient inventory digest mismatch")
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self)
+
+
+@dataclass(frozen=True, slots=True)
+class OccupiedRerunEvidence:
+    """Canonical rerun receipt bound to the attached recipient and BTS."""
+
+    schema_version: str
+    role: OccupiedRole
+    recipient_manifest_digest: str
+    bts_digest: str
+    test_set_digest: str
+    runner_closure_digest: str
+    config_closure_digest: str
+    mount_plan_digest: str
+    execution_policy_digest: str
+    outcomes: tuple[TestOutcomeEvidence, ...]
+    evidence_digest: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != OCCUPIED_RERUN_SCHEMA_VERSION or self.role is not OccupiedRole.OCCUPIED_RERUN:
+            raise ValueError("occupied rerun receipt has an invalid role or schema")
+        for name in (
+            "recipient_manifest_digest",
+            "bts_digest",
+            "test_set_digest",
+            "runner_closure_digest",
+            "config_closure_digest",
+            "mount_plan_digest",
+            "execution_policy_digest",
+            "evidence_digest",
+        ):
+            _digest_value(getattr(self, name), name)
+        _outcomes(self.outcomes)
+        if self.evidence_digest != _canonical_digest(self, omit=frozenset({"evidence_digest"})):
+            raise ValueError("occupied rerun evidence digest mismatch")
+
+    @classmethod
+    def record_fixture(
+        cls,
+        *,
+        recipient_manifest_digest: str,
+        bts_digest: str,
+        test_set_digest: str,
+        runner_closure_digest: str,
+        config_closure_digest: str,
+        mount_plan_digest: str,
+        execution_policy_digest: str,
+        outcomes: tuple[TestOutcomeEvidence, ...],
+    ) -> OccupiedRerunEvidence:
+        draft = cls.__new__(cls)
+        values: tuple[object, ...] = (
+            OCCUPIED_RERUN_SCHEMA_VERSION,
+            OccupiedRole.OCCUPIED_RERUN,
+            recipient_manifest_digest,
+            bts_digest,
+            test_set_digest,
+            runner_closure_digest,
+            config_closure_digest,
+            mount_plan_digest,
+            execution_policy_digest,
+            outcomes,
+            "sha256:" + "0" * 64,
+        )
+        for field, value in zip(fields(cls), values, strict=True):
+            object.__setattr__(draft, field.name, value)
+        return cls(
+            draft.schema_version,
+            draft.role,
+            draft.recipient_manifest_digest,
+            draft.bts_digest,
+            draft.test_set_digest,
+            draft.runner_closure_digest,
+            draft.config_closure_digest,
+            draft.mount_plan_digest,
+            draft.execution_policy_digest,
+            draft.outcomes,
+            _canonical_digest(draft, omit=frozenset({"evidence_digest"})),
+        )
 
     def to_bytes(self) -> bytes:
         return _canonical_bytes(self)
@@ -308,6 +452,8 @@ class OccupiedCorpus:
             raise ValueError("occupied corpus membership is not monotonic")
         if self.corpus_manifest_digest != _canonical_digest(self, omit=frozenset({"ratified_manifest_digest", "corpus_manifest_digest"})):
             raise ValueError("occupied corpus manifest digest mismatch")
+        if self.ratified_manifest_digest == self.corpus_manifest_digest:
+            raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied corpus cannot ratify its own manifest", "occupied_corpus_self_ratification_v1")
 
     @classmethod
     def pin(
@@ -599,7 +745,14 @@ def derive_emitted_bts_identities(bts: BTS | BTSResult, module_map: ModuleMap) -
     return ordered
 
 
-def validate_collisions(inventory: RecipientBindingInventory, bts: BTS | BTSResult, module_map: ModuleMap) -> tuple[RecipientBindingIdentity, ...]:
+def validate_collisions(
+    inventory: RecipientBindingInventory,
+    bts: BTS | BTSResult,
+    module_map: ModuleMap,
+    *,
+    recipient_manifest_digest: str,
+    bts_digest: str,
+) -> tuple[RecipientBindingIdentity, ...]:
     """Reject any binding overlap and any independently colliding output path."""
 
     if not isinstance(inventory, RecipientBindingInventory):
@@ -608,7 +761,15 @@ def validate_collisions(inventory: RecipientBindingInventory, bts: BTS | BTSResu
         RecipientBindingInventory(*[getattr(inventory, field.name) for field in fields(RecipientBindingInventory)])
     except (TypeError, ValueError) as exc:
         raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "recipient inventory is malformed", "occupied_inventory_digest_mismatch_v1", exc) from exc
-    emitted = derive_emitted_bts_identities(bts, module_map)
+    try:
+        _digest_value(recipient_manifest_digest, "recipient_manifest_digest")
+        _digest_value(bts_digest, "bts_digest")
+        artifact = _artifact(bts)
+    except (TypeError, ValueError, BTSError) as exc:
+        raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "collision attachment evidence is malformed", "occupied_collision_attachment_malformed_v1", exc) from exc
+    if inventory.recipient_manifest_digest != recipient_manifest_digest or artifact.bts_digest != bts_digest:
+        raise _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "collision evidence is not bound to the current attachment", "occupied_collision_attachment_mismatch_v1")
+    emitted = derive_emitted_bts_identities(artifact, module_map)
     recipient_keys = {item.collision_key for item in inventory.bindings}
     if any(item.collision_key in recipient_keys for item in emitted):
         raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "BTS binding collides with occupied recipient", "occupied_binding_collision_v1")
@@ -646,6 +807,10 @@ def validate_conflict_matrix(
         raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "conflict matrix is absent", "occupied_conflict_matrix_absent_v1")
     if not isinstance(candidate, CompositionCandidateRef):
         raise TypeError("candidate must be CompositionCandidateRef")
+    try:
+        OccupiedAttachmentPolicy(*[getattr(policy, field.name) for field in fields(OccupiedAttachmentPolicy)])
+    except (AttributeError, TypeError, ValueError, BTSError) as exc:
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied attachment policy is malformed", "occupied_policy_malformed_v1", exc) from exc
     if matrix.schema_version != COMPOSITION_MATRIX_SCHEMA or matrix.recipient_subject != recipient_subject or matrix.policy_digest != policy.conflict_policy_digest:
         raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "conflict matrix identity mismatches attachment", "occupied_conflict_matrix_identity_v1")
     matches = tuple(item for item in matrix.candidates if item.candidate_key == candidate.candidate_key)
@@ -661,10 +826,11 @@ def validate_conflict_matrix(
 
 def validate_recipient_parity(
     baseline: RecipientBaselineEvidence,
-    occupied_outcomes: tuple[TestOutcomeEvidence, ...],
+    occupied_rerun: OccupiedRerunEvidence,
     *,
     policy: OccupiedAttachmentPolicy,
     recipient_manifest_digest: str,
+    bts_digest: str,
     test_set_digest: str,
     runner_closure_digest: str,
     config_closure_digest: str,
@@ -674,8 +840,12 @@ def validate_recipient_parity(
     if not isinstance(baseline, RecipientBaselineEvidence):
         raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "recipient baseline is missing", "occupied_baseline_missing_v1")
     try:
+        OccupiedAttachmentPolicy(*[getattr(policy, field.name) for field in fields(OccupiedAttachmentPolicy)])
+    except (AttributeError, TypeError, ValueError, BTSError) as exc:
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied attachment policy is malformed", "occupied_policy_malformed_v1", exc) from exc
+    try:
         RecipientBaselineEvidence(*[getattr(baseline, field.name) for field in fields(RecipientBaselineEvidence)])
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, BTSError) as exc:
         raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "recipient baseline is malformed", "occupied_baseline_malformed_v1", exc) from exc
     expected = (
         recipient_manifest_digest,
@@ -695,10 +865,35 @@ def validate_recipient_parity(
     )
     if actual != expected:
         raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "recipient baseline is stale or mismatched", "occupied_baseline_stale_v1")
+    if not isinstance(occupied_rerun, OccupiedRerunEvidence):
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied rerun receipt is missing", "occupied_rerun_receipt_missing_v1")
     try:
-        outcomes = _outcomes(occupied_outcomes)
+        OccupiedRerunEvidence(*[getattr(occupied_rerun, field.name) for field in fields(OccupiedRerunEvidence)])
     except (TypeError, ValueError) as exc:
-        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied rerun outcomes are malformed", "occupied_rerun_malformed_v1", exc) from exc
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied rerun receipt is malformed", "occupied_rerun_receipt_malformed_v1", exc) from exc
+    expected_rerun = (
+        OccupiedRole.OCCUPIED_RERUN,
+        recipient_manifest_digest,
+        bts_digest,
+        test_set_digest,
+        runner_closure_digest,
+        config_closure_digest,
+        policy.occupied_rerun_mount_plan_digest,
+        policy.occupied_rerun_execution_policy_digest,
+    )
+    actual_rerun = (
+        occupied_rerun.role,
+        occupied_rerun.recipient_manifest_digest,
+        occupied_rerun.bts_digest,
+        occupied_rerun.test_set_digest,
+        occupied_rerun.runner_closure_digest,
+        occupied_rerun.config_closure_digest,
+        occupied_rerun.mount_plan_digest,
+        occupied_rerun.execution_policy_digest,
+    )
+    if actual_rerun != expected_rerun:
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied rerun receipt is stale or mismatched", "occupied_rerun_receipt_binding_mismatch_v1")
+    outcomes = occupied_rerun.outcomes
     if (
         tuple(item.canonical_test_id for item in outcomes) != baseline.canonical_test_ids
         or _outcome_counts(outcomes) != baseline.counts
@@ -710,10 +905,12 @@ def validate_recipient_parity(
 def run_occupied_corpus_gate(
     corpus: OccupiedCorpus,
     run_case: Callable[[OccupiedCorpusCase], bool],
+    *,
+    policy: OccupiedAttachmentPolicy,
 ) -> OccupiedGateReport:
     """Run every case and apply authority/profile/case gates as one AND."""
 
-    if not isinstance(corpus, OccupiedCorpus) or not callable(run_case):
+    if not isinstance(corpus, OccupiedCorpus) or not isinstance(policy, OccupiedAttachmentPolicy) or not callable(run_case):
         raise TypeError("invalid occupied corpus gate input")
     reports: list[OccupiedCaseReport] = []
     for case in corpus.cases:
@@ -724,7 +921,12 @@ def run_occupied_corpus_gate(
             passed = False
             detail = "occupied_case_error_v1"
         reports.append(OccupiedCaseReport(case.case_id, passed, detail))
-    authority = corpus.corpus_manifest_digest == corpus.ratified_manifest_digest
+    try:
+        OccupiedCorpus(*[getattr(corpus, field.name) for field in fields(OccupiedCorpus)])
+        OccupiedAttachmentPolicy(*[getattr(policy, field.name) for field in fields(OccupiedAttachmentPolicy)])
+    except (TypeError, ValueError, BTSError) as exc:
+        raise _reject(BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied corpus authority evidence is malformed", "occupied_corpus_authority_malformed_v1", exc) from exc
+    authority = corpus.corpus_manifest_digest == policy.corpus_manifest_digest
     ordered = tuple(reports)
     draft = OccupiedGateReport(
         OCCUPIED_GATE_SCHEMA_VERSION,
@@ -742,6 +944,7 @@ __all__ = [
     "OCCUPIED_GATE_SCHEMA_VERSION",
     "OCCUPIED_INVENTORY_SCHEMA_VERSION",
     "OCCUPIED_POLICY_SCHEMA_VERSION",
+    "OCCUPIED_RERUN_SCHEMA_VERSION",
     "RECIPIENT_BASELINE_SCHEMA_VERSION",
     "OccupiedAttachmentPolicy",
     "OccupiedCaseReport",
@@ -749,6 +952,7 @@ __all__ = [
     "OccupiedCorpusCase",
     "OccupiedGateReport",
     "OccupiedRecipientProfile",
+    "OccupiedRerunEvidence",
     "OccupiedRole",
     "RecipientBaselineEvidence",
     "RecipientBindingIdentity",

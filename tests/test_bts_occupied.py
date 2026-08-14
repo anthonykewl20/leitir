@@ -16,11 +16,11 @@ from leitir.composition import CompositionCandidateRef, compose
 from leitir.graph.model import NodeId, NodeKind, NodeOrigin, SourceRef
 from leitir.lockfiles import DependencyManifestPolicy, VerifiedManifestBytes
 from leitir.occupied import (
-    OCCUPIED_POLICY_SCHEMA_VERSION,
     OccupiedAttachmentPolicy,
     OccupiedCorpus,
     OccupiedCorpusCase,
     OccupiedRecipientProfile,
+    OccupiedRerunEvidence,
     RecipientBaselineEvidence,
     derive_recipient_binding_inventory,
     run_occupied_corpus_gate,
@@ -40,9 +40,8 @@ def _digest(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
 
 
-def _policy(*, conflict: str = _D) -> OccupiedAttachmentPolicy:
-    return OccupiedAttachmentPolicy(
-        OCCUPIED_POLICY_SCHEMA_VERSION,
+def _policy(*, conflict: str = _D, corpus: str = _D) -> OccupiedAttachmentPolicy:
+    return OccupiedAttachmentPolicy.pin(
         "leitir-maintainers",
         "occupied-v1",
         "1",
@@ -56,8 +55,7 @@ def _policy(*, conflict: str = _D) -> OccupiedAttachmentPolicy:
         _digest(b"occupied-mount"),
         _digest(b"baseline-policy"),
         _digest(b"occupied-policy"),
-        _D,
-        _D,
+        corpus,
     )
 
 
@@ -93,6 +91,19 @@ def _baseline(
         mount_plan_digest=policy.recipient_baseline_mount_plan_digest,
         execution_policy_digest=policy.recipient_baseline_execution_policy_digest,
         execute=execute,
+    )
+
+
+def _rerun(policy: OccupiedAttachmentPolicy, manifest_digest: str, outcomes: tuple[OutcomeEvidence, ...], *, bts_digest: str = _D) -> OccupiedRerunEvidence:
+    return OccupiedRerunEvidence.record_fixture(
+        recipient_manifest_digest=manifest_digest,
+        bts_digest=bts_digest,
+        test_set_digest=_digest(b"tests"),
+        runner_closure_digest=_digest(b"runner"),
+        config_closure_digest=_digest(b"config"),
+        mount_plan_digest=policy.occupied_rerun_mount_plan_digest,
+        execution_policy_digest=policy.occupied_rerun_execution_policy_digest,
+        outcomes=outcomes,
     )
 
 
@@ -152,7 +163,7 @@ def test_any_binding_overlap_rejects_even_when_symbol_is_unused() -> None:
         _policy(),
     )
     with pytest.raises(BTSError) as caught:
-        validate_collisions(inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "recipient.mod")))
+        validate_collisions(inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "recipient.mod")), recipient_manifest_digest=inventory.recipient_manifest_digest, bts_digest=_D)
     _assert_detail(caught, BTSRejectReason.REJECT_UNRESOLVED_EDGE, "occupied_binding_collision_v1")
 
 
@@ -160,7 +171,7 @@ def test_any_binding_overlap_rejects_even_when_symbol_is_unused() -> None:
 def test_cross_kind_same_name_collision_has_deterministic_first_module_detail(recipient: bytes) -> None:
     inventory = derive_recipient_binding_inventory(_manifest(("src/recipient/mod.py", "source", recipient)), _policy())
     with pytest.raises(BTSError) as caught:
-        validate_collisions(inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "recipient.mod")))
+        validate_collisions(inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "recipient.mod")), recipient_manifest_digest=inventory.recipient_manifest_digest, bts_digest=_D)
     # Different kinds cannot share a collision key; the proven-superset module
     # check therefore supplies the first deterministic rejection.
     _assert_detail(caught, BTSRejectReason.REJECT_UNRESOLVED_EDGE, "occupied_module_collision_v1")
@@ -172,7 +183,7 @@ def test_module_path_collision_rejects_independently() -> None:
         _policy(),
     )
     with pytest.raises(BTSError) as caught:
-        validate_collisions(inventory, _bts("donor_only"), ModuleMap.from_pairs(("donor.mod", "recipient.mod")))
+        validate_collisions(inventory, _bts("donor_only"), ModuleMap.from_pairs(("donor.mod", "recipient.mod")), recipient_manifest_digest=inventory.recipient_manifest_digest, bts_digest=_D)
     _assert_detail(caught, BTSRejectReason.REJECT_UNRESOLVED_EDGE, "occupied_module_collision_v1")
 
     prefix_inventory = derive_recipient_binding_inventory(
@@ -180,7 +191,7 @@ def test_module_path_collision_rejects_independently() -> None:
         _policy(),
     )
     with pytest.raises(BTSError) as prefix:
-        validate_collisions(prefix_inventory, _bts("donor_only"), ModuleMap.from_pairs(("donor.mod", "recipient.child")))
+        validate_collisions(prefix_inventory, _bts("donor_only"), ModuleMap.from_pairs(("donor.mod", "recipient.child")), recipient_manifest_digest=prefix_inventory.recipient_manifest_digest, bts_digest=_D)
     _assert_detail(prefix, BTSRejectReason.REJECT_UNRESOLVED_EDGE, "occupied_module_collision_v1")
 
 
@@ -265,9 +276,10 @@ def test_fixture_baseline_is_qualified_and_missing_baseline_rejects() -> None:
     with pytest.raises(BTSError) as missing:
         validate_recipient_parity(
             None,  # type: ignore[arg-type]
-            baseline.outcomes,
+            _rerun(policy, _D, baseline.outcomes),
             policy=policy,
             recipient_manifest_digest=_D,
+            bts_digest=_D,
             test_set_digest=_digest(b"tests"),
             runner_closure_digest=_digest(b"runner"),
             config_closure_digest=_digest(b"config"),
@@ -281,18 +293,36 @@ def test_exact_occupied_parity_rejects_count_outcome_and_stale_deltas() -> None:
     common = dict(
         policy=policy,
         recipient_manifest_digest=_D,
+        bts_digest=_D,
         test_set_digest=_digest(b"tests"),
         runner_closure_digest=_digest(b"runner"),
         config_closure_digest=_digest(b"config"),
     )
-    validate_recipient_parity(baseline, baseline.outcomes, **common)
+    validate_recipient_parity(baseline, _rerun(policy, _D, baseline.outcomes), **common)
     for changed in ((), (_outcome(outcome=Outcome.SKIP),)):
         with pytest.raises(BTSError) as delta:
-            validate_recipient_parity(baseline, changed, **common)
+            validate_recipient_parity(baseline, _rerun(policy, _D, changed), **common)
         _assert_detail(delta, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_exact_parity_failed_v1")
     with pytest.raises(BTSError) as stale:
-        validate_recipient_parity(baseline, baseline.outcomes, **{**common, "recipient_manifest_digest": _digest(b"new")})
+        validate_recipient_parity(baseline, _rerun(policy, _D, baseline.outcomes), **{**common, "recipient_manifest_digest": _digest(b"new")})
     _assert_detail(stale, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_baseline_stale_v1")
+
+
+def test_replayed_bare_parity_outcomes_reject() -> None:
+    policy = _policy()
+    baseline = _baseline(policy, _D)
+    with pytest.raises(BTSError) as caught:
+        validate_recipient_parity(
+            baseline,
+            baseline.outcomes,  # type: ignore[arg-type] -- a replayed legacy payload
+            policy=policy,
+            recipient_manifest_digest=_D,
+            bts_digest=_D,
+            test_set_digest=_digest(b"tests"),
+            runner_closure_digest=_digest(b"runner"),
+            config_closure_digest=_digest(b"config"),
+        )
+    _assert_detail(caught, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_rerun_receipt_missing_v1")
 
 
 def test_forged_baseline_and_inventory_digests_reject() -> None:
@@ -305,9 +335,10 @@ def test_forged_baseline_and_inventory_digests_reject() -> None:
     with pytest.raises(BTSError) as caught:
         validate_recipient_parity(
             forged_baseline,
-            baseline.outcomes,
+            _rerun(policy, _D, baseline.outcomes),
             policy=policy,
             recipient_manifest_digest=_D,
+            bts_digest=_D,
             test_set_digest=_digest(b"tests"),
             runner_closure_digest=_digest(b"runner"),
             config_closure_digest=_digest(b"config"),
@@ -319,8 +350,80 @@ def test_forged_baseline_and_inventory_digests_reject() -> None:
         object.__setattr__(forged_inventory, field, getattr(inventory, field))
     object.__setattr__(forged_inventory, "inventory_digest", _D)
     with pytest.raises(BTSError) as inventory_error:
-        validate_collisions(forged_inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "new.mod")))
+        validate_collisions(forged_inventory, _bts(), ModuleMap.from_pairs(("donor.mod", "new.mod")), recipient_manifest_digest=inventory.recipient_manifest_digest, bts_digest=_D)
     _assert_detail(inventory_error, BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "occupied_inventory_digest_mismatch_v1")
+
+
+def test_forged_rerun_evidence_digest_rejects() -> None:
+    policy = _policy()
+    baseline = _baseline(policy, _D)
+    rerun = _rerun(policy, _D, baseline.outcomes)
+    forged_rerun = object.__new__(OccupiedRerunEvidence)
+    for field in rerun.__dataclass_fields__:
+        object.__setattr__(forged_rerun, field, getattr(rerun, field))
+    object.__setattr__(forged_rerun, "evidence_digest", _D)
+    with pytest.raises(BTSError) as caught:
+        validate_recipient_parity(
+            baseline,
+            forged_rerun,
+            policy=policy,
+            recipient_manifest_digest=_D,
+            bts_digest=_D,
+            test_set_digest=_digest(b"tests"),
+            runner_closure_digest=_digest(b"runner"),
+            config_closure_digest=_digest(b"config"),
+        )
+    _assert_detail(caught, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_rerun_receipt_malformed_v1")
+
+
+def test_rerun_receipt_binding_mismatch_rejects() -> None:
+    policy = _policy()
+    baseline = _baseline(policy, _D)
+    with pytest.raises(BTSError) as caught:
+        validate_recipient_parity(
+            baseline,
+            _rerun(policy, _D, baseline.outcomes, bts_digest=_digest(b"different-bts")),
+            policy=policy,
+            recipient_manifest_digest=_D,
+            bts_digest=_D,
+            test_set_digest=_digest(b"tests"),
+            runner_closure_digest=_digest(b"runner"),
+            config_closure_digest=_digest(b"config"),
+        )
+    _assert_detail(caught, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_rerun_receipt_binding_mismatch_v1")
+
+
+def test_collision_bts_digest_mismatch_rejects() -> None:
+    inventory = derive_recipient_binding_inventory(_manifest(("src/app.py", "source", b"value = 1\n")), _policy())
+    with pytest.raises(BTSError) as caught:
+        validate_collisions(
+            inventory,
+            _bts(),
+            ModuleMap.from_pairs(("donor.mod", "new.mod")),
+            recipient_manifest_digest=inventory.recipient_manifest_digest,
+            bts_digest=_digest(b"different-bts"),
+        )
+    _assert_detail(caught, BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "occupied_collision_attachment_mismatch_v1")
+
+
+def test_stale_manifest_inventory_rejects_before_collision_check() -> None:
+    inventory = derive_recipient_binding_inventory(_manifest(("src/app.py", "source", b"value = 1\n")), _policy())
+    with pytest.raises(BTSError) as caught:
+        validate_collisions(
+            inventory,
+            _bts(),
+            ModuleMap.from_pairs(("donor.mod", "new.mod")),
+            recipient_manifest_digest=_digest(b"new-recipient"),
+            bts_digest=_D,
+        )
+    _assert_detail(caught, BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "occupied_collision_attachment_mismatch_v1")
+
+
+def test_tampered_policy_content_digest_rejects() -> None:
+    policy = _policy()
+    with pytest.raises(BTSError) as caught:
+        replace(policy, content_digest=_D)
+    _assert_detail(caught, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_policy_content_digest_mismatch_v1")
 
 
 def _corpus(count: int = 5, predecessor: tuple[str, ...] = ()) -> OccupiedCorpus:
@@ -333,14 +436,7 @@ def _corpus(count: int = 5, predecessor: tuple[str, ...] = ()) -> OccupiedCorpus
         )
         for number in range(count)
     )
-    draft = OccupiedCorpus.pin("leitir-maintainers", "v0.1.3", cases, predecessor_case_ids=predecessor, ratified_manifest_digest=_D)
-    return OccupiedCorpus.pin(
-        "leitir-maintainers",
-        "v0.1.3",
-        cases,
-        predecessor_case_ids=predecessor,
-        ratified_manifest_digest=draft.corpus_manifest_digest,
-    )
+    return OccupiedCorpus.pin("leitir-maintainers", "v0.1.3", cases, predecessor_case_ids=predecessor, ratified_manifest_digest=_D)
 
 
 def test_corpus_noncompensating_and_runs_every_case() -> None:
@@ -351,16 +447,16 @@ def test_corpus_noncompensating_and_runs_every_case() -> None:
         ran.append(case.case_id)
         return case.case_id != "case-2"
 
-    report = run_occupied_corpus_gate(corpus, run)
+    report = run_occupied_corpus_gate(corpus, run, policy=_policy(corpus=corpus.corpus_manifest_digest))
     assert not report.accepted
     assert ran == [f"case-{number}" for number in range(5)]
     assert sum(not item.passed for item in report.cases) == 1
 
 
-def test_stale_ratified_digest_rejects_after_running_every_case() -> None:
-    corpus = replace(_corpus(), ratified_manifest_digest=_D)
+def test_policy_pinned_corpus_digest_rejects_after_running_every_case() -> None:
+    corpus = _corpus()
     ran: list[str] = []
-    report = run_occupied_corpus_gate(corpus, lambda case: ran.append(case.case_id) is None)
+    report = run_occupied_corpus_gate(corpus, lambda case: ran.append(case.case_id) is None, policy=_policy(corpus=_digest(b"stale")))
     assert not report.accepted
     assert not report.authority_digest_matches
     assert ran == [f"case-{number}" for number in range(5)]
@@ -387,17 +483,25 @@ def test_corpus_minimum_profiles_and_monotonic_membership() -> None:
         OccupiedCorpus.pin("maintainers", "release", cases, ratified_manifest_digest=_D)
 
 
+def test_self_ratified_corpus_rejects() -> None:
+    corpus = _corpus()
+    with pytest.raises(BTSError) as caught:
+        replace(corpus, ratified_manifest_digest=corpus.corpus_manifest_digest)
+    _assert_detail(caught, BTSRejectReason.REJECT_HARD_GATE_FAILED, "occupied_corpus_self_ratification_v1")
+
+
 def test_every_occupied_digest_is_pythonhashseed_independent() -> None:
     script = """
-from tests.test_bts_occupied import _corpus, _manifest, _policy
+from tests.test_bts_occupied import _corpus, _manifest, _policy, _rerun, _outcome
 from leitir.occupied import derive_recipient_binding_inventory, run_occupied_corpus_gate
 import sys
 m=_manifest(('src/app.py','source',b'value = 1\\n'))
 i=derive_recipient_binding_inventory(m,_policy())
 c=_corpus()
-r=run_occupied_corpus_gate(c,lambda case: True)
+r=_rerun(_policy(), i.recipient_manifest_digest, (_outcome(),))
+g=run_occupied_corpus_gate(c,lambda case: True,policy=_policy(corpus=c.corpus_manifest_digest))
 sys.stdout.buffer.write(
-    "\\n".join((i.inventory_digest,c.corpus_manifest_digest,r.report_digest)).encode("ascii") + b"\\n"
+    "\\n".join((i.inventory_digest,_policy().content_digest,r.evidence_digest,c.ratified_manifest_digest,c.corpus_manifest_digest,g.report_digest)).encode("ascii") + b"\\n"
 )
 """
     outputs = []
@@ -410,6 +514,7 @@ sys.stdout.buffer.write(
                 (sys.executable, "-c", script),
                 cwd=os.fspath(os.path.dirname(os.path.dirname(__file__))),
                 env=environment,
+                timeout=30,
             )
         )
     assert outputs[0] == outputs[1] == outputs[2]

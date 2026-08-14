@@ -26,7 +26,7 @@ def _fixture(name: str = "corpus-valid.json") -> Path:
 
 
 def _write_canonical(path: Path, value: object) -> None:
-    path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_bytes((json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 def _manifest() -> dict[str, object]:

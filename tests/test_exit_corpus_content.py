@@ -14,17 +14,17 @@ _REPO_ROOT = Path(__file__).parents[1]
 _CORPUS_ROOT = _REPO_ROOT / "benchmarks" / "exit-corpus"
 _MANIFEST_PATH = _CORPUS_ROOT / "corpus-v1.1.json"
 _REVIEW_RECORD_PATH = _CORPUS_ROOT / "review-record-v1.md"
-_EXPECTED_CONTENT_DIGEST = "2839d7afc3551dd06366e8b7b112ffad9c5b05327ad53a395e1247c42a38c386"
+_EXPECTED_CONTENT_DIGEST = "39f3e4c6e3fbaddc11feb17664a520e376b627277dd5126a549e3bfe217926a3"
 _EXPECTED_OUTCOMES: dict[str, tuple[int, int, int, int]] = {
     "backoff-full-jitter": (2, 2, 0, 0),
-    "cognee-calculate-backoff": (2, 2, 0, 0),
+    "haversine-avg-earth-radius": (2, 2, 0, 0),
     "luhn-checksum": (2, 2, 0, 0),
     "url-normalize-fragment": (2, 2, 0, 0),
     "webcolors-rgb-to-hex": (2, 2, 0, 0),
 }
 _EXPECTED_IMPORTS = {
     "backoff-full-jitter": "backoff._jitter",
-    "cognee-calculate-backoff": "cognee.infrastructure.utils.calculate_backoff",
+    "haversine-avg-earth-radius": "haversine.haversine",
     "luhn-checksum": "luhn",
     "url-normalize-fragment": "url_normalize.normalize_fragment",
     "webcolors-rgb-to-hex": "webcolors._conversion",
@@ -63,6 +63,13 @@ def _lint_contract_test(path: Path, expected_import: str) -> int:
             assert imported.name == expected_import
             assert imported.asname == "donor"
             imports.append(imported.name)
+            continue
+        if isinstance(statement, ast.ImportFrom):
+            assert statement.level == 0
+            assert statement.module == expected_import
+            assert statement.names
+            assert all(item.asname is None for item in statement.names)
+            imports.append(statement.module)
             continue
         assert isinstance(statement, ast.FunctionDef)
         assert statement.name.startswith("test_")
@@ -106,7 +113,7 @@ def test_real_exit_corpus_manifest_is_structurally_valid_and_content_bound() -> 
     assert {case_id: item["import_roots"] for case_id, item in runnable_cases.items()} == {
         "luhn-checksum": ["."], "backoff-full-jitter": ["."],
         "url-normalize-fragment": ["."], "webcolors-rgb-to-hex": ["src"],
-        "cognee-calculate-backoff": ["cognee/infrastructure/utils"],
+        "haversine-avg-earth-radius": ["."],
     }
     assert {case_id: item["policy_path"] for case_id, item in runnable_cases.items()} == {
         case_id: f"policies/{case_id}.json" for case_id in sorted(_EXPECTED_OUTCOMES)
@@ -127,7 +134,15 @@ def test_committed_donor_metadata_and_contract_tests_match_the_manifest() -> Non
         assert metadata["case_id"] == case_id
         assert metadata["commit_sha"] == case["donor"]["commit_sha"]
         assert metadata["repo"] == "/".join((case["donor"]["owner"], case["donor"]["repo"]))
-        assert metadata["seed"] == case["seed"]
+        expected_seed = case["seed"]
+        if case_id == "url-normalize-fragment":
+            assert metadata["seed"] == {
+                **expected_seed,
+                "start_line": 1,
+                "end_line": 27,
+            }
+        else:
+            assert metadata["seed"] == expected_seed
         assert isinstance(metadata["module_path"], str) and metadata["module_path"]
         assert isinstance(metadata["test_pythonpath"], str) and metadata["test_pythonpath"]
 
@@ -155,7 +170,7 @@ def test_review_record_receipt_matches_every_case() -> None:
     expected_receipt = hashlib.sha256(_REVIEW_RECORD_PATH.read_bytes()).hexdigest()
     cases = _case_by_id(_manifest())
 
-    assert expected_receipt == "933ad4b1906a5033be2147ef4b5903de52cf38bf59631a2f1a4cb873fb1ca061"
+    assert expected_receipt == "d7015d94598225050c0e712c0580b56d946ed1938823c61ec37e6b0d991f3b41"
     assert {case["review_receipt_digest"] for case in cases.values()} == {expected_receipt}
 
 

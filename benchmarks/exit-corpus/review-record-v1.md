@@ -7,10 +7,10 @@ self-ratification.
 
 ## Selection
 
-The five highest-ranked candidates from `/tmp/opencode/donors/candidates.json`
-were selected without substitution: they are five distinct GitHub repositories,
-their recorded licenses are permissive, and their seed extraction verdicts are
-complete at both the generous and mandated 4000-bps donor-source budgets. The
+The initial five selected candidates were distinct GitHub repositories with
+permissive recorded licenses and complete extraction verdicts at both the
+generous and mandated 4000-bps donor-source budgets. The subsequent Phase-A4
+swap below replaces cognee with the smaller, unused MIT haversine donor. The
 search record is `/tmp/opencode/donors/REPORT.md`; its machine-readable final
 verification is `/tmp/opencode/donors/final_verification.json`.
 
@@ -51,17 +51,28 @@ recorded in `candidates.json`).
 {"blockers":[],"counters":{"edges":1,"files":1,"nodes":1,"source_lines":19},"externals":["declared_external:function:src.webcolors._normalization.normalize_integer_triplet","declared_external:module:src.webcolors._normalization"],"file":"src/webcolors/_conversion.py","members":["src.webcolors._conversion.rgb_to_hex"],"repo":"ubernostrum/webcolors","scope":"full-tree (15 py files)","seed":"src.webcolors._conversion.rgb_to_hex","sha":"ed4bad8daf26a0ad606d38732375b2f7cf72e57a","status_bps4000":"complete","status_generous":"complete"}
 ```
 
-### topoteretes/cognee — `cognee.infrastructure.utils.calculate_backoff.calculate_backoff`
+### mapado/haversine — `haversine.haversine.get_avg_earth_radius`
 
 ```json
-{"blockers":[],"counters":{"edges":1,"files":1,"nodes":1,"source_lines":21},"externals":["declared_external:function:random.uniform","declared_external:module:random"],"file":"cognee/infrastructure/utils/calculate_backoff.py","members":["cognee.infrastructure.utils.calculate_backoff.calculate_backoff"],"repo":"topoteretes/cognee","scope":"package-dir (cognee/infrastructure/utils, 3 files)","seed":"cognee.infrastructure.utils.calculate_backoff.calculate_backoff","sha":"4b9dd362625dfd3621c344e571a86f5bc7a55ee8","status_bps4000":"complete","status_generous":"complete"}
+{"blockers":[],"counters":{"edges":2,"files":1,"nodes":3,"source_lines":4},"externals":[],"file":"haversine/haversine.py","members":["haversine.haversine._AVG_EARTH_RADIUS_KM","haversine.haversine._CONVERSIONS","haversine.haversine.get_avg_earth_radius"],"repo":"mapado/haversine","scope":"full-tree (11 py files)","seed":"haversine.haversine.get_avg_earth_radius","sha":"e0daab1fcd8def37ac0449dd05814a64a93d357a","status_bps4000":"complete","status_generous":"complete"}
 ```
+
+### Phase-A4 donor swap evidence
+
+The original cognee bundle was removed to retain a corpus of exactly five
+donors. `mapado/haversine@e0daab1fcd8def37ac0449dd05814a64a93d357a` was
+freshly cloned and checked out detached: it contains 24 tracked files (11 Python
+files), carries `LICENSE` with the MIT grant, and its license SHA-256 is
+`4a5b657ce0f6473ace15c292cd7f0d483b4eef1fd8f31c8a4d58c7a8c27eb20f`.
+Round-1 recorded the selected seed as COMPLETE/COMPLETE with zero externals and
+zero blockers. The two authored radius tests were run against that detached
+checkout; their recorded baseline is 2 collected, 2 passed, 0 failed, 0 skipped.
 
 ## License findings
 
 Freshly materialized `LICENSE` files were hashed and the digest was saved in
-each `donor-meta.json`: luhn, backoff, and url-normalize are MIT; webcolors is
-BSD-3-Clause; cognee is Apache-2.0. Donor source is deliberately not committed.
+each `donor-meta.json`: luhn, backoff, url-normalize, and haversine are MIT;
+webcolors is BSD-3-Clause. Donor source is deliberately not committed.
 
 ## Contract-test rationale and recorded baseline
 
@@ -69,16 +80,14 @@ The committed tests are Leitir-authored, import the relevant donor module, and
 use only bare `test_*` functions with assertions. They exercise two stable
 observations per seed: known-good/known-bad Luhn checksums, zero and bounded
 full jitter, fragment Unicode and percent-escape normalization, canonical RGB
-hex conversion, and zero-jitter exponential plus bounded-jitter backoff. They
-do not rely on a fixed random sequence.
+hex conversion, and kilometer/meter earth-radius conversion. They do not rely
+on a fixed random sequence.
 
 Each test file was run with pytest against a fresh detached checkout at its
-pin. `PYTHONPATH` was the donor root except webcolors (`src`) and cognee
-(`cognee/infrastructure/utils`); the latter avoids importing cognee's unrelated
-dependency-heavy package initializer while importing the pinned donor module
-itself. url-normalize was run after installing its pinned project's declared
-runtime requirement, `idna>=3.3`. Recorded results: every case has 2 collected,
-2 passed, 0 failed, and 0 skipped.
+pin. `PYTHONPATH` was the donor root except webcolors (`src`); all remaining
+donors use the repository root. url-normalize was run after installing its
+pinned project's declared runtime requirement, `idna>=3.3`. Recorded results:
+every case has 2 collected, 2 passed, 0 failed, and 0 skipped.
 
 ## Review trail and ratification boundary
 

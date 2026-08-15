@@ -32,6 +32,7 @@ PLAN_SCHEMA = "leitir-execution-plan-v1"
 RESULT_SCHEMA = "leitir-execution-result-v1"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _NSJAIL_VERSION_RE = re.compile(r"nsjail@([0-9a-f]{40})\Z")
+_MAX_NSJAIL_PROBE_OUTPUT_BYTES = 64 * 1024
 _ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
@@ -556,26 +557,35 @@ def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # e
     if digest != policy.nsjail_sha256:
         raise _reject("nsjail executable digest does not match policy", "nsjail_digest_mismatch")
     _verify_mount_sources(policy)
-    # Retain the bounded execution probe: the binary must be runnable, but its
-    # human-facing version text is intentionally not an identity input because
-    # release builds may embed timestamps in it.
+    # Retain the bounded liveness probe: the binary must be runnable, but its
+    # human-facing help text is intentionally not an identity input because
+    # release builds may embed timestamps in it. The pinned upstream build does
+    # not implement --version; --help deliberately exits nonzero after usage.
+    process: subprocess.Popen[bytes] | None = None
     try:
-        completed = subprocess.run(
-            (policy.nsjail_path, "--version"),
+        process = subprocess.Popen(
+            (policy.nsjail_path, "--help"),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env={},
-            timeout=2,
-            check=False,
         )
+        if process.stdout is None:
+            raise OSError("nsjail probe has no output pipe")
+        probe_output = process.stdout.read(_MAX_NSJAIL_PROBE_OUTPUT_BYTES + 1)
+        process.wait(timeout=2)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if process is not None:
+            process.kill()
+            process.wait()
         raise _reject("nsjail build identity could not be verified", "nsjail_identity_unavailable") from exc
-    version_output = completed.stdout[:4097]
-    if completed.returncode != 0 or len(version_output) > 4096:
+    finally:
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+    if len(probe_output) > _MAX_NSJAIL_PROBE_OUTPUT_BYTES:
         raise _reject("nsjail build identity probe failed", "nsjail_identity_unavailable")
     try:
-        version_output.decode("utf-8", "strict")
+        probe_output.decode("utf-8", "strict")
     except UnicodeDecodeError as exc:
         raise _reject("nsjail build identity is malformed", "nsjail_identity_mismatch") from exc
     _verify_nsjail_identity(policy, digest)

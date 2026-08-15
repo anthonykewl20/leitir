@@ -122,6 +122,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - harden tree walker validation, lowercase SHAs, and early truncation raise (`search`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
 - honest budget exhaustion, canonical --language identity, over-limit budget rejection (`search`)
+- import-safe harness bootstrap and mount-stubbed rendered-config smoke (`ci`)
 - include Starred assignment targets in Python AST definitions (`search`)
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - keep sandbox tests portable (`bts`)

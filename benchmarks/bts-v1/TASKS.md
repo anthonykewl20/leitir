@@ -83,7 +83,8 @@ fallback.
 
 Candidate pins are the C3 search space and require structural materialization:
 an immutable 40-hex commit, resolvable repository, successful materialization,
-and a full-tree integrity identity. Exact Git parity is required only when an
+and its recorded tree-integrity identity (full or sampled). Exact Git parity
+and a full-tree identity are required only when an
 observation-plan execution candidate is promoted to BTS/relocation/rerun. If
 that promotion fails, the task still records C3 discovery/ranking evidence, but
 its canonical run record carries the typed execution failure and marks every

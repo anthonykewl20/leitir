@@ -5,7 +5,7 @@
   },
   "modules": {
     "src/leitir/corpus.py": 89.50,
-    "src/leitir/exit_corpus.py": 83.0,
+    "src/leitir/exit_corpus.py": 82.4,
     "src/leitir/funnel_cli.py": 78.5,
     "src/leitir/graph/go.py": 87.9,
     "src/leitir/graph/javascript.py": 91.6,

@@ -168,6 +168,6 @@ print(content_digest(load_corpus_manifest(Path('benchmarks/exit-corpus/corpus-v1
     outputs: list[bytes] = []
     for seed in ("0", "1", "42"):
         environment = os.environ | {"PYTHONHASHSEED": seed, "PYTHONPATH": str(_REPO_ROOT / "src")}
-        outputs.append(subprocess.check_output([sys.executable, "-c", script], cwd=_REPO_ROOT, env=environment))
+        outputs.append(subprocess.check_output([sys.executable, "-c", script], cwd=_REPO_ROOT, env=environment).replace(b"\r\n", b"\n"))
 
     assert outputs == [_EXPECTED_CONTENT_DIGEST.encode() + b"\n"] * 3

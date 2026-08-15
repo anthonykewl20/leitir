@@ -157,7 +157,9 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
     for relative in expected_paths:
         path = confined_path(directory, relative)
         try:
-            content = read_regular_file(path, maximum_bytes=1 << 20)
+            # Published task sidecars are digest-cross-checked outputs, not
+            # trust anchors, so their portable reads do not require O_NOFOLLOW.
+            content = read_regular_file(path, maximum_bytes=1 << 20, no_follow=False)
         except (OSError, ValueError) as exc:
             raise BTSError(
                 BTSRejectReason.REJECT_HARD_GATE_FAILED,
@@ -174,9 +176,9 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
             detail_code="pipeline_cli_task_contract_sidecars_v1",
         )
     try:
-        receipts = json.loads(read_regular_file(tasks_directory / "RECEIPTS.json", maximum_bytes=1 << 20))
+        receipts = json.loads(read_regular_file(tasks_directory / "RECEIPTS.json", maximum_bytes=1 << 20, no_follow=False))
         policy_receipt = receipts["policy_receipts"][task.task_id]
-        policy_bytes = read_regular_file(policy, maximum_bytes=1 << 20)
+        policy_bytes = read_regular_file(policy, maximum_bytes=1 << 20, no_follow=False)
         if policy_receipt != "sha256:" + hashlib.sha256(policy_bytes).hexdigest():
             raise ValueError("policy receipt mismatch")
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:

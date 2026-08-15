@@ -20,7 +20,7 @@ from leitir.bts_errors import BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult
 from leitir.graph.runtime import DonorAbsenceAuthority
 from leitir.probes import ProbeStatus
-from leitir.rerun import RerunReport, ValidationStatus
+from leitir.rerun import ContractBaselineEvidence, RerunReport, ValidationStatus
 
 EXIT_CORPUS_SCHEMA_VERSION = "leitir-bts-exit-corpus-v1"
 EXIT_GATE_SCHEMA_VERSION = "leitir-bts-exit-gate-v1"
@@ -253,6 +253,10 @@ class ExitDonorReport:
     zero_failure_baseline: bool
     pipeline_validation_digest: str | None
     detail_categories: tuple[str, ...]
+    recorded_outcome_vector: tuple[tuple[str, str], ...] | None = None
+    recorded_counts: tuple[tuple[str, int], ...] | None = None
+    expected_outcome_vector: tuple[tuple[str, str], ...] | None = None
+    expected_counts: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,8 +338,25 @@ def run_exit_gate(corpus: ExitCorpus, pipeline: Pipeline) -> ExitGateReport:
     return replace(draft, report_digest=_digest(draft, omit=frozenset({"report_digest"})))
 
 
+def _baseline_observation(baseline: ContractBaselineEvidence | None) -> tuple[tuple[tuple[str, str], ...] | None, tuple[tuple[str, int], ...] | None]:
+    """Project baseline evidence into deterministic, inspectable reject fields."""
+
+    if baseline is None:
+        return None, None
+    return (
+        tuple((item.canonical_test_id, item.outcome.value) for item in baseline.outcomes),
+        (("failed", baseline.counts.failed), ("passed", baseline.counts.passed), ("skipped", baseline.counts.skipped)),
+    )
+
+
 def rejected_preparation_report(
-    case_id: str, reason: BTSRejectReason, detail_code: str | None, *, cause: BaseException | None = None,
+    case_id: str,
+    reason: BTSRejectReason,
+    detail_code: str | None,
+    *,
+    cause: BaseException | None = None,
+    recorded_baseline: ContractBaselineEvidence | None = None,
+    expected_baseline: ContractBaselineEvidence | None = None,
 ) -> ExitDonorReport:
     """Record a typed pre-pipeline failure without hiding its donor identity."""
 
@@ -343,9 +364,11 @@ def rejected_preparation_report(
     details = [f"exit_preparation_error_v1:{reason.value}:{detail}"]
     if cause is not None:
         details.append(f"exit_preparation_cause_v1:{type(cause).__name__}:{cause}")
+    recorded_vector, recorded_counts = _baseline_observation(recorded_baseline)
+    expected_vector, expected_counts = _baseline_observation(expected_baseline)
     return ExitDonorReport(
         case_id, ValidationStatus.REJECT, False, False, False, False, False,
-        False, None, tuple(details),
+        False, None, tuple(details), recorded_vector, recorded_counts, expected_vector, expected_counts,
     )
 
 

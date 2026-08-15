@@ -78,6 +78,8 @@ class PermittedSyscall(StrEnum):
     """Minimal syscall surface for the pinned CPython/runner closure."""
 
     ARCH_PRCTL = "arch_prctl"
+    # CPython probes executable accessibility while resolving its startup paths.
+    ACCESS = "access"
     BRK = "brk"
     CLOCK_GETTIME = "clock_gettime"
     CLOSE = "close"
@@ -92,6 +94,8 @@ class PermittedSyscall(StrEnum):
     GETCWD = "getcwd"
     GETDENTS64 = "getdents64"
     GETPID = "getpid"
+    # glibc records the calling thread while initializing thread-local state.
+    GETTID = "gettid"
     GETRANDOM = "getrandom"
     LSEEK = "lseek"
     MMAP = "mmap"
@@ -99,14 +103,24 @@ class PermittedSyscall(StrEnum):
     MUNMAP = "munmap"
     NEWFSTATAT = "newfstatat"
     OPENAT = "openat"
+    # The cold interpreter still opens a small number of legacy absolute paths.
+    OPEN = "open"
+    # CPython reads import metadata at an explicit file offset during startup.
+    PREAD64 = "pread64"
     PRLIMIT64 = "prlimit64"
     READ = "read"
     READLINK = "readlink"
     READLINKAT = "readlinkat"
     RT_SIGACTION = "rt_sigaction"
     RT_SIGPROCMASK = "rt_sigprocmask"
+    # glibc queries CPU affinity before selecting its startup runtime settings.
+    SCHED_GETAFFINITY = "sched_getaffinity"
     SET_ROBUST_LIST = "set_robust_list"
     SET_TID_ADDRESS = "set_tid_address"
+    # glibc >= 2.35 registers restartable sequences during process startup.
+    RSEQ = "rseq"
+    # CPython's cold-path loader issues the legacy pathname metadata syscall.
+    STAT = "stat"
     STATX = "statx"
     WRITE = "write"
 

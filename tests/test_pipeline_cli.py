@@ -20,6 +20,7 @@ from leitir.bts import BTSStatus
 from leitir.bts_bench import CandidateIdentity, SeedSpan, load_manifest
 from leitir.bts_cli import SeedSelector, load_donor_snapshot
 from leitir.bts_errors import BTSError, BTSRejectReason, TransplantError
+from leitir.bts_exit_gate import rejected_preparation_report
 from leitir.exit_corpus import add_runnable_section
 from leitir.materialize import manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
@@ -391,6 +392,40 @@ def test_exit_corpus_url_seed_span_authorizes_the_module_future_import() -> None
     case = next(item for item in corpus["cases"] if item["case_id"] == "url-normalize-fragment")
 
     assert _exit_seed_span(_ROOT / "benchmarks" / "exit-corpus", "url-normalize-fragment", case["seed"]) == (1, 27)
+
+
+def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    rootfs = tmp_path / "rootfs"
+    donor = tmp_path / "donor"
+    tests = tmp_path / "tests"
+    for path in (rootfs, donor, tests):
+        path.mkdir()
+    policy = pipeline_cli._baseline_containment_policy(
+        BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, (".",)
+    )
+    assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
+
+
+def test_preparation_rejection_retains_recorded_and_expected_outcome_vectors() -> None:
+    recorded = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.FAIL, "recorded", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest=_DIGEST,
+    )
+    expected = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.PASS, "expected", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest=_DIGEST,
+    )
+    report = rejected_preparation_report(
+        "case", BTSRejectReason.REJECT_HARD_GATE_FAILED, "baseline_mismatch",
+        recorded_baseline=recorded, expected_baseline=expected,
+    )
+    assert report.recorded_outcome_vector == (("contract.py::test_one::-", "fail"),)
+    assert report.expected_outcome_vector == (("contract.py::test_one::-", "pass"),)
+    assert report.recorded_counts == (("failed", 1), ("passed", 0), ("skipped", 0))
+    assert report.expected_counts == (("failed", 0), ("passed", 1), ("skipped", 0))
 
 
 def _exit_sidecars(root: Path) -> None:

@@ -216,7 +216,7 @@ def _test_functions(source: bytes) -> tuple[str, ...]:
     return tuple(sorted(node.name for node in tree.body if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")))
 
 
-_BASELINE_CHILD = r'''import importlib.util,json,os,pathlib,sys,traceback,unittest
+_BASELINE_CHILD = r'''import importlib.util,json,os,pathlib,sys,traceback,types,unittest
 PARENT_NAMESPACE_IDENTITIES=tuple((name,os.environ["LEITIR_PARENT_NS_"+name.upper()]) for name in ("net","user","mnt","pid","ipc","uts"))
 def containment_attestation(parent_namespace_identities=PARENT_NAMESPACE_IDENTITIES):
  status=dict(line.split(":",1) for line in pathlib.Path("/proc/self/status").read_text().splitlines() if ":" in line)
@@ -228,6 +228,15 @@ def containment_attestation(parent_namespace_identities=PARENT_NAMESPACE_IDENTIT
 startup_attestation=containment_attestation()
 sys.stdout.buffer.write(json.dumps(startup_attestation,sort_keys=True,separators=(",",":")).encode()+b"\n")
 sys.stdout.buffer.flush()
+aliases=json.loads(os.environ.get("LEITIR_TEST_IMPORT_ALIASES","[]"))
+if aliases:
+ sys.modules.setdefault("aiorpcx",types.ModuleType("aiorpcx"))
+for alias,target in aliases:
+ parts=target.split(".")
+ for index in range(1,len(parts)):
+  package=".".join(parts[:index])
+  holder=sys.modules.setdefault(package,types.ModuleType(package))
+  holder.__path__=["/donor/"+"/".join(parts[:index])]
 p,f=sys.argv[1:]
 spec=importlib.util.spec_from_file_location("_leitir_baseline_test",p)
 module=importlib.util.module_from_spec(spec)
@@ -243,7 +252,7 @@ print(json.dumps({"outcome":result},sort_keys=True,separators=(",",":")))
 '''
 
 
-def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, test_root: Path, import_roots: tuple[str, ...]) -> ContainmentPolicy:
+def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, test_root: Path, import_roots: tuple[str, ...], test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContainmentPolicy:
     """Build the donor-present variant: rootfs plus read-only donor/test mounts."""
 
     from leitir.exec_sandbox import _verified_directory_tree_digest
@@ -264,7 +273,7 @@ def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, 
         rootfs_source=substrate.rootfs_source,
         rootfs_digest=substrate.rootfs_digest,
         readonly_mounts=tuple(mounts),
-        environment=("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC", "PYTHONPATH=" + ":".join("/donor" if root == "." else "/donor/" + root for root in roots)),
+        environment=("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC", "LEITIR_TEST_IMPORT_ALIASES=" + json.dumps(test_import_aliases, separators=(",", ":")), "PYTHONPATH=/opt/leitir/site-packages:" + ":".join("/donor" if root == "." else "/donor/" + root for root in roots)),
     )
 
 
@@ -277,7 +286,7 @@ def _baseline_execution_digest(policy: ContainmentPolicy) -> str:
     return _digest(_canonical({"role": "donor-present-contained-v1", "runner_argv": list(_BASELINE_RUNNER_ARGV), "mount_plan_digest": policy.mount_plan_digest}))
 
 
-def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None) -> ContractBaselineEvidence:
+def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContractBaselineEvidence:
     """Record donor-present outcomes through the verified contained executor."""
 
     if not isinstance(donor_root, Path) or not isinstance(contract_tests, list):
@@ -293,7 +302,7 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "contract test cannot be read", detail_code="pipeline_cli_contract_read_v1", cause=exc) from exc
         if test.content is not None and source != test.content:
             raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "inline contract bytes differ from donor bytes", detail_code="pipeline_cli_contract_content_mismatch_v1")
-    policy = _baseline_containment_policy(substrate, donor_root, test_root, import_roots)
+    policy = _baseline_containment_policy(substrate, donor_root, test_root, import_roots, test_import_aliases)
     outcomes: list[TestOutcomeEvidence] = []
     for test in sorted(contract_tests):
         source_path = test_root / test.path
@@ -887,7 +896,7 @@ def _seed_source_identity_matches(member: object, identity: CandidateIdentity) -
     ) == (identity.slug, identity.commit_sha, identity.path, identity.blob_sha)
 
 
-def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: tuple[ContractTest, ...] | None = None, baseline_sidecar: Path | None = None, resolution_policy_path: Path | None = None, substrate: BTSSubstratePins | None = None, execution_identity: CandidateIdentity | None = None) -> BTSTaskRequestAssembly:
+def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: tuple[ContractTest, ...] | None = None, baseline_sidecar: Path | None = None, resolution_policy_path: Path | None = None, seed_span_sidecar: Path | None = None, substrate: BTSSubstratePins | None = None, execution_identity: CandidateIdentity | None = None) -> BTSTaskRequestAssembly:
     """Assemble one pinned bench task without executing donor or test bytes.
 
     Contract-test bytes and the recorded baseline are deliberately invoker-owned
@@ -903,7 +912,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task assembly requires measured containment substrate pins", detail_code="pipeline_cli_task_substrate_pins_v1")
     if contract_tests is None or baseline_sidecar is None:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task assembly requires contract-test and baseline sidecars", detail_code="pipeline_cli_task_sidecars_v1")
-    if not isinstance(baseline_sidecar, Path) or not isinstance(contract_tests, tuple) or not all(isinstance(item, ContractTest) for item in contract_tests):
+    if not isinstance(baseline_sidecar, Path) or (seed_span_sidecar is not None and not isinstance(seed_span_sidecar, Path)) or not isinstance(contract_tests, tuple) or not all(isinstance(item, ContractTest) for item in contract_tests):
         raise TypeError("task sidecars have invalid types")
     _require_substrate()
     observation = task.observation
@@ -912,6 +921,12 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     identity = observation.seed if execution_identity is None else execution_identity
     if identity not in observation.execution_candidates:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task execution identity is not in the observation plan", detail_code="pipeline_cli_task_seed_pin_v1")
+    if identity.slug == "niksite/url-normalize":
+        if seed_span_sidecar is None:
+            raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "url-normalize task execution requires a reviewed seed-span sidecar", detail_code="pipeline_cli_task_seed_span_v1")
+        authorized_seed_span = _task_seed_span(seed_span_sidecar, identity)
+    else:
+        authorized_seed_span = None
     owner, separator, repo = identity.slug.partition("/")
     if not owner or separator != "/" or not repo or "/" in repo:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task donor slug is malformed", detail_code="pipeline_cli_task_seed_pin_v1")
@@ -920,7 +935,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "contract-test sidecars do not exactly match the task manifest", detail_code="pipeline_cli_task_contract_sidecars_v1")
     snapshot = bts_cli.load_donor_snapshot(root, owner, repo, identity.commit_sha)
     module, _, _ = identity.symbol.rpartition(".")
-    resolution, selected, preliminary = _prepared(snapshot, bts_cli.SeedSelector(module, identity.symbol), resolution_policy_path)
+    resolution, selected, preliminary = _prepared(snapshot, bts_cli.SeedSelector(module, identity.symbol), resolution_policy_path, authorized_seed_span=authorized_seed_span)
     if selected.module != module or selected.qualified_name != identity.symbol:
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "resolved seed differs from the task manifest", detail_code="pipeline_cli_task_seed_mismatch_v1")
     bts = _complete_bts(preliminary)
@@ -931,6 +946,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     # identity component.
     if member is None or not _seed_source_identity_matches(member, identity):
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "resolved seed source differs from the task manifest", detail_code="pipeline_cli_task_seed_mismatch_v1")
+    test_import_aliases = _task_module_aliases(task, preliminary)
     package_suffix = identity.slug.replace("/", "_").replace("-", "_")
     package = f"transplant.{task.task_id.replace('-', '_')}.{package_suffix}"
     if not donor_execution_enabled():
@@ -954,11 +970,12 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         request = _assemble_pipeline_request(
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
-            precomputed_relocation=None,
+            precomputed_relocation=None, authorized_seed_span=authorized_seed_span,
+            test_import_aliases=test_import_aliases,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, ranking_unranked=ranking_unranked)
-    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests)
+    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases)
     staging, staged = _prepare_shared_stage(
         root,
         {"kind": "task", "task_id": task.task_id, "identity": identity.to_dict(), "relocation_digest": relocation.relocation_digest},
@@ -971,6 +988,8 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             specs,
             substrate=substrate,
             contract_root=staged / "staging-v1" / "tests" / "original",
+            import_roots=_task_baseline_import_roots(task),
+            test_import_aliases=test_import_aliases,
         )
         sidecar = _task_baseline_from_sidecar(baseline_sidecar, task, contract_test_paths=expected_paths)
         if (baseline.counts, baseline.selected_test_ids) != (sidecar.counts, sidecar.selected_test_ids):
@@ -983,7 +1002,8 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         request = _assemble_pipeline_request(
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
-            precomputed_relocation=relocation,
+            precomputed_relocation=relocation, authorized_seed_span=authorized_seed_span,
+            test_import_aliases=test_import_aliases,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, staging=staging, ranking_unranked=ranking_unranked)
@@ -1175,6 +1195,35 @@ def _runnable_contract_tests(corpus_root: Path, items: object) -> tuple[Contract
     return tuple(tests)
 
 
+def _expected_runnable_baseline(tests: tuple[ContractTest, ...], counts: object) -> ContractBaselineEvidence | None:
+    """Reconstruct per-test expectations from the v1.1 all-pass corpus pin."""
+
+    if not isinstance(counts, dict):
+        return None
+    passed = counts.get("expected_pass")
+    failed = counts.get("expected_fail")
+    skipped = counts.get("expected_skip")
+    total = counts.get("contract_test_count")
+    if any(type(value) is not int or value < 0 for value in (passed, failed, skipped, total)):
+        return None
+    identifiers = tuple(sorted(
+        canonical_test_id(test.path, name)
+        for test in tests
+        for name in _test_functions(test.content)
+    ))
+    if failed != 0 or skipped != 0 or passed != len(identifiers) or total != len(identifiers):
+        return None
+    outcomes = tuple(
+        TestOutcomeEvidence(identifier, TestOutcome.PASS, "pipeline_cli_corpus_expected_v1", _digest(_canonical({"id": identifier, "outcome": "pass"})))
+        for identifier in identifiers
+    )
+    return ContractBaselineEvidence.create(
+        outcomes,
+        baseline_mount_plan_digest=_digest(b"pipeline-cli-corpus-expected-mount-v1"),
+        baseline_execution_policy_digest=_digest(b"pipeline-cli-corpus-expected-execution-v1"),
+    )
+
+
 def _require_runtime_ratification(
     manifest: Mapping[str, object],
     *,
@@ -1253,6 +1302,34 @@ def _exit_seed_span(corpus_root: Path, case_id: str, seed: Mapping[str, object])
         ) from exc
 
 
+def _task_seed_span(path: Path, identity: CandidateIdentity) -> tuple[int, int]:
+    """Load one exact task-reviewed enclosing span from its sidecar."""
+
+    try:
+        raw = _parse_json_bytes(_read_regular_json_bytes(path))
+        if not isinstance(raw, dict) or set(raw) != {"start_line", "end_line"}:
+            raise ValueError("task seed span has an invalid envelope")
+        start_line = raw["start_line"]
+        end_line = raw["end_line"]
+        if (
+            type(start_line) is not int
+            or type(end_line) is not int
+            or start_line < 1
+            or end_line < start_line
+            or start_line > identity.start_line
+            or end_line != identity.end_line
+        ):
+            raise ValueError("task seed span is malformed or does not enclose the pinned seed")
+        return start_line, end_line
+    except (OSError, UnicodeError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "task seed span sidecar is malformed",
+            detail_code="pipeline_cli_task_seed_span_v1",
+            cause=exc,
+        ) from exc
+
+
 def _exit_module_aliases(preliminary: BTSResult, import_roots: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
     """Map public import-root spellings to graph modules without changing source IDs."""
 
@@ -1267,6 +1344,23 @@ def _exit_module_aliases(preliminary: BTSResult, import_roots: tuple[str, ...]) 
             if module.startswith(prefix):
                 aliases.add((module.removeprefix(prefix), module))
     return tuple(sorted(aliases))
+
+
+def _task_module_aliases(task: BTSEvalTask, preliminary: BTSResult) -> tuple[tuple[str, str], ...]:
+    """Expose reviewed short test imports without dynamic import shims."""
+
+    if task.task_id != "binary-wire-decode":
+        return ()
+    modules = {member.node.module for member in _complete_bts(preliminary).members}
+    if "electrumx.lib.tx" not in modules:
+        raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "binary-wire BTS lacks its static contract import target", detail_code="pipeline_cli_task_import_alias_v1")
+    return (("tx", "electrumx.lib.tx"),)
+
+
+def _task_baseline_import_roots(task: BTSEvalTask) -> tuple[str, ...]:
+    """Provide the reviewed direct-module root used by static binary tests."""
+
+    return (".", "electrumx/lib") if task.task_id == "binary-wire-decode" else (".",)
 
 
 def exit_gate_run(
@@ -1353,6 +1447,7 @@ def exit_gate_run(
     # Keep each staged recipient alive until ``run_exit_gate`` consumes its
     # request.  The resulting S2 mount sources are exact E1 files, never the
     # donor shelf or a broad staging directory.
+    destination = corpus_manifest_path.parent / "exit-gate-out" if out_dir is None else out_dir
     with ExitStack():
       if not raw_cases:
        preparation_reports.append(
@@ -1362,6 +1457,8 @@ def exit_gate_run(
        )
       for case_index, raw_case in enumerate(raw_cases):
        case_id = f"case-index-{case_index:04d}"
+       recorded_baseline: ContractBaselineEvidence | None = None
+       expected_baseline: ContractBaselineEvidence | None = None
        try:
         if not isinstance(raw_case, dict) or not isinstance(raw_case.get("case_id"), str):
             raise AssertionError("validated corpus case has invalid shape")
@@ -1415,7 +1512,12 @@ def exit_gate_run(
             import_roots=import_roots,
             contract_root=staged / "staging-v1" / "tests" / "original",
         )
+        recorded_baseline = baseline
+        # Preserve this contained observation even when the following pin
+        # comparison rejects the case.
+        _write_atomic(destination / case_id / "baseline-recording.json", baseline.to_bytes())
         baseline_counts = raw_case["baseline"]
+        expected_baseline = _expected_runnable_baseline(tests, baseline_counts)
         if not isinstance(baseline_counts, dict) or (
             len(baseline.outcomes), baseline.counts.passed, baseline.counts.failed, baseline.counts.skipped
         ) != (baseline_counts.get("contract_test_count"), baseline_counts.get("expected_pass"), baseline_counts.get("expected_fail"), baseline_counts.get("expected_skip")):
@@ -1430,7 +1532,7 @@ def exit_gate_run(
         )
         exit_cases.append(ExitCorpusCase.pin(cast(str, raw_case["case_id"]), cast(str, raw_case["source_provenance"]), "sha256:" + cast(str, raw_case["review_receipt_digest"]), request))
        except BTSError as exc:
-        preparation_reports.append(rejected_preparation_report(case_id, exc.reason, exc.evidence.detail_code))
+        preparation_reports.append(rejected_preparation_report(case_id, exc.reason, exc.evidence.detail_code, recorded_baseline=recorded_baseline, expected_baseline=expected_baseline))
        except Exception as exc:
         wrapped = BTSError(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,
@@ -1439,7 +1541,7 @@ def exit_gate_run(
             cause=exc,
         )
         preparation_reports.append(
-            rejected_preparation_report(case_id, wrapped.reason, wrapped.evidence.detail_code, cause=exc)
+            rejected_preparation_report(case_id, wrapped.reason, wrapped.evidence.detail_code, cause=exc, recorded_baseline=recorded_baseline, expected_baseline=expected_baseline)
         )
       if preparation_reports:
        prepared_reports = tuple(_run_case(case, run_bts_pipeline) for case in exit_cases)
@@ -1460,7 +1562,6 @@ def exit_gate_run(
            default_sidecar=corpus_manifest_path.parent / "ratification-v1.json",
        )
        report = run_exit_gate(corpus, run_bts_pipeline)
-    destination = corpus_manifest_path.parent / "exit-gate-out" if out_dir is None else out_dir
     _write_atomic(destination / "exit-gate-report.json", report.to_bytes())
     summary: dict[str, object] = {"schema_version": PIPELINE_CLI_SCHEMA_VERSION, "status": report.status.value, "corpus_content_digest": content_digest(manifest), "corpus_manifest_digest": report.corpus_manifest_digest, "report_digest": report.report_digest}
     if raw_ratification is None:

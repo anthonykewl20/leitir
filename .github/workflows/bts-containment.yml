@@ -2,6 +2,12 @@ name: BTS containment Phase 1
 
 on:
   workflow_dispatch:
+    inputs:
+      run_bench:
+        description: Run the optional six-task BTS benchmark driver
+        required: false
+        default: true
+        type: boolean
 
 permissions: {}
 
@@ -96,3 +102,257 @@ jobs:
           printf -- '- Namespace/seccomp/cgroup-v2 smoke-gate outcome: `%s`\n' "$SMOKE_OUTCOME" >>"$GITHUB_STEP_SUMMARY"
           printf -- '- Informational live-test outcome: `%s`\n' "$LIVE_TEST_OUTCOME" >>"$GITHUB_STEP_SUMMARY"
           printf -- '- Live failures/skips are expected until the release rootfs and corpus artifacts exist.\n' >>"$GITHUB_STEP_SUMMARY"
+
+  corpus:
+    name: Run pinned exit corpus under containment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Install test requirements
+        run: uv pip install --system --requirement requirements.txt
+      - name: Build immutable donor-free contained rootfs
+        env:
+          PYTHONPATH: src
+        run: |
+          set -eu
+          rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
+          rm -rf "$rootfs"
+          # Populate before making the image immutable.  In particular, neither
+          # cp nor uv may be asked to create entries below a read-only rootfs.
+          install -d -m 0755 "$rootfs/usr/bin" "$rootfs/usr/lib" "$rootfs/opt/leitir/site-packages" "$rootfs/harness" "$rootfs/staging-v1/src" "$rootfs/staging-v1/tests/rewritten" "$rootfs/staging-v1/manifests" "$rootfs/staging-v1/probes"
+          # setup-python pins 3.12; record the exact interpreter and stdlib
+          # version in the evidence log.  The runner image is the reproducible
+          # input: a changed image/version necessarily changes rootfs_digest.
+          python3.12 --version | tee "$RUNNER_TEMP/leitir-python-version.txt"
+          cp -L "$(command -v python3.12)" "$rootfs/usr/bin/python3"
+          # Copy the complete interpreter stdlib, including lib-dynload.  Do
+          # not rely on the runner host's /usr/lib when the namespace is rooted
+          # at this image.
+          stdlib="$(python3.12 -S -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')"
+          cp -aL "$stdlib" "$rootfs/usr/lib/python3.12"
+          # Preserve the complete native closure too.  The rootfs is mounted
+          # at / by nsjail, so neither dynamic-loader paths nor transitive
+          # extension dependencies may be inherited from the CI host.  Every
+          # resolved library is placed in one deterministic directory; the
+          # containment runner sets LD_LIBRARY_PATH to it before Python starts.
+          # Copy symlink targets as regular files under their requested ELF
+          # basenames: the canonical rootfs tree intentionally rejects
+          # symlinks, while DT_NEEDED still names the requested SONAME.
+          ROOTFS="$rootfs" PYTHON_BIN="$(command -v python3.12)" python3.12 - <<'PY'
+          import hashlib, os, pathlib, re, shutil, subprocess, sysconfig
+          root = pathlib.Path(os.environ["ROOTFS"])
+          interpreter = pathlib.Path(os.environ["PYTHON_BIN"]).resolve()
+          native = root / "usr/lib/leitir-native"
+          native.mkdir(parents=True, exist_ok=True)
+          libdir = pathlib.Path(sysconfig.get_config_var("LIBDIR"))
+          ld_library = sysconfig.get_config_var("LDLIBRARY")
+          libpython = libdir / ld_library if isinstance(ld_library, str) else None
+          if libpython is None or not libpython.is_file():
+              candidates = sorted(libdir.glob("libpython3.12.so*"))
+              if not candidates:
+                  raise RuntimeError("cannot locate libpython for contained rootfs")
+              libpython = candidates[-1]
+
+          def digest(path):
+              hasher = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      hasher.update(chunk)
+              return hasher.digest()
+
+          def copy_native(source):
+              requested = pathlib.Path(source)
+              resolved = requested.resolve()
+              target = native / requested.name
+              if target.exists():
+                  if digest(target) != digest(resolved):
+                      raise RuntimeError(f"native-library basename collision: {requested.name}")
+              else:
+                  shutil.copy2(resolved, target)
+              return requested, resolved
+
+          def dependencies(binary):
+              output = subprocess.check_output(("ldd", str(binary)), text=True, stderr=subprocess.STDOUT)
+              for line in output.splitlines():
+                  if "not found" in line:
+                      raise RuntimeError(f"unresolved native dependency for {binary}: {line}")
+                  match = re.search(r"=>\s+(/[^ ]+)", line) or re.match(r"\s*(/[^ ]+)\s+\(", line)
+                  if match is not None:
+                      candidate = pathlib.Path(match.group(1))
+                      if candidate.is_file():
+                          yield candidate
+
+          # ldd is traversed to a fixed point for the interpreter, libpython,
+          # and every copied lib-dynload extension.  Dependencies are queued in
+          # sorted order so basename-collision detection is deterministic.
+          queue = [interpreter, libpython.resolve()]
+          queue.extend(sorted((root / "usr/lib/python3.12/lib-dynload").rglob("*.so")))
+          seen = set()
+          while queue:
+              current = pathlib.Path(queue.pop(0)).resolve()
+              if current in seen:
+                  continue
+              seen.add(current)
+              if current == libpython.resolve():
+                  copy_native(current)
+              discovered = sorted(set(dependencies(current)))
+              for dependency in discovered:
+                  requested_dependency, resolved_dependency = copy_native(dependency)
+                  # The interpreter's ELF loader must remain at its PT_INTERP
+                  # absolute path; all ordinary libraries use the deterministic
+                  # LD_LIBRARY_PATH directory above.
+                  if requested_dependency.name.startswith("ld-linux"):
+                      loader = root / requested_dependency.relative_to("/")
+                      loader.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(resolved_dependency, loader)
+                  if resolved_dependency not in seen:
+                      queue.append(resolved_dependency)
+          PY
+          # CPython -S does not add site-packages.  The harness adds this one
+          # pinned directory explicitly, so idna cannot leak from the host.
+          uv pip install --target "$rootfs/opt/leitir/site-packages" idna==3.18
+          install -m 0644 /dev/stdin "$rootfs/harness/runner.py" <<'PY'
+          import builtins, importlib.util, json, os, pathlib, sys, unittest
+          # -S deliberately disables host site discovery.  In containment the
+          # root is /; the scratch proof sets LEITIR_ROOTFS to exercise these
+          # same image-owned paths without nsjail.
+          rootfs = pathlib.Path(os.environ.get("LEITIR_ROOTFS", "/"))
+          sys.path[:] = [str(rootfs / path) for path in ("staging-v1/src", "opt/leitir/site-packages", "usr/lib/python3.12/lib-dynload", "usr/lib/python3.12")]
+          # The scratch proof supplies every policy-authorized stdlib root plus
+          # hashlib.  Each must resolve from the copied image, never the host.
+          for module_name in os.environ.get("LEITIR_REQUIRED_STDLIB", "").split():
+              sys.modules.pop(module_name, None)
+              module = __import__(module_name)
+              if module_name in sys.builtin_module_names:
+                  continue
+              location = getattr(module, "__file__", None)
+              if not isinstance(location, str) or not pathlib.Path(location).resolve().is_relative_to(rootfs.resolve()):
+                  raise RuntimeError(f"stdlib module did not resolve from scratch rootfs: {module_name}")
+          import hashlib
+          observed = []
+          original_import = builtins.__import__
+          def recording_import(name, globals=None, locals=None, fromlist=(), level=0):
+              observed.append(name)
+              return original_import(name, globals, locals, fromlist, level)
+          builtins.__import__ = recording_import
+          outcomes = []
+          for path in sorted((rootfs / "staging-v1/tests/rewritten").rglob("*.py")):
+              spec = importlib.util.spec_from_file_location("leitir_contract_" + hashlib.sha256(str(path).encode()).hexdigest(), path)
+              module = importlib.util.module_from_spec(spec)
+              try:
+                  assert spec.loader is not None
+                  spec.loader.exec_module(module)
+                  names = sorted(name for name in vars(module) if name.startswith("test_"))
+              except BaseException:
+                  names = []
+              for name in names:
+                  test_id = path.name + "::" + name + "::-"
+                  try:
+                      getattr(module, name)(); outcome = "pass"
+                  except unittest.SkipTest: outcome = "skip"
+                  except BaseException: outcome = "fail"
+                  outcomes.append({"canonical_test_id":test_id,"detail_category":"contained_runner_v1","detail_digest":"sha256:" + hashlib.sha256((test_id + outcome).encode()).hexdigest(),"outcome":outcome})
+          builtins.__import__ = original_import
+          frame = {"donor_import_observed":any(name == "donor" or name.startswith("donor.") for name in observed),"outcomes":outcomes,"recorder_complete":True,"runtime_observation_digest":"sha256:" + hashlib.sha256(json.dumps(sorted(set(observed)), separators=(",", ":")).encode()).hexdigest(),"schema_version":"leitir-rerun-runner-frame-v1","teardown_complete":True}
+          sys.stdout.buffer.write(json.dumps(frame, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+          PY
+          # The explicit -S path bootstrap must resolve every committed policy
+          # authorization (and hashlib as a native-extension stress case) from
+          # the image, rather than silently importing from the CI host.
+          policy_stdlib="$(python3.12 - <<'PY'
+          import json
+          from pathlib import Path
+          policy_paths = [*Path("benchmarks/exit-corpus/policies").glob("*.json"), *Path("benchmarks/bts-v1/tasks").glob("*/policy.json")]
+          modules = sorted({module for path in policy_paths for module in json.loads(path.read_text(encoding="utf-8"))["stdlib_modules"]})
+          required = {"random", "struct", "time", "zlib"}
+          if not required <= set(modules):
+              raise SystemExit("committed policy stdlib proof inputs are incomplete")
+          print(" ".join((*modules, "hashlib")))
+          PY
+          )"
+          LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import runpy; runpy.run_path("'"$rootfs"'/harness/runner.py")'
+          chmod -R a-w "$rootfs"
+      - name: Build pinned nsjail
+        run: sudo tools/build-nsjail.sh
+      - name: Materialize the five pinned exit-corpus donors
+        env:
+          PYTHONPATH: src
+        run: |
+          root="$RUNNER_TEMP/leitir-corpus-root"
+          python -m leitir.cli get github:mmcloughlin/luhn@c26e5c61fbc23006f265a71b9f87dac229e6ed99 --root "$root"
+          python -m leitir.cli get github:litl/backoff@d82b23c42d7a7e2402903e71e7a7f03014a00076 --root "$root"
+          python -m leitir.cli get github:niksite/url-normalize@9a9a3214c2b3bdab09ba7b19c8f9d22aa4cfee31 --root "$root"
+          python -m leitir.cli get github:ubernostrum/webcolors@ed4bad8daf26a0ad606d38732375b2f7cf72e57a --root "$root"
+          python -m leitir.cli get github:topoteretes/cognee@4b9dd362625dfd3621c344e571a86f5bc7a55ee8 --root "$root"
+      - name: Measure containment inputs
+        id: substrate
+        env:
+          PYTHONPATH: src
+        run: |
+          rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
+          printf 'nsjail_sha=sha256:%s\n' "$(sha256sum /usr/bin/nsjail | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          printf 'nsjail_version<<EOF\n%s\nEOF\n' "$(nsjail --version 2>&1)" >>"$GITHUB_OUTPUT"
+          printf 'nsjail_build_identity=sha256:%s\n' "$(nsjail --version 2>&1 | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          printf 'config_schema_digest=sha256:%s\n' "$(printf '%s' leitir-containment-policy-v1 | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          printf 'rootfs_digest=%s\n' "$(ROOTFS_SOURCE="$rootfs" python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')" >>"$GITHUB_OUTPUT"
+          printf 'python_version<<EOF\n%s\nEOF\n' "$(cat "$RUNNER_TEMP/leitir-python-version.txt")" >>"$GITHUB_OUTPUT"
+      - name: Run exit gate
+        env:
+          LEITIR_ENABLE_DONOR_EXECUTION: '1'
+          LEITIR_ENABLE_LIVE_E2E: '1'
+          PYTHONPATH: src
+        run: >-
+          python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
+          --corpus-root benchmarks/exit-corpus --donors-dir ${{ runner.temp }}/leitir-corpus-root
+          --out runs/exit-gate
+          --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
+          --substrate-rootfs-digest ${{ steps.substrate.outputs.rootfs_digest }}
+          --nsjail-version "${{ steps.substrate.outputs.nsjail_version }}"
+          --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
+          --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
+          --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs --json
+      - name: Upload exit-gate evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: bts-exit-gate-evidence
+          path: runs/exit-gate/
+          if-no-files-found: warn
+      - name: Run optional BTS task corpus
+        if: ${{ inputs.run_bench }}
+        env:
+          LEITIR_ENABLE_DONOR_EXECUTION: '1'
+          LEITIR_ENABLE_LIVE_E2E: '1'
+          PYTHONPATH: src
+        run: >-
+          python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
+          --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
+          --substrate-rootfs-digest ${{ steps.substrate.outputs.rootfs_digest }}
+          --nsjail-version "${{ steps.substrate.outputs.nsjail_version }}"
+          --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
+          --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
+          --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs
+      - name: Upload BTS task runs
+        if: ${{ always() && inputs.run_bench }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: bts-task-runs
+          path: runs/bts-tasks/
+          if-no-files-found: warn
+      - name: Summarize corpus evidence scope
+        if: ${{ always() }}
+        run: |
+          printf '### BTS containment Phase 2 — corpus evidence\n\n' >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- This job records a pinned corpus-run experiment; it is not a required check.' >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- Its rootfs digest is the canonical tree digest of the donor-free interpreter, stdlib, harness, and pinned runtime-dependency image.' >>"$GITHUB_STEP_SUMMARY"
+          printf -- '- Pinned interpreter: `%s`\n' "${{ steps.substrate.outputs.python_version }}" >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- A release-pinned rootfs and external ratification remain required for #73 sign-off.' >>"$GITHUB_STEP_SUMMARY"

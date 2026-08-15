@@ -223,6 +223,21 @@ recorded in the slice entry — same discipline as ADR-001 P slices.
 
 ## Consequences
 
+### Amendment — Git-commit shelf parity (2026-08-15; consensus-terra Decision B)
+
+For a GitHub `git-commit` shelf, `parity` is `exact` only after complete,
+unsampled, mode-bearing Git-tree enumeration proves equal regular-file and
+symbolic-link path universes and raw Git-blob bytes for every comparison.
+`drift` means that otherwise-complete verification was accepted only through
+one or more CRLF newline-normalization fallbacks; raw mismatches remain hard
+materialization failures. `unknown` covers sampled, archive-only, disabled,
+unavailable, and legacy-unreproved verification. This claim covers paths and
+raw Git blobs only, not directory modes or executable bits. Existing shelves
+are never backfilled from `unknown`; `leitir upgrade-cache --recompute-git-parity`
+may re-enumerate and fully reprove eligible GitHub Git-commit shelves under
+their target locks, leaving the claim unchanged when proof is partial or
+unavailable.
+
 - Gained: a browsable, provenance-bound local corpus; version-accurate
   references via lockfile detection; verifiable integrity; project-local
   gitignored mode.

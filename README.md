@@ -122,11 +122,26 @@ established; opt-in alone is never treated as verification. NsJail is not a
 Python dependency.
 See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
 
+Materialized shelves can additionally require detached publisher authentication:
+pass `--require-manifest-auth --trusted-keys /secure/trusted-keys.json` to
+corpus-reading commands after installing the version-pinned optional extra:
+
+```bash
+pip install 'leitir[auth]'
+# Hash-locked installs use the reviewed wheel-only closure:
+uv pip install --require-hashes --only-binary :all: -r requirements-auth.lock
+```
+
+Unsigned, malformed, unknown-key, or invalidly signed shelves reject; this is
+an optional authenticity layer, separate from tree-integrity verification.
+
 Relocated contract tests are rerun with the donor excluded by the read-only
 filesystem mount plan, not by Python import hooks. The rerun report requires the
 exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;
 the runtime import recorder remains diagnostic-only. The contained interpreter
 uses a sanitized environment with `PYTHONHASHSEED=0` and never uses `-I`.
+Donor-present baseline recording uses the same containment authority, with the
+verified donor mounted read-only; there is no host-subprocess baseline fallback.
 
 `leitir.transplant` packages only a recomputed `COMPLETE` BTS with a matching
 complete validation receipt. Loading verifies the canonical USTAR representation,
@@ -170,6 +185,25 @@ leitir search --package zod --version 3.22.0 --ecosystem npm --must symbol_defin
 leitir index
 leitir search --package zod --version 3.22.0 --ecosystem npm --must exact_text:parse --index
 leitir bench
+
+# Replay a recorded capability funnel and inspect its canonical decision summary
+leitir bts-funnel --spec capability.json --recipient-manifest recipient.json --stages stages.json --json
+
+# Run a pinned BTS pipeline only with explicit containment identity pins
+leitir bts-run owner/repo@<40-char-sha> --root "$LEITIR_HOME" --seed-module pkg.mod \
+  --seed-name symbol --contract-spec contracts.json --recipient-package recipient --out out/ \
+  --nsjail-sha256 sha256:<hex> --nsjail-version '<version>' --nsjail-build-identity sha256:<hex> \
+  --config-schema-digest sha256:<hex> --rootfs-source /pinned/rootfs --rootfs-digest sha256:<hex>
+
+# Validate or run the pinned five-donor exit corpus (runtime substrate pins are mandatory)
+leitir exit-gate-validate benchmarks/exit-corpus/corpus-v1.1.json --json
+leitir exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json --corpus-root benchmarks/exit-corpus \
+  --substrate-nsjail-sha sha256:<hex> --substrate-rootfs-digest sha256:<hex> \
+  --nsjail-version '<version>' --nsjail-build-identity sha256:<hex> \
+  --config-schema-digest sha256:<hex> --rootfs-source /prepared/rootfs --json
+
+# Inspect the published six-task BTS benchmark plan without executing donors
+PYTHONPATH=src python tools/run_bts_tasks.py --dry-run
 ```
 
 ## The agent workflow (required)
@@ -221,7 +255,7 @@ flowchart LR
 - `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
 - `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph; for example, `leitir analysis-architecture graph.json --subject widget --json`.
 - `analysis-lineage manifest.json`: validate a canonical lineage manifest; for example, `leitir analysis-lineage lineage.json --json`.
-- `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check; for example, `leitir exit-gate-validate benchmarks/bts-v1/corpus.json --json`. Its optional public self-hash is reported only as `content_binding`; external ratification authority is deferred in v1, so `ratified` is always `false`.
+- `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check. `ratified_manifest_digest` is record-level content binding; `ratified_runtime_digest` is the separate out-of-band authority value consumed only by `exit-gate-run`.
 
 ### Closure and reproducibility
 - `lock`: materialize the project's transitive dependency closure.
@@ -297,6 +331,11 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
 
 ## Honesty guarantees
 
+- **Manifest authenticity is opt-in.** By default, Leitir verifies content
+  integrity and subject binding only; it does not authenticate a repository owner
+  or publisher. `--require-manifest-auth` requires the separately installed,
+  hash-locked `auth` extra and an explicitly configured out-of-band trust root,
+  and fails closed rather than accepting unsigned or untrusted manifests.
 - Provenance-bound corpus outputs resolve to immutable provenance and source-specific manifests. Verified corpus shelves are re-hashed against `materialized_tree_hash` on every load; unverified shelves may omit the digest. Global search results are not necessarily materialized shelves.
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry. Archive symlink chains are resolved lexically before extraction, so confinement does not depend on host symlink behavior.
 - Legacy verified caches require `leitir upgrade-cache` to add a materialized-tree digest and gain load-time verification; until upgraded they are rejected as cache misses.
@@ -336,7 +375,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2408 passed, 113 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2537 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
 
 ## Repository layout
 

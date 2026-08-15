@@ -399,6 +399,21 @@ def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_source
     assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
 
 
+def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_invoker(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sandbox.os, "getuid", lambda: 1003)
+    monkeypatch.setattr(sandbox.os, "getgid", lambda: 1004)
+    monkeypatch.setenv("SUDO_UID", "not-an-id")
+    monkeypatch.setenv("SUDO_GID", "also-not-an-id")
+
+    config_text = sandbox._render_config(_policy(fake_nsjail))
+
+    assert 'uidmap { inside_id: "65534" outside_id: "1003" count: 1 use_newidmap: false }' in config_text
+    assert 'gidmap { inside_id: "65534" outside_id: "1004" count: 1 use_newidmap: false }' in config_text
+
+
 def test_generated_config_matches_the_passing_handwritten_smoke_except_policy_mounts(
     fake_nsjail: tuple[Path, str, str]
 ) -> None:

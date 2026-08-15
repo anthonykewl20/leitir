@@ -143,8 +143,10 @@ jobs:
           sources = Path(os.environ["SMOKE_SOURCES"])
           for destination in ROOTFS_MOUNT_TARGETS:
               (rootfs / destination.lstrip("/")).mkdir(parents=True, exist_ok=True)
-          for directory in (rootfs / "bin", sources / "donor", sources / "contract"):
+          scratch = sources / "scratch"
+          for directory in (rootfs / "bin", sources / "donor", sources / "contract", scratch):
               directory.mkdir(parents=True, exist_ok=True)
+          scratch.chmod(0o777)
 
           # /bin/true and its dynamic-loader closure make this a runnable
           # rootfs, while the staging directories above are the required mount
@@ -173,6 +175,7 @@ jobs:
                   for mount in mounts
               ],
               "rootfs_digest": rootfs_digest,
+              "scratch_dir": str(scratch),
               "writable_tmpfs": "/work",
               "writable_tmpfs_bytes": 1_048_576,
               "writable_tmpfs_inodes": 128,
@@ -180,7 +183,7 @@ jobs:
           policy = ContainmentPolicy(
               POLICY_SCHEMA, "/usr/bin/nsjail", "sha256:" + "0" * 64, "smoke", "sha256:" + "0" * 64,
               "sha256:" + "0" * 64, platform.machine(), rootfs_digest, _digest_payload(mount_payload), mounts,
-              "/work", 1_048_576, 128, "/work", "ONCE", False, True, True, True, True, True, True, True,
+              "/work", 1_048_576, 128, str(scratch), "/work", "ONCE", False, True, True, True, True, True, True, True,
               67_108_864, 16, 500, 10, 64, 1, 1, 32, 16, 8, 0, 65_536,
               ("LANG=C.UTF-8", "PYTHONHASHSEED=0", "TZ=UTC"), True,
           )

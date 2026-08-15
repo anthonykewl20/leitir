@@ -125,6 +125,7 @@ def _containment(relocation: Relocation | None = None) -> ContainmentPolicy:
             for item in ordered
         ],
         "rootfs_digest": rootfs_digest,
+        "scratch_dir": "/scratch",
         "writable_tmpfs": "/work",
         "writable_tmpfs_bytes": 1_048_576,
         "writable_tmpfs_inodes": 128,
@@ -143,6 +144,7 @@ def _containment(relocation: Relocation | None = None) -> ContainmentPolicy:
         "/work",
         1_048_576,
         128,
+        "/scratch",
         "/work",
         "ONCE",
         True,

@@ -99,6 +99,22 @@ def test_shared_stage_rejects_unsupported_host_before_staging(tmp_path: Path, mo
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="shared staging requires Linux fcntl locking")
+def test_shared_stage_prepares_a_writable_policy_pinned_scratch_directory(tmp_path: Path) -> None:
+    class RelocationFixture:
+        relocation_digest = _DIGEST
+        files: tuple[object, ...] = ()
+
+        def publish(self, destination: Path) -> None:
+            destination.mkdir()
+
+    stage, _staged = _prepare_shared_stage(tmp_path, {"fixture": "scratch"}, RelocationFixture())  # type: ignore[arg-type]
+
+    scratch = stage / "scratch"
+    assert scratch.is_dir() and not scratch.is_symlink()
+    assert scratch.stat().st_mode & 0o777 == 0o777
+
+
 def _bench_shelf(tmp_path: Path) -> None:
     target = target_path(tmp_path, "owner", "donor", _SHA)
     shutil.copytree(Path(__file__).parent / "fixtures" / "bts_cli" / "donor", target)
@@ -140,13 +156,13 @@ def _bench_task_sidecars(tmp_path: Path):
 def test_record_baseline_fails_closed_without_containment_substrate() -> None:
     _without_donor_execution()
     with pytest.raises(TransplantError) as caught:
-        record_baseline(_FIXTURE, [ContractTestSpec("contracts/contract_sample.py", "donor.contract_sample")], substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, _FIXTURE, _DIGEST))
+        record_baseline(_FIXTURE, [ContractTestSpec("contracts/contract_sample.py", "donor.contract_sample")], substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, _FIXTURE, _DIGEST), scratch_dir=_FIXTURE / "scratch")
     assert caught.value.evidence.detail_code == "pipeline_cli_substrate_unavailable_v1"
 
 
 def test_inline_contract_content_mismatch_rejects() -> None:
     with pytest.raises(Exception) as caught:
-        record_baseline(_FIXTURE, [ContractTestSpec("contracts/contract_sample.py", "donor.contract_sample", b"tampered\n")], substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, _FIXTURE, _DIGEST))
+        record_baseline(_FIXTURE, [ContractTestSpec("contracts/contract_sample.py", "donor.contract_sample", b"tampered\n")], substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, _FIXTURE, _DIGEST), scratch_dir=_FIXTURE / "scratch")
     assert getattr(caught.value, "evidence").detail_code == "pipeline_cli_contract_content_mismatch_v1"
 
 
@@ -276,7 +292,7 @@ def test_pipeline_helpers_reject_malformed_sidecars_and_classify_pinned_license(
 def test_build_containment_policy_fails_closed_without_opt_in() -> None:
     _without_donor_execution()
     with pytest.raises(TransplantError) as caught:
-        build_containment_policy(nsjail_sha256=_DIGEST, nsjail_version="fixture", nsjail_build_identity=_DIGEST, config_schema_digest=_DIGEST, rootfs_source=Path("/fixture-root"), rootfs_digest=_DIGEST)
+        build_containment_policy(nsjail_sha256=_DIGEST, nsjail_version="fixture", nsjail_build_identity=_DIGEST, config_schema_digest=_DIGEST, rootfs_source=Path("/fixture-root"), rootfs_digest=_DIGEST, scratch_dir=Path("/fixture-scratch"))
     assert caught.value.evidence.detail_code == "pipeline_cli_substrate_unavailable_v1"
 
 
@@ -293,7 +309,7 @@ def test_pipeline_rejects_before_loading_or_running_donor_without_substrate(tmp_
 def test_offline_preflight_is_seed_independent(seed: str) -> None:
     _without_donor_execution()
     with pytest.raises(TransplantError) as caught:
-        build_containment_policy(nsjail_sha256=_DIGEST, nsjail_version=seed, nsjail_build_identity=_DIGEST, config_schema_digest=_DIGEST, rootfs_source=Path("/fixture-root"), rootfs_digest=_DIGEST)
+        build_containment_policy(nsjail_sha256=_DIGEST, nsjail_version=seed, nsjail_build_identity=_DIGEST, config_schema_digest=_DIGEST, rootfs_source=Path("/fixture-root"), rootfs_digest=_DIGEST, scratch_dir=Path("/fixture-scratch"))
     assert caught.value.evidence.detail_code == "pipeline_cli_substrate_unavailable_v1"
 
 
@@ -414,8 +430,10 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
     tests = tmp_path / "tests"
     for path in (rootfs, donor, tests):
         path.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
     policy = pipeline_cli._baseline_containment_policy(
-        BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, (".",)
+        BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, scratch, (".",)
     )
     assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
 

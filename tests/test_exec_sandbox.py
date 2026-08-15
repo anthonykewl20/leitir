@@ -390,8 +390,8 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     assert policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
     assert policy.seccomp_string == (
         "DEFAULT KILL\n"
-        "ALLOW { arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, fstat, futex, "
-        "getcwd, getdents64, getpid, getrandom, lseek, mmap, mprotect, munmap, newfstatat, openat, "
+        "ALLOW { arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, futex, getcwd, "
+        "getdents64, getpid, getrandom, lseek, mmap, mprotect, munmap, newfstat, newfstatat, openat, "
         "prlimit64, read, readlink, readlinkat, rt_sigaction, rt_sigprocmask, set_robust_list, "
         "set_tid_address, statx, write }\n"
     )

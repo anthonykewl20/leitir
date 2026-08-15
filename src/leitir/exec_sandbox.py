@@ -85,7 +85,9 @@ class PermittedSyscall(StrEnum):
     EXIT = "exit"
     EXIT_GROUP = "exit_group"
     FCNTL = "fcntl"
-    FSTAT = "fstat"
+    # Kafel's amd64 syscall table names syscall 5 ``newfstat`` (the kernel
+    # spelling) rather than libc's ``fstat`` alias.
+    FSTAT = "newfstat"
     FUTEX = "futex"
     GETCWD = "getcwd"
     GETDENTS64 = "getdents64"

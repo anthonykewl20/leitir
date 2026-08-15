@@ -222,7 +222,7 @@ mounts.
 
 Both generated nsjail configs must explicitly set and the controller must verify:
 
-- `mode: ONCE` and `keep_env: false`;
+- `mode: ONCE`, `keep_env: false`, and read-only `mount_proc: true`;
 - `clone_newnet`, `clone_newuser`, `clone_newns`, `clone_newpid`,
   `clone_newipc`, and `clone_newuts` to `true`;
 - exactly one down `lo` interface and no route (`iface_no_lo: true` prevents
@@ -238,14 +238,15 @@ Both generated nsjail configs must explicitly set and the controller must verify
   stack/core and every applicable limit, as defense in depth rather than the
   containment boundary.
 
-The controller validates namespace identities, mount table, no-new-privileges,
-dropped capabilities, nonprivileged UID/GID maps, seccomp activation, cgroup
-membership/controller values, and the down-loopback/no-route state before
-releasing a backend-established post-install start barrier. NsJail process-group
-observation plus `SIGSTOP` is not such a barrier and is forbidden because it is
-racy. Where the release-pinned live backend cannot supply an authoritative
-handshake, execution refuses with `applied_state_barrier_unavailable` before
-donor launch; offline inspection never emits a verified execution receipt.
+The immutable rootfs runner emits a startup receipt before it discovers or
+imports contract-test input. It reads `/proc/self/status`, requires
+`Seccomp: 2` or `NoNewPrivs: 1`, requires itself to be PID 1 in the cloned PID
+namespace, and compares all six `/proc/self/ns/*` identities with the parent
+identities injected only into the one-shot nsjail config. A missing, malformed,
+or nonmatching receipt rejects the rerun. This is the authoritative
+post-install verification for the pinned nsjail semantics; parent process-group
+observation plus `SIGSTOP` remains forbidden because it is racy. Offline
+inspection never emits a verified execution receipt.
 
 There are two explicit sorted mount manifests:
 

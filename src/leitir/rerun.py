@@ -24,6 +24,7 @@ from leitir.exec_sandbox import (
     ValidationAbortEnvelope,
     prepare_execution,
     run_contained,
+    validate_startup_attestation,
 )
 from leitir.graph.runtime import DonorAbsenceAuthority, RuntimeEvidenceRole
 from leitir.relocate import RELOCATION_LAYOUT, RELOCATION_SCHEMA_VERSION, MountAuthorization, Relocation
@@ -493,11 +494,19 @@ class _RunnerFrame:
     donor_import_observed: bool
     recorder_complete: bool
     teardown_complete: bool
+    containment_attestation: Mapping[str, object]
 
 
 def _parse_runner_frame(data: bytes) -> _RunnerFrame:
     try:
-        text = data.decode("utf-8", errors="strict")
+        attestation_bytes, separator, frame_bytes = data.partition(b"\n")
+        if not separator:
+            raise ValueError("runner omitted its startup attestation frame")
+        startup_attestation = json.loads(attestation_bytes.decode("utf-8", errors="strict"), object_pairs_hook=_duplicate_pairs)
+        validate_startup_attestation(startup_attestation)
+        if not isinstance(startup_attestation, Mapping) or attestation_bytes + b"\n" != _canonical_bytes(startup_attestation):
+            raise ValueError("startup containment attestation is noncanonical")
+        text = frame_bytes.decode("utf-8", errors="strict")
         raw = json.loads(text, object_pairs_hook=_duplicate_pairs)
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError("runner frame is malformed") from exc
@@ -508,6 +517,7 @@ def _parse_runner_frame(data: bytes) -> _RunnerFrame:
         "donor_import_observed",
         "recorder_complete",
         "teardown_complete",
+        "containment_attestation",
     }
     if not isinstance(raw, dict) or set(raw) != expected or raw.get("schema_version") != RUNNER_FRAME_SCHEMA_VERSION:
         raise ValueError("runner frame has an unsupported shape")
@@ -516,13 +526,18 @@ def _parse_runner_frame(data: bytes) -> _RunnerFrame:
     teardown_complete = raw["teardown_complete"]
     if type(donor_observed) is not bool or type(recorder_complete) is not bool or type(teardown_complete) is not bool:
         raise ValueError("runner frame gate fields are malformed")
+    containment_attestation = raw["containment_attestation"]
+    validate_startup_attestation(containment_attestation)
+    assert isinstance(containment_attestation, Mapping)
+    if containment_attestation != startup_attestation:
+        raise ValueError("runner startup attestation does not match its pre-execution frame")
     raw_outcomes = raw["outcomes"]
     # The recorder is diagnostic-only, but an observed donor import is terminal
     # even when the remaining untrusted runner vector is malformed.
     if donor_observed:
         raw_runtime_digest = raw["runtime_observation_digest"]
         runtime_digest = raw_runtime_digest if isinstance(raw_runtime_digest, str) and _DIGEST_RE.fullmatch(raw_runtime_digest) else None
-        return _RunnerFrame((), runtime_digest, True, recorder_complete, teardown_complete)
+        return _RunnerFrame((), runtime_digest, True, recorder_complete, teardown_complete, containment_attestation)
     runtime_digest = raw["runtime_observation_digest"]
     _digest(runtime_digest, "runtime_observation_digest")
     assert isinstance(runtime_digest, str)
@@ -544,16 +559,17 @@ def _parse_runner_frame(data: bytes) -> _RunnerFrame:
         checked = _validate_outcomes(tuple(outcomes))
     except (TypeError, ValueError) as exc:
         raise CoverageFrameError("runner outcome vector is noncanonical") from exc
-    frame = _RunnerFrame(checked, runtime_digest, donor_observed, recorder_complete, teardown_complete)
+    frame = _RunnerFrame(checked, runtime_digest, donor_observed, recorder_complete, teardown_complete, containment_attestation)
     canonical = {
         "donor_import_observed": donor_observed,
+        "containment_attestation": containment_attestation,
         "outcomes": [_json_value(item) for item in checked],
         "recorder_complete": recorder_complete,
         "runtime_observation_digest": runtime_digest,
         "schema_version": RUNNER_FRAME_SCHEMA_VERSION,
         "teardown_complete": teardown_complete,
     }
-    if data != _canonical_bytes(canonical):
+    if frame_bytes != _canonical_bytes(canonical):
         raise ValueError("runner frame is not canonical JSON")
     return frame
 

@@ -22,7 +22,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Protocol
 
 from leitir.bts_errors import BTSRejectReason, TransplantError
 
@@ -36,6 +35,8 @@ _MAX_NSJAIL_PROBE_OUTPUT_BYTES = 64 * 1024
 _ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
+STARTUP_ATTESTATION_SCHEMA = "leitir-contained-startup-attestation-v1"
+_ATTESTED_NAMESPACES = ("net", "user", "mnt", "pid", "ipc", "uts")
 _FORBIDDEN_SYSCALLS = frozenset(
     {
         "accept",
@@ -471,12 +472,15 @@ def _protobuf_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _render_config(policy: ContainmentPolicy) -> str:
+def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str, ...] = ()) -> str:
     lines = [
         "mode: ONCE",
         "keep_env: false",
         "keep_caps: false",
         "disable_no_new_privs: false",
+        # NsJail's mount_proc is a read-only procfs view for the freshly cloned
+        # PID namespace.  The immutable runner uses it for its startup receipt.
+        "mount_proc: true",
         "log_level: FATAL",
         "clone_newnet: true",
         "clone_newuser: true",
@@ -484,6 +488,7 @@ def _render_config(policy: ContainmentPolicy) -> str:
         "clone_newpid: true",
         "clone_newipc: true",
         "clone_newuts: true",
+        "clone_newcgroup: true",
         # NsJail's iface_no_lo switch suppresses loopback setup when true.
         "iface_no_lo: true",
         "use_cgroupv2: true",
@@ -510,7 +515,7 @@ def _render_config(policy: ContainmentPolicy) -> str:
         'uidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
         'gidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
     ]
-    lines.extend(f"envar: {_protobuf_string(value)}" for value in policy.environment)
+    lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     for mount in policy.readonly_mounts:
         lines.append(
             "mount { src: "
@@ -716,138 +721,86 @@ class _AppliedState:
     cgroup_path: Path
 
 
-class _AppliedStateReader(Protocol):
-    """Injectable kernel-state reader used by focused verifier tests."""
-
-    def proc_text(self, pid: int, name: str) -> str: ...
-
-    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]: ...
-
-    def cgroup_text(self, path: Path, name: str) -> str: ...
-
-    def network_interfaces(self, pid: int) -> Mapping[str, str]: ...
-
-
-class _ProcfsAppliedStateReader:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    def proc_text(self, pid: int, name: str) -> str:
-        return _read_proc_text(pid, name)
-
-    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]:
-        return _ns_identity(pid, namespace)
-
-    def cgroup_text(self, path: Path, name: str) -> str:
-        return (path / name).read_text(encoding="ascii")
-
-    def network_interfaces(self, pid: int) -> Mapping[str, str]:
-        # /proc/net/dev has names and counters but no authoritative link-state.
-        # Until the live backend supplies a post-install handshake plus a
-        # namespace-scoped rtnetlink receipt, refusing is the only safe answer.
-        del pid
-        raise OSError("namespace-scoped interface state is unavailable")
-
-
-def _read_proc_text(pid: int, name: str) -> str:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    return Path(f"/proc/{pid}/{name}").read_text(encoding="utf-8", errors="strict")
-
-
 def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     metadata = Path(f"/proc/{pid}/ns/{namespace}").stat()
     return metadata.st_dev, metadata.st_ino
 
 
-def _discover_jailed_child(supervisor_pid: int, timeout: float = 2.0) -> int:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    deadline = time.monotonic() + timeout
-    children_file = Path(f"/proc/{supervisor_pid}/task/{supervisor_pid}/children")
-    while time.monotonic() < deadline:
-        try:
-            children = children_file.read_text(encoding="ascii").split()
-        except OSError:
-            children = []
-        if len(children) == 1 and children[0].isdigit():
-            return int(children[0])
-        time.sleep(0.005)
-    raise _reject("nsjail did not expose exactly one jailed child", "applied_state_unavailable")
+def _startup_attestation_environment() -> tuple[str, ...]:  # pragma: no cover - requires Linux namespace backend
+    """Bind the immutable child probe to this launcher's namespace identities.
+
+    ``keep_env: false`` prevents an ambient environment from reaching the
+    child.  These six values are the sole per-launch additions and are rendered
+    into nsjail's config after the plan has passed its static integrity check.
+    """
+
+    values: list[str] = []
+    for namespace in _ATTESTED_NAMESPACES:
+        device, inode = _ns_identity(os.getpid(), namespace)
+        values.append(f"LEITIR_PARENT_NS_{namespace.upper()}={device}:{inode}")
+    return tuple(values)
+
+
+def startup_attestation_from_proc(
+    status_text: str,
+    namespace_identities: Mapping[str, tuple[int, int]],
+    parent_namespace_identities: Mapping[str, tuple[int, int]],
+    *,
+    pid: int,
+) -> dict[str, object]:
+    """Build the canonical child receipt from injectable procfs observations.
+
+    The immutable rootfs runner implements this same small stdlib projection at
+    startup.  Keeping this function pure gives the verifier tests faked procfs
+    coverage without treating parent-side inspection as a release barrier.
+    """
+
+    status = _parse_status(status_text)
+    try:
+        seccomp_mode = int(status["Seccomp"])
+        no_new_privs = status["NoNewPrivs"] == "1"
+        namespace_mismatch = all(
+            namespace_identities[namespace] != parent_namespace_identities[namespace]
+            for namespace in _ATTESTED_NAMESPACES
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("startup procfs receipt is malformed") from exc
+    return {
+        "namespace_mismatch": namespace_mismatch,
+        "no_new_privs": no_new_privs,
+        "pid_namespace_init": pid == 1,
+        "schema_version": STARTUP_ATTESTATION_SCHEMA,
+        "seccomp_mode": seccomp_mode,
+    }
+
+
+def validate_startup_attestation(value: object) -> None:
+    """Fail closed unless the runner reports its pre-execution kernel receipt.
+
+    ``mount_proc`` makes cloned namespace identities and status available to
+    the immutable rootfs runner.  The runner snapshots injected parent
+    identities and emits this receipt before opening any relocated or donor
+    input; this validator intentionally accepts no weaker shape.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "namespace_mismatch", "no_new_privs", "pid_namespace_init", "schema_version", "seccomp_mode"
+    }:
+        raise ValueError("startup containment attestation has an invalid shape")
+    if value.get("schema_version") != STARTUP_ATTESTATION_SCHEMA:
+        raise ValueError("startup containment attestation has an unsupported schema")
+    if type(value.get("namespace_mismatch")) is not bool or value["namespace_mismatch"] is not True:
+        raise ValueError("startup containment attestation did not observe a namespace boundary")
+    if type(value.get("pid_namespace_init")) is not bool or value["pid_namespace_init"] is not True:
+        raise ValueError("startup containment attestation did not observe PID namespace init")
+    if type(value.get("no_new_privs")) is not bool or type(value.get("seccomp_mode")) is not int:
+        raise ValueError("startup containment privilege receipt is malformed")
+    if value["seccomp_mode"] != 2 and value["no_new_privs"] is not True:
+        raise ValueError("startup containment privilege receipt is not applied")
 
 
 def _parse_status(text: str) -> dict[str, str]:
     return {name: value.strip() for line in text.splitlines() for name, separator, value in [line.partition(":")] if separator}
-
-
-def _realized_cgroup(pid: int, reader: _AppliedStateReader) -> Path:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    entries = [line.split(":", 2) for line in reader.proc_text(pid, "cgroup").splitlines()]
-    unified = next((parts[2] for parts in entries if len(parts) == 3 and parts[0] == "0" and parts[1] == ""), None)
-    if unified is None or not unified.startswith("/") or ".." in PurePosixPath(unified).parts:
-        raise _reject("jailed child has no verifiable cgroup-v2 membership", "applied_cgroup_mismatch")
-    path = (_CGROUP_ROOT / unified.lstrip("/")).resolve()
-    try:
-        path.relative_to(_CGROUP_ROOT)
-    except ValueError as exc:
-        raise _reject("jailed child cgroup escaped the v2 hierarchy", "applied_cgroup_mismatch") from exc
-    return path
-
-
-def _verify_applied_state(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    process: subprocess.Popen[bytes],
-    policy: ContainmentPolicy,
-    *,
-    child_pid: int,
-    reader: _AppliedStateReader | None = None,
-) -> _AppliedState:
-    """Verify a child already held by an authoritative backend barrier."""
-
-    state_reader = _ProcfsAppliedStateReader() if reader is None else reader
-    try:
-        if process.poll() is not None or child_pid <= 0:
-            raise _reject("jailed child is not held at the applied-state barrier", "applied_state_unavailable")
-        status = _parse_status(state_reader.proc_text(child_pid, "status"))
-        if status.get("NoNewPrivs") != "1" or status.get("Seccomp") != "2" or int(status.get("CapEff", "-1"), 16) != 0:
-            raise _reject("privilege or seccomp controls are not applied", "applied_privilege_mismatch")
-        for namespace in ("net", "user", "mnt", "pid", "ipc", "uts"):
-            if state_reader.namespace_identity(child_pid, namespace) == state_reader.namespace_identity(os.getpid(), namespace):
-                raise _reject("required namespace is not applied", "applied_namespace_mismatch")
-        for mapping_name in ("uid_map", "gid_map"):
-            fields = state_reader.proc_text(child_pid, mapping_name).split()
-            if len(fields) < 3 or fields[0] != "65534" or fields[2] != "1":
-                raise _reject("nonprivileged UID/GID map is not applied", "applied_idmap_mismatch")
-
-        mounts: dict[str, frozenset[str]] = {}
-        for line in state_reader.proc_text(child_pid, "mountinfo").splitlines():
-            before, separator, _after = line.partition(" - ")
-            fields = before.split()
-            if not separator or len(fields) < 6:
-                raise _reject("realized mount table is malformed", "applied_mount_mismatch")
-            mounts[fields[4]] = frozenset(fields[5].split(","))
-        if any(mount.destination not in mounts or "ro" not in mounts[mount.destination] for mount in policy.readonly_mounts):
-            raise _reject("read-only mount plan is not fully applied", "applied_mount_mismatch")
-        if policy.writable_tmpfs not in mounts or "rw" not in mounts[policy.writable_tmpfs]:
-            raise _reject("bounded writable tmpfs is not applied", "applied_mount_mismatch")
-
-        interfaces = state_reader.network_interfaces(child_pid)
-        if set(interfaces) != {"lo"} or interfaces.get("lo") != "down":
-            raise _reject("network namespace is not limited to a down loopback", "applied_network_mismatch")
-        ipv4_routes = state_reader.proc_text(child_pid, "net/route").splitlines()[1:]
-        ipv6_routes = [line for line in state_reader.proc_text(child_pid, "net/ipv6_route").splitlines() if line.strip()]
-        if ipv4_routes or ipv6_routes:
-            raise _reject("network namespace contains a route", "applied_network_mismatch")
-
-        cgroup = _realized_cgroup(child_pid, state_reader)
-        expected_controls = {
-            "memory.max": str(policy.cgroup_mem_max),
-            "pids.max": str(policy.cgroup_pids_max),
-            "cpu.max": f"{policy.cgroup_cpu_ms_per_sec * 1000} 1000000",
-        }
-        if any(state_reader.cgroup_text(cgroup, name).strip() != expected for name, expected in expected_controls.items()):
-            raise _reject("cgroup-v2 limits do not match policy", "applied_cgroup_mismatch")
-        controllers = frozenset(state_reader.cgroup_text(cgroup, "cgroup.controllers").split())
-        events = dict(line.split(maxsplit=1) for line in state_reader.cgroup_text(cgroup, "cgroup.events").splitlines())
-        if not {"cpu", "memory", "pids"} <= controllers or events.get("populated") != "1":
-            raise _reject("required cgroup-v2 controllers are not active", "applied_cgroup_mismatch")
-        members = {int(value) for value in state_reader.cgroup_text(cgroup, "cgroup.procs").split()}
-        if child_pid not in members:
-            raise _reject("jailed child is outside its realized cgroup", "applied_cgroup_mismatch")
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise _reject("applied containment state could not be verified", "applied_state_unavailable") from exc
-    return _AppliedState(child_pid, cgroup)
 
 
 def _cgroup_populated(path: Path) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -879,7 +832,7 @@ def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | Non
 
 
 def _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-    process: subprocess.Popen[bytes], *, limit: int, timeout: int, applied_state: _AppliedState
+    process: subprocess.Popen[bytes], *, limit: int, timeout: int, applied_state: _AppliedState | None
 ) -> _Capture:
     capture = _Capture(bytearray(), bytearray())
     assert process.stdout is not None and process.stderr is not None
@@ -924,8 +877,14 @@ def _bounded_communicate(  # pragma: no cover  # exercised only by the containme
         if not teardown_attempted:
             authoritative_teardown = _terminate_tree(process, applied_state)
             teardown_attempted = True
-    if not teardown_attempted:
+    if not teardown_attempted and applied_state is not None:
         authoritative_teardown = _terminate_tree(process, applied_state)
+    elif not teardown_attempted and process.returncode is None:
+        authoritative_teardown = _terminate_tree(process, None)
+    elif not teardown_attempted:
+        # A cleanly exited direct child has no remaining process tree to tear
+        # down.  Do not manufacture a cgroup receipt after the fact.
+        authoritative_teardown = True
     capture.noncanonical_kill = not authoritative_teardown
     return capture
 
@@ -951,22 +910,6 @@ def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_byt
         stderr_digest=None,
         result_digest=None,
         abort=envelope,
-    )
-
-
-def _require_applied_state_barrier(policy: ContainmentPolicy) -> None:
-    """Refuse until the pinned backend exposes a post-install start handshake.
-
-    NsJail's observable child/process-group state does not establish that all
-    controls have been installed before donor instructions can run.  A SIGSTOP
-    issued by this controller is inherently racy, so v1 does not launch merely
-    because procfs inspection code is available.
-    """
-
-    del policy
-    raise _reject(
-        "the backend cannot establish a verified post-install execution barrier",
-        "applied_state_barrier_unavailable",
     )
 
 
@@ -996,13 +939,17 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     if platform.machine() != plan.architecture:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         raise _reject("host architecture changed after plan preparation", "architecture_mismatch")
     _verify_backend(plan.policy)
-    _require_applied_state_barrier(plan.policy)
     config_fd: int | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     config_path: str | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     try:
         config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         os.fchmod(config_fd, 0o600)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        config_bytes = plan.config_text.encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        # The static plan is integrity-bound.  Parent namespace identities are
+        # launch facts, not authorization inputs, and are consumed solely by
+        # the immutable child startup probe.
+        config_bytes = _render_config(
+            plan.policy, startup_environment=_startup_attestation_environment()
+        ).encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         with os.fdopen(config_fd, "wb", closefd=True) as config_file:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_fd = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_file.write(config_bytes)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1019,13 +966,14 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             env={},  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             start_new_session=True,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
-        child_pid = _discover_jailed_child(process.pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        applied_state = _verify_applied_state(process, plan.policy, child_pid=child_pid)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         capture = _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             process,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             limit=plan.output_limit_bytes,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             timeout=plan.wall_time_seconds,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-            applied_state=applied_state,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            # Parent-side discovery cannot provide a race-free launch barrier;
+            # the immutable child runner emits the authoritative startup
+            # receipt before it opens relocated or donor input.
+            applied_state=None,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

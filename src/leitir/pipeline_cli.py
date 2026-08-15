@@ -81,6 +81,7 @@ from leitir.exec_sandbox import (
     donor_execution_enabled,
     prepare_execution,
     run_contained,
+    validate_startup_attestation,
 )
 from leitir.exit_corpus import content_digest, load_corpus_manifest
 from leitir.graph.model import Graph, Node, NodeId, SourceRef
@@ -215,7 +216,18 @@ def _test_functions(source: bytes) -> tuple[str, ...]:
     return tuple(sorted(node.name for node in tree.body if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")))
 
 
-_BASELINE_CHILD = r'''import importlib.util,json,sys,traceback,unittest
+_BASELINE_CHILD = r'''import importlib.util,json,os,pathlib,sys,traceback,unittest
+PARENT_NAMESPACE_IDENTITIES=tuple((name,os.environ["LEITIR_PARENT_NS_"+name.upper()]) for name in ("net","user","mnt","pid","ipc","uts"))
+def containment_attestation(parent_namespace_identities=PARENT_NAMESPACE_IDENTITIES):
+ status=dict(line.split(":",1) for line in pathlib.Path("/proc/self/status").read_text().splitlines() if ":" in line)
+ parent=[]
+ for name,expected in parent_namespace_identities:
+  stat=pathlib.Path("/proc/self/ns" ,name).stat()
+  parent.append(f"{stat.st_dev}:{stat.st_ino}" != expected)
+ return {"namespace_mismatch":all(parent),"no_new_privs":status.get("NoNewPrivs","").strip()=="1","pid_namespace_init":os.getpid()==1,"schema_version":"leitir-contained-startup-attestation-v1","seccomp_mode":int(status.get("Seccomp","").strip())}
+startup_attestation=containment_attestation()
+sys.stdout.buffer.write(json.dumps(startup_attestation,sort_keys=True,separators=(",",":")).encode()+b"\n")
+sys.stdout.buffer.flush()
 p,f=sys.argv[1:]
 spec=importlib.util.spec_from_file_location("_leitir_baseline_test",p)
 module=importlib.util.module_from_spec(spec)
@@ -299,7 +311,15 @@ def _run_donor_present_test(policy: ContainmentPolicy, source_path: str, name: s
 
     try:
         result = run_contained(prepare_execution(policy), (*_BASELINE_RUNNER_ARGV, source_path, name))
-        payload = json.loads(result.stdout.decode("utf-8", "strict")) if result.completed and result.exit_code == 0 else {"outcome": "fail"}
+        if not result.completed or result.exit_code != 0:
+            return TestOutcome.FAIL, "pipeline_cli_baseline_fail_v1"
+        attestation_bytes, separator, payload_bytes = result.stdout.partition(b"\n")
+        if not separator:
+            raise ValueError("baseline runner omitted its startup attestation frame")
+        validate_startup_attestation(json.loads(attestation_bytes.decode("utf-8", "strict")))
+        payload = json.loads(payload_bytes.decode("utf-8", "strict"))
+        if not isinstance(payload, dict):
+            raise ValueError("baseline runner payload is malformed")
         value = payload.get("outcome") if isinstance(payload, dict) else "fail"
         outcome = {"pass": TestOutcome.PASS, "fail": TestOutcome.FAIL, "skip": TestOutcome.SKIP}.get(value if isinstance(value, str) else "fail", TestOutcome.FAIL)
         return outcome, f"pipeline_cli_baseline_{outcome.value}_v1"
@@ -855,6 +875,18 @@ def _rank_materialized_candidates(task: BTSEvalTask, root: Path) -> tuple[tuple[
     return tuple((*ranked, *unranked)), licenses[task.observation.seed], bool(unranked)
 
 
+def _seed_source_identity_matches(member: object, identity: CandidateIdentity) -> bool:
+    """Compare stable source identity; source locations are reviewed evidence."""
+
+    source = getattr(member, "source", None)
+    return (
+        getattr(source, "slug", None),
+        getattr(source, "commit_sha", None),
+        getattr(source, "path", None),
+        getattr(source, "blob_sha", None),
+    ) == (identity.slug, identity.commit_sha, identity.path, identity.blob_sha)
+
+
 def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: tuple[ContractTest, ...] | None = None, baseline_sidecar: Path | None = None, resolution_policy_path: Path | None = None, substrate: BTSSubstratePins | None = None, execution_identity: CandidateIdentity | None = None) -> BTSTaskRequestAssembly:
     """Assemble one pinned bench task without executing donor or test bytes.
 
@@ -893,21 +925,11 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "resolved seed differs from the task manifest", detail_code="pipeline_cli_task_seed_mismatch_v1")
     bts = _complete_bts(preliminary)
     member = next((item for item in bts.members if item.node == selected), None)
-    if member is None or (
-        member.source.slug,
-        member.source.commit_sha,
-        member.source.path,
-        member.source.blob_sha,
-        member.source.start_line,
-        member.source.end_line,
-    ) != (
-        identity.slug,
-        identity.commit_sha,
-        identity.path,
-        identity.blob_sha,
-        identity.start_line,
-        identity.end_line,
-    ):
+    # A task seed is the immutable donor blob plus module/symbol identity.  The
+    # selected graph node may retain a narrower AST span while an exit corpus
+    # records an enclosing reviewed span; locations remain evidence, not an
+    # identity component.
+    if member is None or not _seed_source_identity_matches(member, identity):
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "resolved seed source differs from the task manifest", detail_code="pipeline_cli_task_seed_mismatch_v1")
     package_suffix = identity.slug.replace("/", "_").replace("-", "_")
     package = f"transplant.{task.task_id.replace('-', '_')}.{package_suffix}"

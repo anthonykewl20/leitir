@@ -145,6 +145,46 @@ def test_inline_contract_content_mismatch_rejects() -> None:
     assert getattr(caught.value, "evidence").detail_code == "pipeline_cli_contract_content_mismatch_v1"
 
 
+def test_baseline_runner_emits_startup_attestation_before_donor_can_mutate_environment(tmp_path: Path) -> None:
+    marker = tmp_path / "donor-executed"
+    test_source = tmp_path / "test_mutates_environment.py"
+    test_source.write_text(
+        "import os\n"
+        "\n"
+        "def test_mutates_parent_namespace_environment():\n"
+        "    for name in ('net', 'user', 'mnt', 'pid', 'ipc', 'uts'):\n"
+        "        identity = os.stat('/proc/self/ns/' + name)\n"
+        "        os.environ['LEITIR_PARENT_NS_' + name.upper()] = f'{identity.st_dev}:{identity.st_ino}'\n"
+        f"    open({str(marker)!r}, 'w', encoding='utf-8').write('executed')\n"
+        "    print('donor-executed')\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.update({f"LEITIR_PARENT_NS_{name.upper()}": "0:0" for name in ("net", "user", "mnt", "pid", "ipc", "uts")})
+    completed = subprocess.run(
+        (sys.executable, "-c", pipeline_cli._BASELINE_CHILD, str(test_source), "test_mutates_parent_namespace_environment"),
+        check=False,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", "strict")
+    frames = completed.stdout.splitlines()
+    assert len(frames) == 3
+    assert json.loads(frames[0])["namespace_mismatch"] is True
+    assert frames[1] == b"donor-executed"
+    assert json.loads(frames[2]) == {"outcome": "pass"}
+    assert marker.read_text(encoding="utf-8") == "executed"
+
+
+def test_containment_runners_textually_emit_attestations_before_module_execution() -> None:
+    workflow = (_ROOT / ".github/workflows/bts-containment.yml").read_text(encoding="utf-8")
+
+    assert pipeline_cli._BASELINE_CHILD.index("startup_attestation=containment_attestation()") < pipeline_cli._BASELINE_CHILD.index("spec.loader.exec_module(module)")
+    runner = workflow.split("install -m 0644 /dev/stdin \"$rootfs/harness/runner.py\" <<'PY'", 1)[1].split("          PY\n", 1)[0]
+    assert runner.index("startup_attestation = containment_attestation()") < runner.index("spec.loader.exec_module(module)")
+
+
 def test_exit_baseline_sidecar_and_runnable_contracts_are_digest_anchored_without_no_follow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -159,8 +159,16 @@ def _baseline(outcomes: tuple[OutcomeEvidence, ...]) -> ContractBaselineEvidence
     )
 
 
-def _frame(outcomes: tuple[OutcomeEvidence, ...], *, donor: bool = False, recorder: bool = True) -> bytes:
+def _frame(outcomes: tuple[OutcomeEvidence, ...], *, donor: bool = False, recorder: bool = True, attestation: bool = True) -> bytes:
+    startup_attestation = {
+        "namespace_mismatch": True,
+        "no_new_privs": True,
+        "pid_namespace_init": True,
+        "schema_version": "leitir-contained-startup-attestation-v1",
+        "seccomp_mode": 2,
+    }
     payload = {
+        "containment_attestation": startup_attestation,
         "donor_import_observed": donor,
         "outcomes": [
             {
@@ -176,7 +184,15 @@ def _frame(outcomes: tuple[OutcomeEvidence, ...], *, donor: bool = False, record
         "schema_version": RUNNER_FRAME_SCHEMA_VERSION,
         "teardown_complete": True,
     }
-    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if not attestation:
+        del payload["containment_attestation"]
+        return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    return (
+        json.dumps(startup_attestation, sort_keys=True, separators=(",", ":"))
+        + "\n"
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode()
 
 
 def _result(frame: bytes) -> ExecutionResult:
@@ -198,6 +214,13 @@ def test_exact_count_ids_and_outcomes_complete(monkeypatch: pytest.MonkeyPatch) 
     assert report.status is ValidationStatus.COMPLETE
     assert (report.counts.passed, report.counts.failed, report.counts.skipped) == (1, 0, 0)
     assert report.to_bytes() == report.to_bytes()
+
+
+def test_missing_startup_containment_attestation_is_a_hard_gate_abort(monkeypatch: pytest.MonkeyPatch) -> None:
+    outcomes = (_outcome("tests/test_contract.py::test_f::-", Outcome.PASS),)
+    report = _run(monkeypatch, outcomes, outcomes, attestation=False)
+    assert isinstance(report, ValidationAbortEnvelope)
+    assert report.detail_category == "rerun_malformed_runner_frame_v1"
 
 
 def test_count_delta_is_coverage_miscount(monkeypatch: pytest.MonkeyPatch) -> None:

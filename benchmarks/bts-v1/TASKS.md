@@ -111,6 +111,13 @@ Thus `binary-wire-decode` uses fixed-width/cursor primitives and
 `lru-ttl-decisions` uses TTL decisions; their missing mutation steps are honest
 recipient adaptations, not asserted donor provenance.
 
+The binary-wire seed calls `unpack_le_uint32_from` at
+`electrumx/lib/tx.py:144`, bound by its `from electrumx.lib.util import ...`
+at line 36.  The conservative Python graph emits that binding as the declared
+external `electrumx.lib.util`; the per-task policy therefore records it as a
+`pinned-exact` external requirement.  `struct` and `zlib` remain the only
+stdlib allowlist entries; no implicit builtin or module authorization was added.
+
 `worker-shutdown-predicate` is a permanent honest partial: the pinned mypy donor
 contains 1,921 files, which exceeds the verification cap, so materialization was
 sampled and an exact-parity snapshot is structurally unavailable. Its discovery

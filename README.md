@@ -116,10 +116,11 @@ uv pip install --require-hashes --only-binary :all: -r requirements-tree-sitter.
 Behavioral-transplant donor execution is default-off and Linux-only. It requires
 the exact opt-in `LEITIR_ENABLE_DONOR_EXECUTION=1` and a release-pinned external
 native **nsjail** binary and policy; missing or unverifiable containment rejects,
-with no portable or unsandboxed fallback. The current controller also refuses
-before donor launch when a backend post-install applied-state barrier cannot be
-established; opt-in alone is never treated as verification. NsJail is not a
-Python dependency.
+with no portable or unsandboxed fallback. The immutable contained runner emits
+a startup receipt before test discovery: it attests seccomp/no-new-privileges,
+PID-namespace init, and namespace identities distinct from the launcher.
+Missing or malformed receipts reject; opt-in alone is never verification.
+NsJail is not a Python dependency.
 See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
 
 Materialized shelves can additionally require detached publisher authentication:

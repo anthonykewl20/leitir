@@ -57,18 +57,17 @@ descriptors and zero core size), Leitir's generated closed-allowlist Kafel
 seccomp policy (caller-authored Kafel is not accepted), no inherited
 environment or capabilities, no-new-privileges, a read-only allowlisted mount
 plan, only a down loopback interface and no routes, and one size/inode-bounded
-writable tmpfs. The parent additionally enforces wall time and bounded output,
-and requires cgroup-v2 `cgroup.kill` plus verified `populated 0` after every
-outcome. A process-group kill is nonauthoritative and can never produce success. Limit hits,
-output overflow, process leaks, or an unverifiable control reject and cannot
-produce authorizing canonical evidence.
+writable tmpfs. The parent additionally enforces wall time and bounded output.
+A process-group kill is nonauthoritative and can never produce success. Limit
+hits, output overflow, process leaks, or an unverifiable control reject and
+cannot produce authorizing canonical evidence.
 
-NsJail does not expose a controller-verifiable post-install child handshake in
-this environment. A process-group `SIGSTOP` is racy because donor instructions
-may run first. Consequently the offline path refuses donor execution with
-`applied_state_barrier_unavailable`, even when the opt-in is set. Only a gated
-live path with release-pinned nsjail, rootfs, and runner artifacts may attempt
-execution after such a barrier can be authoritatively established.
+The immutable rootfs runner produces a startup receipt before it opens test or
+relocated source input. Its read-only procfs view must show seccomp filtering or
+no-new-privileges, PID 1 in the cloned PID namespace, and all six namespace
+identities distinct from the launcher identities injected into the one-shot
+nsjail config. Missing, malformed, or negative receipts reject. A process-group
+`SIGSTOP` remains racy and is never used as a containment receipt.
 
 There is no portable, audit-hook, `resource`-only, or unsandboxed fallback.
 Python audit hooks are diagnostic only. Residual risk remains in the Linux

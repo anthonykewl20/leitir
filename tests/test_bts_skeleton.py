@@ -250,6 +250,9 @@ def _request(root: Path) -> BTSPipelineRequest:
 
 _RUNNER = r'''
 import builtins, hashlib, importlib.util, json, pathlib, sys
+startup_attestation = {"namespace_mismatch":True,"no_new_privs":True,"pid_namespace_init":True,"schema_version":"leitir-contained-startup-attestation-v1","seccomp_mode":2}
+sys.stdout.buffer.write(json.dumps(startup_attestation,sort_keys=True,separators=(",",":")).encode("utf-8") + b"\n")
+sys.stdout.buffer.flush()
 src, test_file, donor_root = sys.argv[1:]
 sys.path[:] = [src] + [item for item in sys.path if item and not pathlib.Path(item).resolve().is_relative_to(pathlib.Path(donor_root).resolve())]
 donor_absent = all(not pathlib.Path(item).resolve().is_relative_to(pathlib.Path(donor_root).resolve()) for item in sys.path if item)
@@ -280,7 +283,7 @@ for name in sorted(item for item in vars(module) if item.startswith("test_")) if
     outcomes.append({"canonical_test_id":test_id,"detail_category":"runner_result_v1","detail_digest":detail,"outcome":outcome})
 builtins.__import__ = original_import
 runtime = "sha256:" + hashlib.sha256(json.dumps(sorted(set(observed)),separators=(",",":")).encode()).hexdigest()
-frame = {"donor_import_observed":any(name == "skeleton_donor" or name.startswith("skeleton_donor.") for name in observed),"outcomes":outcomes,"recorder_complete":True,"runtime_observation_digest":runtime,"schema_version":"leitir-rerun-runner-frame-v1","teardown_complete":donor_absent}
+frame = {"containment_attestation":startup_attestation,"donor_import_observed":any(name == "skeleton_donor" or name.startswith("skeleton_donor.") for name in observed),"outcomes":outcomes,"recorder_complete":True,"runtime_observation_digest":runtime,"schema_version":"leitir-rerun-runner-frame-v1","teardown_complete":donor_absent}
 sys.stdout.buffer.write(json.dumps(frame,sort_keys=True,separators=(",",":")).encode("utf-8") + b"\n")
 '''
 
@@ -328,7 +331,8 @@ class TrustedFixtureExecution:
                 env=environment,
             )
             frame = completed.stdout
-            parsed = json.loads(frame)
+            _startup_frame, _separator, result_frame = frame.partition(b"\n")
+            parsed = json.loads(result_frame)
             self.donor_absent = parsed["teardown_complete"] and not parsed["donor_import_observed"]
             if completed.returncode != 0:
                 return ExecutionResult(False, _digest(b"trusted-plan"), None, b"", b"", None, None, None, None)

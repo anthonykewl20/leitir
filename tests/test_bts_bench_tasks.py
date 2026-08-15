@@ -11,6 +11,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +35,7 @@ from leitir.materialize import manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
     BTSSubstratePins,
     BTSTaskRequestAssembly,
+    _seed_source_identity_matches,
     _task_baseline_from_sidecar,
     _test_functions,
     assemble_bts_task_request,
@@ -250,6 +252,21 @@ def test_task_sidecars_assemble_one_nonexecuting_driver_request(tmp_path: Path, 
 
     assert assembly.request.contract_tests == sidecars.contract_tests
     assert assembly.request.baseline.selected_test_ids == task.gold.expected_selected_test_ids
+
+
+def test_task_seed_source_identity_ignores_reviewed_span_widening() -> None:
+    """The S4 enclosing span is evidence; the donor blob remains the seed ID."""
+
+    identity = CandidateIdentity(
+        "niksite/url-normalize", "9a9a3214c2b3bdab09ba7b19c8f9d22aa4cfee31",
+        "url_normalize/normalize_fragment.py", "3111ed7c4e35e2a5f945c989ed1028a701a4c8f1",
+        "url_normalize.normalize_fragment.normalize_fragment", 1, 27,
+    )
+    resolved = SimpleNamespace(source=SimpleNamespace(
+        slug=identity.slug, commit_sha=identity.commit_sha, path=identity.path,
+        blob_sha=identity.blob_sha, start_line=8, end_line=27,
+    ))
+    assert _seed_source_identity_matches(resolved, identity)
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="shared staging requires Linux fcntl locking")

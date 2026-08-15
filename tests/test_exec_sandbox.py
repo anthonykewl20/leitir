@@ -219,6 +219,32 @@ def test_execution_result_rendering_covers_success_and_abort() -> None:
     assert json.loads(successful.to_json())["stdout_bytes"] == 3
 
 
+def test_startup_attestation_accepts_faked_applied_procfs_receipt() -> None:
+    parent = {name: (1, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}
+    child = {name: (2, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}
+    receipt = sandbox.startup_attestation_from_proc(
+        "Name:\trunner\nNoNewPrivs:\t1\nSeccomp:\t2\n", child, parent, pid=1
+    )
+    sandbox.validate_startup_attestation(receipt)
+
+
+@pytest.mark.parametrize(
+    ("status", "child", "pid"),
+    [
+        ("NoNewPrivs:\t0\nSeccomp:\t0\n", {name: (2, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}, 1),
+        ("NoNewPrivs:\t1\nSeccomp:\t2\n", {name: (1, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}, 1),
+        ("NoNewPrivs:\t1\nSeccomp:\t2\n", {name: (2, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}, 2),
+    ],
+)
+def test_startup_attestation_rejects_missing_applied_control(
+    status: str, child: dict[str, tuple[int, int]], pid: int
+) -> None:
+    parent = {name: (1, index) for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}
+    receipt = sandbox.startup_attestation_from_proc(status, child, parent, pid=pid)
+    with pytest.raises(ValueError):
+        sandbox.validate_startup_attestation(receipt)
+
+
 @pytest.mark.parametrize(
     ("changes", "detail"),
     [
@@ -325,6 +351,7 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
         "clone_newpid: true",
         "clone_newipc: true",
         "clone_newuts: true",
+        "clone_newcgroup: true",
         "iface_no_lo: true",
         "use_cgroupv2: true",
         "cgroup_mem_max: 67108864",
@@ -437,90 +464,17 @@ def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
     sys.platform != "linux",
     reason="nsjail containment is Linux-only (ADR-0009 §3)",
 )
-def test_offline_execution_refuses_before_donor_launch(
+def test_offline_execution_reaches_backend_after_static_containment_validation(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], tmp_path: Path
 ) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     plan = prepare_execution(_policy(fake_nsjail))
     marker = tmp_path / "donor-ran"
-    with pytest.raises(TransplantError) as caught:
-        run_contained(plan, (sys.executable, "-c", f"open({str(marker)!r}, 'w').write('bad')"))
-    assert caught.value.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
-    assert caught.value.evidence.detail_code == "applied_state_barrier_unavailable"
-    assert not marker.exists()
-
-
-class _FakeProcess:
-    pid = 100
-
-    def poll(self) -> None:
-        return None
-
-
-class _FakeAppliedStateReader:
-    def __init__(self, interfaces: dict[str, str] | None = None) -> None:
-        self.interfaces = {"lo": "down"} if interfaces is None else interfaces
-
-    def proc_text(self, pid: int, name: str) -> str:
-        del pid
-        values = {
-            "status": "NoNewPrivs:\t1\nSeccomp:\t2\nCapEff:\t0000000000000000\n",
-            "uid_map": "65534 1000 1\n",
-            "gid_map": "65534 1000 1\n",
-            "mountinfo": "1 0 0:1 / / ro - ext4 root ro\n2 1 0:2 / /work rw - tmpfs tmpfs rw\n",
-            "net/route": "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n",
-            "net/ipv6_route": "",
-            "cgroup": "0::/leitir-test\n",
-        }
-        return values[name]
-
-    def namespace_identity(self, pid: int, namespace: str) -> tuple[int, int]:
-        identities = {name: index for index, name in enumerate(("net", "user", "mnt", "pid", "ipc", "uts"), 1)}
-        return (identities[namespace], pid)
-
-    def cgroup_text(self, path: Path, name: str) -> str:
-        del path
-        values = {
-            "memory.max": "67108864\n",
-            "pids.max": "16\n",
-            "cpu.max": "500000 1000000\n",
-            "cgroup.controllers": "cpu memory pids\n",
-            "cgroup.events": "populated 1\n",
-            "cgroup.procs": "100\n",
-        }
-        return values[name]
-
-    def network_interfaces(self, pid: int) -> dict[str, str]:
-        del pid
-        return self.interfaces
-
-
-@pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="nsjail containment is Linux-only (ADR-0009 §3)",
-)
-def test_real_applied_state_verifier_accepts_only_complete_kernel_receipt(fake_nsjail: tuple[Path, str, str]) -> None:
-    state = sandbox._verify_applied_state(
-        _FakeProcess(),  # type: ignore[arg-type]
-        _policy(fake_nsjail),
-        child_pid=100,
-        reader=_FakeAppliedStateReader(),
-    )
-    assert state.child_pid == 100
-
-
-@pytest.mark.parametrize("interfaces", [{"lo": "up"}, {"lo": "down", "eth0": "down"}, {}])
-def test_real_applied_state_verifier_rejects_network_bypass(
-    fake_nsjail: tuple[Path, str, str], interfaces: dict[str, str]
-) -> None:
-    with pytest.raises(TransplantError) as caught:
-        sandbox._verify_applied_state(
-            _FakeProcess(),  # type: ignore[arg-type]
-            _policy(fake_nsjail),
-            child_pid=100,
-            reader=_FakeAppliedStateReader(interfaces),
-        )
-    assert caught.value.evidence.detail_code == "applied_network_mismatch"
+    result = run_contained(plan, (sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ok')"))
+    # The old unconditional parent-side barrier made this unreachable.  The
+    # real rootfs runner's mandatory startup frame is verified by rerun.py.
+    assert result.completed
+    assert marker.read_text(encoding="utf-8") == "ok"
 
 
 def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(

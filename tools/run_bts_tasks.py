@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NoReturn
 
 from leitir.bts_bench import (
@@ -126,6 +126,12 @@ def task_directory() -> Path:
     return Path(__file__).resolve().parents[1] / "benchmarks" / "bts-v1" / "tasks"
 
 
+def _posix_layout_path(value: str) -> str:
+    """Normalize a platform path spelling at the POSIX-published layout boundary."""
+
+    return PurePosixPath(PureWindowsPath(value).as_posix()).as_posix()
+
+
 def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSidecars:
     """Load exactly the committed sidecars without donor materialization.
 
@@ -146,7 +152,7 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
         )
     if task.observation is None:
         raise BTSDriverError(f"task has no non-gold observation plan: {task.task_id}")
-    expected_paths = task.observation.contract_tests
+    expected_paths = tuple(_posix_layout_path(path) for path in task.observation.contract_tests)
     tests: list[ContractTest] = []
     for relative in expected_paths:
         path = confined_path(directory, relative)
@@ -160,7 +166,7 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
                 cause=exc,
             ) from exc
         tests.append(ContractTest(relative, content, Path(relative).stem))
-    actual_paths = tuple(sorted(path.relative_to(directory).as_posix() for path in tests_root.rglob("*.py") if path.is_file() and not path.is_symlink()))
+    actual_paths = tuple(sorted(_posix_layout_path(path.relative_to(directory).as_posix()) for path in tests_root.rglob("*.py") if path.is_file() and not path.is_symlink()))
     if actual_paths != expected_paths:
         raise BTSError(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,

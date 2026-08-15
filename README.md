@@ -134,6 +134,7 @@ uv pip install --require-hashes --only-binary :all: -r requirements-auth.lock
 
 Unsigned, malformed, unknown-key, or invalidly signed shelves reject; this is
 an optional authenticity layer, separate from tree-integrity verification.
+The authentication trust-anchor surface requires a platform with no-follow-capable file reads; unsupported platforms fail closed.
 
 Relocated contract tests are rerun with the donor excluded by the read-only
 filesystem mount plan, not by Python import hooks. The rerun report requires the

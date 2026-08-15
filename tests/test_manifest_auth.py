@@ -36,6 +36,7 @@ from leitir.treehash import compute_materialized_tree_hash
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "manifest_auth"
 _HAS_CRYPTOGRAPHY = importlib.util.find_spec("cryptography") is not None
+_HAS_NO_FOLLOW = hasattr(os, "O_NOFOLLOW")
 
 
 def _vectors() -> dict[str, object]:
@@ -46,7 +47,7 @@ def _sidecar_path(shelf: Path) -> Path:
     return shelf.parent / f"{shelf.name}.{AUTH_RECORD_NAME}"
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_committed_vectors_cover_valid_tampered_wrong_key_and_malformed(tmp_path: Path) -> None:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -107,6 +108,7 @@ def test_trusted_keys_inside_authenticated_shelf_are_rejected(tmp_path: Path) ->
     assert caught.value.code == "manifest_auth_keys_in_shelf_v1"
 
 
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
 def test_trusted_keys_are_a_no_follow_trust_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     keys = tmp_path / "trusted-keys.json"
     keys.write_text(
@@ -119,6 +121,7 @@ def test_trusted_keys_are_a_no_follow_trust_anchor(tmp_path: Path, monkeypatch: 
         load_trusted_keys(keys)
 
 
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
 def test_load_trusted_keys_accepts_the_closed_valid_schema(tmp_path: Path) -> None:
     keys = tmp_path / "trusted-keys.json"
     public_key = bytes(range(32))
@@ -139,6 +142,7 @@ def test_load_trusted_keys_accepts_the_closed_valid_schema(tmp_path: Path) -> No
         {"keys": [{"key_id": "key", "public_key_b64": base64.b64encode(bytes(range(32))).decode("ascii"), "note": "test"}, {"key_id": "key", "public_key_b64": base64.b64encode(bytes(range(32))).decode("ascii"), "note": "duplicate"}]},
     ],
 )
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
 def test_load_trusted_keys_rejects_empty_or_malformed_closed_schema(tmp_path: Path, payload: object) -> None:
     keys = tmp_path / "trusted-keys.json"
     keys.write_text(json.dumps(payload), encoding="utf-8")
@@ -147,6 +151,7 @@ def test_load_trusted_keys_rejects_empty_or_malformed_closed_schema(tmp_path: Pa
         load_trusted_keys(keys)
 
 
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
 def test_authorization_records_validate_with_the_provider_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeInvalidSignature(Exception):
         pass
@@ -206,7 +211,7 @@ def test_authorization_records_validate_with_the_provider_seam(tmp_path: Path, m
         require_manifest_auth(manifest, shelf, trusted_keys={})
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_no_keys_and_tree_projection_tamper_fail_closed(tmp_path: Path) -> None:
     vectors = _vectors()
     manifest = vectors["manifest"]
@@ -247,7 +252,7 @@ def test_extra_missing_is_typed_and_module_import_does_not_import_provider(monke
         _provider()
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_get_require_manifest_auth_accepts_signed_cache_and_rejects_tamper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

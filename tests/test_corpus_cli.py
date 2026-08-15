@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 import threading
 from contextlib import contextmanager
@@ -597,6 +598,7 @@ def test_upgrade_cache_recomputes_raw_git_parity_before_promoting(tmp_path, monk
     with routed_server(routes) as server:
         target = _materialized_github_shelf(tmp_path, server.base_url, files)
         update_manifest(target, {"parity": "unknown"})
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
         monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
         code, out, err = _invoke(
             ["upgrade-cache", "--root", str(tmp_path), "--recompute-git-parity"]

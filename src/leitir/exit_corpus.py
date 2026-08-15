@@ -353,7 +353,9 @@ def content_digest(manifest_dict: Mapping[str, object]) -> str:
 
 def _read_manifest(path: Path) -> bytes:
     try:
-        data = read_regular_file(path, maximum_bytes=MAX_MANIFEST_BYTES)
+        # The canonical manifest's content digest binds these portable bytes;
+        # ratification remains the separate no-follow trust-anchor read.
+        data = read_regular_file(path, maximum_bytes=MAX_MANIFEST_BYTES, no_follow=False)
     except (OSError, ValueError) as exc:
         raise BTSError(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,

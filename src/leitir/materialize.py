@@ -1062,7 +1062,9 @@ def recompute_github_git_parity(
     for manifest_path in sorted(root_path.rglob(MANIFEST_NAME)):
         target = manifest_path.parent
         try:
-            payload = json.loads(read_regular_file(manifest_path, maximum_bytes=1 << 20).decode("utf-8", "strict"))
+            # The cache manifest is bound again by the verified tree hash below,
+            # so this portable parity-recomputation input may omit O_NOFOLLOW.
+            payload = json.loads(read_regular_file(manifest_path, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"))
             if not isinstance(payload, dict):
                 raise ValueError("manifest must be an object")
             owner = payload.get("owner")

@@ -114,10 +114,10 @@ def test_loader_round_trips_the_source_fields() -> None:
     assert loaded == source
 
 
-def test_corpus_manifest_remains_a_no_follow_trust_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_corpus_manifest_is_content_digest_anchored_without_no_follow(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 
-    assert _detail_code(load_corpus_manifest, _fixture()) == "exit_corpus_read_v1"
+    assert load_corpus_manifest(_fixture()) == _manifest()
 
 
 def test_content_digest_is_pythonhashseed_independent() -> None:

@@ -44,6 +44,7 @@ _DIGEST = "sha256:" + "1" * 64
 _SHA = "a" * 40
 _BLOB_SHA = "d3400504c93fd42b1fd39d180e08940d2443bf63"
 _ROOT = Path(__file__).resolve().parents[1]
+_HAS_NO_FOLLOW = hasattr(os, "O_NOFOLLOW")
 
 
 def _without_donor_execution() -> None:
@@ -394,14 +395,14 @@ def _l5_ratification(tmp_path: Path) -> tuple[dict[str, object], Path, Path, Pat
     return manifest, sidecar, keys, tmp_path / "donors"
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_l5_ratification_valid_signature_allows_authority_to_proceed(tmp_path: Path) -> None:
     manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
 
     _require_runtime_ratification(manifest, corpus_manifest_digest="sha256:" + "a" * 64, donors_dir=donors, trusted_keys_path=keys, ratification_sidecar=sidecar, default_sidecar=sidecar)
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_l5_ratification_missing_sidecar_rejects_typed(tmp_path: Path) -> None:
     manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
     sidecar.unlink()
@@ -412,7 +413,7 @@ def test_l5_ratification_missing_sidecar_rejects_typed(tmp_path: Path) -> None:
     assert caught.value.evidence.detail_code == "pipeline_cli_ratification_invalid_v1"
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
 @pytest.mark.parametrize("field", ["signature", "projection"])
 def test_l5_ratification_tampered_signature_or_projection_rejects_typed(tmp_path: Path, field: str) -> None:
     manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
@@ -429,7 +430,7 @@ def test_l5_ratification_tampered_signature_or_projection_rejects_typed(tmp_path
     assert caught.value.evidence.detail_code == "pipeline_cli_ratification_invalid_v1"
 
 
-@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_l5_ratification_self_signed_untrusted_key_rejects_typed(tmp_path: Path) -> None:
     manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
     record = json.loads(sidecar.read_text(encoding="utf-8"))

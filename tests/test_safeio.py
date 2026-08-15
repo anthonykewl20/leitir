@@ -30,12 +30,22 @@ def test_read_regular_file_can_read_digest_anchored_input_without_no_follow(
     assert read_regular_file(path, maximum_bytes=64, no_follow=False) == b"contents"
 
 
-def test_read_regular_file_rejects_non_regular_and_oversized_inputs(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "no_follow",
+    [
+        pytest.param(None, marks=pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="strict no-follow read requires O_NOFOLLOW")),
+        False,
+    ],
+)
+def test_read_regular_file_rejects_non_regular_and_oversized_inputs(tmp_path: Path, no_follow: bool | None) -> None:
     oversized = tmp_path / "oversized.txt"
     oversized.write_bytes(b"contents")
 
     with pytest.raises(ValueError, match="exceeds bound"):
-        read_regular_file(oversized, maximum_bytes=3)
+        if no_follow is None:
+            read_regular_file(oversized, maximum_bytes=3)
+        else:
+            read_regular_file(oversized, maximum_bytes=3, no_follow=no_follow)
     with pytest.raises(OSError, match="not a regular file"):
         read_regular_file(tmp_path, maximum_bytes=64, no_follow=False)
 

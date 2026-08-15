@@ -396,6 +396,17 @@ def test_task_sidecar_discovery_rejects_missing_sidecars_before_materialization(
     assert caught.value.evidence.detail_code == "pipeline_cli_task_sidecars_v1"
 
 
+def test_task_sidecar_discovery_normalizes_backslash_layout_inputs() -> None:
+    task = load_tasks(TASK_DIRECTORY)[0]
+    assert task.observation is not None
+    windows_spelling = tuple(path.replace("/", "\\") for path in task.observation.contract_tests)
+    windows_task = replace(task, observation=replace(task.observation, contract_tests=windows_spelling))
+
+    sidecars = discover_task_sidecars(TASK_DIRECTORY, windows_task)
+
+    assert tuple(test.path for test in sidecars.contract_tests) == task.observation.contract_tests
+
+
 def test_pinned_gold_binds_the_reference_run_and_metrics() -> None:
     manifest = load_manifest(REFERENCE_MANIFEST)
     run = BTSEvalBenchmark().execute(manifest, GoldDerivedSyntheticRunner())

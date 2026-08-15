@@ -341,7 +341,8 @@ def test_missing_or_unapplied_v1_control_rejects_before_launch(
 
 def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    config_text = sandbox._render_config(_policy(fake_nsjail))
+    policy = _policy(fake_nsjail)
+    config_text = sandbox._render_config(policy)
     required = (
         "mode: ONCE",
         "keep_env: false",
@@ -362,6 +363,10 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
     )
     for control in required:
         assert control in config_text
+    assert (
+        f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
+        'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
+    ) in config_text
 
 
 @pytest.mark.skipif(

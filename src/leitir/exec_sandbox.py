@@ -533,10 +533,13 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     for mount in policy.readonly_mounts:
+        # NsJail applies the user mapping before it builds this mount tree.  Do
+        # not let its source-path heuristic misclassify a rootfs below a
+        # non-traversable CI temporary directory as a file mount.
         lines.append(
             "mount { src: "
             f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
-            'is_bind: true rw: false mandatory: true nosuid: true nodev: true }'
+            'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
         )
     tmpfs_options = f"size={policy.writable_tmpfs_bytes},nr_inodes={policy.writable_tmpfs_inodes},nosuid,nodev,noexec"
     lines.append(

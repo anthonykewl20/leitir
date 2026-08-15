@@ -73,7 +73,7 @@ jobs:
           cgroup_cpu_ms_per_sec: 500
           uidmap { inside_id: "65534" outside_id: "$host_uid" count: 1 use_newidmap: false }
           gidmap { inside_id: "65534" outside_id: "$host_gid" count: 1 use_newidmap: false }
-          mount { src: "/" dst: "/" is_bind: true rw: false mandatory: true nosuid: true nodev: true }
+          mount { src: "/" dst: "/" fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }
           seccomp_string: "DEFAULT ALLOW"
           EOF
 
@@ -89,6 +89,7 @@ jobs:
           smoke_rootfs="$RUNNER_TEMP/nsjail-rendered-rootfs"
           smoke_sources="$RUNNER_TEMP/nsjail-rendered-sources"
           SMOKE_ROOTFS="$smoke_rootfs" SMOKE_SOURCES="$smoke_sources" PYTHONPATH=src python - <<'PY' >"$RUNNER_TEMP/nsjail-rendered-phase1.cfg"
+          import json
           import os
           import platform
           import re
@@ -171,6 +172,9 @@ jobs:
           )
           if any(item not in config for item in required):
               raise RuntimeError("rendered containment smoke policy omitted a required control")
+          root_mount = f'mount {{ src: {json.dumps(str(rootfs))} dst: "/" fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }}'
+          if root_mount not in config:
+              raise RuntimeError("rendered containment smoke policy omitted its required rootfs bind")
           print(config, end="")
           PY
           # The renderer intentionally uses FATAL in production.  DEBUG is

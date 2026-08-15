@@ -397,7 +397,8 @@ def test_candidate_pin_validation_is_structural_but_selected_snapshot_stays_exac
     task = replace(task, observation=replace(task.observation, candidates=(identity,), execution_candidates=(identity,), seed=identity))
     shelf = target_path(tmp_path, "owner", "donor", identity.commit_sha)
     shutil.copytree(ROOT / "tests" / "fixtures" / "bts_cli" / "donor", shelf)
-    monkeypatch.setattr("leitir.treehash.MAX_BYTES", 1)
+    (shelf / "additional.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.setattr("leitir.treehash.MAX_FILES", 1)
     tree_hash, scope = compute_materialized_tree_hash(shelf)
     assert scope == SAMPLED
     manifest = {

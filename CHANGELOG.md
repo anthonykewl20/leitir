@@ -113,6 +113,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
 - correct typing for mypy strict mode (`cost`)
+- expose nsjail mount sources in CI
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)

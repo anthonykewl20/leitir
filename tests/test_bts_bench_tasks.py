@@ -40,7 +40,7 @@ from leitir.pipeline_cli import (
 )
 from leitir.relocate import ContractTest, ModuleMap, SourceFile, relocate_tests
 from leitir.rerun import canonical_test_id
-from leitir.treehash import compute_materialized_tree_hash
+from leitir.treehash import SAMPLED, compute_materialized_tree_hash
 from tests.test_relocate import _bts, _relocate
 from tools.export_bts_eval import export, load_run, metrics_markdown
 from tools.run_bts_tasks import (
@@ -389,7 +389,7 @@ def test_task_driver_dry_run_plan_is_pinned_and_runner_seam_is_fail_closed(tmp_p
     assert len(three_repo["requests"]) == 3
 
 
-def test_candidate_pin_validation_is_structural_but_selected_snapshot_stays_exact(tmp_path: Path) -> None:
+def test_candidate_pin_validation_is_structural_but_selected_snapshot_stays_exact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A sampled candidate can be ranked but can never reach transplant execution."""
 
     task = next(item for item in load_tasks(TASK_DIRECTORY) if item.task_id == "async-retry-backoff")
@@ -397,7 +397,10 @@ def test_candidate_pin_validation_is_structural_but_selected_snapshot_stays_exac
     task = replace(task, observation=replace(task.observation, candidates=(identity,), execution_candidates=(identity,), seed=identity))
     shelf = target_path(tmp_path, "owner", "donor", identity.commit_sha)
     shutil.copytree(ROOT / "tests" / "fixtures" / "bts_cli" / "donor", shelf)
+    (shelf / "additional.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.setattr("leitir.treehash.MAX_FILES", 1)
     tree_hash, scope = compute_materialized_tree_hash(shelf)
+    assert scope == SAMPLED
     manifest = {
         "commit_sha": identity.commit_sha, "fetch_method": "codeload-tarball", "fetched_at": "2026-08-15T00:00:00Z",
         "host": "github.com", "owner": "owner", "repo": "donor", "repo_url": "https://github.com/owner/donor",

@@ -86,7 +86,7 @@ from leitir.graph.ts_kernel import (
     DEFAULT_MAX_WORK_UNITS,
 )
 from leitir.materialize import _target_lock, read_valid_manifest, target_path
-from leitir.treehash import FULL, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
+from leitir.treehash import FULL, SAMPLED, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
 CLI_SCHEMA_VERSION = "leitir-bts-cli-compute-v1"
 DEFAULT_POLICY_ID = "leitir-bts-cli-default-policy-v1"
@@ -187,7 +187,7 @@ def load_donor_materialization(root: Path, owner: str, repo: str, commit_sha: st
         not isinstance(tree_hash, str)
         or not tree_hash
         or manifest.get("materialized_tree_hash_algorithm") != TREE_HASH_ALGORITHM
-        or manifest.get("materialized_tree_hash_scope") != FULL
+        or manifest.get("materialized_tree_hash_scope") not in (FULL, SAMPLED)
     ):
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor manifest integrity identity is invalid", "bts_cli_manifest_integrity_v1")
     return target

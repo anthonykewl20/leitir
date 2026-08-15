@@ -102,6 +102,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - serve scoped search from verified local shelves; complete Go module, license, and API-surface support (`search`)
 
 ### Fixed
+- accept sampled structural candidate pins (`bench`)
 - address review findings (qwen) (`corpus`)
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
 - bind adapter language routing to trusted registry identity (`search`)

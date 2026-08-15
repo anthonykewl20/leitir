@@ -145,6 +145,7 @@ def test_inline_contract_content_mismatch_rejects() -> None:
     assert getattr(caught.value, "evidence").detail_code == "pipeline_cli_contract_content_mismatch_v1"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="startup attestation reads Linux procfs")
 def test_baseline_runner_emits_startup_attestation_before_donor_can_mutate_environment(tmp_path: Path) -> None:
     marker = tmp_path / "donor-executed"
     test_source = tmp_path / "test_mutates_environment.py"

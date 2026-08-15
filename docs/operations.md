@@ -34,6 +34,18 @@ same repository shelf layout. Leitir also maintains optional `api/` and
 staging generations. Do not delete it blindly: it is part of the coordination
 mechanism, and lock paths are opened without following symlinks.
 
+## Optional Manifest Authentication Keys
+
+The optional `leitir[auth]` extra verifies detached Ed25519 manifest records
+only when a caller supplies `--require-manifest-auth`. Configure trusted public
+keys out of band at `~/.leitir/trusted-keys.json` (or pass
+`--trusted-keys /secure/trusted-keys.json`); the file is a canonical JSON key
+set whose entries contain `key_id`, `public_key_b64`, and a human `note`.
+Keep it under normal configuration-management access control, not in an
+untrusted corpus. Authentication does not replace the mandatory
+`materialized_tree_hash` check: an unsigned, malformed, unknown-key, projection
+mismatch, or bad signature rejects when authentication is required.
+
 ## Backup
 
 Export a complete immutable snapshot from the source corpus:

@@ -1,7 +1,7 @@
 # ADR-0018: Manifest authenticity
 
-- Status: Proposed
-- Scope: v2.0; decision deferred to v2.0 planning
+- Status: Accepted
+- Scope: v2.0 implementation landed
 - Deciders: leitir maintainers; consensus reviewers; consensus-terra review 2026-08-13 (ACCEPT-WITH-AMENDMENTS — recommendation recorded, adoption deferred)
 - Date: 2026-08-13
 - Technical Story: #40 — Verify manifest publisher authenticity
@@ -11,8 +11,7 @@
 Tree and packet digests detect corruption and bind records to content, but do not
 authenticate the repository owner or publisher. A party able to replace source
 and expected digests can produce internally consistent malicious artifacts. This
-ADR records the consensus recommendation for v2.0 planning; **Proposed** status
-does not commit v1.x to implementation or dependency changes.
+ADR records the consensus recommendation and its v2.0 implementation.
 
 ## Decision Drivers
 
@@ -32,11 +31,33 @@ does not commit v1.x to implementation or dependency changes.
 
 ## Decision Outcome
 
-Recommended option: "`leitir-manifest-auth-v1`, opt-in detached Ed25519 over a
+Decision: "`leitir-manifest-auth-v1`, opt-in detached Ed25519 over a
 canonical authorization projection with an out-of-band trust root", because it
 adds explicit publisher authorization without signing mutable local observations
-or pretending content hashes authenticate an owner. Adoption remains deferred to
-v2.0 planning.
+or pretending content hashes authenticate an owner.
+
+### Implementation notes
+
+- `cryptography==50.0.0` is the optional `auth` extra. `requirements-auth.lock`
+  contains all 45 PyPI cryptography wheel hashes (no sdist hashes) and the
+  hash-pinned CPython 3.14 Linux x86_64 transitive wheel closure; install it
+  only with `--require-hashes --only-binary :all:`. Other provider platforms
+  currently fail closed at installation until their transitive wheel closure is
+  release-reviewed, and the PyPI metadata must be re-reviewed before regeneration.
+- Detached records are shelf-adjacent as
+  `<commit>.leitir-manifest-auth.json`, rather than in the shelf. This is the
+  necessary layout deviation from the illustrative in-shelf path: current tree
+  hashing includes all shelf files other than the manifest, so an in-shelf
+  detached signature would recursively invalidate its own signed tree digest.
+  Trust roots are external `trusted-keys.json` files with the closed shape
+  `{"keys":[{"key_id":"...", "public_key_b64":"...", "note":"..."}]}`;
+  the default path is
+  `~/.leitir/trusted-keys.json`, overridable by `--trusted-keys`.
+- `--require-manifest-auth` is implemented for `get`, `info`, and `diff`; these
+  command paths load-time verify the tree before authenticating the detached
+  record. Golden vectors are in `tests/fixtures/manifest_auth/vectors.json`.
+- The key-ceremony helper derives its record `key_id` as SHA-256 of raw public
+  key bytes. Verification still selects only the exact configured key ID.
 
 ### 1. Optional dependency boundary
 

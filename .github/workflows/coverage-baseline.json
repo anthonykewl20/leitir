@@ -5,6 +5,8 @@
   },
   "modules": {
     "src/leitir/corpus.py": 89.50,
+    "src/leitir/exit_corpus.py": 82.4,
+    "src/leitir/funnel_cli.py": 78.5,
     "src/leitir/graph/go.py": 87.9,
     "src/leitir/graph/javascript.py": 91.6,
     "src/leitir/graph/policy.py": 88.9,
@@ -12,7 +14,10 @@
     "src/leitir/graph/ts_kernel.py": 88.4,
     "src/leitir/graph/typescript.py": 88.5,
     "src/leitir/materialize.py": 76.26,
+    "src/leitir/manifest_auth.py": 72.9,
+    "src/leitir/pipeline_cli.py": 58.0,
     "src/leitir/resolver.py": 77.68,
+    "src/leitir/safeio.py": 86.8,
     "src/leitir/snapshot.py": 83.16,
     "src/leitir/treehash.py": 88.14,
     "src/leitir/trust.py": 90.41

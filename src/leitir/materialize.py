@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 from leitir import _http
+from leitir.safeio import read_regular_file
 from leitir.search import RepoScope
 from leitir.treehash import (
     TreeHashError,
@@ -457,8 +458,19 @@ def _read_valid_manifest(
         return None
     fetch_method, canonical_base = metadata
     try:
-        payload = json.loads((Path(target) / MANIFEST_NAME).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        # Match detached-auth parsing: a duplicate field must never silently
+        # select the last attacker-controlled value.  This remains a normal
+        # invalid-manifest result rather than a new load-time exception.
+        from leitir.manifest_auth import ManifestAuthMalformedError, _parse_json
+
+        payload = _parse_json(
+            # The parsed manifest is subsequently bound to its materialized
+            # tree digest, so this digest-anchored cache input can support
+            # platforms without O_NOFOLLOW.
+            read_regular_file(Path(target) / MANIFEST_NAME, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"),
+            subject="materialized manifest",
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, ManifestAuthMalformedError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -867,6 +879,7 @@ def _verify_extracted_tree(
     *,
     max_files: int,
     max_bytes: int,
+    excluded_paths: frozenset[str] = frozenset(),
 ) -> tuple[bool | str, int]:
     """Return verification status and the number of EOL-normalized files."""
     import hashlib
@@ -882,12 +895,16 @@ def _verify_extracted_tree(
     extracted = {
         path.relative_to(staging).as_posix(): path
         for path in extracted_paths
-        if not path.is_symlink() and path.is_file()
+        if (
+            path.relative_to(staging).as_posix() not in excluded_paths
+            and not path.is_symlink()
+            and path.is_file()
+        )
     }
     extracted_symlinks = {
         path.relative_to(staging).as_posix(): path
         for path in extracted_paths
-        if path.is_symlink()
+        if path.relative_to(staging).as_posix() not in excluded_paths and path.is_symlink()
     }
 
     entries = tree_source.list_blobs(f"{owner}/{repo}", commit_sha)  # type: ignore[attr-defined]
@@ -1019,6 +1036,97 @@ def _verify_extracted_tree(
         "tree verification outcome=%s normalized_files=%d", outcome, text_normalized
     )
     return outcome, text_normalized
+
+
+def _github_git_parity(verified: bool | str, text_normalized: int) -> str:
+    """Derive the GitHub Git-commit parity claim from a verification outcome."""
+    if verified is not True:
+        return "unknown"
+    return "drift" if text_normalized else "exact"
+
+
+def recompute_github_git_parity(
+    root: str | os.PathLike[str],
+    *,
+    tree_source: object,
+    dry_run: bool = False,
+) -> tuple[int, int, int]:
+    """Reprove cached GitHub Git-commit shelves and update their parity claims.
+
+    Only an already fully verified Git-commit shelf is eligible. Incomplete
+    enumeration or sampling leaves an existing claim untouched, so partial
+    proof can never promote an unknown shelf.
+    """
+    root_path = Path(root).expanduser().absolute()
+    updated = skipped = failed = 0
+    for manifest_path in sorted(root_path.rglob(MANIFEST_NAME)):
+        target = manifest_path.parent
+        try:
+            # The cache manifest is bound again by the verified tree hash below,
+            # so this portable parity-recomputation input may omit O_NOFOLLOW.
+            payload = json.loads(read_regular_file(manifest_path, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"))
+            if not isinstance(payload, dict):
+                raise ValueError("manifest must be an object")
+            owner = payload.get("owner")
+            repo = payload.get("repo")
+            commit_sha = payload.get("commit_sha")
+            if not (
+                payload.get("host") == "github.com"
+                and payload.get("source") == "git-commit"
+                and payload.get("verified") is True
+                and isinstance(owner, str)
+                and isinstance(repo, str)
+                and isinstance(commit_sha, str)
+            ):
+                skipped += 1
+                continue
+            canonical_target = target_path(
+                root_path, owner, repo, commit_sha, host="github.com"
+            )
+            if target != canonical_target:
+                skipped += 1
+                continue
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("could not load parity cache manifest %s: %s", manifest_path, exc)
+            failed += 1
+            continue
+
+        with _target_lock(root_path, target, commit_sha):
+            try:
+                manifest = read_valid_manifest(
+                    target, owner, repo, commit_sha, host="github.com"
+                )
+                if (
+                    manifest is None
+                    or manifest.get("source") != "git-commit"
+                    or manifest.get("verified") is not True
+                ):
+                    skipped += 1
+                    continue
+                verified, text_normalized = _verify_extracted_tree(
+                    target,
+                    owner,
+                    repo,
+                    commit_sha,
+                    tree_source,
+                    max_files=VERIFY_MAX_FILES,
+                    max_bytes=VERIFY_MAX_BYTES,
+                    excluded_paths=frozenset({MANIFEST_NAME}),
+                )
+                if verified is not True:
+                    skipped += 1
+                    continue
+                parity = _github_git_parity(verified, text_normalized)
+                if manifest.get("parity") == parity:
+                    skipped += 1
+                    continue
+                updated += 1
+                if not dry_run:
+                    update_manifest(target, {"parity": parity})
+            except Exception as exc:
+                logger.warning("could not recompute Git parity for %s: %s", target, exc)
+                failed += 1
+    return updated, skipped, failed
 
 
 def materialize_github_repo(
@@ -1288,6 +1396,9 @@ def _materialize_hosted_repo_locked(
                 "verification_notes": verification_notes,
                 "source": "git-commit",
                 "has_tests": has_top_level_tests(staging, subpath),
+                "parity": _github_git_parity(verified, text_normalized)
+                if host == "github.com"
+                else "unknown",
             }
         )
         tree_digest, tree_scope = compute_materialized_tree_hash(staging)

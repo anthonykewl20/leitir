@@ -13,10 +13,13 @@ from pathlib import Path
 import pytest
 from _http_server import json_body, routed_server
 
+from leitir.bts_cli import load_donor_snapshot
+from leitir.bts_errors import BTSError
 from leitir.cli import ExitCode, main
 from leitir.materialize import (
     MaterializationError,
     VerificationError,
+    _github_git_parity,
     _verify_extracted_tree,
     materialize_github_repo,
     read_valid_manifest,
@@ -85,12 +88,15 @@ def test_matching_tree_is_fully_verified(tmp_path):
         paths = server.state.request_paths
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["verified"] is True
+    assert manifest["parity"] == "exact"
     assert manifest["verified_at"].endswith("Z")
     assert manifest["verification_notes"] == []
     assert paths == [
         f"/acme/demo/tar.gz/{SHA}",
         f"/repos/acme/demo/git/trees/{SHA}",
     ]
+    snapshot = load_donor_snapshot(tmp_path, "acme", "demo", SHA)
+    assert snapshot.parity == "exact"
 
 
 def test_crlf_archive_variant_is_verified_via_pinned_contents(tmp_path):
@@ -105,12 +111,15 @@ def test_crlf_archive_variant_is_verified_via_pinned_contents(tmp_path):
 
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["verified"] is True
+    assert manifest["parity"] == "drift"
     assert manifest["verification_notes"] == ["text-normalized: 1 file(s)"]
     assert paths == [
         f"/acme/demo/tar.gz/{SHA}",
         f"/repos/acme/demo/git/trees/{SHA}",
         "/repos/acme/demo/contents/docs/proof.txt",
     ]
+    with pytest.raises(BTSError, match="donor parity is not exact"):
+        load_donor_snapshot(tmp_path, "acme", "demo", SHA)
 
 
 def test_over_cap_uses_deterministic_sample(tmp_path):
@@ -130,6 +139,9 @@ def test_over_cap_uses_deterministic_sample(tmp_path):
         )
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["verified"] == "sampled"
+    assert manifest["parity"] == "unknown"
+    with pytest.raises(BTSError, match="donor parity is not exact"):
+        load_donor_snapshot(tmp_path, "acme", "demo", SHA)
 
 
 def test_digest_mismatch_is_hard_failure_and_cleans_staging(tmp_path):
@@ -145,9 +157,14 @@ def test_digest_mismatch_is_hard_failure_and_cleans_staging(tmp_path):
     assert not list(target.parent.glob(f".{SHA}.tmp-*"))
 
 
-def test_missing_extracted_regular_file_is_a_mismatch(tmp_path):
+@pytest.mark.parametrize("variant", ["missing", "extra"])
+def test_regular_file_universe_mismatch_fails_publication(tmp_path, variant):
     archive_files = {"present.txt": b"present"}
-    tree_files = {**archive_files, "missing.txt": b"missing"}
+    tree_files = (
+        {**archive_files, "missing.txt": b"missing"}
+        if variant == "missing"
+        else {}
+    )
     routes = {
         f"/acme/demo/tar.gz/{SHA}": (200, {}, _tarball(archive_files)),
         f"/repos/acme/demo/git/trees/{SHA}": (200, {}, _tree(tree_files)),
@@ -246,7 +263,9 @@ def test_symbolic_link_universe_mismatch_is_sampled(tmp_path, variant):
         BlobEntry("link", GitHubTreeSource.git_blob_sha(target.encode()), len(target), "120000"),
     )
 
-    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {})) == "sampled"
+    status = _verify_direct(tmp_path, _FakeTreeSource(entries, {}))
+    assert status == "sampled"
+    assert _github_git_parity(status, 0) == "unknown"
 
 
 def test_symbolic_link_eol_difference_is_rejected(tmp_path):
@@ -363,3 +382,23 @@ def test_no_verify_fresh_materialization_records_explicit_false(tmp_path):
     manifest = json.loads((result / "leitir-manifest.json").read_text())
     assert manifest["verified"] is False
     assert manifest["verified_at"] is None
+    assert manifest["parity"] == "unknown"
+    with pytest.raises(BTSError, match="donor parity is not exact"):
+        load_donor_snapshot(tmp_path, "acme", "demo", SHA)
+
+
+def test_caller_cannot_claim_exact_parity_without_complete_raw_verification(tmp_path):
+    files = {"proof.txt": b"proof"}
+    routes = {f"/acme/demo/tar.gz/{SHA}": (200, {}, _tarball(files))}
+    with routed_server(routes) as server:
+        target = _materialize(
+            tmp_path,
+            server.base_url,
+            verify=False,
+            manifest_fields={"parity": "exact"},
+        )
+
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["parity"] == "unknown"
+    with pytest.raises(BTSError, match="donor parity is not exact"):
+        load_donor_snapshot(tmp_path, "acme", "demo", SHA)

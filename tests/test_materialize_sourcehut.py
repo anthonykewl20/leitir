@@ -7,6 +7,8 @@ import tarfile
 import _http_server as hs
 import pytest
 
+from leitir.bts_cli import load_donor_snapshot
+from leitir.bts_errors import BTSError
 from leitir.materialize import MaterializationError, materialize_repo
 from leitir.resolver import SourcehutResolver
 from leitir.search import RepoScope
@@ -64,8 +66,11 @@ def test_anonymous_materialization_records_archive_only(tmp_path, monkeypatch):
     manifest = json.loads((target / "leitir-manifest.json").read_text())
     assert manifest["verified"] == "archive-only"
     assert manifest["verified"] is not True
+    assert manifest["parity"] == "unknown"
     assert manifest["verified_at"]
     assert server.state.served_count == 1
+    with pytest.raises(BTSError, match="donor parity is not exact"):
+        load_donor_snapshot(tmp_path, "~user", "repo", SHA, host="git.sr.ht")
 
 
 def test_sourcehut_mismatch_fails_closed(tmp_path):

@@ -25,7 +25,7 @@
 
 ## Current status
 
-The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI); the project remains design-stage software and **not production-ready**. The v0.1.1 production-ready audit work (#22–#41) is complete; the remaining human gates (dogfood, load test, security sign-off) are tracked in epic #42 under [milestone v0.1.1](https://github.com/anthonykewl20/leitir/milestone/1). The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127, but the milestone remains open for epic #52, its exit gate (#73), and evaluation (#75).
+The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI); the project remains design-stage software and **not production-ready**. The v0.1.1 production-ready audit work (#22–#41) is complete; #42 now has recorded 100-package load-test evidence, while external dogfood and final human security sign-off remain. The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127; its five-donor exit corpus (#73) and six real evaluation tasks (#75) are assembled, but await contained Phase-A evidence, publication, and owner sign-off.
 
 ## Initially implemented (v0.1.0 scope)
 
@@ -44,15 +44,21 @@ The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-00
   the Windows fix for #128; ADR-0012's fully implemented stage-1 policy/registry
   and stage-2 JavaScript/TypeScript/Rust/Go graph producers in this PR; and
   ADR-0013 through ADR-0019.
-- #148 slices 1–3 now expose `bts-compute`, architecture/lineage analysis, and
-  exit-corpus validation at the CLI; #75's BTS exporter and `benchmarks/bts-v1`
-  publication target are landed. Remaining #148 work is the S2 execution
-  substrate, capability funnel, transplant, occupied, and runnable gates; the
-  owner-external #73/#75 residues are unchanged.
+- #148's CLI surfaces are landed: `bts-compute`, architecture/lineage analysis,
+  capability funnel, pipeline, transplant, occupied validation, and runnable
+  exit-corpus gates. #73's five-donor corpus and #75's six-task publication
+  target/drivers are also landed. Their remaining owner-external work is
+  contained Phase-A evidence, result publication, and sign-off.
+- GitHub/git parity exact-vs-drift recording, the recorded capability funnel,
+  v1.1 five-donor runnable exit corpus, six BTS task manifests, and the
+  non-required Phase 2 containment-evidence workflow are landed. Optional
+  detached manifest authentication (ADR-0018) is also landed; remaining gates
+  are CI evidence runs, dogfood, and human sign-off rather than an authenticity
+  implementation gap.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
-Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are **closed**; what remains open in epic #42 are the human gates (external dogfood run, real ≥100-package load test, final human security sign-off) that must close before claiming the "production-ready" quality label. These gates do not gate the v0.1.1 version number itself.
+Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are **closed**; the real ≥100-package load-test gate is met with recorded evidence. External dogfood and final human security sign-off remain before claiming the "production-ready" quality label. These gates do not gate the v0.1.1 version number itself.
 
 ### Critical (blocks the "production-ready" quality label)
 
@@ -85,7 +91,7 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 ## Next milestones (incremental, shipped as patch releases)
 
 - **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (3 open; 22/25 complete): the BTS code landed on `main` via PR #127, and ADR-0008 through ADR-0011 are Accepted and Implemented. The remaining work is epic #52, exit gate #73 (at least five pinned real donors, an nsjail rootfs, and offline containment CI), and evaluation #75 (real agent tasks and published results). The v0.1.1 production-ready human gates (#42) validate already-landed code and run in parallel, not as a hard dependency.
-- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (6/8 closed): #76, #77, #78, #79, #80, and #82 closed via PRs #132, #137, #136, #135, #134, and #139. #81 (tree-sitter) is fully implemented in this PR: ADR-0012's open questions are answered and both stages are landed. Only epic #40 (manifest authenticity; ADR-0018 Proposed for v2.0) remains as implementation work.
+- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (6/8 closed): #76, #77, #78, #79, #80, and #82 closed via PRs #132, #137, #136, #135, #134, and #139. #81 (tree-sitter) is fully implemented: ADR-0012's open questions are answered and both stages are landed. ADR-0018 optional detached manifest authentication is also landed; remaining gates are evidence and owner sign-off, not an authenticity implementation gap.
 - **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete on `main` (all slices merged and independently cross-reviewed/hardened), but no release has been cut. This is a pre-first-release repository with zero `v*` tags, and `pyproject.toml` remains at 0.1.1; cutting the release requires the owner-held version bump, tag, and push. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
 
 ## Post-production-ready (still v0.x)

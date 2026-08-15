@@ -32,10 +32,10 @@ and #119 are closed.
 
 The Behavioral Transplant Set code landed on `main` via PR #127. ADR-0008
 through ADR-0011 are Accepted and Implemented, and issues #55, #60, #61, #62,
-#63, #64, and #72 are closed. The v0.1.2 milestone remains open: its exit gate
-(#73) still requires at least five pinned real donors, an nsjail rootfs, and
-offline containment CI; evaluation (#75) still requires real agent tasks and
-published results.
+#63, #64, and #72 are closed. The v0.1.2 milestone remains open: #73's
+five-donor runnable corpus and #75's six real task manifests/drivers are
+landed, but both await contained Phase-A evidence runs, publication, and owner
+sign-off; no release-pinned rootfs or successful contained execution is claimed.
 
 ### v0.1.3 — composition and multi-language
 
@@ -55,16 +55,19 @@ limits evidence at `docs/evidence/oq3-tree-sitter-limits-2026-08-14.md`.
 The producers remain conservative and never guess, with per-language golden,
 tamper, determinism, and budget tests.
 Composition, architecture, duplicate-abstraction detection, lineage,
-integration-cost, and occupied-recipient validation landed through PRs
-#132–#139; #82 is closed by PR #139. Only epic #40 (manifest authenticity;
-ADR-0018 Proposed for v2.0) remains as implementation work; #148 is unblocked
-for design subject to owner promotion.
+integration-cost, occupied-recipient validation, and ADR-0018's optional
+detached manifest-authentication layer landed through PRs #132–#139 and the
+2026-08-15 integration work. #82 is closed by PR #139; remaining work is CI
+evidence, dogfood, and owner sign-off rather than an ADR-0018 implementation
+gap. #148 remains owner-gated for further design.
 
-2026-08-15: #148 slices 1–3 are wired through `bts-compute`,
-`analysis-architecture`, `analysis-lineage`, and `exit-gate-validate`; the #75
-exporter and `benchmarks/bts-v1` publication target are landed. Remaining #148
-work is the S2 execution substrate, capability funnel, transplant, occupied,
-and runnable gates. The owner-external #73 and #75 residues are unchanged.
+2026-08-15: GitHub/git parity now records exact versus drift outcomes, the
+recorded capability funnel, BTS pipeline, occupied-artifact validator, and
+runnable exit-corpus surfaces are wired at the CLI boundary. The five-donor
+v1.1 corpus and six BTS tasks are assembled, while Phase 2 containment CI is
+intentionally non-required evidence. ADR-0018's optional manifest-auth layer
+is landed. Remaining owner gates are successful CI evidence runs, external
+dogfood, and human sign-off; a release-pinned rootfs is not yet claimed.
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
 
@@ -143,8 +146,8 @@ Epic #42 documentation gates:
   reviewed against the current CLI and cache implementation, with the
   historical v1 material explicitly separated from current behavior.
 - [ ] **REMAINING HUMAN GATE:** external dogfood run with feedback.
-- [ ] **REMAINING HUMAN GATE:** real load test using a corpus of 100 or more
-  packages.
+- [x] **MET WITH EVIDENCE:** 100-package corpus load test recorded at
+  [`docs/evidence/loadtest-100-2026-08.md`](evidence/loadtest-100-2026-08.md).
 - [ ] **REMAINING HUMAN GATE:** final human security sign-off.
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
@@ -158,7 +161,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2408 passed, 113 skipped**. The skips are opt-in live tests
+Offline suite: **2537 passed, 122 skipped**. The skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1` and polyglot
 tests that require the optional tree-sitter extra; with that extra installed,
 the four polyglot test files run **105 additional tests**.

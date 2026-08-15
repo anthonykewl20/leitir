@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Protocol, cast
@@ -21,6 +21,7 @@ from leitir.bts_pipeline import BTSPipelineResult
 from leitir.exec_sandbox import ValidationAbortEnvelope
 from leitir.relocate import FileRole
 from leitir.rerun import RerunReport
+from leitir.safeio import read_regular_file
 
 LEITIR_BTS_EVAL_MANIFEST_V1 = "leitir-bts-eval-manifest-v1"
 LEITIR_BTS_EVAL_RUN_V1 = "leitir-bts-eval-run-v1"
@@ -276,18 +277,70 @@ class BTSGold:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskObservationPlan:
+    """Non-gold inputs that may influence a task observation.
+
+    Gold remains exclusively a grading oracle.  This plan contains the pinned
+    candidates, execution seeds, contract sidecars, and capability identifiers
+    available to the runner before grading starts.
+    """
+
+    candidates: tuple[CandidateIdentity, ...]
+    execution_candidates: tuple[CandidateIdentity, ...]
+    seed: CandidateIdentity
+    contract_tests: tuple[str, ...]
+    required_behaviors: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _tuple(self.candidates, "observation candidates", CandidateIdentity)
+        _tuple(self.execution_candidates, "observation execution candidates", CandidateIdentity)
+        _strings(self.contract_tests, "observation contract tests", sorted_=True)
+        _strings(self.required_behaviors, "observation required behaviors", sorted_=True)
+        if not self.candidates or not self.execution_candidates or not isinstance(self.seed, CandidateIdentity):
+            raise ValueError("observation plan requires candidates and a seed")
+        if len(set(self.candidates)) != len(self.candidates) or tuple(sorted(self.candidates, key=lambda item: item.sort_key)) != self.candidates:
+            raise ValueError("observation candidates must be sorted and unique")
+        if len(set(self.execution_candidates)) != len(self.execution_candidates) or tuple(sorted(self.execution_candidates, key=lambda item: item.sort_key)) != self.execution_candidates:
+            raise ValueError("observation execution candidates must be sorted and unique")
+        if self.seed not in self.candidates or self.seed not in self.execution_candidates:
+            raise ValueError("observation seed must be an execution candidate")
+        if not set(self.execution_candidates) <= set(self.candidates):
+            raise ValueError("execution candidates must be in the candidate set")
+        if not self.contract_tests or not self.required_behaviors:
+            raise ValueError("observation plan requires contract tests and behaviors")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "candidates": [item.to_dict() for item in self.candidates],
+            "contract_tests": list(self.contract_tests),
+            "execution_candidates": [item.to_dict() for item in self.execution_candidates],
+            "required_behaviors": list(self.required_behaviors),
+            "seed": self.seed.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BTSEvalTask:
     task_id: str
     gold: BTSGold
+    observation: TaskObservationPlan | None = field(default=None, compare=False)
+    observation_serialized: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or _TASK_ID.fullmatch(self.task_id) is None:
             raise ValueError("task_id must be lowercase kebab-case")
         if not isinstance(self.gold, BTSGold):
             raise TypeError("gold must be BTSGold")
+        if self.observation is not None and not isinstance(self.observation, TaskObservationPlan):
+            raise TypeError("observation must be TaskObservationPlan or None")
+        if not isinstance(self.observation_serialized, bool):
+            raise TypeError("observation_serialized must be bool")
 
     def to_dict(self) -> dict[str, object]:
-        return {"gold": self.gold.to_dict(), "task_id": self.task_id}
+        result: dict[str, object] = {"gold": self.gold.to_dict(), "task_id": self.task_id}
+        if self.observation is not None and self.observation_serialized:
+            result["observation"] = self.observation.to_dict()
+        return result
 
     def digest(self) -> str:
         return _digest(self.to_dict())
@@ -368,6 +421,8 @@ class BTSTaskObservation:
     probe_ran_ids: tuple[str, ...]
     probe_passed: int
     probe_total: int
+    ranking_unranked: bool = False
+    composition_mode: str = "single-recipient-run"
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or _TASK_ID.fullmatch(self.task_id) is None:
@@ -377,6 +432,10 @@ class BTSTaskObservation:
         _tuple(self.candidate_ranking, "candidate_ranking", CandidateIdentity)
         if len(set(self.candidate_ranking)) != len(self.candidate_ranking):
             raise ValueError("candidate_ranking contains duplicate identities")
+        if not isinstance(self.ranking_unranked, bool):
+            raise TypeError("ranking_unranked must be bool")
+        if self.composition_mode not in {"single-recipient-run", "coexisting-recipient-three-runs"}:
+            raise ValueError("composition_mode is unsupported")
         _tuple(self.bts_members, "bts_members", MemberObs)
         if len({item.node for item in self.bts_members}) != len(self.bts_members):
             raise ValueError("bts_members contains duplicate nodes")
@@ -411,7 +470,9 @@ class BTSTaskObservation:
             "baseline_digest": self.baseline_digest,
             "bts_members": [item.to_dict() for item in sorted(self.bts_members, key=lambda item: item.node)],
             "candidate_ranking": [item.to_dict() for item in self.candidate_ranking],
+            "ranking_unranked": self.ranking_unranked,
             "classified_license": self.classified_license,
+            "composition_mode": self.composition_mode,
             "donor_import_observed": self.donor_import_observed,
             "probe_passed": self.probe_passed,
             "probe_ran_ids": sorted(self.probe_ran_ids),
@@ -631,6 +692,8 @@ def _grade_candidate(gold: BTSGold, obs: BTSTaskObservation, metric: str, k: int
     excluded = _require_applicable(gold, metric, bool(gold.candidate_qrels))
     if excluded is not None:
         return excluded
+    if obs.ranking_unranked:
+        return _excluded(metric, "unranked_no_comparison_evidence")
     exact = {item.identity for item in gold.candidate_qrels if item.grade == 2}
     return _record(metric, int(any(item in exact for item in obs.candidate_ranking[:k])), 1)
 
@@ -839,15 +902,24 @@ def compute_run_with_timing(manifest: BTSEvalManifest, runner: BTSRunner, *, tim
     return replace(run, timing=envelope)
 
 
+def _normalize_staging_test_path(path: str) -> str:
+    """Drop only the E1 rewritten-test transport prefix."""
+
+    return path.removeprefix("staging-v1/tests/rewritten/")
+
+
 def from_pipeline_result(
     task: BTSEvalTask,
     candidate_ranking: tuple[CandidateIdentity, ...],
     pipeline: BTSPipelineResult,
     *,
+    task_digest: str | None = None,
     classified_license: str | None = None,
     relocated_examples: tuple[str, ...] = (),
     donor_import_observed: bool = False,
     adaptation_probes: tuple[AdaptationProbeObs, ...] = (),
+    ranking_unranked: bool = False,
+    normalize_staging_test_paths: bool = False,
 ) -> BTSTaskObservation:
     """Project authoritative pipeline artifacts onto the gradable E5a surface."""
 
@@ -872,23 +944,31 @@ def from_pipeline_result(
         )
         for member in artifact.members
     )
-    tests = tuple(sorted(item.path for item in pipeline.relocation.files if item.role is FileRole.TEST_REWRITTEN))
+    # E1 staging paths are transport details. Relocation already preserves the
+    # corpus-owned ``contract_tests/`` prefix, so remove only E1's prefix.
+    tests = tuple(sorted(
+        (_normalize_staging_test_path(item.path) if normalize_staging_test_paths else item.path)
+        for item in pipeline.relocation.files
+        if item.role is FileRole.TEST_REWRITTEN
+    ))
     if isinstance(pipeline.rerun, RerunReport):
         rerun_status = pipeline.rerun.status.value
         rerun_counts = (pipeline.rerun.counts.passed, pipeline.rerun.counts.failed, pipeline.rerun.counts.skipped)
         outcome_vector = tuple(sorted((item.canonical_test_id, item.outcome.value) for item in pipeline.rerun.outcomes))
         baseline_digest = pipeline.rerun.baseline_digest
+        donor_import_observed = pipeline.rerun.reason is not None and pipeline.rerun.reason.value == "reject_donor_import_observed"
     elif isinstance(pipeline.rerun, ValidationAbortEnvelope):
         rerun_status = "reject"
         rerun_counts = None
         outcome_vector = None
         baseline_digest = None
+        donor_import_observed = False
     else:
         raise TypeError("pipeline rerun has an unsupported type")
     outcomes = tuple(sorted(pipeline.probes.outcomes, key=lambda item: item.probe_id))
     return BTSTaskObservation(
         task.task_id,
-        task.digest(),
+        task.digest() if task_digest is None else task_digest,
         candidate_ranking,
         members,
         tests,
@@ -903,6 +983,70 @@ def from_pipeline_result(
         tuple(item.probe_id for item in outcomes),
         sum(item.observed_outcome is item.expected_outcome for item in outcomes),
         len(outcomes),
+        ranking_unranked,
+    )
+
+
+def coexisting_recipient_three_runs_observation(
+    task: BTSEvalTask,
+    candidate_ranking: tuple[CandidateIdentity, ...],
+    runs: tuple[tuple[CandidateIdentity, BTSPipelineResult], ...],
+    *,
+    task_digest: str | None = None,
+    classified_license: str | None = None,
+    relocated_examples: tuple[str, ...] = (),
+    adaptation_probes: tuple[AdaptationProbeObs, ...] = (),
+    ranking_unranked: bool = False,
+) -> BTSTaskObservation:
+    """Project three explicit contained reruns without claiming one merged rerun.
+
+    ``Relocation.publish`` intentionally accepts only an empty recipient, so its
+    public contract cannot construct a merged relocation tree.  This adapter
+    therefore preserves each validator-produced result and combines only their
+    disjoint, manifest-authorized test IDs; it never fabricates a single-run
+    baseline.
+    """
+
+    if len(runs) != 3 or len({identity for identity, _ in runs}) != 3:
+        raise ValueError("coexisting recipient composition requires three distinct runs")
+    projected = tuple(
+        (identity, from_pipeline_result(task, candidate_ranking, pipeline, task_digest=task_digest, classified_license=classified_license, relocated_examples=relocated_examples, adaptation_probes=adaptation_probes, ranking_unranked=ranking_unranked, normalize_staging_test_paths=True))
+        for identity, pipeline in sorted(runs, key=lambda item: item[0].sort_key)
+    )
+    members = tuple(sorted((member for _identity, observation in projected for member in observation.bts_members), key=lambda item: item.node))
+    if len({item.node for item in members}) != len(members):
+        raise ValueError("coexisting recipient composition has overlapping BTS members")
+    outcomes = tuple(sorted(
+        (test_id, outcome)
+        for _identity, observation in projected
+        for test_id, outcome in observation.rerun_outcome_vector or ()
+    ))
+    if len({test_id for test_id, _outcome in outcomes}) != len(outcomes):
+        raise ValueError("coexisting recipient composition has overlapping outcome IDs")
+    counts = None if any(observation.rerun_counts is None for _identity, observation in projected) else cast(
+        tuple[int, int, int],
+        tuple(sum((observation.rerun_counts or (0, 0, 0))[index] for _identity, observation in projected) for index in range(3)),
+    )
+    status = "complete" if all(observation.rerun_status == "complete" for _identity, observation in projected) else "reject"
+    return BTSTaskObservation(
+        task.task_id,
+        task.digest() if task_digest is None else task_digest,
+        candidate_ranking,
+        members,
+        tuple(sorted({test for _identity, observation in projected for test in observation.relocated_tests})),
+        relocated_examples,
+        status,
+        counts,
+        outcomes if counts is not None else None,
+        None,
+        any(observation.donor_import_observed for _identity, observation in projected),
+        classified_license,
+        adaptation_probes,
+        tuple(sorted({probe for _identity, observation in projected for probe in observation.probe_ran_ids})),
+        sum(observation.probe_passed for _identity, observation in projected),
+        sum(observation.probe_total for _identity, observation in projected),
+        ranking_unranked,
+        "coexisting-recipient-three-runs",
     )
 
 
@@ -918,13 +1062,51 @@ def manifest_from_dict(raw: object) -> BTSEvalManifest:
 def load_manifest(path: str | Path) -> BTSEvalManifest:
     if not isinstance(path, (str, Path)):
         raise TypeError("path must be text or Path")
-    return manifest_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    try:
+        # Benchmark task manifests are digest-bound by their callers after
+        # parsing, so this portable input may omit O_NOFOLLOW.
+        return manifest_from_dict(json.loads(read_regular_file(Path(path), maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict")))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("BTS evaluation manifest cannot be read as bounded UTF-8 JSON") from exc
 
 
 def _task_from_dict(raw: object) -> BTSEvalTask:
     value = _mapping(raw, "task")
-    _exact(value, {"task_id", "gold"}, "task")
-    return BTSEvalTask(_str(value["task_id"], "task_id"), _gold_from_dict(value["gold"]))
+    if set(value) not in ({"task_id", "gold"}, {"task_id", "gold", "observation"}):
+        raise ValueError("task has unknown or missing fields")
+    gold = _gold_from_dict(value["gold"])
+    return BTSEvalTask(
+        _str(value["task_id"], "task_id"),
+        gold,
+        _observation_from_dict(value["observation"]) if "observation" in value else _legacy_observation_plan(gold),
+        "observation" in value,
+    )
+
+
+def _observation_from_dict(raw: object) -> TaskObservationPlan:
+    value = _mapping(raw, "task observation")
+    _exact(value, {"candidates", "execution_candidates", "seed", "contract_tests", "required_behaviors"}, "task observation")
+    candidates = tuple(CandidateIdentity.from_dict(item) for item in _list(value["candidates"], "observation candidates"))
+    execution = tuple(CandidateIdentity.from_dict(item) for item in _list(value["execution_candidates"], "observation execution candidates"))
+    return TaskObservationPlan(
+        candidates,
+        execution,
+        CandidateIdentity.from_dict(value["seed"]),
+        _string_tuple(value["contract_tests"], "observation contract tests"),
+        _string_tuple(value["required_behaviors"], "observation required behaviors"),
+    )
+
+
+def _legacy_observation_plan(gold: BTSGold) -> TaskObservationPlan:
+    """Lift legacy v1 task setup once at manifest loading, never at observation."""
+
+    if gold.seed_span is None:
+        raise ValueError("legacy task has no observation seed")
+    candidates = tuple(sorted((item.identity for item in gold.candidate_qrels), key=lambda item: item.sort_key))
+    execution = candidates if len(candidates) == 3 and {item.slug for item in candidates} == {
+        "mmcloughlin/luhn", "litl/backoff", "niksite/url-normalize",
+    } else (gold.seed_span.identity,)
+    return TaskObservationPlan(candidates, execution, gold.seed_span.identity, tuple(sorted(gold.required_tests)), ("python.callable.sync@v1",))
 
 
 def _gold_from_dict(raw: object) -> BTSGold:
@@ -1058,6 +1240,7 @@ __all__ = [
     "MetricApplicability",
     "MetricRecord",
     "SeedSpan",
+    "TaskObservationPlan",
     "aggregate_task_runs",
     "compute_run_with_timing",
     "from_pipeline_result",

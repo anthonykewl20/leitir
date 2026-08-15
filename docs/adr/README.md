@@ -22,7 +22,7 @@ please use [`template.md`](template.md) as the basis.
 | [0015](0015-duplicate-abstraction-detection.md) | Duplicate abstraction detection | Accepted | 2026-08-13 |
 | [0016](0016-lineage-and-drift-tracking.md) | Lineage and drift tracking | Accepted | 2026-08-13 |
 | [0017](0017-occupied-recipient-validation-gate.md) | Occupied-recipient validation gate | Accepted | 2026-08-13 |
-| [0018](0018-manifest-authenticity.md) | Manifest authenticity | Proposed | 2026-08-13 |
+| [0018](0018-manifest-authenticity.md) | Manifest authenticity | Accepted | 2026-08-13 |
 | [0019](0019-integration-cost-evidence.md) | Integration-cost evidence | Accepted | 2026-08-13 |
 
 ## Status vocabulary

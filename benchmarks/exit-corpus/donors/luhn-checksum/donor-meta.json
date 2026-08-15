@@ -1,0 +1,1 @@
+{"case_id":"luhn-checksum","commit_sha":"c26e5c61fbc23006f265a71b9f87dac229e6ed99","license":{"file":"LICENSE","sha256":"e839aa96610def32e2551898e101976c0f2d9f7a42e82b2870ffaa82860cc884","spdx":"MIT"},"module_path":"luhn.py","repo":"mmcloughlin/luhn","schema_version":"leitir-exit-corpus-donor-meta-v1","seed":{"module":"luhn","qualified_name":"checksum"},"test_pythonpath":"."}

@@ -133,6 +133,7 @@ jobs:
               POLICY_SCHEMA,
               ContainmentPolicy,
               ReadOnlyMount,
+              ROOTFS_MOUNT_TARGETS,
               _digest_payload,
               _render_config,
               _validate_policy,
@@ -141,15 +142,9 @@ jobs:
 
           rootfs = Path(os.environ["SMOKE_ROOTFS"])
           sources = Path(os.environ["SMOKE_SOURCES"])
-          for directory in (
-              rootfs / "bin",
-              rootfs / "proc",
-              rootfs / "work",
-              rootfs / "staging-v1" / "donor",
-              rootfs / "staging-v1" / "contract",
-              sources / "donor",
-              sources / "contract",
-          ):
+          for destination in ROOTFS_MOUNT_TARGETS:
+              (rootfs / destination.lstrip("/")).mkdir(parents=True, exist_ok=True)
+          for directory in (rootfs / "bin", sources / "donor", sources / "contract"):
               directory.mkdir(parents=True, exist_ok=True)
 
           # /bin/true and its dynamic-loader closure make this a runnable
@@ -204,6 +199,9 @@ jobs:
           )
           if any(item not in config for item in required):
               raise RuntimeError("rendered containment smoke policy omitted a required control")
+          rendered_destinations = {mount.destination for mount in policy.readonly_mounts} | {policy.writable_tmpfs}
+          if not rendered_destinations <= set(ROOTFS_MOUNT_TARGETS) or "/proc" not in ROOTFS_MOUNT_TARGETS:
+              raise RuntimeError("rendered containment smoke policy has a mount target absent from its immutable rootfs")
           root_mount = f'mount {{ src: {json.dumps(str(rootfs))} dst: "/" fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }}'
           if root_mount not in config:
               raise RuntimeError("rendered containment smoke policy omitted its required rootfs bind")
@@ -277,8 +275,20 @@ jobs:
           rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
           rm -rf "$rootfs"
           # Populate before making the image immutable.  In particular, neither
-          # cp nor uv may be asked to create entries below a read-only rootfs.
-          install -d -m 0755 "$rootfs/proc" "$rootfs/usr/bin" "$rootfs/usr/lib" "$rootfs/opt/leitir/site-packages" "$rootfs/harness" "$rootfs/staging-v1/src" "$rootfs/staging-v1/tests/rewritten" "$rootfs/staging-v1/manifests" "$rootfs/staging-v1/probes"
+          # cp, uv, nor NsJail may be asked to create entries below a read-only
+          # rootfs.  ROOTFS_MOUNT_TARGETS is the renderer-owned deterministic
+          # target list, including mount_proc and all baseline/rerun mounts.
+          ROOTFS="$rootfs" PYTHONPATH=src python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from leitir.exec_sandbox import ROOTFS_MOUNT_TARGETS
+
+          rootfs = Path(os.environ["ROOTFS"])
+          for destination in ROOTFS_MOUNT_TARGETS:
+              (rootfs / destination.lstrip("/")).mkdir(parents=True, exist_ok=True)
+          PY
+          install -d -m 0755 "$rootfs/usr/bin" "$rootfs/usr/lib" "$rootfs/opt/leitir/site-packages" "$rootfs/harness"
           # setup-python pins 3.12; record the exact interpreter and stdlib
           # version in the evidence log.  The runner image is the reproducible
           # input: a changed image/version necessarily changes rootfs_digest.

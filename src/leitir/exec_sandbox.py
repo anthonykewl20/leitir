@@ -497,6 +497,31 @@ def _host_mapping_id(sudo_name: str, fallback: int) -> int:
     return fallback
 
 
+# Immutable rootfs builders must create these targets before ``chmod -R a-w``.
+# NsJail's createMountTarget runs after the read-only root bind and therefore
+# cannot create a missing destination itself.  This deterministic union covers
+# every fixed destination rendered below: mount_proc's /proc, the writable
+# tmpfs, and the baseline/rerun staging mounts.  File-granular rerun mounts
+# land below the pre-created staging directories.
+ROOTFS_MOUNT_TARGETS = (
+    "/",
+    "/contract",
+    "/donor",
+    "/proc",
+    "/staging-v1",
+    "/staging-v1/contract",
+    "/staging-v1/donor",
+    "/staging-v1/harness",
+    "/staging-v1/manifests",
+    "/staging-v1/probes",
+    "/staging-v1/src",
+    "/staging-v1/tests",
+    "/staging-v1/tests/original",
+    "/staging-v1/tests/rewritten",
+    "/work",
+)
+
+
 def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str, ...] = ()) -> str:
     # GitHub's runner-class mount sources are owned by the invoking runner user.
     # NsJail drops to this mapping before building the bind-mounted root, so

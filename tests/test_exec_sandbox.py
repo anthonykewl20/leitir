@@ -389,7 +389,7 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
 def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_sources(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
-    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setenv("SUDO_UID", "1001")
     monkeypatch.setenv("SUDO_GID", "1002")
 
@@ -402,7 +402,7 @@ def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_source
 def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_invoker(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
-    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(sandbox.os, "getuid", lambda: 1003)
     monkeypatch.setattr(sandbox.os, "getgid", lambda: 1004)
     monkeypatch.setenv("SUDO_UID", "not-an-id")
@@ -439,6 +439,13 @@ def test_generated_config_matches_the_passing_handwritten_smoke_except_policy_mo
 
     actual_root_mount = next(line for line in actual.splitlines() if ' dst: "/" ' in line)
     expected_root_mount = next(line for line in expected.splitlines() if ' dst: "/" ' in line)
+    rendered_destinations = {
+        json.loads(line.split(" dst: ", 1)[1].split(" fstype:", 1)[0])
+        for line in actual.splitlines()
+        if line.startswith("mount {")
+    }
+    assert rendered_destinations <= set(sandbox.ROOTFS_MOUNT_TARGETS)
+    assert "mount_proc: true" in actual and "/proc" in sandbox.ROOTFS_MOUNT_TARGETS
     assert non_mount_lines(actual) == non_mount_lines(expected)
     # Only the policy-pinned source differs; the root bind's destination and
     # security shape must remain identical to the passing handwritten smoke.

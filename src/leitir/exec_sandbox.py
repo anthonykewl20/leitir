@@ -488,22 +488,7 @@ def _protobuf_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _host_mapping_id(sudo_name: str, fallback: int) -> int:
-    """Return the invoking host identity for a mount-source user mapping."""
-
-    sudo_identity = os.environ.get(sudo_name)
-    if getattr(os, "geteuid", lambda: -1)() == 0 and sudo_identity is not None and sudo_identity.isdecimal():
-        return int(sudo_identity)
-    return fallback
-
-
 def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str, ...] = ()) -> str:
-    # The mounted sources live below the invoking user's temporary directory.
-    # Preserve that user's host identity so NsJail can traverse them after it
-    # enters the child user namespace.  The fallback keeps rendering portable
-    # for the Windows determinism test; launch is Linux-only.
-    host_uid = _host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
-    host_gid = _host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
     lines = [
         "mode: ONCE",
         "keep_env: false",
@@ -543,8 +528,8 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f"rlimit_core: {policy.rlimit_core_mb}",
         "rlimit_core_type: VALUE",
         f"seccomp_string: {_protobuf_string(policy.seccomp_string)}",
-        f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}',
-        f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
+        'uidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
+        'gidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     for mount in policy.readonly_mounts:

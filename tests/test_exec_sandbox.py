@@ -343,8 +343,6 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
     policy = _policy(fake_nsjail)
     config_text = sandbox._render_config(policy)
-    host_uid = getattr(os, "getuid", lambda: 0)()
-    host_gid = getattr(os, "getgid", lambda: 0)()
     required = (
         "mode: ONCE",
         "keep_env: false",
@@ -365,23 +363,10 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
     )
     for control in required:
         assert control in config_text
-    assert f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}' in config_text
-    assert f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}' in config_text
     assert (
         f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
         'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
     ) in config_text
-
-
-def test_generated_nsjail_config_maps_sudo_invoker_for_mount_sources(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
-    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0)
-    monkeypatch.setenv("SUDO_UID", "1001")
-    monkeypatch.setenv("SUDO_GID", "1002")
-
-    config_text = sandbox._render_config(_policy(fake_nsjail))
-
-    assert 'uidmap { inside_id: "65534" outside_id: "1001" count: 1 use_newidmap: false }' in config_text
-    assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
 
 
 @pytest.mark.skipif(

@@ -50,6 +50,11 @@ jobs:
         id: smoke
         shell: bash
         run: |
+          # NsJail drops to the mapped child identity before it assembles the
+          # mount tree.  The generated rootfs and input sources are below this
+          # runner-owned directory, so make its pathname traversable without
+          # granting write access.
+          chmod a+rx "$RUNNER_TEMP"
           host_uid="$(id -u)"
           host_gid="$(id -g)"
           config="$RUNNER_TEMP/nsjail-phase1.cfg"
@@ -470,7 +475,7 @@ jobs:
           LEITIR_ENABLE_LIVE_E2E: '1'
           PYTHONPATH: src
         run: >-
-          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
+          chmod a+rx "$RUNNER_TEMP" && sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
           --corpus-root benchmarks/exit-corpus --donors-dir ${{ runner.temp }}/leitir-corpus-root
           --out runs/exit-gate
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}

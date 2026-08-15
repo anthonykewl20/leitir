@@ -42,6 +42,14 @@ deterministic `METRICS.md`.
 `METRICS.md` intentionally omits a generated-at timestamp so identical input
 evidence has identical publication bytes.
 
+When a task's selected donor cannot be promoted to an exact snapshot, its run
+record retains a typed `execution_failure` and excludes only execution-dependent
+metrics with the same named reason. Candidate discovery, suitability, ranking,
+and license evidence remain recorded; the task is never silently omitted. A
+different task-local assembly or pipeline error is also recorded as a typed
+failure with all task metrics not applicable, while the driver continues with
+the remaining tasks.
+
 ## Current state
 
 The deterministic evaluation harness is landed. The six real tasks remain an

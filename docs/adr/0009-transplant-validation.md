@@ -466,6 +466,15 @@ imports classified diagnostically; all applicable probes passing in a fresh
 child; and every execution gate passing. Corpus acceptance is the AND of all
 cases, sorted by case ID; scheduling is unobservable.
 
+Benchmark candidate discovery is not transplant validation. A task runner may
+inspect structurally materialized immutable candidates to collect C3 suitability
+and ranking evidence, but promotion of every planned execution identity into
+BTS, relocation, baseline, or rerun still requires the exact full-tree snapshot
+defined by ADR-0008. If promotion fails, the benchmark records the typed reason
+on that task and marks only its execution-dependent metrics not applicable; it
+does not execute the donor, silently drop the task, or invalidate independent
+task observations.
+
 The normal suite does not globally export donor opt-in. A dedicated offline
 Linux/nsjail containment job sets `LEITIR_ENABLE_DONOR_EXECUTION=1`; live refresh
 also sets `LEITIR_ENABLE_LIVE_E2E=1`. This is the **v0.1.2** milestone exit

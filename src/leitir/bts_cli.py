@@ -165,6 +165,34 @@ def load_donor_snapshot(root: Path, owner: str, repo: str, commit_sha: str, *, h
     )
 
 
+def load_donor_materialization(root: Path, owner: str, repo: str, commit_sha: str, *, host: str = "github.com") -> Path:
+    """Open a structurally verified materialization without granting snapshot authority.
+
+    Discovery may inspect a materialized candidate selected from the benchmark
+    search space, but transplant construction must continue to use
+    :func:`load_donor_snapshot`, which additionally requires exact Git parity.
+    """
+
+    target = target_path(root, owner, repo, commit_sha, host=host)
+    with _target_lock(target.parent, target, commit_sha):
+        manifest = read_valid_manifest(target, owner, repo, commit_sha, host=host)
+    if manifest is None:
+        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor shelf is not structurally verified", "bts_cli_shelf_unverified_v1")
+    if manifest.get("source") != "git-commit":
+        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor source is not a Git commit", "bts_cli_source_unsupported_v1")
+    if manifest.get("verified") not in (True, "sampled"):
+        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor materialization verification is incomplete", "bts_cli_verification_v1")
+    tree_hash = manifest.get("materialized_tree_hash")
+    if (
+        not isinstance(tree_hash, str)
+        or not tree_hash
+        or manifest.get("materialized_tree_hash_algorithm") != TREE_HASH_ALGORITHM
+        or manifest.get("materialized_tree_hash_scope") != FULL
+    ):
+        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor manifest integrity identity is invalid", "bts_cli_manifest_integrity_v1")
+    return target
+
+
 def _read_regular(
     path: Path,
     *,
@@ -715,5 +743,5 @@ def write_artifacts(result: BTSComputeArtifacts, out_dir: Path) -> None:
 
 __all__ = [
     "CLI_SCHEMA_VERSION", "DEFAULT_MAX_INPUT_BYTES", "DEFAULT_POLICY_AUTHORITY", "DEFAULT_POLICY_ID", "POLICY_SCHEMA_VERSION", "BTSComputeArtifacts", "SeedSelector",
-    "load_donor_snapshot", "load_resolution_policy", "python_graph_provider", "resolve_seed", "run_bts_compute", "tree_sitter_graph_provider", "write_artifacts",
+    "load_donor_materialization", "load_donor_snapshot", "load_resolution_policy", "python_graph_provider", "resolve_seed", "run_bts_compute", "tree_sitter_graph_provider", "write_artifacts",
 ]

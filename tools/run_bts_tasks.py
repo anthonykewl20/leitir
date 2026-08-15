@@ -24,11 +24,12 @@ from leitir.bts_bench import (
     BTSEvalTask,
     BTSTaskObservation,
     CandidateIdentity,
+    TaskExecutionFailure,
     coexisting_recipient_three_runs_observation,
     from_pipeline_result,
     load_manifest,
 )
-from leitir.bts_cli import load_donor_snapshot
+from leitir.bts_cli import load_donor_materialization, load_donor_snapshot
 from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult, run_bts_pipeline
 from leitir.materialize import materialize_github_repo
@@ -232,11 +233,21 @@ def _split_pin(pin: DonorPin) -> tuple[str, str]:
 
 
 def validate_donor_pins(root: Path, plan: TaskPlan) -> None:
-    """Require every already-materialized shelf to be an exact verified pin."""
+    """Require every candidate search-space pin to materialize structurally."""
 
     for pin in sorted({pin for _, _, pins, _ in plan.tasks for pin in pins}):
         owner, repository = _split_pin(pin)
-        load_donor_snapshot(root, owner, repository, pin.commit_sha)
+        load_donor_materialization(root, owner, repository, pin.commit_sha)
+
+
+def validate_task_snapshot_pins(root: Path, task: BTSEvalTask) -> None:
+    """Require exact parity only for identities the observation plan executes."""
+
+    if task.observation is None:
+        raise BTSDriverError(f"task has no non-gold observation plan: {task.task_id}")
+    for identity in task.observation.execution_candidates:
+        owner, repository = _split_pin(DonorPin(identity.slug, identity.commit_sha))
+        load_donor_snapshot(root, owner, repository, identity.commit_sha)
 
 
 def materialize_donor_pins(root: Path, plan: TaskPlan) -> None:
@@ -274,9 +285,20 @@ class _PipelineTaskRunner:
 
     def run(self, task: BTSEvalTask) -> BTSTaskObservation:
         module = _pipeline_cli()
+        if task.observation is None:
+            raise PipelineAssemblyError("task has no non-gold observation plan")
         if self.substrate is None:
-            # Preserve the assembler's typed substrate-first fail-closed seam.
+            # Preserve the substrate-first boundary: no materialized candidate
+            # bytes reach discovery before the execution authority exists.
             module.assemble_bts_task_request(task, self.root)
+        # Discovery/ranking reads the complete candidate search space under the
+        # structural gate. It must remain observable even when the selected
+        # donor cannot be promoted to an exact execution snapshot.
+        ranking, classified_license, ranking_unranked = module._rank_materialized_candidates(task, self.root)
+        try:
+            validate_task_snapshot_pins(self.root, task)
+        except BTSError as exc:
+            return self._snapshot_failure_observation(task, ranking, classified_license, ranking_unranked, exc)
         sidecars = self.sidecars.get(task.task_id)
         if sidecars is None:
             raise BTSError(
@@ -284,8 +306,6 @@ class _PipelineTaskRunner:
                 f"BTS task sidecars are missing for {task.task_id}",
                 detail_code="pipeline_cli_task_sidecars_v1",
             )
-        if task.observation is None:
-            raise PipelineAssemblyError("task has no non-gold observation plan")
         primary_tests = module.execution_contract_tests(task, task.observation.seed, sidecars.contract_tests)
         assembly = module.assemble_bts_task_request(
             task,
@@ -366,6 +386,91 @@ class _PipelineTaskRunner:
             adaptation_probes=probes,
             ranking_unranked=ranking_unranked,
             normalize_staging_test_paths=True,
+        )
+
+    def _snapshot_failure_observation(
+        self,
+        task: BTSEvalTask,
+        ranking: tuple[CandidateIdentity, ...],
+        classified_license: str | None,
+        ranking_unranked: bool,
+        error: BTSError,
+    ) -> BTSTaskObservation:
+        """Record a named typed snapshot failure while preserving discovery evidence."""
+
+        detail = error.evidence.detail_code or "unknown"
+        assert task.observation is not None
+        identities = tuple(sorted(
+            f"{identity.slug}@{identity.commit_sha}"
+            for identity in task.observation.execution_candidates
+        ))
+        reason = f"snapshot_validation:{error.reason.value}:{detail}:{','.join(identities)}"
+        execution_metrics = tuple(
+            metric
+            for metric in (
+                "adaptation_integrity", "donor_import_free", "example_recall",
+                "hallucinated_dependency_rate", "helper_recall", "integration_success",
+                "missing_dependency_rate", "probe_success", "seed_symbol_exact",
+                "seed_symbol_line_overlap", "test_recall",
+            )
+        )
+        return BTSTaskObservation(
+            task.task_id,
+            self.task_digests[task.task_id] if task.task_id in self.task_digests else task.digest(),
+            ranking,
+            (), (), (), "reject", None, None, None, False, classified_license,
+            (), (), 0, 0, ranking_unranked,
+            not_applicable_metrics=execution_metrics,
+            not_applicable_reason=reason,
+            execution_failure=TaskExecutionFailure(error.reason.value, detail, error.evidence.message, identities),
+        )
+
+
+class _ContinuingTaskRunner:
+    """Turn task-local driver failures into canonical partial-run evidence."""
+
+    def __init__(self, runner: Any) -> None:
+        self._runner = runner
+
+    def run(self, task: BTSEvalTask) -> BTSTaskObservation:
+        try:
+            return self._runner.run(task)
+        except BTSError as error:
+            return self._failure_observation(task, error)
+        except Exception as cause:
+            failure = BTSError(
+                BTSRejectReason.REJECT_HARD_GATE_FAILED,
+                "BTS task execution failed",
+                detail_code="bts_task_execution_error_v1",
+                cause=cause,
+            )
+            return self._failure_observation(task, failure)
+
+    @staticmethod
+    def _failure_observation(task: BTSEvalTask, error: BTSError) -> BTSTaskObservation:
+        """Represent an unobservable task result without inventing metric data."""
+
+        detail = error.evidence.detail_code or "unknown"
+        identities = () if task.observation is None else tuple(sorted(
+            f"{identity.slug}@{identity.commit_sha}"
+            for identity in task.observation.execution_candidates
+        ))
+        reason = f"task_execution:{error.reason.value}:{detail}:{','.join(identities)}"
+        return BTSTaskObservation(
+            task.task_id,
+            task.digest(),
+            (), (), (), (), "reject", None, None, None, False, None,
+            (), (), 0, 0,
+            not_applicable_metrics=(
+                "adaptation_integrity", "candidate_top1", "candidate_top10",
+                "candidate_top3", "donor_import_free", "example_recall",
+                "hallucinated_dependency_rate", "helper_recall", "integration_success",
+                "license_accuracy", "missing_dependency_rate", "probe_success",
+                "seed_symbol_exact", "seed_symbol_line_overlap", "test_recall",
+                "time_saved",
+            ),
+            not_applicable_reason=reason,
+            execution_failure=TaskExecutionFailure(error.reason.value, detail, error.evidence.message, identities),
         )
 
 
@@ -457,7 +562,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     materialize_donor_pins(args.root, plan)
     task_digests = {task.task_id: task.digest() for task in tasks}
-    run = BTSEvalBenchmark().execute(combined_manifest(tasks), _PipelineTaskRunner(args.root, sidecars, substrate, task_digests))
+    runner = _PipelineTaskRunner(args.root, sidecars, substrate, task_digests)
+    run = BTSEvalBenchmark().execute(combined_manifest(tasks), _ContinuingTaskRunner(runner))
     write_run(args.out, run.to_json().encode("utf-8"))
     return 0
 

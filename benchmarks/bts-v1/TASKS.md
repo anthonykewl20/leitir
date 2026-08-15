@@ -81,6 +81,15 @@ layout `tasks/<task-id>/contract_tests/*.py` and
 for S2/nsjail containment; the driver has no unsandboxed donor-execution
 fallback.
 
+Candidate pins are the C3 search space and require structural materialization:
+an immutable 40-hex commit, resolvable repository, successful materialization,
+and a full-tree integrity identity. Exact Git parity is required only when an
+observation-plan execution candidate is promoted to BTS/relocation/rerun. If
+that promotion fails, the task still records C3 discovery/ranking evidence, but
+its canonical run record carries the typed execution failure and marks every
+execution-dependent metric not applicable with that same reason. Other tasks
+continue; no sampled or drifted candidate is executed.
+
 ## Observation chain
 
 The task runner captures candidate identities before grading, builds a minimal

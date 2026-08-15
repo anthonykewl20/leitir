@@ -8,7 +8,7 @@ is a plausible component-level alternative, not an interchangeable answer.
 | Task | Grade-2 seed | Contract baseline (pass/fail/skip) | License |
 | --- | --- | --- | --- |
 | `async-retry-backoff` | `litl/backoff@d82b23c42d7a7e2402903e71e7a7f03014a00076` `backoff._jitter.full_jitter` lines 18-28 | 9/0/0 | MIT |
-| `url-normalization-compare` | `niksite/url-normalize@9a9a3214c2b3bdab09ba7b19c8f9d22aa4cfee31` `url_normalize.normalize_fragment.normalize_fragment` lines 8-27 | 9/0/0 | MIT |
+| `url-normalization-compare` | `niksite/url-normalize@9a9a3214c2b3bdab09ba7b19c8f9d22aa4cfee31` `url_normalize.normalize_fragment.normalize_fragment` lines 1-27 | 9/0/0 | MIT |
 | `lru-ttl-decisions` | `lonelyenvoy/python-memoization@9c1a0d13e8fbad1f7f4a05d5b41873a7ca5b6aaa` `memoization.caching.general.values_with_ttl.make_cache_value` lines 4-5 | 6/0/0 | MIT |
 | `binary-wire-decode` | `moontreeapp/electrumx-evr@df269a63bcb2fd09bb0fea9142f31f6598c079a0` `electrumx.lib.tx.read_le_uint32` lines 143-145 | 11/0/0 | MIT |
 | `worker-shutdown-predicate` | `python/mypy@d6d7295e6721a6d97bd474569820f6ea10e983dd` `mypy.build_worker.worker.should_shutdown` lines 140-147 | 3/0/0 | MIT |
@@ -110,3 +110,9 @@ LRU-eviction search (classes, closures, method dispatch, and an AGPL exclusion).
 Thus `binary-wire-decode` uses fixed-width/cursor primitives and
 `lru-ttl-decisions` uses TTL decisions; their missing mutation steps are honest
 recipient adaptations, not asserted donor provenance.
+
+`worker-shutdown-predicate` is a permanent honest partial: the pinned mypy donor
+contains 1,921 files, which exceeds the verification cap, so materialization was
+sampled and an exact-parity snapshot is structurally unavailable. Its discovery
+and ranking metrics are real; execution-dependent metrics are
+NA-with-reason `bts_cli_parity_v1` rather than claimed as an execution result.

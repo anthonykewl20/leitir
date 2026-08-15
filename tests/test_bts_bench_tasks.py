@@ -78,7 +78,7 @@ TASK_BASELINE_COUNTS = {
     "url-normalization-compare": (9, 0, 0),
     "worker-shutdown-predicate": (3, 0, 0),
 }
-PINNED_TASK_PLAN_SHA256 = "de74b93dfc1957aacee40405e772477306347e6216dc8cf655d3b447e9d1976f"
+PINNED_TASK_PLAN_SHA256 = "e89e9b3c074657fee906b89a09404367e3fdebc4001d06ff66271d71e0fc8e2c"
 
 
 class GoldDerivedSyntheticRunner:

@@ -44,9 +44,9 @@ def fake_nsjail(tmp_path: Path) -> tuple[Path, str, str]:
         f"#!{sys.executable}\n"
         "import os, sys\n"
         f"VERSION = {timestamped_version!r}\n"
-        "if sys.argv[1:] == ['--version']:\n"
-        "    print(VERSION)\n"
-        "    raise SystemExit(0)\n"
+        "if sys.argv[1:] == ['--help']:\n"
+        "    sys.stderr.write('usage: nsjail [options]\\n' * 512)\n"
+        "    raise SystemExit(255)\n"
         "separator = sys.argv.index('--')\n"
         "argv = sys.argv[separator + 1:]\n"
         "os.execv(argv[0], argv)\n",
@@ -166,6 +166,21 @@ def test_only_exact_one_enables(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tu
     plan = prepare_execution(_policy(fake_nsjail))
     assert plan.opt_in_satisfied is True
     assert "LEITIR_ENABLE_DONOR_EXECUTION" not in plan.to_json()
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_nsjail_help_usage_is_an_accepted_bounded_liveness_probe(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str],
+) -> None:
+    """Pinned nsjail exits 255 with usage for --help; identity remains pin-derived."""
+
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    plan = prepare_execution(_policy(fake_nsjail))
+
+    assert plan.nsjail_argv[0] == str(fake_nsjail[0])
 
 
 def test_non_linux_host_rejects(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:

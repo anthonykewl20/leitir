@@ -16,7 +16,7 @@ import shutil
 import stat
 import tempfile
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
@@ -466,7 +466,7 @@ def _allowed_unchanged_import(module: str, module_map: ModuleMap, external: froz
     )
 
 
-def _rewrite_python(data: bytes, module_context: str, module_map: ModuleMap, external: frozenset[str], role: str) -> bytes:
+def _rewrite_python(data: bytes, module_context: str, module_map: ModuleMap, external: frozenset[str], role: str, import_aliases: Mapping[str, str] | None = None) -> bytes:
     try:
         text = data.decode("utf-8", errors="strict")
         tree = ast.parse(text, type_comments=True, feature_version=(3, 11))
@@ -495,14 +495,15 @@ def _rewrite_python(data: bytes, module_context: str, module_map: ModuleMap, ext
             raise _reject(BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "conditional, fallback, or local import is unsupported", "relocate_conditional_import_v1")
         if isinstance(node, ast.Import):
             for alias in node.names:
-                rewritten = module_map.rewrite(alias.name)
-                donor_rooted = alias.name.split(".", 1)[0] in module_map.donor_roots
+                mapped = ({} if import_aliases is None else import_aliases).get(alias.name, alias.name)
+                rewritten = module_map.rewrite(mapped)
+                donor_rooted = mapped.split(".", 1)[0] in module_map.donor_roots
                 if rewritten is None:
                     if donor_rooted:
                         raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "donor import has no unambiguous mapping", "relocate_unresolved_import_v1")
-                    if not _allowed_unchanged_import(alias.name, module_map, external):
+                    if not _allowed_unchanged_import(mapped, module_map, external):
                         raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "import is neither stdlib nor declared external", "relocate_undeclared_external_import_v1")
-                    rewritten = alias.name
+                    rewritten = mapped
                 else:
                     alias_start, _ = _node_range(alias, starts)
                     replacements.append((alias_start, alias_start + len(alias.name.encode()), rewritten.encode()))
@@ -516,11 +517,12 @@ def _rewrite_python(data: bytes, module_context: str, module_map: ModuleMap, ext
             if any(alias.name == "*" for alias in node.names):
                 raise _reject(BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT, "star imports cannot be rewritten", "relocate_star_import_v1")
             absolute = _absolute_relative(module_context, node.level, node.module) if node.level else (node.module or "")
-            rewritten = module_map.rewrite(absolute)
-            donor_rooted = absolute.split(".", 1)[0] in module_map.donor_roots
-            if rewritten is None and donor_rooted:
+            mapped = ({} if import_aliases is None else import_aliases).get(absolute, absolute)
+            rewritten = module_map.rewrite(mapped)
+            donor_rooted = mapped.split(".", 1)[0] in module_map.donor_roots
+            if rewritten is None and donor_rooted and not _allowed_unchanged_import(mapped, module_map, external):
                 raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "donor import has no unambiguous mapping", "relocate_unresolved_import_v1")
-            if rewritten is None and not _allowed_unchanged_import(absolute, module_map, external):
+            if rewritten is None and not _allowed_unchanged_import(mapped, module_map, external):
                 raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "import is neither stdlib nor declared external", "relocate_undeclared_external_import_v1")
             if rewritten is not None:
                 start, end = _node_range(node, starts)
@@ -635,6 +637,7 @@ def relocate_tests(
     tests: tuple[ContractTest, ...],
     declared_external_modules: tuple[str, ...] = (),
     recipient_bindings: RecipientBindingManifest = EMPTY_RECIPIENT_BINDINGS,
+    test_import_aliases: tuple[tuple[str, str], ...] = (),
 ) -> Relocation:
     """Produce the canonical empty-recipient tree; never import or execute it."""
     artifact = _validate_bts(bts)
@@ -647,6 +650,11 @@ def relocate_tests(
     external = frozenset(_module(item, "declared external module") for item in declared_external_modules)
     if len(external) != len(declared_external_modules):
         raise ValueError("duplicate declared external module")
+    if test_import_aliases != tuple(sorted(set(test_import_aliases))) or not all(
+        isinstance(alias, str) and isinstance(module, str) for alias, module in test_import_aliases
+    ):
+        raise ValueError("test import aliases must be sorted unique text pairs")
+    import_aliases = dict(test_import_aliases)
     donor_modules = sorted({member.node.module for member in artifact.members})
     missing = [module for module in donor_modules if module_map.exact(module) is None]
     if missing:
@@ -736,7 +744,7 @@ def relocate_tests(
         if test.path in seen_tests:
             raise _reject(BTSRejectReason.REJECT_DUPLICATE_RESULT, "duplicate contract test path", "relocate_test_path_collision_v1")
         seen_tests.add(test.path)
-        rewritten = _rewrite_python(test.content, test.module, module_map, external, "test")
+        rewritten = _rewrite_python(test.content, test.module, module_map, external, "test", import_aliases)
         files.append(RelocatedFile(f"{RELOCATION_LAYOUT}/tests/original/{test.path}", FileRole.TEST_ORIGINAL, test.content))
         files.append(RelocatedFile(f"{RELOCATION_LAYOUT}/tests/rewritten/{test.path}", FileRole.TEST_REWRITTEN, rewritten))
 
@@ -747,6 +755,7 @@ def relocate_tests(
             "layout": RELOCATION_LAYOUT,
             "member_equivalence_digest": artifact.member_equivalence_digest,
             "module_map_digest": module_map.digest,
+            "test_import_aliases": list(test_import_aliases),
             "recipient_binding_manifest_digest": recipient_bindings.digest,
             "reserved_module_manifest_digest": module_map.reserved.digest,
             "schema_version": RELOCATION_SCHEMA_VERSION,

@@ -30,7 +30,7 @@ import stat
 import tempfile
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import NoReturn, cast
 
@@ -83,7 +83,7 @@ from leitir.exec_sandbox import (
     run_contained,
 )
 from leitir.exit_corpus import content_digest, load_corpus_manifest
-from leitir.graph.model import NodeId
+from leitir.graph.model import Graph, Node, NodeId, SourceRef
 from leitir.lockfiles import DependencyManifestPolicy
 from leitir.occupied import (
     OccupiedAttachmentPolicy,
@@ -604,14 +604,63 @@ class BTSTaskRequestAssembly:
         })
 
 
-def _prepared(snapshot: DonorSnapshot, seed: bts_cli.SeedSelector, policy_path: Path | None) -> tuple[ResolutionPolicy, NodeId, BTSResult]:
-    graph = bts_cli.python_graph_provider(snapshot)
-    if not callable(graph):
+def _with_authorized_seed_span(graph: Graph, selected: NodeId, span: tuple[int, int] | None) -> Graph:
+    """Apply a corpus-recorded enclosing span before deriving BTS evidence."""
+
+    if span is None:
+        return graph
+    start_line, end_line = span
+    if start_line < 1 or end_line < start_line:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "exit corpus seed span is invalid",
+            detail_code="pipeline_cli_exit_seed_span_v1",
+        )
+    nodes: list[Node] = []
+    matched = False
+    for node in graph.nodes:
+        if node.id != selected:
+            nodes.append(node)
+            continue
+        source = node.source
+        if source is None or end_line != source.end_line or start_line > source.start_line:
+            raise BTSError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "exit corpus seed span does not enclose the extracted seed",
+                detail_code="pipeline_cli_exit_seed_span_v1",
+            )
+        nodes.append(replace(node, source=SourceRef(
+            source.slug, source.commit_sha, source.path, source.blob_sha,
+            start_line, 0, end_line, source.end_col,
+        )))
+        matched = True
+    if not matched:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "exit corpus seed is absent from the extracted graph",
+            detail_code="pipeline_cli_exit_seed_span_v1",
+        )
+    return Graph(graph.schema_version, tuple(nodes), graph.edges, graph.unresolved, graph.coverage)
+
+
+def _prepared(
+    snapshot: DonorSnapshot,
+    seed: bts_cli.SeedSelector,
+    policy_path: Path | None,
+    *,
+    authorized_seed_span: tuple[int, int] | None = None,
+) -> tuple[ResolutionPolicy, NodeId, BTSResult]:
+    base_provider = bts_cli.python_graph_provider(snapshot)
+    if not callable(base_provider):
         raise TypeError("Python graph provider must be callable")
-    rendered = graph(snapshot.source_root)
+    rendered = base_provider(snapshot.source_root)
     selected = bts_cli.resolve_seed(rendered, seed)
+    rendered = _with_authorized_seed_span(rendered, selected, authorized_seed_span)
     resolution = bts_cli.load_resolution_policy(policy_path, rendered) if policy_path is not None else bts_cli._default_resolution_policy()
-    bts = compute_bts(snapshot, selected, graph, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution)
+    def provider(root: Path) -> Graph:
+        return _with_authorized_seed_span(base_provider(root), selected, authorized_seed_span)
+
+    bts = compute_bts(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution)
     return resolution, selected, bts
 
 
@@ -627,6 +676,7 @@ def _relocate_prepared(
     *,
     recipient_package: str,
     contract_tests: tuple[ContractTest, ...],
+    test_import_aliases: tuple[tuple[str, str], ...] = (),
 ) -> Relocation:
     """Compute E1 before S2 policy assembly, without executing donor bytes."""
 
@@ -634,35 +684,48 @@ def _relocate_prepared(
     modules = tuple(sorted({member.node.module for member in bts.members}))
     module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
     source_files = tuple(
-        SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
-        for item in bts.required_files
+        SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
+        for path in sorted({item.path for item in bts.required_files})
     )
-    external_modules = tuple(sorted({item.node.module for item in bts.members if item.disposition.value == "external"}))
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
     return relocate_tests(
         preliminary,
         module_map=module_map,
         source_files=source_files,
         tests=contract_tests,
         declared_external_modules=external_modules,
+        test_import_aliases=test_import_aliases,
     )
 
 
-def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None) -> BTSPipelineRequest:
+def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> BTSPipelineRequest:
     """Build the shared non-executing request portion for CLI and bench callers."""
 
     bts = _complete_bts(preliminary)
     modules = tuple(sorted({member.node.module for member in bts.members}))
     module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
-    source_files = tuple(SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)) for item in bts.required_files)
+    source_files = tuple(
+        SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
+        for path in sorted({item.path for item in bts.required_files})
+    )
     probe_set = ProbeSet.pin(bts_digest=bts.bts_digest, seed=selected, bts_members=tuple(member.node for member in bts.members), catalog_edges=(), probes=())
-    external_modules = tuple(sorted({item.node.module for item in bts.members if item.disposition.value == "external"}))
-    return BTSPipelineRequest(snapshot, selected, bts_cli.python_graph_provider(snapshot), BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, precomputed_relocation=precomputed_relocation)
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    provider = cast(Callable[[Path], Graph], bts_cli.python_graph_provider(snapshot))
+    if authorized_seed_span is not None:
+        base_provider = provider
+
+        def span_provider(root: Path) -> Graph:
+            return _with_authorized_seed_span(base_provider(root), selected, authorized_seed_span)
+
+        provider = span_provider
+
+    return BTSPipelineRequest(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, test_import_aliases=test_import_aliases, precomputed_relocation=precomputed_relocation)
 
 
 def _license_from_materialized_donor(root: Path) -> str | None:
     """Classify the pinned donor's own license bytes, never benchmark gold."""
 
-    for name in ("LICENSE", "LICENSE.txt", "LICENSE.md", "COPYING"):
+    for name in ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENCE", "LICENCE.txt", "LICENCE.md", "COPYING", "COPYING.txt"):
         candidate = root / name
         try:
             text = read_regular_file(candidate, maximum_bytes=256 * 1024, no_follow=False).decode("utf-8", "strict")
@@ -1133,6 +1196,57 @@ def _require_runtime_ratification(
         ) from exc
 
 
+def _exit_seed_span(corpus_root: Path, case_id: str, seed: Mapping[str, object]) -> tuple[int, int] | None:
+    """Load an optional, corpus-reviewed enclosing seed span from donor metadata."""
+
+    path = corpus_root / "donors" / case_id / "donor-meta.json"
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False).decode("utf-8", "strict"))
+        metadata_seed = raw["seed"]
+        if not isinstance(metadata_seed, dict):
+            raise ValueError("metadata seed is not an object")
+        start_line = metadata_seed.get("start_line")
+        end_line = metadata_seed.get("end_line")
+        if start_line is None and end_line is None:
+            return None
+        if (
+            set(metadata_seed) != {"module", "qualified_name", "start_line", "end_line"}
+            or metadata_seed["module"] != seed.get("module")
+            or metadata_seed["qualified_name"] != seed.get("qualified_name")
+            or type(start_line) is not int
+            or type(end_line) is not int
+            or start_line < 1
+            or end_line < start_line
+        ):
+            raise ValueError("metadata seed span is malformed")
+        return start_line, end_line
+    except (OSError, UnicodeError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "exit corpus donor metadata seed span is malformed",
+            detail_code="pipeline_cli_exit_seed_span_v1",
+            cause=exc,
+        ) from exc
+
+
+def _exit_module_aliases(preliminary: BTSResult, import_roots: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """Map public import-root spellings to graph modules without changing source IDs."""
+
+    bts = _complete_bts(preliminary)
+    modules = {member.node.module for member in bts.members}
+    aliases: set[tuple[str, str]] = set()
+    for root in import_roots:
+        if root == ".":
+            continue
+        prefix = root.replace("/", ".") + "."
+        for module in modules:
+            if module.startswith(prefix):
+                aliases.add((module.removeprefix(prefix), module))
+    return tuple(sorted(aliases))
+
+
 def exit_gate_run(
     corpus_manifest_path: Path,
     donors_dir: Path,
@@ -1251,15 +1365,24 @@ def exit_gate_run(
             raise AssertionError("validated policy path has invalid shape")
         seed_module = cast(str, seed["module"])
         seed_name = cast(str, seed["qualified_name"])
+        authorized_seed_span = _exit_seed_span(root, case_id, seed)
         resolution, selected, preliminary = _prepared(
             snapshot,
             bts_cli.SeedSelector(seed_module, seed_name if seed_name.startswith(seed_module + ".") else f"{seed_module}.{seed_name}"),
             None if policy_path is None else root / policy_path,
+            authorized_seed_span=authorized_seed_span,
         )
         if preliminary.status is not BTSStatus.COMPLETE or preliminary.bts is None:
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "exit pipeline requires a complete static BTS", detail_code="pipeline_cli_non_complete_bts_v1")
-        package = f"transplant.{raw_case['case_id']}"
-        relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=tests)
+        package = f"transplant.{case_id.replace('-', '_')}"
+        test_import_aliases = _exit_module_aliases(preliminary, import_roots)
+        relocation = _relocate_prepared(
+            snapshot,
+            preliminary,
+            recipient_package=package,
+            contract_tests=tests,
+            test_import_aliases=test_import_aliases,
+        )
         _stage, staged = _prepare_shared_stage(
             root,
             {"kind": "exit-corpus", "case_id": case_id, "relocation_digest": relocation.relocation_digest},
@@ -1280,6 +1403,8 @@ def exit_gate_run(
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=relocation,
+            authorized_seed_span=authorized_seed_span,
+            test_import_aliases=test_import_aliases,
         )
         exit_cases.append(ExitCorpusCase.pin(cast(str, raw_case["case_id"]), cast(str, raw_case["source_provenance"]), "sha256:" + cast(str, raw_case["review_receipt_digest"]), request))
        except BTSError as exc:
@@ -1291,7 +1416,9 @@ def exit_gate_run(
             detail_code="pipeline_cli_case_preparation_v1",
             cause=exc,
         )
-        preparation_reports.append(rejected_preparation_report(case_id, wrapped.reason, wrapped.evidence.detail_code))
+        preparation_reports.append(
+            rejected_preparation_report(case_id, wrapped.reason, wrapped.evidence.detail_code, cause=exc)
+        )
       if preparation_reports:
        prepared_reports = tuple(_run_case(case, run_bts_pipeline) for case in exit_cases)
        report = report_prepared_cases(

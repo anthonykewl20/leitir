@@ -26,9 +26,8 @@ the detached `HEAD` equals `donor.commit_sha`, verify the named license-file
 digest from `donor-meta.json`, and expose the donor at `test_pythonpath` before
 running that case's committed contract tests inside the donor-present nsjail
 policy. It must never execute donor tests on the host, use a moving branch, or
-use a vendored donor copy. The selected paths are `.` for luhn, backoff, and
-url-normalize, `src` for webcolors, and
-`cognee/infrastructure/utils` for cognee. The v1.1 manifest spells these as
+use a vendored donor copy. The selected paths are `.` for luhn, backoff,
+url-normalize, and haversine, and `src` for webcolors. The v1.1 manifest spells these as
 per-case `import_roots` and links the matching `policies/<case-id>.json` file;
 its `runtime_deps` records the exact plain version
 `idna` `3.18` only for url-normalize. It is installed only into the contained
@@ -50,7 +49,7 @@ Recorded on 2026-08-15 against freshly fetched pins:
 | backoff-full-jitter | 2 | 2 | 0 | 0 |
 | url-normalize-fragment | 2 | 2 | 0 | 0 |
 | webcolors-rgb-to-hex | 2 | 2 | 0 | 0 |
-| cognee-calculate-backoff | 2 | 2 | 0 | 0 |
+| haversine-avg-earth-radius | 2 | 2 | 0 | 0 |
 
 ## Ratification and execution boundary
 

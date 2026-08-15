@@ -10,19 +10,22 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import leitir.pipeline_cli as pipeline_cli
+from leitir.bts import BTSStatus
 from leitir.bts_bench import CandidateIdentity, SeedSpan, load_manifest
 from leitir.bts_cli import SeedSelector, load_donor_snapshot
-from leitir.bts_errors import BTSError, TransplantError
+from leitir.bts_errors import BTSError, BTSRejectReason, TransplantError
 from leitir.exit_corpus import add_runnable_section
 from leitir.materialize import manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
     BTSSubstratePins,
     ContractTestSpec,
     _baseline_from_sidecar,
+    _exit_seed_span,
     _license_from_materialized_donor,
     _prepare_shared_stage,
     _prepared,
@@ -189,6 +192,9 @@ def test_pipeline_helpers_reject_malformed_sidecars_and_classify_pinned_license(
 
     (tmp_path / "LICENSE").write_text("Apache License\nVersion 2.0\n", encoding="utf-8")
     assert _license_from_materialized_donor(tmp_path) == "Apache-2.0"
+    (tmp_path / "LICENSE").unlink()
+    (tmp_path / "LICENCE").write_text("MIT License\nPermission is hereby granted, free of charge\n", encoding="utf-8")
+    assert _license_from_materialized_donor(tmp_path) == "MIT"
 
 
 def test_build_containment_policy_fails_closed_without_opt_in() -> None:
@@ -318,6 +324,13 @@ def test_exit_corpus_webcolors_seed_and_policy_assemble_offline(tmp_path: Path) 
     assert any(entry.donor == seed.module and entry.recipient == f"transplant.webcolors.{seed.module}" for entry in module_map.entries)
 
 
+def test_exit_corpus_url_seed_span_authorizes_the_module_future_import() -> None:
+    corpus = json.loads((_ROOT / "benchmarks" / "exit-corpus" / "corpus-v1.1.json").read_text(encoding="utf-8"))
+    case = next(item for item in corpus["cases"] if item["case_id"] == "url-normalize-fragment")
+
+    assert _exit_seed_span(_ROOT / "benchmarks" / "exit-corpus", "url-normalize-fragment", case["seed"]) == (1, 27)
+
+
 def _exit_sidecars(root: Path) -> None:
     corpus = json.loads((_FIXTURE / "corpus-runnable-v1.1.json").read_text())
     for case in corpus["cases"]:
@@ -381,6 +394,53 @@ def test_exit_gate_writes_rejected_report_for_untyped_case_preparation_error(
         in donor["detail_categories"]
         for donor in report["donors"]
     )
+    assert all(
+        "exit_preparation_cause_v1:OSError:donor shelf unavailable" in donor["detail_categories"]
+        for donor in report["donors"]
+    )
+
+
+def test_exit_gate_sanitizes_hyphenated_case_ids_for_relocation_recipient_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The package passed to relocate must be a dotted Python module path."""
+
+    _exit_sidecars(tmp_path)
+    manifest_path = _FIXTURE / "corpus-runnable-v1.1.json"
+    substrate = json.loads(manifest_path.read_text())["runnable"]["substrate"]
+    packages: list[str] = []
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    monkeypatch.setattr(pipeline_cli.bts_cli, "load_donor_snapshot", lambda *args, **kwargs: object())
+    preliminary = SimpleNamespace(status=BTSStatus.COMPLETE, bts=object())
+    monkeypatch.setattr(pipeline_cli, "_prepared", lambda *args, **kwargs: (object(), object(), preliminary))
+    monkeypatch.setattr(pipeline_cli, "_exit_module_aliases", lambda *args, **kwargs: ())
+
+    def capture_package(*args: object, **kwargs: object) -> object:
+        packages.append(str(kwargs["recipient_package"]))
+        raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "stop after relocation package capture")
+
+    monkeypatch.setattr(pipeline_cli, "_relocate_prepared", capture_package)
+    summary = exit_gate_run(
+        manifest_path,
+        tmp_path / "donors",
+        corpus_root=tmp_path,
+        out_dir=tmp_path / "out",
+        nsjail_version="fixture",
+        nsjail_build_identity=_DIGEST,
+        config_schema_digest=_DIGEST,
+        rootfs_source=tmp_path / "rootfs",
+        substrate_nsjail_sha256=substrate["nsjail_sha256"],
+        substrate_rootfs_digest=substrate["rootfs_digest"],
+    )
+
+    assert summary["status"] == "reject"
+    assert packages == [
+        "transplant.alpha_parser",
+        "transplant.bravo_tokenizer",
+        "transplant.charlie_router",
+        "transplant.delta_cache",
+        "transplant.echo_store",
+    ]
 
 
 def test_exit_gate_empty_cases_writes_typed_rejection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

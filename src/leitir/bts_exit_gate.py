@@ -335,14 +335,17 @@ def run_exit_gate(corpus: ExitCorpus, pipeline: Pipeline) -> ExitGateReport:
 
 
 def rejected_preparation_report(
-    case_id: str, reason: BTSRejectReason, detail_code: str | None,
+    case_id: str, reason: BTSRejectReason, detail_code: str | None, *, cause: BaseException | None = None,
 ) -> ExitDonorReport:
     """Record a typed pre-pipeline failure without hiding its donor identity."""
 
     detail = detail_code or "unspecified"
+    details = [f"exit_preparation_error_v1:{reason.value}:{detail}"]
+    if cause is not None:
+        details.append(f"exit_preparation_cause_v1:{type(cause).__name__}:{cause}")
     return ExitDonorReport(
         case_id, ValidationStatus.REJECT, False, False, False, False, False,
-        False, None, (f"exit_preparation_error_v1:{reason.value}:{detail}",),
+        False, None, tuple(details),
     )
 
 

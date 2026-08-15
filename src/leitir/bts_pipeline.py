@@ -66,6 +66,7 @@ class BTSPipelineRequest:
     probe_execution_policy: ProbeExecutionPolicy
     declared_external_modules: tuple[str, ...] = ()
     recipient_bindings: RecipientBindingManifest = EMPTY_RECIPIENT_BINDINGS
+    test_import_aliases: tuple[tuple[str, str], ...] = ()
     # The CLI performs relocation before it can construct the S2 policy: the
     # policy must bind every E1-authorized file, not a directory approximation.
     # Keep the value typed and verify its BTS binding below; this is not an
@@ -238,6 +239,7 @@ def run_bts_pipeline(request: BTSPipelineRequest) -> BTSPipelineResult:
         tests=request.contract_tests,
         declared_external_modules=request.declared_external_modules,
         recipient_bindings=request.recipient_bindings,
+        test_import_aliases=request.test_import_aliases,
     )
     if request.precomputed_relocation is not None:
         relocation = request.precomputed_relocation

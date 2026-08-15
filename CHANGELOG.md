@@ -161,6 +161,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - use portable child PYTHONPATH (`bts`)
 - verify buffered blob SHA, bind tree response SHA, and require truncated field (`search`)
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
+- writable scratch bind replaces tmpfs; mount-target and evidence hardening
 
 ### Security
 - bind gate evidence to pinned attachment policy (`occupied`)

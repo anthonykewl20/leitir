@@ -403,8 +403,8 @@ def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_in
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
     monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
-    monkeypatch.setattr(sandbox.os, "getuid", lambda: 1003)
-    monkeypatch.setattr(sandbox.os, "getgid", lambda: 1004)
+    monkeypatch.setattr(sandbox.os, "getuid", lambda: 1003, raising=False)
+    monkeypatch.setattr(sandbox.os, "getgid", lambda: 1004, raising=False)
     monkeypatch.setenv("SUDO_UID", "not-an-id")
     monkeypatch.setenv("SUDO_GID", "also-not-an-id")
 
@@ -412,6 +412,24 @@ def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_in
 
     assert 'uidmap { inside_id: "65534" outside_id: "1003" count: 1 use_newidmap: false }' in config_text
     assert 'gidmap { inside_id: "65534" outside_id: "1004" count: 1 use_newidmap: false }' in config_text
+
+
+def test_malformed_nsjail_identity_inputs_reject() -> None:
+    with pytest.raises(ValueError, match="identity inputs are malformed"):
+        sandbox._nsjail_build_identity("not-a-commit", "sha256:" + "0" * 64)
+
+
+def test_duplicate_mount_destination_rejects_before_execution(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = _policy(fake_nsjail)
+    root_mount = policy.readonly_mounts[0]
+    duplicate = replace(root_mount, source="/different-rootfs")
+    duplicate_mounts = tuple(sorted((root_mount, duplicate)))
+    invalid = replace(policy, readonly_mounts=duplicate_mounts)
+
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(invalid)
+
+    assert caught.value.evidence.detail_code == "duplicate_mount_destination"
 
 
 def test_generated_config_matches_the_passing_handwritten_smoke_except_policy_mounts(

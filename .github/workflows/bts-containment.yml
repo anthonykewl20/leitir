@@ -460,6 +460,7 @@ jobs:
           printf 'rootfs_digest=%s\n' "$(ROOTFS_SOURCE="$rootfs" python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')" >>"$GITHUB_OUTPUT"
           printf 'python_version<<EOF\n%s\nEOF\n' "$(cat "$RUNNER_TEMP/leitir-python-version.txt")" >>"$GITHUB_OUTPUT"
       - name: Run exit gate
+        id: exit_gate
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
@@ -474,6 +475,14 @@ jobs:
           --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
           --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
           --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs --json
+      - name: Restore exit-gate artifact ownership
+        if: ${{ always() }}
+        run: |
+          for output in runs/exit-gate "$RUNNER_TEMP/leitir-corpus-root"; do
+            if [[ -e "$output" ]]; then
+              sudo chown -R "$(id -u):$(id -g)" "$output"
+            fi
+          done
       - name: Upload exit-gate evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
@@ -482,7 +491,7 @@ jobs:
           path: runs/exit-gate/
           if-no-files-found: warn
       - name: Run optional BTS task corpus
-        if: ${{ inputs.run_bench }}
+        if: ${{ inputs.run_bench && (success() || steps.exit_gate.outcome == 'failure') }}
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
@@ -495,6 +504,14 @@ jobs:
           --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
           --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
           --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs
+      - name: Restore BTS task artifact ownership
+        if: ${{ always() && inputs.run_bench }}
+        run: |
+          for output in runs/bts-tasks "$RUNNER_TEMP/leitir-bts-task-root"; do
+            if [[ -e "$output" ]]; then
+              sudo chown -R "$(id -u):$(id -g)" "$output"
+            fi
+          done
       - name: Upload BTS task runs
         if: ${{ always() && inputs.run_bench }}
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0

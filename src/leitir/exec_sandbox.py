@@ -119,8 +119,8 @@ class PermittedSyscall(StrEnum):
     SET_TID_ADDRESS = "set_tid_address"
     # glibc >= 2.35 registers restartable sequences during process startup.
     RSEQ = "rseq"
-    # CPython's cold-path loader issues the legacy pathname metadata syscall.
-    STAT = "stat"
+    # Kafel's amd64 table has no ``stat`` identifier: pathname metadata is
+    # covered by ``newfstatat`` (and descriptor metadata by ``newfstat``).
     STATX = "statx"
     WRITE = "write"
 

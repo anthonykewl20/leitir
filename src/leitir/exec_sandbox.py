@@ -1034,7 +1034,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     # ADR-0009 requires immutable authorizing inputs across the complete run.
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             "noncanonical_killpg_fallback",  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             BTSRejectReason.REJECT_EXECUTION_THREAT,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1045,22 +1045,22 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             stderr=bytes(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     if capture.timed_out:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
             exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
         )
     if capture.truncated:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
             exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
         )
     if capture.leaked:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
             exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
         )
     if process.returncode != 0:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan,
             "child_crash",
             BTSRejectReason.REJECT_HARD_GATE_FAILED,

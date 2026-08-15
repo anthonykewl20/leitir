@@ -148,6 +148,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - tolerate nsjail --version non-zero exit in containment report step (`bts`)
 - treat source checkout as healthy in install checks (#43) (`doctor`)
 - trust tests fairness, Bitbucket live tolerance, lock best-effort (`corpus`)
+- use Kafel amd64 fstat spelling (`sandbox`)
 - use os.pathsep in PYTHONPATH so bts_walk subprocess runs on Windows (`tests`)
 - use portable child PYTHONPATH (`bts`)
 - verify buffered blob SHA, bind tree response SHA, and require truncated field (`search`)

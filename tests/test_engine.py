@@ -503,7 +503,7 @@ class TestLocalMaterializedShelf:
             ).search(_spec())
 
         assert report.matches
-        assert server.state.request_paths == [tree_path]
+        assert server.state.request_paths == []
 
     def test_valid_shelf_serves_regular_blob_without_api_read(self, tmp_path):
         data = SAMPLE_PY.encode()
@@ -720,6 +720,34 @@ class TestLocalMaterializedShelf:
 
         assert first.to_dict() == second.to_dict()
         assert source.read_calls == []
+
+    def test_full_drift_shelf_uses_local_artifact_and_reports_git_only_exclusion(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        target = _write_shelf(tmp_path, files={"parse.py": data})
+        manifest = json.loads((target / "leitir-manifest.json").read_text())
+        manifest.update({"parity": "drift", "only_in_git": 3})
+        from leitir.treehash import compute_materialized_tree_hash
+
+        digest, scope = compute_materialized_tree_hash(target)
+        manifest.update(manifest_digest_fields(digest, scope=scope))
+        (target / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        source = _fake_source()
+
+        report = ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(_spec())
+
+        assert report.matches
+        assert source.list_calls == 0
+        assert report.coverage.exclusions == {"registry_artifact_git_only": 3}
+
+    def test_exact_shelf_missing_remote_blob_fails_when_given_remote_listing(self, tmp_path):
+        data = SAMPLE_PY.encode()
+        target = _write_shelf(tmp_path, files={"parse.py": data})
+        reader = __import__("leitir.engine", fromlist=["_LocalShelfReader"])._LocalShelfReader(
+            target, json.loads((target / "leitir-manifest.json").read_text())
+        )
+        missing = BlobEntry("missing.py", _blob_sha(b"missing"), len(b"missing"))
+        with pytest.raises(VerificationError, match="cannot safely stat local blob"):
+            reader.read(missing)
 
 
 def test_required_language_report_is_hash_seed_independent():

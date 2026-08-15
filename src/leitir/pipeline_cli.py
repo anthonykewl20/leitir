@@ -47,7 +47,14 @@ from leitir.bts import (
 )
 from leitir.bts_bench import AdaptationProbeObs, BTSEvalTask, CandidateIdentity
 from leitir.bts_errors import BTSError, BTSRejectReason, TransplantError
-from leitir.bts_exit_gate import ExitCorpus, ExitCorpusCase, run_exit_gate
+from leitir.bts_exit_gate import (
+    ExitCorpus,
+    ExitCorpusCase,
+    _run_case,
+    rejected_preparation_report,
+    report_prepared_cases,
+    run_exit_gate,
+)
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult, run_bts_pipeline
 from leitir.candidates import CandidateProposal, EvidencePointer, RetrievalProvenance
 from leitir.capability import (
@@ -137,7 +144,13 @@ def _read_regular_json_bytes(path: Path) -> bytes:
         # reading, so their inputs retain a digest anchor without O_NOFOLLOW.
         return read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "pipeline CLI JSON input is malformed", detail_code="pipeline_cli_schema_v1", cause=exc) from exc
+        detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+        raise BTSError(
+            BTSRejectReason.REJECT_HARD_GATE_FAILED,
+            f"pipeline CLI JSON input is malformed: {path}: {detail}",
+            detail_code="pipeline_cli_schema_v1",
+            cause=exc,
+        ) from exc
 
 
 def _parse_json_bytes(data: bytes) -> object:
@@ -1154,7 +1167,6 @@ def exit_gate_run(
     cases_by_id: dict[str, dict[str, object]] = {
         cast(str, item["case_id"]): item for item in per_case if isinstance(item, dict) and isinstance(item.get("case_id"), str)
     }
-    prepared: list[tuple[dict[str, object], dict[str, object], tuple[ContractTest, ...]]] = []
     raw_cases = manifest["cases"]
     if not isinstance(raw_cases, list):
         raise AssertionError("validated corpus cases have invalid shape")
@@ -1165,8 +1177,6 @@ def exit_gate_run(
         runnable_case = cases_by_id.get(case_id)
         if runnable_case is None:
             raise AssertionError("validated runnable case alignment was lost")
-        tests = _runnable_contract_tests(root, runnable_case.get("contract_tests"))
-        prepared.append((raw_case, runnable_case, tests))
 
     substrate = runnable["substrate"]
     if not isinstance(substrate, dict) or not isinstance(substrate.get("containment_template_version"), str):
@@ -1200,18 +1210,33 @@ def exit_gate_run(
         raise AssertionError("validated donor layout has invalid shape")
     shared_shelf_root = layout == "repos/github.com/{owner}/{repo}/{commit_sha}"
     exit_cases: list[ExitCorpusCase] = []
+    preparation_reports = []
     # Keep each staged recipient alive until ``run_exit_gate`` consumes its
     # request.  The resulting S2 mount sources are exact E1 files, never the
     # donor shelf or a broad staging directory.
     with ExitStack():
-      for raw_case, runnable_case, tests in prepared:
+      if not raw_cases:
+       preparation_reports.append(
+           rejected_preparation_report(
+               "corpus", BTSRejectReason.REJECT_HARD_GATE_FAILED, "pipeline_cli_exit_empty_cases_v1",
+           )
+       )
+      for case_index, raw_case in enumerate(raw_cases):
+       case_id = f"case-index-{case_index:04d}"
+       try:
+        if not isinstance(raw_case, dict) or not isinstance(raw_case.get("case_id"), str):
+            raise AssertionError("validated corpus case has invalid shape")
+        case_id = cast(str, raw_case["case_id"])
+        runnable_case = cases_by_id.get(case_id)
+        if runnable_case is None:
+            raise AssertionError("validated runnable case alignment was lost")
+        tests = _runnable_contract_tests(root, runnable_case.get("contract_tests"))
         donor = raw_case["donor"]
         seed = raw_case["seed"]
         if not isinstance(donor, dict) or not isinstance(seed, dict):
             raise AssertionError("validated corpus donor or seed has invalid shape")
         if not all(isinstance(donor.get(name), str) for name in ("host", "owner", "repo", "commit_sha")) or not all(isinstance(seed.get(name), str) for name in ("module", "qualified_name")):
             raise AssertionError("validated corpus donor or seed values have invalid shape")
-        case_id = cast(str, raw_case["case_id"])
         snapshot_root = donors_dir if shared_shelf_root else donors_dir / case_id
         snapshot = bts_cli.load_donor_snapshot(snapshot_root, cast(str, donor["owner"]), cast(str, donor["repo"]), cast(str, donor["commit_sha"]), host=cast(str, donor["host"]))
         roots_raw = runnable_case.get("import_roots", ["."])
@@ -1254,17 +1279,35 @@ def exit_gate_run(
             precomputed_relocation=relocation,
         )
         exit_cases.append(ExitCorpusCase.pin(cast(str, raw_case["case_id"]), cast(str, raw_case["source_provenance"]), "sha256:" + cast(str, raw_case["review_receipt_digest"]), request))
-      ratification = raw_ratification if isinstance(raw_ratification, str) else "sha256:" + "0" * 64
-      corpus = ExitCorpus.pin(str(manifest["corpus_id"]), str(manifest["created_for_milestone"]), tuple(sorted(exit_cases, key=lambda item: (item.case_id, item.source_provenance))), ratified_manifest_digest=ratification)
-      _require_runtime_ratification(
-          manifest,
-          corpus_manifest_digest=corpus.corpus_manifest_digest,
-          donors_dir=donors_dir,
-          trusted_keys_path=trusted_keys_path,
-          ratification_sidecar=ratification_sidecar,
-          default_sidecar=corpus_manifest_path.parent / "ratification-v1.json",
-      )
-      report = run_exit_gate(corpus, run_bts_pipeline)
+       except BTSError as exc:
+        preparation_reports.append(rejected_preparation_report(case_id, exc.reason, exc.evidence.detail_code))
+       except Exception as exc:
+        wrapped = BTSError(
+            BTSRejectReason.REJECT_HARD_GATE_FAILED,
+            "exit case preparation failed",
+            detail_code="pipeline_cli_case_preparation_v1",
+            cause=exc,
+        )
+        preparation_reports.append(rejected_preparation_report(case_id, wrapped.reason, wrapped.evidence.detail_code))
+      if preparation_reports:
+       prepared_reports = tuple(_run_case(case, run_bts_pipeline) for case in exit_cases)
+       report = report_prepared_cases(
+           corpus_manifest_digest="sha256:" + content_digest(manifest),
+           ratified_manifest_digest=raw_ratification if isinstance(raw_ratification, str) else "sha256:" + "0" * 64,
+           reports=(*prepared_reports, *preparation_reports),
+       )
+      else:
+       ratification = raw_ratification if isinstance(raw_ratification, str) else "sha256:" + "0" * 64
+       corpus = ExitCorpus.pin(str(manifest["corpus_id"]), str(manifest["created_for_milestone"]), tuple(sorted(exit_cases, key=lambda item: (item.case_id, item.source_provenance))), ratified_manifest_digest=ratification)
+       _require_runtime_ratification(
+           manifest,
+           corpus_manifest_digest=corpus.corpus_manifest_digest,
+           donors_dir=donors_dir,
+           trusted_keys_path=trusted_keys_path,
+           ratification_sidecar=ratification_sidecar,
+           default_sidecar=corpus_manifest_path.parent / "ratification-v1.json",
+       )
+       report = run_exit_gate(corpus, run_bts_pipeline)
     destination = corpus_manifest_path.parent / "exit-gate-out" if out_dir is None else out_dir
     _write_atomic(destination / "exit-gate-report.json", report.to_bytes())
     summary: dict[str, object] = {"schema_version": PIPELINE_CLI_SCHEMA_VERSION, "status": report.status.value, "corpus_content_digest": content_digest(manifest), "corpus_manifest_digest": report.corpus_manifest_digest, "report_digest": report.report_digest}

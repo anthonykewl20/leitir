@@ -141,6 +141,32 @@ def build_shelf_index(root: Path, shelf: ShelfRef) -> Path:
         return directory / "index.json"
 
 
+def ineligible_shelf_conditions(root: Path, shelf: ShelfRef) -> tuple[str, ...]:
+    """Return the named eligibility conditions a verified shelf does not meet.
+
+    A missing or invalid manifest is an operational error rather than an
+    eligibility result: callers must not turn failed load-time verification into
+    a skippable shelf.
+    """
+
+    root = root.expanduser().absolute()
+    target = target_path(root, shelf.owner, shelf.repo, shelf.commit, host=shelf.host)
+    with _target_lock(root, target, shelf.commit):
+        manifest = read_valid_manifest(
+            target, shelf.owner, shelf.repo, shelf.commit, host=shelf.host
+        )
+    if manifest is None:
+        raise VerificationError("materialized shelf failed load-time verification")
+    conditions: list[str] = []
+    if manifest.get("source") != "git-commit":
+        conditions.append("source")
+    if manifest.get("parity") != "exact":
+        conditions.append("parity")
+    if manifest.get("materialized_tree_hash_scope") != "full":
+        conditions.append("scope")
+    return tuple(conditions)
+
+
 def shelves_from_corpus(root: Path, selectors: tuple[str, ...] = ()) -> tuple[ShelfRef, ...]:
     """Resolve deterministic shelf identities from the corpus source catalog."""
     from leitir.corpus import load_sources
@@ -160,4 +186,9 @@ def shelves_from_corpus(root: Path, selectors: tuple[str, ...] = ()) -> tuple[Sh
     return result
 
 
-__all__ = ["ShelfRef", "build_shelf_index", "shelves_from_corpus"]
+__all__ = [
+    "ShelfRef",
+    "build_shelf_index",
+    "ineligible_shelf_conditions",
+    "shelves_from_corpus",
+]

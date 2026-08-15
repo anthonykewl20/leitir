@@ -101,7 +101,8 @@ def _read_json(path: Path, family: str) -> object:
         # permit Windows platforms without O_NOFOLLOW for this digest anchor.
         data = read_regular_file(path, maximum_bytes=_MAX_INPUT_BYTES, no_follow=False)
     except (OSError, TypeError, ValueError) as exc:
-        _input_error(family, f"could not read {path}", exc)
+        detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+        _input_error(family, f"could not read {path}: {detail}", exc)
     try:
         return json.loads(data, object_pairs_hook=_duplicate_keys)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:

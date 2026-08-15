@@ -16,6 +16,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 
 from leitir.bts import BTSStatus
+from leitir.bts_errors import BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult
 from leitir.graph.runtime import DonorAbsenceAuthority
 from leitir.probes import ProbeStatus
@@ -333,6 +334,35 @@ def run_exit_gate(corpus: ExitCorpus, pipeline: Pipeline) -> ExitGateReport:
     return replace(draft, report_digest=_digest(draft, omit=frozenset({"report_digest"})))
 
 
+def rejected_preparation_report(
+    case_id: str, reason: BTSRejectReason, detail_code: str | None,
+) -> ExitDonorReport:
+    """Record a typed pre-pipeline failure without hiding its donor identity."""
+
+    detail = detail_code or "unspecified"
+    return ExitDonorReport(
+        case_id, ValidationStatus.REJECT, False, False, False, False, False,
+        False, None, (f"exit_preparation_error_v1:{reason.value}:{detail}",),
+    )
+
+
+def report_prepared_cases(
+    *,
+    corpus_manifest_digest: str,
+    ratified_manifest_digest: str,
+    reports: tuple[ExitDonorReport, ...],
+) -> ExitGateReport:
+    """Build a rejecting report when a corpus case failed before pipeline assembly."""
+
+    draft = ExitGateReport(
+        EXIT_GATE_SCHEMA_VERSION, ValidationStatus.REJECT, False,
+        corpus_manifest_digest, ratified_manifest_digest,
+        tuple(sorted(reports, key=lambda report: report.case_id)),
+        "sha256:" + "0" * 64,
+    )
+    return replace(draft, report_digest=_digest(draft, omit=frozenset({"report_digest"})))
+
+
 __all__ = [
     "EXIT_CORPUS_SCHEMA_VERSION",
     "EXIT_GATE_SCHEMA_VERSION",
@@ -342,5 +372,7 @@ __all__ = [
     "ExitDonorReport",
     "ExitGateReport",
     "Pipeline",
+    "rejected_preparation_report",
+    "report_prepared_cases",
     "run_exit_gate",
 ]

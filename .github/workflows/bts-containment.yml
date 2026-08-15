@@ -39,7 +39,6 @@ jobs:
       - name: Report runner containment capabilities
         run: |
           uname -a
-          nsjail --version 2>&1 || true
           stat -fc 'cgroup filesystem type: %T' /sys/fs/cgroup
           printf 'available controllers: '
           tr '\n' ' ' </sys/fs/cgroup/cgroup.controllers
@@ -299,9 +298,11 @@ jobs:
           PYTHONPATH: src
         run: |
           rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
-          printf 'nsjail_sha=sha256:%s\n' "$(sha256sum /usr/bin/nsjail | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
-          printf 'nsjail_version<<EOF\n%s\nEOF\n' "$(nsjail --version 2>&1)" >>"$GITHUB_OUTPUT"
-          printf 'nsjail_build_identity=sha256:%s\n' "$(nsjail --version 2>&1 | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          nsjail_commit="f78475530b46d0186111a9096b30725f816b55fe"
+          nsjail_binary_sha="$(sha256sum /usr/bin/nsjail | cut -d' ' -f1)"
+          printf 'nsjail_sha=sha256:%s\n' "$nsjail_binary_sha" >>"$GITHUB_OUTPUT"
+          printf 'nsjail_version=nsjail@%s\n' "$nsjail_commit" >>"$GITHUB_OUTPUT"
+          printf 'nsjail_build_identity=sha256:%s\n' "$(printf '%s%s' "$nsjail_commit" "$nsjail_binary_sha" | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
           printf 'config_schema_digest=sha256:%s\n' "$(printf '%s' leitir-containment-policy-v1 | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
           printf 'rootfs_digest=%s\n' "$(ROOTFS_SOURCE="$rootfs" python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')" >>"$GITHUB_OUTPUT"
           printf 'python_version<<EOF\n%s\nEOF\n' "$(cat "$RUNNER_TEMP/leitir-python-version.txt")" >>"$GITHUB_OUTPUT"

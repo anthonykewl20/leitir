@@ -50,8 +50,45 @@ MAX_BLOB_SIZE = 2 * 1024 * 1024
 
 
 class _LocalShelfReader:
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path, manifest: dict[str, object]) -> None:
         self._target = target
+        self._manifest = manifest
+
+    @property
+    def fully_verified(self) -> bool:
+        return self._manifest.get("materialized_tree_hash_scope") == "full"
+
+    @property
+    def drift_git_only_count(self) -> int:
+        count = self._manifest.get("only_in_git")
+        return count if self._manifest.get("parity") == "drift" and isinstance(count, int) and count > 0 else 0
+
+    def list_local_blobs(self) -> tuple[BlobEntry, ...]:
+        """Enumerate the verified materialized universe without consulting GitHub."""
+
+        blobs: list[BlobEntry] = []
+        for path in sorted(self._target.rglob("*")):
+            if path.name in {"leitir-manifest.json", "index.json"}:
+                continue
+            try:
+                metadata = path.lstat()
+            except OSError as exc:
+                raise VerificationError(f"cannot safely stat local blob: {path}") from exc
+            if stat.S_ISDIR(metadata.st_mode):
+                continue
+            relative = path.relative_to(self._target).as_posix()
+            if stat.S_ISLNK(metadata.st_mode):
+                link = os.readlink(os.fsencode(path))
+                data = link if isinstance(link, bytes) else os.fsencode(link)
+                mode = "120000"
+            elif stat.S_ISREG(metadata.st_mode):
+                data = path.read_bytes()
+                mode = "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+            else:
+                raise VerificationError(f"local blob is not a file: {relative}")
+            digest = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+            blobs.append(BlobEntry(relative, digest, len(data), mode))
+        return tuple(blobs)
 
     def read(self, blob: BlobEntry) -> bytes:
         return b"".join(self.stream(blob))
@@ -359,20 +396,31 @@ class ScopedSearcher:
         total_eligible = 0
         total_indexed = 0
         total_excluded = 0
+        exclusions: dict[str, int] = {}
         incomplete = False
 
         for scope in spec.scopes:
-            enumeration_excluded = 0
-            try:
-                blobs, recovered = self._tree.list_blobs_ex(
-                    scope.slug, scope.commit_sha
-                )
-                enumeration_excluded = int(recovered)
-            except TreeEnumerationError as exc:
-                blobs = exc.partial_blobs
-                recovered = False
-                enumeration_excluded = 1
             with self._local_shelf(scope.slug, scope.commit_sha) as local_shelf:
+                enumeration_excluded = 0
+                if local_shelf is not None and local_shelf.fully_verified:
+                    # A full verified shelf is a local immutable representation
+                    # of the declared donor tree.  Do not burn API budget merely
+                    # to rediscover its listing; drift is explicitly accounted
+                    # for below rather than silently treated as a read failure.
+                    blobs = local_shelf.list_local_blobs()
+                    recovered = False
+                    drift_excluded = local_shelf.drift_git_only_count
+                else:
+                    drift_excluded = 0
+                    try:
+                        blobs, recovered = self._tree.list_blobs_ex(
+                            scope.slug, scope.commit_sha
+                        )
+                        enumeration_excluded = int(recovered)
+                    except TreeEnumerationError as exc:
+                        blobs = exc.partial_blobs
+                        recovered = False
+                        enumeration_excluded = 1
                 eligible, indexed, excluded, matches, partial = self._search_scope(
                     scope.slug,
                     scope.commit_sha,
@@ -383,7 +431,9 @@ class ScopedSearcher:
                 )
             total_eligible += eligible
             total_indexed += indexed
-            total_excluded += excluded + enumeration_excluded
+            total_excluded += excluded + enumeration_excluded + drift_excluded
+            if drift_excluded:
+                exclusions["registry_artifact_git_only"] = exclusions.get("registry_artifact_git_only", 0) + drift_excluded
             all_matches.extend(matches)
             if partial or recovered or enumeration_excluded:
                 incomplete = True
@@ -399,6 +449,7 @@ class ScopedSearcher:
             files_indexed=total_indexed,
             files_excluded=total_excluded,
             incomplete_results=incomplete,
+            exclusions=exclusions,
         )
         return SearchReport(
             spec_digest=spec.digest(),
@@ -569,7 +620,7 @@ class ScopedSearcher:
             if manifest is None:
                 yield None
                 return
-            yield _LocalShelfReader(target)
+            yield _LocalShelfReader(target, manifest)
 
     def _adapter_for(
         self, path: str, required_language: str | None = None

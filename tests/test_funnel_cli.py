@@ -55,6 +55,17 @@ def test_funnel_rejects_a_final_component_symlink(tmp_path: Path) -> None:
     assert caught.value.evidence.detail_code == "funnel_cli_spec_invalid_v1"
 
 
+def test_funnel_missing_file_names_path_and_os_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.json"
+
+    with pytest.raises(BTSError) as caught:
+        validate_capability_spec(missing)
+
+    assert caught.value.evidence.detail_code == "funnel_cli_spec_invalid_v1"
+    assert str(missing) in caught.value.evidence.message
+    assert "No such file or directory" in caught.value.evidence.message
+
+
 def test_funnel_reads_digest_anchored_inputs_without_no_follow(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 

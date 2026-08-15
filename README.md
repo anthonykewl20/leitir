@@ -197,6 +197,7 @@ leitir bts-run owner/repo@<40-char-sha> --root "$LEITIR_HOME" --seed-module pkg.
   --config-schema-digest sha256:<hex> --rootfs-source /pinned/rootfs --rootfs-digest sha256:<hex>
 
 # Validate or run the pinned five-donor exit corpus (runtime substrate pins are mandatory)
+# Requires a source checkout: the corpus path below is checkout-relative.
 leitir exit-gate-validate benchmarks/exit-corpus/corpus-v1.1.json --json
 leitir exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json --corpus-root benchmarks/exit-corpus \
   --substrate-nsjail-sha sha256:<hex> --substrate-rootfs-digest sha256:<hex> \
@@ -204,8 +205,24 @@ leitir exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json --corpus-root bench
   --config-schema-digest sha256:<hex> --rootfs-source /prepared/rootfs --json
 
 # Inspect the published six-task BTS benchmark plan without executing donors
+# Requires a source checkout: tools/run_bts_tasks.py is not installed with Leitir.
 PYTHONPATH=src python tools/run_bts_tasks.py --dry-run
 ```
+
+### Credentials and corpus root
+
+GitHub API/search commands accept `GH_TOKEN` first, then `GITHUB_TOKEN`; values
+are never printed. Other optional provider tokens remain environment-backed as
+documented by `leitir doctor`. The corpus root is `LEITIR_HOME` when set and
+otherwise defaults to `~/.leitir`.
+
+### `bts-funnel` inputs
+
+`bts-funnel` reads three JSON inputs: a canonical capability spec
+(`{"schema_version":"leitir-capability-v1",...}`), a recipient manifest
+(`{"schema_version":"leitir-funnel-recipient-input-v1","project_root_identity":"...","entries":[...]}`),
+and a closed stages array
+(`[{"search_spec_digest":"...","report":{...},"symbols":[...],"termination":"clean_eof","pages_recorded":1,"blob_byte_lengths":[1]}]`).
 
 ## The agent workflow (required)
 
@@ -224,8 +241,12 @@ flowchart LR
 ### Search and benchmark
 - `search`: resolve spec+predicate scope and return provenance-bound results; scoped search serves matching verified local shelves without per-file API fetches.
 - `index [scope ...] [--root ROOT|--local]`: explicitly build deterministic local
-  trigram indexes for eligible materialized shelves. A shelf is eligible only with
-  `source=git-commit`, `parity=exact`, and a full materialized-tree hash.
+   trigram indexes for eligible materialized shelves. A shelf is eligible only with
+   `source=git-commit`, `parity=exact`, and a full materialized-tree hash.
+   Ineligible shelves are reported by shelf identity and failed `source`, `parity`,
+   or `scope` condition in stderr and `skipped_ineligible` JSON; eligible shelves
+   still index. The command exits 0 only when at least one eligible shelf indexed
+   and no hard error occurred.
   `search --index` reports uncovered fallback scopes as partial;
   `search --require-index` rejects them. Search never builds or repairs an index.
   Export/import excludes index artifacts and `gc` preserves them.
@@ -253,8 +274,8 @@ flowchart LR
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
 - `diff`: compare two resolved versions with file and API-symbol deltas.
-- `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
-- `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph; for example, `leitir analysis-architecture graph.json --subject widget --json`.
+- `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. `--list-seeds` instead lists selectable donor definition seeds and cannot be combined with seed or output arguments. Without `--allow-reject`, a written REJECT result exits nonzero; `--allow-reject` retains the artifact but exits successfully. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
+- `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph with a non-empty slug-like caller label (`letters`, digits, `-`, `_`, `.`); JSON labels it `caller-declared-label`, not derived authority. For example, `leitir analysis-architecture graph.json --subject widget --json`.
 - `analysis-lineage manifest.json`: validate a canonical lineage manifest; for example, `leitir analysis-lineage lineage.json --json`.
 - `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check. `ratified_manifest_digest` is record-level content binding; `ratified_runtime_digest` is the separate out-of-band authority value consumed only by `exit-gate-run`.
 

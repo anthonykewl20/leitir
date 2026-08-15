@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import symtable
+import warnings
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -933,13 +934,13 @@ class _Extractor(ast.NodeVisitor):
             for table in self.scope.table.get_children()
             if table.get_name() == name and table.get_lineno() == node.lineno and table.get_id() not in self._used_tables
         ]
-        if len(matches) > 1:
-            raise BTSError(
-                BTSRejectReason.REJECT_UNRESOLVED_EDGE,
-                f"AST/symtable scope mismatch for {name!r}",
-                detail_code="symtable_scope_mismatch",
-            )
         if matches:
+            # symtable exposes line numbers but not columns.  Multiple
+            # comprehensions of the same kind may share a physical line; its
+            # child order is lexical, so consuming the first unused matching
+            # child preserves the AST traversal's lexical order.  In
+            # particular, the second of ``any(x for x in a) or any(y for y in
+            # b)`` must not be mistaken for an unknown scope shape.
             table = matches[0]
             self._used_tables.add(table.get_id())
             inherited_bindings: dict[str, list[_Binding]] = {}
@@ -955,7 +956,15 @@ class _Extractor(ast.NodeVisitor):
                     detail_code="symtable_scope_mismatch",
                 )
             table = self.scope.table
-            inherited_bindings = {binding_name: list(values) for binding_name, values in self.scope.bindings.items()}
+            # Class-body bindings are not closure variables for a comprehension:
+            # CPython evaluates its body in a nested function-like scope.  The
+            # free-variable walk in ``_lookup_scope`` deliberately skips class
+            # bodies too, so the reconstructed PEP 709 envelope must do so.
+            inherited_bindings = (
+                {}
+                if self.scope.class_body
+                else {binding_name: list(values) for binding_name, values in self.scope.bindings.items()}
+            )
         child = _Scope(table, self.scope, self.scope.owner, inherited_bindings)
         for generator in node.generators:
             for target_name, ref in self._unknown_targets(generator.target):
@@ -1206,7 +1215,12 @@ def extract_static_edges(
             cause=exc,
         ) from exc
     try:
-        tree = ast.parse(text, filename=path, mode="exec", feature_version=(3, 11))
+        # Donor source is parsed, not executed.  SyntaxWarning is host-facing
+        # noise (for example an old invalid escape) and must not leak from a
+        # static graph operation; SyntaxError remains the fail-closed gate.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(text, filename=path, mode="exec", feature_version=(3, 11))
         symbols = symtable.symtable(text, path, "exec")
     except SyntaxError as exc:
         line = exc.lineno or 1

@@ -61,6 +61,8 @@ from leitir.graph.model import (
     GraphCoverage,
     Node,
     NodeId,
+    NodeKind,
+    NodeOrigin,
     SourceRef,
     UnresolvedEdge,
 )
@@ -186,7 +188,12 @@ def _read_regular(
     except BTSError:
         raise
     except OSError as exc:
-        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "cannot safely read input", "bts_cli_source_read_v1", cause=exc)
+        _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"cannot safely read input: {path}: {exc.strerror or str(exc)}",
+            "bts_cli_source_read_v1",
+            cause=exc,
+        )
     if maximum is not None and len(data) > maximum:
         _reject(BTSRejectReason.REJECT_EXTRACTION_BUDGET, "input exceeds the configured bound", maximum_detail_code)
     return data
@@ -514,14 +521,59 @@ def load_resolution_policy(path: Path, graph: Graph) -> ResolutionPolicy:
     )
 
 
+_SEED_KINDS = frozenset({
+    NodeKind.FUNCTION,
+    NodeKind.ASYNC_FUNCTION,
+    NodeKind.METHOD,
+    NodeKind.ASYNC_METHOD,
+})
+_SEED_CANDIDATE_LIMIT = 10
+
+
+def list_seed_candidates(graph: Graph, module: str | None = None) -> tuple[NodeId, ...]:
+    """Return deterministic, selectable donor definition seeds only."""
+
+    return tuple(sorted(
+        (
+            node.id
+            for node in graph.nodes
+            if node.id.origin is NodeOrigin.DONOR
+            and node.id.kind in _SEED_KINDS
+            and (module is None or node.id.module == module)
+        ),
+        key=lambda node: (node.module, node.qualified_name, node.kind.value, node.location_key),
+    ))
+
+
+def _seed_evidence_candidates(candidates: tuple[NodeId, ...]) -> str:
+    displayed = candidates[:_SEED_CANDIDATE_LIMIT]
+    rendered = ", ".join(
+        f"{candidate.qualified_name} ({candidate.origin.value})" for candidate in displayed
+    )
+    suffix = "" if len(candidates) <= _SEED_CANDIDATE_LIMIT else f", … (+{len(candidates) - _SEED_CANDIDATE_LIMIT} more)"
+    return f"; candidates: {rendered or '(none)'}{suffix}"
+
+
 def resolve_seed(graph: Graph, selector: SeedSelector) -> NodeId:
     """Resolve exactly one graph node, refusing absent or ambiguous selectors."""
 
-    matches = tuple(node.id for node in graph.nodes if node.id.module == selector.module and node.id.qualified_name == selector.qualified_name)
+    candidates = list_seed_candidates(graph, selector.module)
+    matches = tuple(
+        node for node in candidates
+        if node.module == selector.module and node.qualified_name == selector.qualified_name
+    )
     if not matches:
-        _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "seed selector matched no graph node", "bts_cli_seed_not_found_v1")
+        _reject(
+            BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+            "seed selector matched no donor definition" + _seed_evidence_candidates(candidates),
+            "bts_cli_seed_not_found_v1",
+        )
     if len(matches) != 1:
-        _reject(BTSRejectReason.REJECT_DUPLICATE_RESULT, "seed selector matched multiple graph nodes", "bts_cli_seed_ambiguous_v1")
+        _reject(
+            BTSRejectReason.REJECT_DUPLICATE_RESULT,
+            "seed selector matched multiple donor definitions" + _seed_evidence_candidates(matches),
+            "bts_cli_seed_ambiguous_v1",
+        )
     return matches[0]
 
 
@@ -586,6 +638,37 @@ def run_bts_compute(
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "materialized donor tree integrity verification failed", "bts_materialized_tree_hash_v1", cause=exc)
     graph_bytes = graph.to_bytes()
     return BTSComputeArtifacts(result, graph_bytes, _summary(snapshot, normalized, selected, result, graph_bytes))
+
+
+def list_bts_seeds(
+    root: Path,
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str = "github.com",
+    language: str = "python",
+    lock_path: Path | None = None,
+) -> tuple[NodeId, ...]:
+    """List callable donor definitions from a verified graph without computing a BTS."""
+
+    snapshot = load_donor_snapshot(root, owner, repo, commit_sha, host=host)
+    normalized = canonicalize_language(language)
+    if normalized == "python":
+        provider = python_graph_provider(snapshot)
+    else:
+        if lock_path is None:
+            _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "tree-sitter lock path is required for non-Python BTS computation", "bts_cli_lock_required_v1")
+        provider = tree_sitter_graph_provider(snapshot, normalized, lock_path=lock_path)
+    try:
+        with _target_lock(snapshot.materialization_root, snapshot.source_root, snapshot.commit_sha):
+            verify_materialized_tree_hash(snapshot.source_root, snapshot.materialized_tree_hash, algorithm=snapshot.materialized_tree_hash_algorithm, scope=snapshot.materialized_tree_hash_scope)
+            if not callable(provider):
+                raise TypeError("BTS CLI graph provider must be callable")
+            graph = provider(snapshot.source_root)
+    except TreeHashError as exc:
+        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "materialized donor tree integrity verification failed", "bts_materialized_tree_hash_v1", cause=exc)
+    return list_seed_candidates(graph)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

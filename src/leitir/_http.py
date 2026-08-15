@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC
@@ -37,6 +38,7 @@ from typing import TypeVar
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+_rate_limit_notice_emitted = False
 
 
 def __getattr__(name: str):
@@ -288,6 +290,7 @@ def retry_http(
     if base_delay < 0 or max_delay < 0 or max_rate_limit_delay < 0:
         raise ValueError("delay parameters must be non-negative")
 
+    global _rate_limit_notice_emitted
     for attempt in range(1, max_attempts + 1):
         logger.debug("http attempt %d/%d", attempt, max_attempts)
         try:
@@ -305,6 +308,15 @@ def retry_http(
 
             hint = retry_after_seconds(exc, now=clock())
             if kind is HttpErrorKind.RATE_LIMITED:
+                if not _rate_limit_notice_emitted:
+                    headers = getattr(exc, "headers", None)
+                    reset = None if headers is None else headers.get("X-RateLimit-Reset")
+                    until = f" until {reset}" if reset else ""
+                    print(
+                        f"leitir: GitHub API rate limited{until}; set GH_TOKEN to raise limits",
+                        file=sys.stderr,
+                    )
+                    _rate_limit_notice_emitted = True
                 cap = max_rate_limit_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
             else:

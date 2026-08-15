@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import subprocess
+import symtable
 import sys
 import textwrap
 
 import pytest
 
-from leitir.bts_errors import BTSRejectReason
+from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.graph.model import EdgeKind, NodeKind, NodeOrigin
 from leitir.graph.python import GRAMMAR_ID, extract_static_edges
 
@@ -25,6 +26,60 @@ def _extract(source: str, *, path: str = "src/pkg/mod.py"):
 
 def _edges(result, kind: EdgeKind):
     return [edge for edge in result.edges if edge.kind is kind]
+
+
+class _GlobalSymbol:
+    def is_parameter(self) -> bool:
+        return False
+
+    def is_imported(self) -> bool:
+        return False
+
+    def is_local(self) -> bool:
+        return False
+
+    def is_assigned(self) -> bool:
+        return False
+
+    def is_global(self) -> bool:
+        return True
+
+
+class _TableWithoutComprehensionChildren:
+    """Proxy a symtable while simulating PEP 709's inlined comprehension table."""
+
+    def __init__(self, table: symtable.SymbolTable, omitted_name: str, class_globals: frozenset[str]) -> None:
+        self._table = table
+        self._omitted_name = omitted_name
+        self._class_globals = class_globals
+
+    def get_children(self):
+        return tuple(
+            _TableWithoutComprehensionChildren(child, self._omitted_name, self._class_globals)
+            for child in self._table.get_children()
+            if not (self._table.get_type() == "class" and child.get_name() == self._omitted_name)
+        )
+
+    def lookup(self, name: str):
+        try:
+            return self._table.lookup(name)
+        except KeyError:
+            if self._table.get_type() == "class" and name in self._class_globals:
+                return _GlobalSymbol()
+            raise
+
+    def __getattr__(self, name: str):
+        return getattr(self._table, name)
+
+
+def _inline_class_comprehension(
+    monkeypatch: pytest.MonkeyPatch, name: str = "listcomp", class_globals: frozenset[str] = frozenset(),
+) -> None:
+    original = symtable.symtable
+    monkeypatch.setattr(
+        "leitir.graph.python.symtable.symtable",
+        lambda *args: _TableWithoutComprehensionChildren(original(*args), name, class_globals),
+    )
 
 
 def test_plain_aliased_and_from_imports_retain_binding_evidence():
@@ -244,3 +299,81 @@ def test_nested_method_raise_uses_method_node_and_byte_columns():
     assert edge.source.kind is NodeKind.METHOD
     assert edge.source.qualified_name == "pkg.mod.Service.run"
     assert edge.provenance.site.start_col == 14
+
+
+def test_comprehension_scopes_resolve_outer_closures_and_same_line_genexprs() -> None:
+    result = _extract(
+        """
+        def helper(value):
+            return value
+
+        def run(values):
+            first = (helper(value) for value in values)
+            listed = [helper(value) for value in first]
+            setted = {helper(value) for value in listed}
+            mapped = {value: helper(value) for value in setted}
+            return any(helper(value) for value in mapped) or any(helper(value) for value in mapped)
+        """
+    )
+    calls = _edges(result, EdgeKind.CALLS)
+    assert len([edge for edge in calls if edge.target.qualified_name == "pkg.mod.helper"]) == 6
+    assert not [item for item in result.unresolved if item.detail_code == "symtable_scope_mismatch"]
+
+
+def test_inlined_class_comprehension_does_not_inherit_class_bindings(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inline_class_comprehension(monkeypatch)
+    result = _extract(
+        """
+        class C:
+            class_local = 1
+            values = [class_local for item in range(1)]
+        """
+    )
+    assert not [edge for edge in _edges(result, EdgeKind.READS) if edge.target.qualified_name == "pkg.mod.C.class_local"]
+    assert not [item for item in result.unresolved if item.detail_code == "symtable_scope_mismatch"]
+
+
+def test_inlined_class_comprehension_still_resolves_module_bindings(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inline_class_comprehension(monkeypatch, class_globals=frozenset({"module_value"}))
+    result = _extract(
+        """
+        module_value = 1
+        class C:
+            values = [module_value for item in range(1)]
+        """
+    )
+    reads = _edges(result, EdgeKind.READS)
+    assert [edge.target.qualified_name for edge in reads] == ["pkg.mod.module_value"]
+
+
+def test_unmatched_genexpr_scope_remains_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inline_class_comprehension(monkeypatch, "genexpr")
+    with pytest.raises(BTSError) as caught:
+        _extract("class C:\n    values = (item for item in range(1))\n")
+    assert caught.value.evidence.detail_code == "symtable_scope_mismatch"
+
+
+def test_async_comprehension_resolves_outer_binding() -> None:
+    result = _extract(
+        """
+        async def helper(value):
+            return value
+
+        async def run(values):
+            return [helper(value) async for value in values]
+        """
+    )
+    assert [edge.target.qualified_name for edge in _edges(result, EdgeKind.CALLS)] == ["pkg.mod.helper"]
+
+
+def test_walrus_in_comprehension_resolves_outer_binding() -> None:
+    result = _extract(
+        """
+        def helper(value):
+            return value
+
+        def run(values):
+            return [(result := helper(value)) for value in values]
+        """
+    )
+    assert [edge.target.qualified_name for edge in _edges(result, EdgeKind.CALLS)] == ["pkg.mod.helper"]

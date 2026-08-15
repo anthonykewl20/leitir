@@ -347,7 +347,7 @@ def _default_resolution_policy() -> ResolutionPolicy:
     return ResolutionPolicy(
         BTS_SCHEMA_VERSION, DEFAULT_POLICY_AUTHORITY, DEFAULT_POLICY_ID,
         _sha256_digest(b"leitir-bts-cli-resolution-policy-v1"),
-        StdlibIdentity("cpython", ">=3.11,<3.12", "leitir-bts-cli-stdlib-v1", _sha256_digest(b"empty-stdlib-allowlist")),
+        StdlibIdentity("cpython", ">=3.12,<3.13", "leitir-bts-cli-stdlib-v1", _sha256_digest(b"empty-stdlib-allowlist")),
         AdapterCatalog("empty", "leitir-bts-cli-adapters-v1", _sha256_digest(b"empty-adapter-catalog")),
     )
 
@@ -501,7 +501,7 @@ def load_resolution_policy(path: Path, graph: Graph) -> ResolutionPolicy:
         ),
         StdlibIdentity(
             "cpython",
-            ">=3.11,<3.12",
+            ">=3.12,<3.13",
             POLICY_SCHEMA_VERSION,
             _canonical_digest([
                 {"module": entry.module, "qualified_name": entry.qualified_name}

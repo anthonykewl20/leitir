@@ -292,6 +292,16 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "get":
             corpus_command.add_argument("--json", action="store_true", dest="as_json")
+            corpus_command.add_argument(
+                "--require-manifest-auth",
+                action="store_true",
+                help="require opt-in publisher authentication; never accepts unsigned shelves",
+            )
+            corpus_command.add_argument(
+                "--trusted-keys",
+                default=None,
+                help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+            )
 
     list_command = commands.add_parser("list", help="list materialized sources")
     list_command.add_argument("--json", action="store_true", dest="as_json")
@@ -304,6 +314,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=_UPGRADE_CACHE_DESCRIPTION,
     )
     upgrade.add_argument("--dry-run", action="store_true")
+    upgrade.add_argument(
+        "--recompute-git-parity",
+        action="store_true",
+        help="reprove raw Git-blob parity for eligible GitHub Git-commit shelves; current thresholds can downgrade exact to drift",
+    )
     upgrade_roots = upgrade.add_mutually_exclusive_group()
     upgrade_roots.add_argument("--root", default=None, help="corpus root directory")
     upgrade_roots.add_argument(
@@ -376,6 +391,16 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument(
         "--no-verify", action="store_true", help="skip Git tree verification"
     )
+    info.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require opt-in publisher authentication; never accepts unsigned shelves",
+    )
+    info.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     diff = commands.add_parser("diff", help="diff two resolved source versions")
     diff.add_argument("spec_a")
     diff.add_argument("spec_b")
@@ -386,6 +411,16 @@ def build_parser() -> argparse.ArgumentParser:
     diff_roots = diff.add_mutually_exclusive_group()
     diff_roots.add_argument("--root", default=None, help="corpus root directory")
     diff_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    diff.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require opt-in publisher authentication; never accepts unsigned shelves",
+    )
+    diff.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
     import_command = commands.add_parser(
@@ -467,6 +502,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     exit_gate.add_argument("corpus", metavar="corpus.json")
     exit_gate.add_argument("--json", action="store_true", dest="as_json")
+
+    funnel = commands.add_parser(
+        "bts-funnel", help="run the recorded capability-to-candidate BTS funnel"
+    )
+    funnel.add_argument("--spec", required=True, help="canonical capability spec JSON")
+    funnel.add_argument(
+        "--recipient-manifest", required=True, help="closed recipient input manifest JSON"
+    )
+    funnel.add_argument("--stages", required=True, help="recorded discovery stages JSON")
+    funnel.add_argument("--json", action="store_true", dest="as_json")
+
+    bts_run = commands.add_parser(
+        "bts-run", help="run the contained Python BTS pipeline from a verified shelf"
+    )
+    bts_run.add_argument("spec", type=_parse_bts_compute_spec, metavar="owner/repo@commit")
+    bts_run_roots = bts_run.add_mutually_exclusive_group()
+    bts_run_roots.add_argument("--root", default=None, help="corpus root directory")
+    bts_run_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    bts_run.add_argument("--seed-module", required=True)
+    bts_run.add_argument("--seed-name", required=True)
+    bts_run.add_argument("--policy", default=None, help="closed-schema BTS resolution policy JSON")
+    bts_run.add_argument("--contract-spec", required=True, help="contract-tests JSON")
+    bts_run.add_argument("--out", required=True, help="empty artifact output directory")
+    bts_run.add_argument("--recipient-package", required=True)
+    bts_run.add_argument("--nsjail-sha256", required=True)
+    bts_run.add_argument("--nsjail-version", required=True)
+    bts_run.add_argument("--nsjail-build-identity", required=True)
+    bts_run.add_argument("--config-schema-digest", required=True)
+    bts_run.add_argument("--rootfs-source", required=True)
+    bts_run.add_argument("--rootfs-digest", required=True)
+    bts_run.add_argument("--emit-packets", default=None, metavar="PACKET_INPUTS.json")
+    bts_run.add_argument("--json", action="store_true", dest="as_json")
+
+    exit_run = commands.add_parser(
+        "exit-gate-run",
+        help="run a v1.1 runnable exit corpus under measured containment; phase A publishes corpus_manifest_digest, phase C requires its out-of-band ratified_runtime_digest",
+    )
+    exit_run.add_argument("corpus", metavar="corpus-v1.1.json")
+    exit_run.add_argument("--corpus-root", required=True, help="root containing committed contract tests")
+    exit_run.add_argument(
+        "--donors-dir", default=None,
+        help="root containing verified donor shelves and baseline sidecars (default: --corpus-root)",
+    )
+    exit_run.add_argument("--out", default=None, help="gate-report output directory")
+    exit_run.add_argument("--substrate-nsjail-sha", required=True, help="measured sha256:<hex> of /usr/bin/nsjail")
+    exit_run.add_argument("--substrate-rootfs-digest", required=True, help="measured sha256:<hex> canonical rootfs tree digest")
+    exit_run.add_argument("--nsjail-version", required=True)
+    exit_run.add_argument("--nsjail-build-identity", required=True)
+    exit_run.add_argument("--config-schema-digest", required=True)
+    exit_run.add_argument("--rootfs-source", required=True)
+    exit_run.add_argument("--trusted-keys", default=None, help="out-of-band trusted-keys.json required when ratified_runtime_digest is set")
+    exit_run.add_argument("--ratification-sidecar", default=None, help="detached Ed25519 ratification record (default: corpus directory/ratification-v1.json)")
+    exit_run.add_argument("--json", action="store_true", dest="as_json")
+
+    occupied_validate = commands.add_parser(
+        "occupied-validate", help="validate a canonical occupied-recipient attachment artifact"
+    )
+    occupied_validate.add_argument("artifact", metavar="artifact.json")
+    occupied_validate.add_argument("--json", action="store_true", dest="as_json")
 
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
@@ -876,8 +970,10 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
         )
 
 
-def _upgrade_cache(root: Path, *, dry_run: bool, out: TextIO) -> int:
-    """Backfill integrity anchors on verified legacy shelves under ``root``."""
+def _upgrade_cache(
+    root: Path, *, dry_run: bool, recompute_git_parity: bool, out: TextIO
+) -> int:
+    """Backfill integrity anchors; parity recomputation can downgrade exact to drift."""
     from .materialize import MANIFEST_NAME, _write_manifest
     from .treehash import (
         TreeHashError,
@@ -916,6 +1012,24 @@ def _upgrade_cache(root: Path, *, dry_run: bool, out: TextIO) -> int:
         f"failed {failed} (see warnings)",
         file=out,
     )
+    if recompute_git_parity:
+        from .materialize import recompute_github_git_parity
+        from .tree import GitHubTreeSource
+
+        github_api = os.environ.get("LEITIR_GITHUB_API_BASE_URL")
+        tree_source = GitHubTreeSource(
+            token=_github_token(),
+            base_url=github_api or "https://api.github.com",
+        )
+        parity_updated, parity_skipped, parity_failed = recompute_github_git_parity(
+            root, tree_source=tree_source, dry_run=dry_run
+        )
+        print(
+            f"Recomputed Git parity for {parity_updated} shelves, skipped "
+            f"{parity_skipped}, failed {parity_failed} (see warnings)",
+            file=out,
+        )
+        failed += parity_failed
     return int(ExitCode.SUCCESS if failed == 0 else ExitCode.CORPUS_FAILURE)
 
 
@@ -1069,12 +1183,20 @@ def _run_corpus_command(
     from .docpointers import POINTERS_NAME
 
     try:
+        require_manifest_authentication = False
+        if getattr(args, "require_manifest_auth", False):
+            require_manifest_authentication = True
         root = _corpus_root(args, err)
         if args.command == "list":
             _corpus_list(root, as_json=args.as_json, out=out)
             return int(ExitCode.SUCCESS)
         if args.command == "upgrade-cache":
-            return _upgrade_cache(root, dry_run=args.dry_run, out=out)
+            return _upgrade_cache(
+                root,
+                dry_run=args.dry_run,
+                recompute_git_parity=args.recompute_git_parity,
+                out=out,
+            )
         if args.command == "gc":
             removed = _gc_abandoned_staging(root)
             print(
@@ -1217,6 +1339,21 @@ def _run_corpus_command(
                     ):
                         raise ValueError(
                             f"materialized source failed load-time verification: {path}"
+                        )
+                    if require_manifest_authentication:
+                        from .manifest_auth import load_trusted_keys, require_manifest_auth
+
+                        checked_manifest = read_valid_manifest(
+                            path, owner, repo, scope.commit_sha, host=materialize_host
+                        )
+                        if checked_manifest is None:
+                            raise ValueError(
+                                f"materialized source failed load-time verification: {path}"
+                            )
+                        require_manifest_auth(
+                            checked_manifest,
+                            path,
+                            trusted_keys=load_trusted_keys(args.trusted_keys, shelf_context=path),
                         )
 
                 def locked_materializer(
@@ -1579,6 +1716,14 @@ def _run_corpus_command(
                         f"materialized source failed load-time verification: {path}"
                     )
                 manifest = valid_manifest
+                if require_manifest_authentication:
+                    from .manifest_auth import load_trusted_keys, require_manifest_auth
+
+                    require_manifest_auth(
+                        manifest,
+                        path,
+                        trusted_keys=load_trusted_keys(args.trusted_keys, shelf_context=path),
+                    )
                 recorded_subpath = manifest.get("subpath")
                 cached_subpath = (
                     recorded_subpath if isinstance(recorded_subpath, str) else None
@@ -1816,6 +1961,11 @@ def _run_corpus_command(
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.MALFORMED_USAGE)
     except Exception as exc:
+        from .manifest_auth import ManifestAuthError
+
+        if isinstance(exc, ManifestAuthError) and getattr(args, "as_json", False):
+            print(f"leitir: error: {exc.to_json()}", file=err)
+            return int(ExitCode.CORPUS_FAILURE)
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.CORPUS_FAILURE)
 
@@ -1986,9 +2136,13 @@ def main(
 
     if args.command in {
         "bts-compute",
+        "bts-funnel",
+        "bts-run",
         "analysis-architecture",
         "analysis-lineage",
         "exit-gate-validate",
+        "exit-gate-run",
+        "occupied-validate",
     }:
         try:
             if args.command == "bts-compute":
@@ -2014,6 +2168,50 @@ def main(
                     print(
                         f"leitir: wrote BTS artifacts to {output_directory}", file=err
                     )
+            elif args.command == "bts-funnel":
+                from .funnel_cli import run_funnel
+
+                payload = run_funnel(
+                    Path(args.spec), Path(args.recipient_manifest), Path(args.stages)
+                )
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            elif args.command == "bts-run":
+                from .bts_cli import SeedSelector
+                from .pipeline_cli import run_pipeline
+
+                packet_inputs = None
+                if args.emit_packets is not None:
+                    from .safeio import read_regular_file
+                    from .transplant import _inputs_from_value, _strict_json
+
+                    packet_path = Path(args.emit_packets)
+                    packet_bytes = read_regular_file(packet_path, maximum_bytes=1 << 20)
+                    packet_inputs = _inputs_from_value(_strict_json(packet_bytes))
+                owner, repo, commit_sha = args.spec
+                pipeline_result = run_pipeline(
+                    _corpus_root(args, err), owner, repo, commit_sha,
+                    seed=SeedSelector(args.seed_module, args.seed_name),
+                    contract_tests_path=Path(args.contract_spec),
+                    out_dir=Path(args.out),
+                    recipient_package=args.recipient_package,
+                    nsjail_sha256=args.nsjail_sha256,
+                    nsjail_version=args.nsjail_version,
+                    nsjail_build_identity=args.nsjail_build_identity,
+                    config_schema_digest=args.config_schema_digest,
+                    rootfs_source=Path(args.rootfs_source),
+                    rootfs_digest=args.rootfs_digest,
+                    policy_path=None if args.policy is None else Path(args.policy),
+                    emit_packets=packet_inputs,
+                )
+                payload = {
+                    "schema_version": "leitir-pipeline-cli-v1",
+                    "verdict": pipeline_result.verdict.status.value,
+                    "bts_digest": pipeline_result.verdict.bts_digest,
+                    "relocation_digest": pipeline_result.verdict.relocation_digest,
+                    "rerun_report_digest": pipeline_result.verdict.rerun_report_digest,
+                    "probe_report_digest": pipeline_result.verdict.probe_report_digest,
+                }
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
             elif args.command == "analysis-architecture":
                 from .analysis_cli import run_architecture_assessment
 
@@ -2029,7 +2227,7 @@ def main(
 
                 payload = validate_lineage_manifest(Path(args.manifest))
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
-            else:
+            elif args.command == "exit-gate-validate":
                 from .exit_corpus import (
                     cross_check_against_gate,
                     validate_corpus_manifest,
@@ -2040,6 +2238,30 @@ def main(
                     "cross_check_against_gate": cross_check_against_gate(corpus_path),
                     "validation": validate_corpus_manifest(corpus_path),
                 }
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            elif args.command == "exit-gate-run":
+                from .pipeline_cli import exit_gate_run
+
+                payload = exit_gate_run(
+                    Path(args.corpus), Path(args.corpus_root if args.donors_dir is None else args.donors_dir),
+                    corpus_root=Path(args.corpus_root),
+                    out_dir=None if args.out is None else Path(args.out),
+                    nsjail_version=args.nsjail_version,
+                    nsjail_build_identity=args.nsjail_build_identity,
+                    config_schema_digest=args.config_schema_digest,
+                    rootfs_source=Path(args.rootfs_source),
+                    substrate_nsjail_sha256=args.substrate_nsjail_sha,
+                    substrate_rootfs_digest=args.substrate_rootfs_digest,
+                    trusted_keys_path=None if args.trusted_keys is None else Path(args.trusted_keys),
+                    ratification_sidecar=None if args.ratification_sidecar is None else Path(args.ratification_sidecar),
+                )
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            else:
+                from .pipeline_cli import occupied_validate
+                from .safeio import read_regular_file
+
+                artifact = read_regular_file(Path(args.artifact), maximum_bytes=1 << 20)
+                payload = occupied_validate(artifact)
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
         except Exception as exc:
             _write_bts_error(exc, as_json=args.as_json, err=err)

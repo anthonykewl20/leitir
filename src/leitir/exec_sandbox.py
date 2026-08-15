@@ -615,7 +615,8 @@ def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cove
     rootfs: ReadOnlyMount | None = None
     for mount in policy.readonly_mounts:
         try:
-            if mount.destination == "/":
+            source = Path(mount.source)
+            if mount.destination == "/" or stat.S_ISDIR(source.stat(follow_symlinks=False).st_mode):
                 actual = _verified_directory_tree_digest(Path(mount.source))
             else:
                 actual = _verified_regular_file_digest(Path(mount.source))

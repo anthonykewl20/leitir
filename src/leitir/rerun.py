@@ -81,6 +81,15 @@ class TestOutcomeEvidence:
             raise ValueError("canonical_test_id must be a single-line pinned identity")
 
 
+def canonical_test_id(path: str, function: str) -> str:
+    """Return rerun's filename-based, transport-independent test identity."""
+
+    filename = path.rsplit("/", 1)[-1]
+    if not filename.endswith(".py") or not function.startswith("test_"):
+        raise ValueError("canonical test identity requires a Python test filename and test function")
+    return f"{filename}::{function}::-"
+
+
 def _bounded_text(value: object, name: str, *, maximum: int = _MAX_TEXT_BYTES) -> None:
     if not isinstance(value, str) or not value or "\x00" in value:
         raise ValueError(f"{name} must be nonempty bounded text")
@@ -749,5 +758,6 @@ __all__ = [
     "TestOutcome",
     "TestOutcomeEvidence",
     "ValidationStatus",
+    "canonical_test_id",
     "rerun_transplant",
 ]

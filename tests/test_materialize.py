@@ -151,6 +151,7 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
         "materialized_tree_hash_scope": "full",
         "owner": "example",
+        "parity": "unknown",
         "repo": "demo",
         "repo_url": "https://github.com/example/demo",
         "source": "git-commit",
@@ -192,6 +193,27 @@ def test_unverified_shelf_without_tree_hash_is_rejected(tmp_path):
     ):
         manifest.pop(field)
     path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def test_duplicate_manifest_key_is_rejected_like_any_other_malformed_manifest(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    path = target / "leitir-manifest.json"
+    path.write_text('{"owner":"example","owner":"attacker"}', encoding="utf-8")
+
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def test_read_valid_manifest_rejects_a_final_component_symlink(tmp_path):
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    manifest = target / "leitir-manifest.json"
+    outside = tmp_path / "outside-manifest.json"
+    outside.write_bytes(manifest.read_bytes())
+    manifest.unlink()
+    manifest.symlink_to(outside)
 
     assert read_valid_manifest(target, "example", "demo", SHA) is None
 

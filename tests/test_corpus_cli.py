@@ -5,14 +5,17 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import tarfile
 import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from _http_server import json_body, routed_server
 
 from leitir.cli import ExitCode, _ensure_local_gitignore, main, parse_corpus_spec
 from leitir.corpus import record_trust, remove_source, write_sources
+from leitir.materialize import materialize_github_repo, update_manifest
 from leitir.search import RepoScope
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
 
@@ -539,6 +542,97 @@ def test_upgrade_cache_hash_failure_is_reported_without_writing(tmp_path, monkey
     )
     assert manifest_path.read_bytes() == original
     assert warnings and warnings[0][1] == target
+
+
+def _github_tarball(files: dict[str, bytes]) -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for path, content in files.items():
+            member = tarfile.TarInfo(f"demo-{SHA}/{path}")
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    return output.getvalue()
+
+
+def _github_tree(files: dict[str, bytes]) -> bytes:
+    return json_body(
+        {
+            "sha": SHA,
+            "truncated": False,
+            "tree": [
+                {
+                    "path": path,
+                    "type": "blob",
+                    "size": len(content),
+                    "mode": "100644",
+                    "sha": hashlib.sha1(
+                        b"blob " + str(len(content)).encode() + b"\0" + content
+                    ).hexdigest(),
+                }
+                for path, content in sorted(files.items())
+            ],
+        }
+    )
+
+
+def _materialized_github_shelf(tmp_path, base_url: str, files: dict[str, bytes]):
+    return materialize_github_repo(
+        tmp_path,
+        "acme/demo",
+        "acme",
+        "demo",
+        SHA,
+        base_url=base_url,
+        tree_base_url=base_url,
+        max_attempts=1,
+    )
+
+
+def test_upgrade_cache_recomputes_raw_git_parity_before_promoting(tmp_path, monkeypatch):
+    files = {"proof.txt": b"proof\n"}
+    routes = {
+        f"/acme/demo/tar.gz/{SHA}": (200, {}, _github_tarball(files)),
+        f"/repos/acme/demo/git/trees/{SHA}": (200, {}, _github_tree(files)),
+    }
+    with routed_server(routes) as server:
+        target = _materialized_github_shelf(tmp_path, server.base_url, files)
+        update_manifest(target, {"parity": "unknown"})
+        monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
+        code, out, err = _invoke(
+            ["upgrade-cache", "--root", str(tmp_path), "--recompute-git-parity"]
+        )
+
+    assert code == ExitCode.SUCCESS, err
+    assert "Recomputed Git parity for 1 shelves" in out
+    assert json.loads((target / "leitir-manifest.json").read_text())["parity"] == "exact"
+
+
+@pytest.mark.parametrize("tree_response", ["unavailable", "sampled"])
+def test_upgrade_cache_never_promotes_parity_without_full_tree_proof(
+    tmp_path, monkeypatch, tree_response
+):
+    import leitir.materialize as materialize
+
+    files = {"one.txt": b"1", "two.txt": b"2"}
+    routes = {
+        f"/acme/demo/tar.gz/{SHA}": (200, {}, _github_tarball(files)),
+        f"/repos/acme/demo/git/trees/{SHA}": (200, {}, _github_tree(files)),
+    }
+    with routed_server(routes) as server:
+        target = _materialized_github_shelf(tmp_path, server.base_url, files)
+        update_manifest(target, {"parity": "unknown"})
+        if tree_response == "unavailable":
+            routes[f"/repos/acme/demo/git/trees/{SHA}"] = (404, {}, b"no")
+        else:
+            monkeypatch.setattr(materialize, "VERIFY_MAX_FILES", 1)
+        monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
+        code, _out, _err = _invoke(
+            ["upgrade-cache", "--root", str(tmp_path), "--recompute-git-parity"]
+        )
+
+    expected = ExitCode.CORPUS_FAILURE if tree_response == "unavailable" else ExitCode.SUCCESS
+    assert code == expected
+    assert json.loads((target / "leitir-manifest.json").read_text())["parity"] == "unknown"
 
 
 def test_remove_and_clean_fabricated_corpus(tmp_path, monkeypatch):

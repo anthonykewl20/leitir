@@ -569,6 +569,61 @@ class BTS:
         return _canonical_bytes(self)
 
 
+def load_bts_artifact(data: str | bytes) -> BTS:
+    """Load a canonical complete :class:`BTSReport` as its BTS artifact.
+
+    Reports deliberately retain all of the member source evidence needed to
+    re-derive the complete BTS.  Rebuilding the two derived BTS digests here
+    keeps occupied attachment callers from treating a report's cached fields
+    as authority.
+    """
+
+    try:
+        if not isinstance(data, (str, bytes)):
+            raise TypeError("BTS artifact must be str or bytes")
+        report = BTSReport.from_json(data)
+        if report.schema_version != BTS_SCHEMA_VERSION or report.status is not BTSStatus.COMPLETE:
+            raise ValueError("BTS artifact must be a complete current-schema report")
+        required_files = tuple(
+            sorted({RequiredFileEvidence(item.source.path, item.source.blob_sha, item.source_bytes_sha256) for item in report.members})
+        )
+        required_symbols = tuple(
+            sorted((RequiredSymbolEvidence(item.node, item.source) for item in report.members), key=lambda item: _node_id_key(item.node))
+        )
+        equivalent = BTS(
+            BTS_SCHEMA_VERSION,
+            report.inputs.seed,
+            report.members,
+            report.dispositions,
+            required_files,
+            required_symbols,
+            "",
+            "",
+        )
+        equivalence = _digest(equivalent, omit=frozenset({"bts_digest", "member_equivalence_digest"}))
+        primary = _digest(
+            (report, equivalent),
+            omit=frozenset({"analysis_digest", "bts_digest", "member_equivalence_digest"}),
+        )
+        return BTS(
+            BTS_SCHEMA_VERSION,
+            equivalent.seed,
+            equivalent.members,
+            equivalent.dispositions,
+            equivalent.required_files,
+            equivalent.required_symbols,
+            primary,
+            equivalence,
+        )
+    except (TypeError, ValueError, BTSError) as exc:
+        raise BTSError(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "invalid BTS artifact for occupied validation",
+            detail_code="bts_artifact_invalid_v1",
+            cause=exc,
+        ) from exc
+
+
 @dataclass(frozen=True, slots=True)
 class BTSResult:
     status: BTSStatus
@@ -1101,4 +1156,5 @@ __all__ = [
     "StdlibIdentity",
     "StdlibInterface",
     "compute_bts",
+    "load_bts_artifact",
 ]

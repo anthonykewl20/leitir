@@ -1,0 +1,68 @@
+{
+  "key_id": "56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
+  "malformed": "{\"key_id\":\"one\",\"key_id\":\"two\"}",
+  "manifest": {
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fetched_at": "volatile",
+    "host": "github.com",
+    "materialized_tree_hash": "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
+    "materialized_tree_hash_scope": "full",
+    "owner": "acme",
+    "repo": "widget",
+    "source": "git-commit",
+    "trust": {"x": 1}
+  },
+  "public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "tampered_projection": {
+    "algorithm": "ed25519",
+    "key_id": "56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
+    "projection": {
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "host": "github.com",
+      "materialized_tree_hash": "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
+      "materialized_tree_hash_scope": "full",
+      "owner": "acme",
+      "repo": "attacker",
+      "source": "git-commit"
+    },
+    "projection_digest": "02db2ad0b02896a3da93858341d6d212918036d8391ab9b2e921ed8da1aff556",
+    "schema_version": "leitir-manifest-auth-v1",
+    "signature": "x9fe+5F9MTIKzs4C0smI1Keb8+7j8yJsq0V/v2IZRgHJfqQ6ueD1hyjlzXbZG/29j4o7/qumN4uTEpBpsu4vAA=="
+  },
+  "valid": {
+    "algorithm": "ed25519",
+    "key_id": "56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
+    "projection": {
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "host": "github.com",
+      "materialized_tree_hash": "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
+      "materialized_tree_hash_scope": "full",
+      "owner": "acme",
+      "repo": "widget",
+      "source": "git-commit"
+    },
+    "projection_digest": "02db2ad0b02896a3da93858341d6d212918036d8391ab9b2e921ed8da1aff556",
+    "schema_version": "leitir-manifest-auth-v1",
+    "signature": "x9fe+5F9MTIKzs4C0smI1Keb8+7j8yJsq0V/v2IZRgHJfqQ6ueD1hyjlzXbZG/29j4o7/qumN4uTEpBpsu4vAA=="
+  },
+  "wrong_key": {
+    "algorithm": "ed25519",
+    "key_id": "wrong-key",
+    "projection": {
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "host": "github.com",
+      "materialized_tree_hash": "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
+      "materialized_tree_hash_scope": "full",
+      "owner": "acme",
+      "repo": "widget",
+      "source": "git-commit"
+    },
+    "projection_digest": "02db2ad0b02896a3da93858341d6d212918036d8391ab9b2e921ed8da1aff556",
+    "schema_version": "leitir-manifest-auth-v1",
+    "signature": "x9fe+5F9MTIKzs4C0smI1Keb8+7j8yJsq0V/v2IZRgHJfqQ6ueD1hyjlzXbZG/29j4o7/qumN4uTEpBpsu4vAA=="
+  }
+}

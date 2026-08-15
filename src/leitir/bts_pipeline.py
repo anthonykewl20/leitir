@@ -66,6 +66,11 @@ class BTSPipelineRequest:
     probe_execution_policy: ProbeExecutionPolicy
     declared_external_modules: tuple[str, ...] = ()
     recipient_bindings: RecipientBindingManifest = EMPTY_RECIPIENT_BINDINGS
+    # The CLI performs relocation before it can construct the S2 policy: the
+    # policy must bind every E1-authorized file, not a directory approximation.
+    # Keep the value typed and verify its BTS binding below; this is not an
+    # alternate relocation path.
+    precomputed_relocation: Relocation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +231,7 @@ def run_bts_pipeline(request: BTSPipelineRequest) -> BTSPipelineResult:
             "only a COMPLETE BTS may enter the pipeline relocation boundary",
             detail_code="pipeline_non_complete_bts_v1",
         )
-    relocation = relocate_tests(
+    derived_relocation = relocate_tests(
         bts,
         module_map=request.module_map,
         source_files=request.source_files,
@@ -234,6 +239,19 @@ def run_bts_pipeline(request: BTSPipelineRequest) -> BTSPipelineResult:
         declared_external_modules=request.declared_external_modules,
         recipient_bindings=request.recipient_bindings,
     )
+    if request.precomputed_relocation is not None:
+        relocation = request.precomputed_relocation
+        if (
+            relocation.bts_digest != bts.bts.bts_digest
+            or relocation.relocation_digest != derived_relocation.relocation_digest
+        ):
+            raise TransplantError(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                "precomputed relocation does not reproduce the authoritative E1 output",
+                detail_code="pipeline_precomputed_relocation_mismatch_v1",
+            )
+    else:
+        relocation = derived_relocation
     rerun = rerun_transplant(
         relocation,
         bts,

@@ -13,17 +13,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import stat
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Never, TypeAlias, cast
 
 from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.bts_exit_gate import MINIMUM_EXIT_DONORS
+from leitir.safeio import read_regular_file
 
-EXIT_CORPUS_MANIFEST_SCHEMA_VERSION = "leitir-exit-corpus-manifest-v1"
+EXIT_CORPUS_MANIFEST_SCHEMA_VERSION = "leitir-exit-corpus-manifest-v1.1"
+_V1_SCHEMA_VERSION = "leitir-exit-corpus-manifest-v1"
 MAX_MANIFEST_BYTES = 1 << 20
 
 _HEX_40_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -37,10 +37,12 @@ _TOP_LEVEL_KEYS = frozenset(
         "created_for_milestone",
         "cases",
         "ratified_manifest_digest",
+        "ratified_runtime_digest",
         "notes",
+        "runnable",
     }
 )
-_REQUIRED_TOP_LEVEL_KEYS = _TOP_LEVEL_KEYS - {"notes"}
+_REQUIRED_TOP_LEVEL_KEYS = _TOP_LEVEL_KEYS - {"notes", "runnable", "ratified_runtime_digest"}
 _CASE_KEYS = frozenset(
     {
         "case_id",
@@ -55,6 +57,12 @@ _CASE_KEYS = frozenset(
 _DONOR_KEYS = frozenset({"host", "owner", "repo", "commit_sha"})
 _BASELINE_KEYS = frozenset({"contract_test_count", "expected_pass", "expected_fail", "expected_skip"})
 _SEED_KEYS = frozenset({"module", "qualified_name"})
+_RUNNABLE_KEYS = frozenset({"substrate", "donors_dir_layout", "per_case"})
+_SUBSTRATE_KEYS = frozenset({"nsjail_sha256", "nsjail_version", "nsjail_build_identity", "config_schema_digest", "rootfs_digest", "containment_template_version"})
+_RUNNABLE_CASE_REQUIRED_KEYS = frozenset({"case_id", "contract_tests"})
+_RUNNABLE_CASE_KEYS = _RUNNABLE_CASE_REQUIRED_KEYS | frozenset({"policy_path", "notes", "import_roots", "runtime_deps"})
+_CONTRACT_TEST_KEYS = frozenset({"path", "module"})
+_RUNTIME_DEP_KEYS = frozenset({"distribution", "version"})
 
 JsonObject: TypeAlias = dict[str, object]
 
@@ -172,13 +180,121 @@ def _validate_case(raw_case: object) -> JsonObject:
     }
 
 
+def _relative_python_path(value: object, field: str) -> str:
+    path = _text(value, field)
+    candidate = PurePosixPath(path)
+    if not path.endswith(".py") or candidate.is_absolute() or ".." in candidate.parts or candidate.as_posix() != path:
+        _reject(f"{field} must be a normalized relative Python path", "exit_corpus_schema_v1")
+    return path
+
+
+def _relative_json_path(value: object, field: str) -> str:
+    path = _text(value, field)
+    candidate = PurePosixPath(path)
+    if not path.endswith(".json") or candidate.is_absolute() or ".." in candidate.parts or candidate.as_posix() != path:
+        _reject(f"{field} must be a normalized relative JSON path", "exit_corpus_schema_v1")
+    return path
+
+
+def _module_name(value: object, field: str) -> str:
+    module = _text(value, field)
+    if any(not part.isidentifier() for part in module.split(".")):
+        _reject(f"{field} must be a Python module name", "exit_corpus_schema_v1")
+    return module
+
+
+def _validate_runnable(raw_runnable: object, case_ids: list[object]) -> JsonObject:
+    runnable = _object(raw_runnable, "runnable")
+    _exact_keys(runnable, _RUNNABLE_KEYS, "runnable")
+    substrate = _object(runnable["substrate"], "runnable.substrate")
+    if not {"nsjail_sha256", "rootfs_digest", "containment_template_version"} <= set(substrate) or not set(substrate) <= _SUBSTRATE_KEYS:
+        _reject("runnable.substrate has unknown or missing fields", "exit_corpus_schema_v1")
+    def substrate_pin(value: object, field: str) -> str | None:
+        # A committed runnable corpus may deliberately defer a machine-specific
+        # containment identity to an evidence run.  The runner then requires a
+        # supplied pin; null never means "accept any substrate".
+        if value is None:
+            return None
+        pin = _text(value, field)
+        if _GATE_DIGEST_RE.fullmatch(pin) is None:
+            _reject("runnable substrate pins must be sha256 digests or null", "exit_corpus_schema_v1")
+        return pin
+
+    nsjail_sha256 = substrate_pin(substrate["nsjail_sha256"], "runnable.substrate.nsjail_sha256")
+    rootfs_digest = substrate_pin(substrate["rootfs_digest"], "runnable.substrate.rootfs_digest")
+    nsjail_version = substrate.get("nsjail_version")
+    nsjail_build_identity = substrate_pin(substrate.get("nsjail_build_identity"), "runnable.substrate.nsjail_build_identity")
+    config_schema_digest = substrate_pin(substrate.get("config_schema_digest"), "runnable.substrate.config_schema_digest")
+    if nsjail_version is not None:
+        nsjail_version = _text(nsjail_version, "runnable.substrate.nsjail_version")
+    template = _text(substrate["containment_template_version"], "runnable.substrate.containment_template_version")
+    layout = _text(runnable["donors_dir_layout"], "runnable.donors_dir_layout", limit=4096)
+    normalized_cases: list[JsonObject] = []
+    for raw_case in _list(runnable["per_case"], "runnable.per_case"):
+        case = _object(raw_case, "runnable.per_case item")
+        if not _RUNNABLE_CASE_REQUIRED_KEYS <= set(case) or not set(case) <= _RUNNABLE_CASE_KEYS:
+            _reject("runnable per_case item has unknown or missing fields", "exit_corpus_schema_v1")
+        tests: list[JsonObject] = []
+        for raw_test in _list(case["contract_tests"], "runnable.per_case.contract_tests"):
+            test = _object(raw_test, "runnable contract test")
+            _exact_keys(test, _CONTRACT_TEST_KEYS, "runnable contract test")
+            tests.append({"path": _relative_python_path(test["path"], "runnable contract test.path"), "module": _module_name(test["module"], "runnable contract test.module")})
+        if not tests or tests != sorted(tests, key=lambda item: (cast(str, item["path"]), cast(str, item["module"]))) or len({(item["path"], item["module"]) for item in tests}) != len(tests):
+            _reject("runnable contract tests must be nonempty, sorted, and unique", "exit_corpus_schema_v1")
+        normalized: JsonObject = {"case_id": _text(case["case_id"], "runnable.per_case.case_id"), "contract_tests": tests}
+        if "policy_path" in case:
+            normalized["policy_path"] = _relative_json_path(case["policy_path"], "runnable.per_case.policy_path")
+        if "notes" in case:
+            normalized["notes"] = _text(case["notes"], "runnable.per_case.notes", limit=4096)
+        roots = case.get("import_roots", ["."])
+        if not isinstance(roots, list) or not roots:
+            _reject("runnable import_roots must be a nonempty array", "exit_corpus_schema_v1")
+        normalized_roots: list[str] = []
+        for root in roots:
+            root_path = _text(root, "runnable.per_case.import_roots")
+            candidate = PurePosixPath(root_path)
+            if candidate.is_absolute() or ".." in candidate.parts or candidate.as_posix() != root_path:
+                _reject("runnable import root must be normalized and relative", "exit_corpus_schema_v1")
+            normalized_roots.append(root_path)
+        if normalized_roots != sorted(set(normalized_roots)):
+            _reject("runnable import_roots must be sorted and unique", "exit_corpus_schema_v1")
+        if "import_roots" in case:
+            normalized["import_roots"] = normalized_roots
+        deps = case.get("runtime_deps", [])
+        if not isinstance(deps, list):
+            _reject("runnable runtime_deps must be an array", "exit_corpus_schema_v1")
+        normalized_deps: list[JsonObject] = []
+        for dep in deps:
+            item = _object(dep, "runnable runtime dependency")
+            _exact_keys(item, _RUNTIME_DEP_KEYS, "runnable runtime dependency")
+            distribution = _text(item["distribution"], "runnable runtime dependency.distribution")
+            version = _text(item["version"], "runnable runtime dependency.version")
+            if "==" in distribution or version.startswith("==") or any(character.isspace() for character in version):
+                _reject("runtime dependencies require a distribution and exact plain version pin", "exit_corpus_schema_v1")
+            normalized_deps.append({"distribution": distribution, "version": version})
+        if normalized_deps != sorted(normalized_deps, key=lambda item: (cast(str, item["distribution"]), cast(str, item["version"]))):
+            _reject("runnable runtime_deps must be sorted", "exit_corpus_schema_v1")
+        if "runtime_deps" in case:
+            normalized["runtime_deps"] = normalized_deps
+        normalized_cases.append(normalized)
+    expected = tuple(cast(str, item) for item in case_ids)
+    actual = tuple(cast(str, item["case_id"]) for item in normalized_cases)
+    if actual != tuple(sorted(actual)) or len(actual) != len(set(actual)) or set(actual) != set(expected):
+        _reject("runnable per_case entries must be sorted and exactly align with corpus cases", "exit_corpus_runnable_case_alignment_v1")
+    normalized_substrate: JsonObject = {"nsjail_sha256": nsjail_sha256, "rootfs_digest": rootfs_digest, "containment_template_version": template}
+    for field, value in (("nsjail_version", nsjail_version), ("nsjail_build_identity", nsjail_build_identity), ("config_schema_digest", config_schema_digest)):
+        if field in substrate:
+            normalized_substrate[field] = value
+    return {"substrate": normalized_substrate, "donors_dir_layout": layout, "per_case": normalized_cases}
+
+
 def _validate_manifest(raw: object) -> JsonObject:
     manifest = _object(raw, "manifest")
     keys = set(manifest)
     if not _REQUIRED_TOP_LEVEL_KEYS <= keys or not keys <= _TOP_LEVEL_KEYS:
         _reject("manifest has unknown or missing fields", "exit_corpus_schema_v1")
     schema_version = _text(manifest["schema_version"], "schema_version")
-    if schema_version != EXIT_CORPUS_MANIFEST_SCHEMA_VERSION:
+    if schema_version not in {_V1_SCHEMA_VERSION, EXIT_CORPUS_MANIFEST_SCHEMA_VERSION}:
         _reject("manifest schema_version is unsupported", "exit_corpus_schema_v1")
     corpus_id = _text(manifest["corpus_id"], "corpus_id")
     milestone = _text(manifest["created_for_milestone"], "created_for_milestone")
@@ -201,6 +317,11 @@ def _validate_manifest(raw: object) -> JsonObject:
         ratified = _text(ratified, "ratified_manifest_digest")
         if _HEX_64_RE.fullmatch(ratified) is None:
             _reject("ratified_manifest_digest must be null or 64 lowercase hexadecimal characters", "exit_corpus_schema_v1")
+    runtime = manifest.get("ratified_runtime_digest")
+    if runtime is not None:
+        runtime = _text(runtime, "ratified_runtime_digest")
+        if _GATE_DIGEST_RE.fullmatch(runtime) is None:
+            _reject("ratified_runtime_digest must be null or a sha256 digest", "exit_corpus_schema_v1")
 
     normalized: JsonObject = {
         "schema_version": schema_version,
@@ -209,8 +330,16 @@ def _validate_manifest(raw: object) -> JsonObject:
         "cases": cases,
         "ratified_manifest_digest": ratified,
     }
+    # v1.1 accepts an absent value as the canonical historical spelling of the
+    # default null. New manifests should spell it explicitly to bind that choice.
+    if "ratified_runtime_digest" in manifest:
+        normalized["ratified_runtime_digest"] = runtime
     if "notes" in manifest:
         normalized["notes"] = _text(manifest["notes"], "notes", limit=4096)
+    if "runnable" in manifest:
+        if schema_version != EXIT_CORPUS_MANIFEST_SCHEMA_VERSION:
+            _reject("runnable section requires the v1.1 manifest schema", "exit_corpus_schema_v1")
+        normalized["runnable"] = _validate_runnable(manifest["runnable"], case_ids)
     return normalized
 
 
@@ -224,19 +353,14 @@ def content_digest(manifest_dict: Mapping[str, object]) -> str:
 
 def _read_manifest(path: Path) -> bytes:
     try:
-        with path.open("rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                _reject("exit corpus manifest must be a regular file", "exit_corpus_read_v1")
-            data = handle.read(MAX_MANIFEST_BYTES + 1)
-    except OSError as exc:
+        data = read_regular_file(path, maximum_bytes=MAX_MANIFEST_BYTES)
+    except (OSError, ValueError) as exc:
         raise BTSError(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
             "cannot read exit corpus manifest",
             detail_code="exit_corpus_read_v1",
             cause=exc,
         ) from exc
-    if len(data) > MAX_MANIFEST_BYTES:
-        _reject("exit corpus manifest exceeds the size limit", "exit_corpus_read_v1")
     return data
 
 
@@ -349,9 +473,28 @@ def cross_check_against_gate(corpus_manifest_path: Path) -> JsonObject:
     }
 
 
+def add_runnable_section(manifest_dict: Mapping[str, object], runnable: Mapping[str, object]) -> JsonObject:
+    """Convert a validated v1 pin manifest into a v1.1 runnable manifest.
+
+    Ratification is intentionally cleared: runnable execution instructions are
+    corpus content, but do not grant any new authority or inherit an old
+    content binding.
+    """
+
+    if not isinstance(manifest_dict, Mapping) or not isinstance(runnable, Mapping):
+        raise TypeError("manifest_dict and runnable must be mappings")
+    candidate = dict(manifest_dict)
+    candidate["schema_version"] = EXIT_CORPUS_MANIFEST_SCHEMA_VERSION
+    candidate["runnable"] = dict(runnable)
+    candidate["ratified_manifest_digest"] = None
+    candidate["ratified_runtime_digest"] = None
+    return _validate_manifest(candidate)
+
+
 __all__ = [
     "EXIT_CORPUS_MANIFEST_SCHEMA_VERSION",
     "MAX_MANIFEST_BYTES",
+    "add_runnable_section",
     "content_digest",
     "cross_check_against_gate",
     "load_corpus_manifest",

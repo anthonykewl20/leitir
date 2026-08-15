@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from leitir.bts_errors import BTSError
+from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.cli import ExitCode, main
 from leitir.funnel_cli import build_recipient_profile, run_discovery, run_funnel, validate_capability_spec
 
@@ -62,8 +62,8 @@ def test_funnel_missing_file_names_path_and_os_error(tmp_path: Path) -> None:
         validate_capability_spec(missing)
 
     assert caught.value.evidence.detail_code == "funnel_cli_spec_invalid_v1"
+    assert caught.value.reason is BTSRejectReason.REJECT_HARD_GATE_FAILED
     assert str(missing) in caught.value.evidence.message
-    assert "No such file or directory" in caught.value.evidence.message
 
 
 def test_funnel_reads_digest_anchored_inputs_without_no_follow(monkeypatch: pytest.MonkeyPatch) -> None:

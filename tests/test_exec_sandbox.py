@@ -117,18 +117,23 @@ def test_nsjail_ci_identity_derivation_is_accepted_without_running_nsjail(fake_n
     """Match bts-containment.yml: sha256(commit UTF-8 + binary-sha hex UTF-8)."""
 
     path, version, identity = fake_nsjail
-    binary_sha_hex = hashlib.sha256(path.read_bytes()).hexdigest()
+    policy = _policy(fake_nsjail)
+    binary_digest = _digest(path.read_bytes())
+    binary_sha_hex = binary_digest.removeprefix("sha256:")
     assert version == f"nsjail@{_NSJAIL_COMMIT}"
     assert identity == f"sha256:{hashlib.sha256((_NSJAIL_COMMIT + binary_sha_hex).encode()).hexdigest()}"
-    sandbox._verify_backend(_policy(fake_nsjail))
+    assert sandbox._nsjail_build_identity(_NSJAIL_COMMIT, binary_digest) == identity
+    sandbox._verify_nsjail_identity(policy, binary_digest)
 
 
 def test_nsjail_timestamped_version_output_identity_is_rejected(fake_nsjail: tuple[Path, str, str]) -> None:
     legacy_output = "nsjail version test-pinned built 2026-08-15T00:00:00Z"
     legacy_identity = _digest((legacy_output + "\n").encode())
+    path, _, _ = fake_nsjail
     with pytest.raises(TransplantError) as caught:
-        sandbox._verify_backend(
-            replace(_policy(fake_nsjail), nsjail_version=legacy_output, nsjail_build_identity=legacy_identity)
+        sandbox._verify_nsjail_identity(
+            replace(_policy(fake_nsjail), nsjail_version=legacy_output, nsjail_build_identity=legacy_identity),
+            _digest(path.read_bytes()),
         )
     assert caught.value.evidence.detail_code == "nsjail_identity_mismatch"
 

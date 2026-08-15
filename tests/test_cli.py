@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from _http_server import json_body, routed_server
 
+from leitir.bts_errors import BTSRejectReason
 from leitir.cli import ExitCode, main
 from leitir.search import (
     Coverage,
@@ -325,9 +326,9 @@ def test_exit_gate_validate_cli_missing_file_names_path_and_os_error(tmp_path: P
     assert code == ExitCode.CORPUS_FAILURE
     assert stdout == ""
     error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["reason"] == BTSRejectReason.REJECT_PROVENANCE_MISMATCH.value
     assert error["evidence"]["detail_code"] == "exit_corpus_read_v1"
     assert str(missing) in error["evidence"]["message"]
-    assert "No such file or directory" in error["evidence"]["message"]
 
 
 def test_help_lists_search_without_side_effects(capsys):

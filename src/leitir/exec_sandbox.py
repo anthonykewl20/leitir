@@ -304,6 +304,20 @@ def _nsjail_build_identity(commit: str, binary_sha256: str) -> str:
     return _digest_bytes((commit + binary_sha256.removeprefix("sha256:")).encode("utf-8"))
 
 
+def _verify_nsjail_identity(policy: ContainmentPolicy, binary_sha256: str) -> None:
+    """Reject policy identity pins that do not match the measured binary digest."""
+
+    version_match = _NSJAIL_VERSION_RE.fullmatch(policy.nsjail_version)
+    if version_match is None:
+        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
+    try:
+        expected_identity = _nsjail_build_identity(version_match.group(1), binary_sha256)
+    except ValueError as exc:
+        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch") from exc
+    if policy.nsjail_build_identity != expected_identity:
+        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
+
+
 def _digest_payload(value: object) -> str:
     return _digest_bytes(_canonical_json(value).encode("utf-8"))
 
@@ -564,15 +578,7 @@ def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # e
         version_output.decode("utf-8", "strict")
     except UnicodeDecodeError as exc:
         raise _reject("nsjail build identity is malformed", "nsjail_identity_mismatch") from exc
-    version_match = _NSJAIL_VERSION_RE.fullmatch(policy.nsjail_version)
-    if version_match is None:
-        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
-    try:
-        expected_identity = _nsjail_build_identity(version_match.group(1), digest)
-    except ValueError as exc:  # defensive: ``digest`` was measured from the executable above.
-        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch") from exc
-    if policy.nsjail_build_identity != expected_identity:
-        raise _reject("nsjail release/build identity does not match policy", "nsjail_identity_mismatch")
+    _verify_nsjail_identity(policy, digest)
 
 
 def _verified_regular_file_digest(path: Path) -> str:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

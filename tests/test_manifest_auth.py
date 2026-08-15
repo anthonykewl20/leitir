@@ -17,15 +17,19 @@ import pytest
 from leitir.cli import ExitCode, main
 from leitir.manifest_auth import (
     AUTH_RECORD_NAME,
+    ManifestAuthBadSignatureError,
     ManifestAuthExtraMissingError,
     ManifestAuthKeysInShelfError,
+    ManifestAuthMalformedError,
     ManifestAuthNoKeysError,
     ManifestAuthProjectionMismatchError,
     ManifestAuthUnknownKeyError,
     canonical_json,
     derive_projection,
     load_trusted_keys,
+    require_detached_projection_auth,
     require_manifest_auth,
+    sign_projection,
 )
 from leitir.materialize import manifest_digest_fields, target_path
 from leitir.treehash import compute_materialized_tree_hash
@@ -101,6 +105,105 @@ def test_trusted_keys_inside_authenticated_shelf_are_rejected(tmp_path: Path) ->
     with pytest.raises(ManifestAuthKeysInShelfError) as caught:
         load_trusted_keys(keys, shelf_context=shelf)
     assert caught.value.code == "manifest_auth_keys_in_shelf_v1"
+
+
+def test_trusted_keys_are_a_no_follow_trust_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    keys = tmp_path / "trusted-keys.json"
+    keys.write_text(
+        json.dumps({"keys": [{"key_id": "key", "public_key_b64": base64.b64encode(bytes(range(32))).decode("ascii"), "note": "test"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+    with pytest.raises(ManifestAuthMalformedError, match="cannot read trusted keys"):
+        load_trusted_keys(keys)
+
+
+def test_load_trusted_keys_accepts_the_closed_valid_schema(tmp_path: Path) -> None:
+    keys = tmp_path / "trusted-keys.json"
+    public_key = bytes(range(32))
+    keys.write_text(
+        json.dumps({"keys": [{"key_id": "key", "public_key_b64": base64.b64encode(public_key).decode("ascii"), "note": "test"}]}),
+        encoding="utf-8",
+    )
+
+    assert load_trusted_keys(keys) == {"key": public_key}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"keys": []},
+        {"keys": [{"key_id": "key", "public_key_b64": "not base64", "note": "test"}]},
+        {"keys": [{"key_id": "key", "public_key_b64": base64.b64encode(b"too short").decode("ascii"), "note": "test"}]},
+        {"keys": [{"key_id": "key", "public_key_b64": base64.b64encode(bytes(range(32))).decode("ascii"), "note": "test"}, {"key_id": "key", "public_key_b64": base64.b64encode(bytes(range(32))).decode("ascii"), "note": "duplicate"}]},
+    ],
+)
+def test_load_trusted_keys_rejects_empty_or_malformed_closed_schema(tmp_path: Path, payload: object) -> None:
+    keys = tmp_path / "trusted-keys.json"
+    keys.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises((ManifestAuthNoKeysError, ManifestAuthMalformedError)):
+        load_trusted_keys(keys)
+
+
+def test_authorization_records_validate_with_the_provider_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeInvalidSignature(Exception):
+        pass
+
+    class FakePublicKey:
+        @classmethod
+        def from_public_bytes(cls, value: bytes) -> FakePublicKey:
+            assert len(value) == 32
+            return cls()
+
+        def verify(self, signature: bytes, canonical: bytes) -> None:
+            assert len(signature) == 64
+            assert canonical.endswith(b"\n")
+            if signature == b"x" * 64:
+                raise FakeInvalidSignature()
+
+        def public_bytes(self, *, encoding: object, format: object) -> bytes:
+            return bytes(range(32))
+
+    class FakePrivateKey:
+        def public_key(self) -> FakePublicKey:
+            return FakePublicKey()
+
+        def sign(self, canonical: bytes) -> bytes:
+            assert canonical.endswith(b"\n")
+            return b"s" * 64
+
+    class FakeSerialization:
+        class Encoding:
+            Raw = object()
+
+        class PublicFormat:
+            Raw = object()
+
+    monkeypatch.setattr("leitir.manifest_auth._provider", lambda: (FakePrivateKey, FakePublicKey, FakeInvalidSignature, FakeSerialization))
+    vectors = _vectors()
+    manifest = vectors["manifest"]
+    record = vectors["valid"]
+    assert isinstance(manifest, dict) and isinstance(record, dict)
+    public_key = base64.b64decode(str(vectors["public_key_b64"]), validate=True)
+    trusted = {str(vectors["key_id"]): public_key}
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+    _sidecar_path(shelf).write_bytes(canonical_json(record))
+
+    require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    detached = tmp_path / "detached.json"
+    detached.write_bytes(canonical_json(record))
+    require_detached_projection_auth(record["projection"], detached, trusted_keys=trusted)  # type: ignore[arg-type]
+    assert sign_projection(record["projection"], FakePrivateKey())["signature"] == base64.b64encode(b"s" * 64).decode("ascii")  # type: ignore[arg-type]
+
+    bad_signature = dict(record, signature=base64.b64encode(b"x" * 64).decode("ascii"))
+    _sidecar_path(shelf).write_bytes(canonical_json(bad_signature))
+    with pytest.raises(ManifestAuthBadSignatureError):
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    with pytest.raises(ManifestAuthNoKeysError):
+        require_manifest_auth(manifest, shelf, trusted_keys={})
 
 
 @pytest.mark.skipif(not _HAS_CRYPTOGRAPHY, reason="requires optional auth extra")

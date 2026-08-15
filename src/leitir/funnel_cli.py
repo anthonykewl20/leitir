@@ -97,7 +97,9 @@ def _read_json(path: Path, family: str) -> object:
     try:
         if not isinstance(path, Path):
             raise TypeError("path must be pathlib.Path")
-        data = read_regular_file(path, maximum_bytes=_MAX_INPUT_BYTES)
+        # Funnel inputs are closed-schema and digest-validated after reading;
+        # permit Windows platforms without O_NOFOLLOW for this digest anchor.
+        data = read_regular_file(path, maximum_bytes=_MAX_INPUT_BYTES, no_follow=False)
     except (OSError, TypeError, ValueError) as exc:
         _input_error(family, f"could not read {path}", exc)
     try:

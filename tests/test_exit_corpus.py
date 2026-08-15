@@ -114,6 +114,12 @@ def test_loader_round_trips_the_source_fields() -> None:
     assert loaded == source
 
 
+def test_corpus_manifest_remains_a_no_follow_trust_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+    assert _detail_code(load_corpus_manifest, _fixture()) == "exit_corpus_read_v1"
+
+
 def test_content_digest_is_pythonhashseed_independent() -> None:
     script = """
 from pathlib import Path

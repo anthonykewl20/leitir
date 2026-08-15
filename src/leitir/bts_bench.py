@@ -1063,7 +1063,9 @@ def load_manifest(path: str | Path) -> BTSEvalManifest:
     if not isinstance(path, (str, Path)):
         raise TypeError("path must be text or Path")
     try:
-        return manifest_from_dict(json.loads(read_regular_file(Path(path), maximum_bytes=1 << 20).decode("utf-8", "strict")))
+        # Benchmark task manifests are digest-bound by their callers after
+        # parsing, so this portable input may omit O_NOFOLLOW.
+        return manifest_from_dict(json.loads(read_regular_file(Path(path), maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict")))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("BTS evaluation manifest cannot be read as bounded UTF-8 JSON") from exc
 

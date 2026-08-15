@@ -133,7 +133,9 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _read_regular_json_bytes(path: Path) -> bytes:
     try:
-        return read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES)
+        # Published task/exit sidecars are canonical and digest-validated after
+        # reading, so their inputs retain a digest anchor without O_NOFOLLOW.
+        return read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "pipeline CLI JSON input is malformed", detail_code="pipeline_cli_schema_v1", cause=exc) from exc
 
@@ -261,7 +263,7 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
     # availability.
     for test in sorted(contract_tests):
         try:
-            source = read_regular_file(test_root / test.path, maximum_bytes=_MAX_SPEC_BYTES)
+            source = read_regular_file(test_root / test.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         except (OSError, ValueError) as exc:
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "contract test cannot be read", detail_code="pipeline_cli_contract_read_v1", cause=exc) from exc
         if test.content is not None and source != test.content:
@@ -270,7 +272,7 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
     outcomes: list[TestOutcomeEvidence] = []
     for test in sorted(contract_tests):
         source_path = test_root / test.path
-        source = read_regular_file(source_path, maximum_bytes=_MAX_SPEC_BYTES)
+        source = read_regular_file(source_path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         for name in _test_functions(source):
             identifier = canonical_test_id(test.path, name)
             outcome, category = _run_donor_present_test(policy, "/contract/" + test.path, name)
@@ -619,7 +621,7 @@ def _relocate_prepared(
     modules = tuple(sorted({member.node.module for member in bts.members}))
     module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
     source_files = tuple(
-        SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES))
+        SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for item in bts.required_files
     )
     external_modules = tuple(sorted({item.node.module for item in bts.members if item.disposition.value == "external"}))
@@ -638,7 +640,7 @@ def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolu
     bts = _complete_bts(preliminary)
     modules = tuple(sorted({member.node.module for member in bts.members}))
     module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
-    source_files = tuple(SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES)) for item in bts.required_files)
+    source_files = tuple(SourceFile(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)) for item in bts.required_files)
     probe_set = ProbeSet.pin(bts_digest=bts.bts_digest, seed=selected, bts_members=tuple(member.node for member in bts.members), catalog_edges=(), probes=())
     external_modules = tuple(sorted({item.node.module for item in bts.members if item.disposition.value == "external"}))
     return BTSPipelineRequest(snapshot, selected, bts_cli.python_graph_provider(snapshot), BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, precomputed_relocation=precomputed_relocation)
@@ -650,7 +652,7 @@ def _license_from_materialized_donor(root: Path) -> str | None:
     for name in ("LICENSE", "LICENSE.txt", "LICENSE.md", "COPYING"):
         candidate = root / name
         try:
-            text = read_regular_file(candidate, maximum_bytes=256 * 1024).decode("utf-8", "strict")
+            text = read_regular_file(candidate, maximum_bytes=256 * 1024, no_follow=False).decode("utf-8", "strict")
         except (OSError, UnicodeError, ValueError):
             continue
         upper = text.upper()
@@ -728,7 +730,7 @@ def _materialized_candidate(identity: CandidateIdentity, root: Path, spec: Capab
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "task candidate slug is malformed", detail_code="pipeline_cli_task_candidate_evidence_v1")
     snapshot = bts_cli.load_donor_snapshot(root, owner, repo, identity.commit_sha)
     try:
-        source = read_regular_file(snapshot.source_root / identity.path, maximum_bytes=_MAX_SPEC_BYTES)
+        source = read_regular_file(snapshot.source_root / identity.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
     except (OSError, ValueError) as exc:
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "task candidate source cannot be read", detail_code="pipeline_cli_task_candidate_evidence_v1", cause=exc) from exc
     if hashlib.sha1(b"blob %d\0" % len(source) + source).hexdigest() != identity.blob_sha:
@@ -988,7 +990,7 @@ def run_pipeline(root: Path, owner: str, repo: str, commit_sha: str, *, seed: bt
     snapshot = bts_cli.load_donor_snapshot(root, owner, repo, commit_sha)
     specs = load_contract_tests(contract_tests_path)
     resolution, selected, preliminary = _prepared(snapshot, seed, policy_path)
-    tests = tuple(ContractTest(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES), item.module) for item in specs)
+    tests = tuple(ContractTest(item.path, read_regular_file(snapshot.source_root / item.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False), item.module) for item in specs)
     substrate = BTSSubstratePins(nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, rootfs_source, rootfs_digest)
     # Phase 1 is entirely in-process.  Phase 2 persists precisely those E1
     # bytes, records the donor-present baseline against staged originals, then
@@ -1065,7 +1067,7 @@ def _runnable_contract_tests(corpus_root: Path, items: object) -> tuple[Contract
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "runnable contract test is malformed", detail_code="pipeline_cli_exit_runnable_v1")
         try:
             path = confined_path(corpus_root, item["path"])
-            content = read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES)
+            content = read_regular_file(path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         except (OSError, ValueError) as exc:
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "runnable contract test cannot be read", detail_code="pipeline_cli_exit_contract_read_v1", cause=exc) from exc
         tests.append(ContractTest(item["path"], content, item["module"]))

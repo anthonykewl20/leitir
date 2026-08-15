@@ -248,6 +248,7 @@ def test_task_sidecars_assemble_one_nonexecuting_driver_request(tmp_path: Path, 
     assert assembly.request.baseline.selected_test_ids == task.gold.expected_selected_test_ids
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="shared staging requires Linux fcntl locking")
 def test_repeated_live_task_assembly_has_a_deterministic_mount_plan_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """E1 staging roots are stable, so identical S2 authority bytes are stable."""
 
@@ -283,6 +284,7 @@ def test_repeated_live_task_assembly_has_a_deterministic_mount_plan_digest(tmp_p
         second.close()
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="shared staging requires Linux fcntl locking")
 def test_concurrent_live_task_assemblies_reuse_complete_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Concurrent E1 assemblies share one verified content-addressed stage."""
 

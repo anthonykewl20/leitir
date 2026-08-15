@@ -21,11 +21,16 @@ from leitir.materialize import manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
     BTSSubstratePins,
     ContractTestSpec,
+    _baseline_from_sidecar,
+    _license_from_materialized_donor,
     _prepare_shared_stage,
     _prepared,
     _require_runtime_ratification,
+    _runnable_contract_tests,
+    _task_spec,
     assemble_bts_task_request,
     build_containment_policy,
+    execution_contract_tests,
     exit_gate_run,
     record_baseline,
     run_pipeline,
@@ -133,6 +138,55 @@ def test_inline_contract_content_mismatch_rejects() -> None:
     with pytest.raises(Exception) as caught:
         record_baseline(_FIXTURE, [ContractTestSpec("contracts/contract_sample.py", "donor.contract_sample", b"tampered\n")], substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, _FIXTURE, _DIGEST))
     assert getattr(caught.value, "evidence").detail_code == "pipeline_cli_contract_content_mismatch_v1"
+
+
+def test_exit_baseline_sidecar_and_runnable_contracts_are_digest_anchored_without_no_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.PASS, "recorded", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest="sha256:" + "2" * 64,
+    )
+    sidecar = tmp_path / "baseline.json"
+    sidecar.write_bytes(baseline.to_bytes())
+    contract = tmp_path / "contracts" / "contract.py"
+    contract.parent.mkdir()
+    contract.write_text("def test_one():\n    pass\n", encoding="utf-8")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+    assert _baseline_from_sidecar(sidecar) == baseline
+    assert _runnable_contract_tests(tmp_path, [{"path": "contracts/contract.py", "module": "contract"}]) == (
+        ContractTest("contracts/contract.py", b"def test_one():\n    pass\n", "contract"),
+    )
+
+
+def test_task_spec_and_composition_contract_subset_are_deterministic() -> None:
+    task = load_manifest(_ROOT / "benchmarks" / "bts-v1" / "tasks" / "three-repo-combine.json").tasks[0]
+    assert task.observation is not None
+    spec = _task_spec(task.observation.required_behaviors)
+    tests = (
+        ContractTest("a.py", b"import donor.selected\n", "a"),
+        ContractTest("b.py", b"from donor.other import value\n", "b"),
+    )
+    identity = CandidateIdentity("owner/donor", _SHA, "package/policy.py", _BLOB_SHA, "donor.selected.value", 1, 1)
+
+    assert tuple(f"{item.behavior_id}@{item.contract_version}" for item in spec.required_behaviors) == task.observation.required_behaviors
+    assert execution_contract_tests(task, identity, tests) == (tests[0],)
+
+
+def test_pipeline_helpers_reject_malformed_sidecars_and_classify_pinned_license(tmp_path: Path) -> None:
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("{}", encoding="utf-8")
+    with pytest.raises(BTSError) as caught:
+        _baseline_from_sidecar(malformed)
+    assert caught.value.evidence.detail_code == "pipeline_cli_exit_baseline_sidecar_v1"
+    with pytest.raises(BTSError) as caught:
+        _runnable_contract_tests(tmp_path, {"not": "a list"})
+    assert caught.value.evidence.detail_code == "pipeline_cli_exit_runnable_v1"
+
+    (tmp_path / "LICENSE").write_text("Apache License\nVersion 2.0\n", encoding="utf-8")
+    assert _license_from_materialized_donor(tmp_path) == "Apache-2.0"
 
 
 def test_build_containment_policy_fails_closed_without_opt_in() -> None:

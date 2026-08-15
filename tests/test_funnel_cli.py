@@ -55,6 +55,12 @@ def test_funnel_rejects_a_final_component_symlink(tmp_path: Path) -> None:
     assert caught.value.evidence.detail_code == "funnel_cli_spec_invalid_v1"
 
 
+def test_funnel_reads_digest_anchored_inputs_without_no_follow(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+    assert validate_capability_spec(_SPEC)["spec_digest"] == "sha256:03d934858ab68c9800b78864a7076f89602c760a79125d2970060870eb392949"
+
+
 def test_build_recipient_profile_is_canonical_and_rejects_unknown_keys(tmp_path: Path) -> None:
     summary, profile = build_recipient_profile(_RECIPIENT)
     assert summary == {
@@ -66,6 +72,21 @@ def test_build_recipient_profile_is_canonical_and_rejects_unknown_keys(tmp_path:
     payload["extra"] = True
     with pytest.raises(BTSError) as caught:
         build_recipient_profile(_write_json(tmp_path / "recipient.json", payload))
+    assert caught.value.evidence.detail_code == "funnel_cli_recipient_manifest_invalid_v1"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"path": "src/a.py", "role": "source", "content_b64": "not base64"},
+        {"path": "src/a.py", "role": "source", "content_b64": "YQ"},
+    ],
+)
+def test_recipient_manifest_rejects_noncanonical_base64(tmp_path: Path, entry: dict[str, str]) -> None:
+    path = _write_json(tmp_path / "recipient.json", {"schema_version": "leitir-recipient-input-v1", "project_root_identity": "recipient", "entries": [entry]})
+
+    with pytest.raises(BTSError) as caught:
+        build_recipient_profile(path)
     assert caught.value.evidence.detail_code == "funnel_cli_recipient_manifest_invalid_v1"
 
 

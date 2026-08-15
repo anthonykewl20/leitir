@@ -2185,7 +2185,8 @@ def main(
                     from .transplant import _inputs_from_value, _strict_json
 
                     packet_path = Path(args.emit_packets)
-                    packet_bytes = read_regular_file(packet_path, maximum_bytes=1 << 20)
+                    # The packet parser verifies its embedded digest anchor.
+                    packet_bytes = read_regular_file(packet_path, maximum_bytes=1 << 20, no_follow=False)
                     packet_inputs = _inputs_from_value(_strict_json(packet_bytes))
                 owner, repo, commit_sha = args.spec
                 pipeline_result = run_pipeline(
@@ -2260,7 +2261,8 @@ def main(
                 from .pipeline_cli import occupied_validate
                 from .safeio import read_regular_file
 
-                artifact = read_regular_file(Path(args.artifact), maximum_bytes=1 << 20)
+                # Occupied artifacts are validated against their digest anchor.
+                artifact = read_regular_file(Path(args.artifact), maximum_bytes=1 << 20, no_follow=False)
                 payload = occupied_validate(artifact)
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
         except Exception as exc:

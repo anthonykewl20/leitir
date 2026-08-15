@@ -464,7 +464,10 @@ def _read_valid_manifest(
         from leitir.manifest_auth import ManifestAuthMalformedError, _parse_json
 
         payload = _parse_json(
-            read_regular_file(Path(target) / MANIFEST_NAME, maximum_bytes=1 << 20).decode("utf-8", "strict"),
+            # The parsed manifest is subsequently bound to its materialized
+            # tree digest, so this digest-anchored cache input can support
+            # platforms without O_NOFOLLOW.
+            read_regular_file(Path(target) / MANIFEST_NAME, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"),
             subject="materialized manifest",
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, ManifestAuthMalformedError):

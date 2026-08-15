@@ -6,6 +6,7 @@ import os
 import platform
 import subprocess
 import sys
+import textwrap
 from dataclasses import replace
 from pathlib import Path
 
@@ -307,6 +308,17 @@ def test_abort_bounds_reported_stream_lengths(fake_nsjail: tuple[Path, str, str]
     result = sandbox._abort(draft, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, 99, 98)
     assert result.abort is not None
     assert (result.abort.stdout_bytes, result.abort.stderr_bytes) == (3, 3)
+    child_abort = sandbox._abort(
+        draft,
+        "child_crash",
+        BTSRejectReason.REJECT_HARD_GATE_FAILED,
+        1,
+        2,
+        exit_code=137,
+        stdout=b"o",
+        stderr=b"ab",
+    )
+    assert (child_abort.completed, child_abort.exit_code, child_abort.stdout, child_abort.stderr) == (False, 137, b"o", b"ab")
 
 
 @pytest.mark.parametrize(
@@ -355,6 +367,7 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
         "clone_newcgroup: true",
         "iface_no_lo: true",
         "use_cgroupv2: true",
+        'cgroupv2_mount: "/sys/fs/cgroup"',
         "cgroup_mem_max: 67108864",
         "cgroup_pids_max: 16",
         "cgroup_cpu_ms_per_sec: 500",
@@ -363,10 +376,60 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
     )
     for control in required:
         assert control in config_text
+    host_uid = sandbox._host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = sandbox._host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
+    assert f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}' in config_text
+    assert f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}' in config_text
     assert (
         f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
         'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
     ) in config_text
+
+
+def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_sources(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SUDO_UID", "1001")
+    monkeypatch.setenv("SUDO_GID", "1002")
+
+    config_text = sandbox._render_config(_policy(fake_nsjail))
+
+    assert 'uidmap { inside_id: "65534" outside_id: "1001" count: 1 use_newidmap: false }' in config_text
+    assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
+
+
+def test_generated_config_matches_the_passing_handwritten_smoke_except_policy_mounts(
+    fake_nsjail: tuple[Path, str, str]
+) -> None:
+    """Pin the runner-class smoke shape, including its direct bind-mounted root."""
+
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "bts-containment.yml"
+    source = workflow.read_text(encoding="utf-8")
+    marker = 'cat >"$config" <<EOF\n'
+    pieces = source.split(marker, 1)
+    assert len(pieces) == 2, f"workflow handwritten-smoke marker {marker!r} is missing"
+    source_lines = pieces[1].splitlines()
+    eof_index = next((index for index, line in enumerate(source_lines) if line.strip() == "EOF"), None)
+    assert eof_index is not None, "workflow handwritten-smoke terminator is missing"
+    handwritten = "\n".join(source_lines[:eof_index])
+    host_uid = sandbox._host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = sandbox._host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
+    expected = textwrap.dedent(handwritten).replace("$host_uid", str(host_uid)).replace("$host_gid", str(host_gid))
+    actual = sandbox._render_config(_policy(fake_nsjail))
+
+    def non_mount_lines(config: str) -> tuple[str, ...]:
+        policy_bound = ("mount {", "cgroup_mem_max:", "cgroup_pids_max:", "cgroup_cpu_ms_per_sec:", "time_limit:", "cwd:", "rlimit_", "envar:")
+        return tuple(line.strip() for line in config.splitlines() if not line.strip().startswith((*policy_bound, "#")))
+
+    actual_root_mount = next(line for line in actual.splitlines() if ' dst: "/" ' in line)
+    expected_root_mount = next(line for line in expected.splitlines() if ' dst: "/" ' in line)
+    assert non_mount_lines(actual) == non_mount_lines(expected)
+    # Only the policy-pinned source differs; the root bind's destination and
+    # security shape must remain identical to the passing handwritten smoke.
+    assert actual_root_mount.split(" dst:", 1)[1] == expected_root_mount.split(" dst:", 1)[1]
+    assert 'cgroupv2_mount: "/sys/fs/cgroup"' in actual
+    assert 'cgroupv2_mount: "/sys/fs/cgroup"' in expected
 
 
 @pytest.mark.skipif(

@@ -24,9 +24,12 @@ from leitir.bts_exit_gate import rejected_preparation_report
 from leitir.exit_corpus import add_runnable_section
 from leitir.materialize import manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
+    BaselineTestExecutionEvidence,
     BTSSubstratePins,
     ContractTestSpec,
     _baseline_from_sidecar,
+    _baseline_recording_bytes,
+    _baseline_test_execution_evidence,
     _exit_seed_span,
     _license_from_materialized_donor,
     _prepare_shared_stage,
@@ -415,6 +418,39 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
         BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, (".",)
     )
     assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
+
+
+def test_baseline_recording_preserves_bounded_child_abort_evidence() -> None:
+    baseline = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.FAIL, "recorded", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest=_DIGEST,
+    )
+    result = SimpleNamespace(completed=False, exit_code=137, stderr=b"x" * 3000 + b"child aborted")
+    observation = _baseline_test_execution_evidence("contract.py::test_one::-", result)
+
+    evidence = json.loads(_baseline_recording_bytes(baseline, (observation,)))
+
+    assert set(evidence) == {"baseline", "per_test", "schema_version"}
+    assert evidence["schema_version"] == "leitir-baseline-recording-v1"
+    assert evidence["per_test"] == [{
+        "canonical_test_id": "contract.py::test_one::-",
+        "completed": False,
+        "returncode": 137,
+        "child_stderr_tail": "x" * (2048 - len("child aborted")) + "child aborted",
+    }]
+
+
+def test_baseline_recording_rejects_observations_outside_the_baseline() -> None:
+    baseline = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.PASS, "recorded", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest=_DIGEST,
+    )
+    observation = BaselineTestExecutionEvidence("other.py::test_two::-", True, 0, "")
+
+    with pytest.raises(ValueError, match="do not match"):
+        _baseline_recording_bytes(baseline, (observation,))
 
 
 def test_preparation_rejection_retains_recorded_and_expected_outcome_vectors() -> None:

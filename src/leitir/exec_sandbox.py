@@ -488,7 +488,23 @@ def _protobuf_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _host_mapping_id(sudo_name: str, fallback: int) -> int:
+    """Return the invoking host identity for a mount-source user mapping."""
+
+    sudo_identity = os.environ.get(sudo_name)
+    if getattr(os, "geteuid", lambda: -1)() == 0 and sudo_identity is not None and sudo_identity.isdecimal():
+        return int(sudo_identity)
+    return fallback
+
+
 def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str, ...] = ()) -> str:
+    # GitHub's runner-class mount sources are owned by the invoking runner user.
+    # NsJail drops to this mapping before building the bind-mounted root, so
+    # mapping it to sudo's host root makes the source path inaccessible. Match
+    # the passing hand-written CI smoke mapping; that smoke structurally checks
+    # renderer parity so runner mount-permission behavior cannot silently drift.
+    host_uid = _host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = _host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
     lines = [
         "mode: ONCE",
         "keep_env: false",
@@ -508,6 +524,7 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         # NsJail's iface_no_lo switch suppresses loopback setup when true.
         "iface_no_lo: true",
         "use_cgroupv2: true",
+        'cgroupv2_mount: "/sys/fs/cgroup"',
         f"cgroup_mem_max: {policy.cgroup_mem_max}",
         f"cgroup_pids_max: {policy.cgroup_pids_max}",
         f"cgroup_cpu_ms_per_sec: {policy.cgroup_cpu_ms_per_sec}",
@@ -528,8 +545,8 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f"rlimit_core: {policy.rlimit_core_mb}",
         "rlimit_core_type: VALUE",
         f"seccomp_string: {_protobuf_string(policy.seccomp_string)}",
-        'uidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
-        'gidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
+        f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}',
+        f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     for mount in policy.readonly_mounts:
@@ -908,7 +925,17 @@ def _bounded_communicate(  # pragma: no cover  # exercised only by the containme
     return capture
 
 
-def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_bytes: int, stderr_bytes: int) -> ExecutionResult:
+def _abort(
+    plan: ExecutionPlan,
+    detail: str,
+    reason: BTSRejectReason,
+    stdout_bytes: int,
+    stderr_bytes: int,
+    *,
+    exit_code: int | None = None,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> ExecutionResult:
     envelope = ValidationAbortEnvelope(
         schema_version="leitir-validation-abort-v1",
         stage="execution",
@@ -922,9 +949,9 @@ def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_byt
     return ExecutionResult(
         completed=False,
         subject_digest=plan.plan_digest,
-        exit_code=None,
-        stdout=b"",
-        stderr=b"",
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
         stdout_digest=None,
         stderr_digest=None,
         result_digest=None,
@@ -1013,15 +1040,36 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             BTSRejectReason.REJECT_EXECUTION_THREAT,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             len(capture.stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             len(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            exit_code=process.returncode,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stdout=bytes(capture.stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stderr=bytes(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     if capture.timed_out:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(
+            plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if capture.truncated:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(
+            plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if capture.leaked:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(
+            plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if process.returncode != 0:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "child_crash", BTSRejectReason.REJECT_HARD_GATE_FAILED, len(capture.stdout), len(capture.stderr))
+        return _abort(
+            plan,
+            "child_crash",
+            BTSRejectReason.REJECT_HARD_GATE_FAILED,
+            len(capture.stdout),
+            len(capture.stderr),
+            exit_code=process.returncode,
+            stdout=bytes(capture.stdout),
+            stderr=bytes(capture.stderr),
+        )
     stdout = bytes(capture.stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     stderr = bytes(capture.stderr)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     stdout_digest = _digest_bytes(stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

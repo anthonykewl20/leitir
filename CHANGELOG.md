@@ -104,6 +104,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - accept sampled structural candidate pins (`bench`)
 - address review findings (qwen) (`corpus`)
+- align containment smoke root and evidence
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
 - bind adapter language routing to trusted registry identity (`search`)
 - bound SumDB HTTP response reads to 1 MiB fail-closed (`sumdb`)

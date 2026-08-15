@@ -188,6 +188,16 @@ def test_containment_runners_textually_emit_attestations_before_module_execution
     assert runner.index("def main():") < runner.index("startup_attestation = containment_attestation()") < runner.index("spec.loader.exec_module(module)")
 
 
+def test_containment_workflow_runs_benchmark_after_only_exit_gate_failure() -> None:
+    workflow = (_ROOT / ".github/workflows/bts-containment.yml").read_text(encoding="utf-8")
+
+    exit_gate = workflow.index("- name: Run exit gate")
+    benchmark = workflow.index("- name: Run optional BTS task corpus")
+    next_step = workflow.index("- name:", benchmark + 1)
+    assert "id: exit_gate" in workflow[exit_gate:benchmark]
+    assert "if: ${{ inputs.run_bench && (success() || steps.exit_gate.outcome == 'failure') }}" in workflow[benchmark:next_step]
+
+
 def test_contained_rootfs_runner_import_does_not_require_parent_namespace_environment(tmp_path: Path) -> None:
     workflow = (_ROOT / ".github/workflows/bts-containment.yml").read_text(encoding="utf-8")
     runner = workflow.split("install -m 0644 /dev/stdin \"$rootfs/harness/runner.py\" <<'PY'", 1)[1].split("          PY\n", 1)[0]

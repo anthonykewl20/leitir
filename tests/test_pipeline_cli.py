@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -183,7 +184,27 @@ def test_containment_runners_textually_emit_attestations_before_module_execution
 
     assert pipeline_cli._BASELINE_CHILD.index("startup_attestation=containment_attestation()") < pipeline_cli._BASELINE_CHILD.index("spec.loader.exec_module(module)")
     runner = workflow.split("install -m 0644 /dev/stdin \"$rootfs/harness/runner.py\" <<'PY'", 1)[1].split("          PY\n", 1)[0]
-    assert runner.index("startup_attestation = containment_attestation()") < runner.index("spec.loader.exec_module(module)")
+    assert runner.index("def main():") < runner.index("startup_attestation = containment_attestation()") < runner.index("spec.loader.exec_module(module)")
+
+
+def test_contained_rootfs_runner_import_does_not_require_parent_namespace_environment(tmp_path: Path) -> None:
+    workflow = (_ROOT / ".github/workflows/bts-containment.yml").read_text(encoding="utf-8")
+    runner = workflow.split("install -m 0644 /dev/stdin \"$rootfs/harness/runner.py\" <<'PY'", 1)[1].split("          PY\n", 1)[0]
+    runner_path = tmp_path / "runner.py"
+    runner_path.write_text(textwrap.dedent(runner), encoding="utf-8")
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            "import importlib.util, sys; spec = importlib.util.spec_from_file_location('rootfs_runner', sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)",
+            str(runner_path),
+        ),
+        check=False,
+        capture_output=True,
+        env={},
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", "strict")
 
 
 def test_exit_baseline_sidecar_and_runnable_contracts_are_digest_anchored_without_no_follow(

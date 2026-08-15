@@ -18,6 +18,8 @@ from leitir.exit_corpus import (
     validate_corpus_manifest,
 )
 
+_PIPELINE_FIXTURES = Path(__file__).parent / "fixtures" / "pipeline_cli"
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "exit_corpus"
 
 
@@ -138,3 +140,39 @@ def test_cross_check_reports_every_standalone_gate_pin_as_valid() -> None:
     assert report["valid"] is True
     assert report["case_count"] == 5
     assert all(case["valid"] is True for case in report["cases"])
+
+
+def test_v11_runnable_section_is_loaded_and_bound_into_content_digest() -> None:
+    path = _PIPELINE_FIXTURES / "corpus-runnable-v1.1.json"
+    loaded = load_corpus_manifest(path)
+    assert loaded["schema_version"] == EXIT_CORPUS_MANIFEST_SCHEMA_VERSION
+    first = content_digest(loaded)
+    changed = json.loads(path.read_text())
+    changed["runnable"]["substrate"]["containment_template_version"] = "changed-template"
+    assert content_digest(changed) != first
+
+
+def test_v11_runnable_section_permits_deferred_runtime_substrate_pins(tmp_path: Path) -> None:
+    manifest = json.loads((_PIPELINE_FIXTURES / "corpus-runnable-v1.1.json").read_text())
+    manifest["runnable"]["substrate"]["nsjail_sha256"] = None
+    manifest["runnable"]["substrate"]["rootfs_digest"] = None
+    target = tmp_path / "runnable-null-pins.json"
+    _write_canonical(target, manifest)
+    loaded = load_corpus_manifest(target)
+    assert loaded["runnable"]["substrate"]["nsjail_sha256"] is None
+    assert loaded["runnable"]["substrate"]["rootfs_digest"] is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda manifest: manifest["runnable"].__setitem__("unexpected", True),
+        lambda manifest: manifest["runnable"]["substrate"].__setitem__("nsjail_sha256", "not-a-digest"),
+    ],
+)
+def test_v11_runnable_unknown_or_bad_substrate_pins_reject(tmp_path: Path, mutate: Callable[[dict[str, object]], None]) -> None:
+    manifest = json.loads((_PIPELINE_FIXTURES / "corpus-runnable-v1.1.json").read_text())
+    mutate(manifest)
+    target = tmp_path / "runnable.json"
+    _write_canonical(target, manifest)
+    assert _detail_code(load_corpus_manifest, target) == "exit_corpus_schema_v1"

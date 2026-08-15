@@ -128,6 +128,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)
 - make nsjail --version capture non-fatal in build script (`bts`)
 - make validate_report fail-closed on span bounds without line_counts (`search`)
+- per-task typed failure continuation and honest partial runs (#75) (`bench`)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - preserve collection skip nodeid on Windows (`canary`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)

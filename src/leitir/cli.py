@@ -229,6 +229,16 @@ def _parse_bts_compute_spec(raw: str) -> tuple[str, str, str]:
     return owner, repo, commit_sha
 
 
+def _analysis_subject(raw: str) -> str:
+    """Accept a bounded caller-declared analysis label, never a free-form claim."""
+
+    if not raw or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_." for character in raw):
+        raise argparse.ArgumentTypeError(
+            "architecture subject must contain only letters, digits, '-', '_', or '.'"
+        )
+    return raw
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="leitir",
@@ -334,8 +344,14 @@ def build_parser() -> argparse.ArgumentParser:
     trust_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     remove = commands.add_parser("remove", help="remove a materialized source")
     remove.add_argument("spec")
+    remove_roots = remove.add_mutually_exclusive_group()
+    remove_roots.add_argument("--root", default=None, help="corpus root directory")
+    remove_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     clean = commands.add_parser("clean", help="empty the source corpus")
     clean.add_argument("--repos", action="store_true")
+    clean_roots = clean.add_mutually_exclusive_group()
+    clean_roots.add_argument("--root", default=None, help="corpus root directory")
+    clean_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
     lock = commands.add_parser(
         "lock", help="materialize the project's dependency closure"
     )
@@ -472,9 +488,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="closed-schema BTS resolution policy JSON; without it the pinned empty policy is used, so COMPLETE typically requires policy coverage for stdlib or external usage",
     )
-    bts_compute.add_argument("--seed-module", required=True)
-    bts_compute.add_argument("--seed-name", required=True)
-    bts_compute.add_argument("--out", required=True, help="empty artifact output directory")
+    bts_compute.add_argument("--seed-module")
+    bts_compute.add_argument("--seed-name")
+    bts_compute.add_argument("--out", help="empty artifact output directory")
+    bts_compute.add_argument("--list-seeds", action="store_true", help="list selectable donor definition seeds without computing a BTS")
+    bts_compute.add_argument("--allow-reject", action="store_true", help="return success after writing a REJECT BTS result")
     bts_compute.add_argument("--json", action="store_true", dest="as_json")
 
     architecture = commands.add_parser(
@@ -482,7 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="assess a canonical graph artifact for architecture compatibility",
     )
     architecture.add_argument("graph", metavar="graph.json")
-    architecture.add_argument("--subject", required=True)
+    architecture.add_argument("--subject", required=True, type=_analysis_subject)
     architecture.add_argument("--catalog", default=None)
     architecture.add_argument(
         "--declared-concurrency",
@@ -790,10 +808,12 @@ def _build_default_searcher(
     )
 
 
-def _build_default_benchmark_runner(searcher: object) -> object:
+def _build_default_benchmark_runner(
+    searcher: object, *, progress: Callable[[object], None] | None = None,
+) -> object:
     from .bench import BenchmarkRunner
 
-    return BenchmarkRunner(cast(_Searcher, searcher))
+    return BenchmarkRunner(cast(_Searcher, searcher), progress=progress)
 
 
 def _load_benchmark_manifest(path: str | None) -> object:
@@ -1205,20 +1225,73 @@ def _run_corpus_command(
             )
             return int(ExitCode.SUCCESS)
         if args.command == "index":
-            from .index.builder import build_shelf_index, shelves_from_corpus
+            from .index.builder import (
+                build_shelf_index,
+                ineligible_shelf_conditions,
+                shelves_from_corpus,
+            )
 
             shelves = shelves_from_corpus(root, tuple(args.scopes))
             if not shelves:
                 raise ValueError("the corpus has no materialized shelves to index")
-            built_paths = [str(build_shelf_index(root, shelf).absolute()) for shelf in shelves]
+            built_paths: list[str] = []
+            skipped_ineligible: list[dict[str, object]] = []
+            hard_errors: list[dict[str, object]] = []
+            for shelf in shelves:
+                identity = {
+                    "commit": shelf.commit,
+                    "host": shelf.host,
+                    "owner": shelf.owner,
+                    "repo": shelf.repo,
+                }
+                specification = f"{shelf.host}:{shelf.slug}@{shelf.commit}"
+                try:
+                    conditions = ineligible_shelf_conditions(root, shelf)
+                except Exception as exc:
+                    message = redact(str(exc))
+                    hard_errors.append(
+                        {"error": message, "shelf": identity, "spec": specification}
+                    )
+                    print(f"leitir: error: could not inspect shelf {specification}: {message}", file=err)
+                    continue
+                if conditions:
+                    skipped_ineligible.append(
+                        {
+                            "conditions": list(conditions),
+                            "shelf": identity,
+                            "spec": specification,
+                        }
+                    )
+                    print(
+                        f"leitir: skipped ineligible shelf {specification}: "
+                        + ", ".join(conditions),
+                        file=err,
+                    )
+                    continue
+                try:
+                    built_paths.append(str(build_shelf_index(root, shelf).absolute()))
+                except Exception as exc:
+                    message = redact(str(exc))
+                    hard_errors.append(
+                        {"error": message, "shelf": identity, "spec": specification}
+                    )
+                    print(f"leitir: error: could not index shelf {specification}: {message}", file=err)
             print(
                 json.dumps(
-                    {"count": len(built_paths), "indexes": built_paths, "schema_version": 1},
+                    {
+                        "count": len(built_paths),
+                        "hard_errors": hard_errors,
+                        "indexes": built_paths,
+                        "schema_version": 1,
+                        "skipped_ineligible": skipped_ineligible,
+                    },
                     sort_keys=True,
                 ),
                 file=out,
             )
-            return int(ExitCode.SUCCESS)
+            if built_paths and not hard_errors:
+                return int(ExitCode.SUCCESS)
+            return int(ExitCode.CORPUS_FAILURE)
         if args.command == "trust":
             from .corpus import record_trust
 
@@ -2106,6 +2179,11 @@ def main(
 
     if args.command == "bench":
         token = _github_token()
+        if token is None:
+            print(
+                "leitir: warning: anonymous search benchmarks consume significant GitHub API budget; set GH_TOKEN to raise limits",
+                file=err,
+            )
         try:
             manifest = _load_benchmark_manifest(args.manifest)
             from .corpus_bench import CorpusBenchmarkManifest, CorpusBenchmarkRunner
@@ -2118,7 +2196,19 @@ def main(
             else:
                 tree_source = tree_source_factory(token)
                 searcher = searcher_factory(tree_source)
-                runner = cast(_BenchmarkRunner, benchmark_runner_factory(searcher))
+                if benchmark_runner_factory is _build_default_benchmark_runner:
+                    runner = cast(
+                        _BenchmarkRunner,
+                        _build_default_benchmark_runner(
+                            searcher,
+                            progress=lambda task: print(
+                                f"leitir: benchmark task {getattr(task, 'task_id', 'unknown')} starting",
+                                file=err,
+                            ),
+                        ),
+                    )
+                else:
+                    runner = cast(_BenchmarkRunner, benchmark_runner_factory(searcher))
                 run = runner.run(manifest)
         except Exception as exc:
             print(f"leitir: error: {redact(str(exc))}", file=err)
@@ -2146,9 +2236,21 @@ def main(
     }:
         try:
             if args.command == "bts-compute":
-                from .bts_cli import SeedSelector, run_bts_compute, write_artifacts
+                from .bts import BTSStatus
+                from .bts_cli import SeedSelector, list_bts_seeds, run_bts_compute, write_artifacts
 
                 owner, repo, commit_sha = args.spec
+                if args.list_seeds:
+                    if args.seed_module is not None or args.seed_name is not None or args.out is not None:
+                        raise ValueError("--list-seeds cannot be combined with --seed-module, --seed-name, or --out")
+                    seeds = list_bts_seeds(
+                        _corpus_root(args, err), owner, repo, commit_sha,
+                        language=args.language, lock_path=Path(args.lock).expanduser().absolute(),
+                    )
+                    _write_cli_payload({"schema_version": "leitir-bts-seed-list-v1", "seeds": [{"module": seed.module, "qualified_name": seed.qualified_name, "kind": seed.kind.value, "origin": seed.origin.value} for seed in seeds]}, as_json=True, out=out)
+                    return successful()
+                if args.seed_module is None or args.seed_name is None or args.out is None:
+                    raise ValueError("bts-compute requires --seed-module, --seed-name, and --out unless --list-seeds is used")
                 artifacts = run_bts_compute(
                     _corpus_root(args, err),
                     owner,
@@ -2168,6 +2270,8 @@ def main(
                     print(
                         f"leitir: wrote BTS artifacts to {output_directory}", file=err
                     )
+                if artifacts.result.status is BTSStatus.REJECT and not args.allow_reject:
+                    return int(ExitCode.CORPUS_FAILURE)
             elif args.command == "bts-funnel":
                 from .funnel_cli import run_funnel
 

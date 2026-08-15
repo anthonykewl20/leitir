@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from _http_server import json_body, routed_server
 
+from leitir.bts_errors import BTSRejectReason
 from leitir.cli import ExitCode, main
 from leitir.search import (
     Coverage,
@@ -261,9 +262,22 @@ def test_analysis_architecture_cli_emits_pinned_json_summary():
     assert payload["schema_version"] == "leitir-analysis-cli-architecture-v1"
     assert payload["status"] == "unknown"
     assert payload["concurrency_model"] == "mixed"
+    assert payload["subject"]["provenance"] == "caller-declared-label"
     assert payload["assessment_digest"] == (
         "sha256:bd20cac703dde3f4711032892cb230d3293843866790062841c86972ac6b5ffa"
     )
+
+
+@pytest.mark.parametrize("subject", ["", "has spaces", "not!slug"])
+def test_analysis_architecture_cli_rejects_non_slug_subjects(subject: str) -> None:
+    assert main(
+        [
+            "analysis-architecture",
+            str(_ANALYSIS_FIXTURES / "graph.json"),
+            "--subject",
+            subject,
+        ]
+    ) == ExitCode.MALFORMED_USAGE
 
 
 def test_analysis_lineage_cli_emits_validation_summary():
@@ -302,6 +316,19 @@ def test_exit_gate_validate_cli_reports_valid_corpus_and_rejects_minimum_donors(
     assert stdout == ""
     error = json.loads(stderr.removeprefix("leitir: error: "))
     assert error["evidence"]["detail_code"] == "exit_corpus_min_donors_v1"
+
+
+def test_exit_gate_validate_cli_missing_file_names_path_and_os_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-corpus.json"
+
+    code, stdout, stderr, _, _ = invoke(["exit-gate-validate", str(missing), "--json"])
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["reason"] == BTSRejectReason.REJECT_PROVENANCE_MISMATCH.value
+    assert error["evidence"]["detail_code"] == "exit_corpus_read_v1"
+    assert str(missing) in error["evidence"]["message"]
 
 
 def test_help_lists_search_without_side_effects(capsys):
@@ -429,7 +456,7 @@ def test_search_uses_passed_root_for_verified_local_shelf(tmp_path: Path):
         )
 
     assert code == ExitCode.SUCCESS
-    assert server.state.request_paths == [tree_path]
+    assert server.state.request_paths == []
 
 
 def test_package_resolution_wires_resolver_then_searcher():

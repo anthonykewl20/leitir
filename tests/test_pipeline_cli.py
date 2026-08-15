@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import leitir.pipeline_cli as pipeline_cli
 from leitir.bts_bench import CandidateIdentity, SeedSpan, load_manifest
 from leitir.bts_cli import SeedSelector, load_donor_snapshot
 from leitir.bts_errors import BTSError, TransplantError
@@ -346,6 +347,67 @@ def test_exit_gate_parses_v11_runnable_contracts_and_sidecars_before_substrate(t
             substrate_nsjail_sha256=substrate["nsjail_sha256"], substrate_rootfs_digest=substrate["rootfs_digest"],
         )
     assert caught.value.evidence.detail_code == "pipeline_cli_substrate_unavailable_v1"
+
+
+def test_exit_gate_writes_rejected_report_for_untyped_case_preparation_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _exit_sidecars(tmp_path)
+    manifest_path = _FIXTURE / "corpus-runnable-v1.1.json"
+    substrate = json.loads(manifest_path.read_text())["runnable"]["substrate"]
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+
+    def unavailable_snapshot(*args: object, **kwargs: object) -> object:
+        raise OSError("donor shelf unavailable")
+
+    monkeypatch.setattr(pipeline_cli.bts_cli, "load_donor_snapshot", unavailable_snapshot)
+    summary = exit_gate_run(
+        manifest_path,
+        tmp_path / "donors",
+        corpus_root=tmp_path,
+        out_dir=tmp_path / "out",
+        nsjail_version="fixture",
+        nsjail_build_identity=_DIGEST,
+        config_schema_digest=_DIGEST,
+        rootfs_source=tmp_path / "rootfs",
+        substrate_nsjail_sha256=substrate["nsjail_sha256"],
+        substrate_rootfs_digest=substrate["rootfs_digest"],
+    )
+    report = json.loads((tmp_path / "out" / "exit-gate-report.json").read_text())
+    assert summary["status"] == "reject"
+    assert len(report["donors"]) == 5
+    assert all(
+        "exit_preparation_error_v1:reject_hard_gate_failed:pipeline_cli_case_preparation_v1"
+        in donor["detail_categories"]
+        for donor in report["donors"]
+    )
+
+
+def test_exit_gate_empty_cases_writes_typed_rejection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    manifest_path = _FIXTURE / "corpus-runnable-v1.1.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["cases"] = []
+    manifest["runnable"]["per_case"] = []
+    substrate = manifest["runnable"]["substrate"]
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    monkeypatch.setattr(pipeline_cli, "load_corpus_manifest", lambda path: manifest)
+    summary = exit_gate_run(
+        manifest_path,
+        tmp_path / "donors",
+        corpus_root=tmp_path,
+        out_dir=tmp_path / "out",
+        nsjail_version="fixture",
+        nsjail_build_identity=_DIGEST,
+        config_schema_digest=_DIGEST,
+        rootfs_source=tmp_path / "rootfs",
+        substrate_nsjail_sha256=substrate["nsjail_sha256"],
+        substrate_rootfs_digest=substrate["rootfs_digest"],
+    )
+    report = json.loads((tmp_path / "out" / "exit-gate-report.json").read_text())
+    assert summary["status"] == "reject"
+    assert report["donors"][0]["detail_categories"] == [
+        "exit_preparation_error_v1:reject_hard_gate_failed:pipeline_cli_exit_empty_cases_v1"
+    ]
 
 
 def test_add_runnable_section_rejects_case_alignment_errors() -> None:

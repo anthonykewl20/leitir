@@ -29,6 +29,7 @@ from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.cost import collect_integration_cost_evidence
 from leitir.graph.model import GRAPH_SCHEMA_VERSION, Graph, Node, NodeId, NodeKind, NodeOrigin
 from leitir.graph.policy import compute_policy_digest
+from leitir.graph.python import extract_static_edges
 from leitir.graph.ts_kernel import (
     DEFAULT_MAX_EDGES,
     DEFAULT_MAX_FILE_BYTES,
@@ -376,13 +377,43 @@ def test_seed_resolution_requires_exactly_one_node() -> None:
     selector = SeedSelector("pkg", "pkg.f")
     first = NodeId(NodeOrigin.DONOR, NodeKind.FUNCTION, "pkg", "pkg.f", "a")
     assert resolve_seed(Graph(GRAPH_SCHEMA_VERSION, (Node(first, None, "test"),), (), ()), selector) == first
-    with pytest.raises(BTSError, match="matched no graph node") as missing:
+    with pytest.raises(BTSError, match="matched no donor definition") as missing:
         resolve_seed(Graph(GRAPH_SCHEMA_VERSION, (), (), ()), selector)
     assert missing.value.evidence.detail_code == "bts_cli_seed_not_found_v1"
     second = NodeId(NodeOrigin.DONOR, NodeKind.METHOD, "pkg", "pkg.f", "b")
-    with pytest.raises(BTSError, match="matched multiple graph nodes") as duplicate:
+    with pytest.raises(BTSError, match="matched multiple donor definitions") as duplicate:
         resolve_seed(Graph(GRAPH_SCHEMA_VERSION, (Node(first, None, "test"), Node(second, None, "test")), (), ()), selector)
     assert duplicate.value.reason is BTSRejectReason.REJECT_DUPLICATE_RESULT
+
+
+def test_seed_resolution_ignores_declared_external_placeholders_and_lists_candidates() -> None:
+    selector = SeedSelector("pkg", "pkg.f")
+    donor = NodeId(NodeOrigin.DONOR, NodeKind.FUNCTION, "pkg", "pkg.f", "pkg.py:1")
+    imported = NodeId(NodeOrigin.DECLARED_EXTERNAL, NodeKind.FUNCTION, "pkg", "pkg.f", "external:pkg.f")
+    graph = Graph(GRAPH_SCHEMA_VERSION, (Node(donor, None, "test"), Node(imported, None, "test")), (), ())
+    assert resolve_seed(graph, selector) == donor
+    with pytest.raises(BTSError) as missing:
+        resolve_seed(graph, SeedSelector("pkg", "pkg.missing"))
+    assert "pkg.f (donor)" in missing.value.evidence.message
+    with pytest.raises(BTSError) as external_only:
+        resolve_seed(Graph(GRAPH_SCHEMA_VERSION, (Node(imported, None, "test"),), (), ()), selector)
+    assert external_only.value.evidence.detail_code == "bts_cli_seed_not_found_v1"
+
+
+def test_luhn_shaped_donor_definition_imported_by_its_test_resolves_once() -> None:
+    donor = extract_static_edges(
+        b"def checksum(value):\n    return value\n",
+        slug="owner/luhn", commit_sha=SHA, path="luhn.py", blob_sha="a" * 40,
+        package_root="",
+    )
+    test = extract_static_edges(
+        b"from luhn import checksum\n\ndef test_checksum():\n    assert checksum(1) == 1\n",
+        slug="owner/luhn", commit_sha=SHA, path="test.py", blob_sha="b" * 40,
+        package_root="",
+    )
+    graph = Graph(GRAPH_SCHEMA_VERSION, (*donor.nodes, *test.nodes), (*donor.edges, *test.edges), (*donor.unresolved, *test.unresolved))
+    selected = resolve_seed(graph, SeedSelector("luhn", "luhn.checksum"))
+    assert selected.origin is NodeOrigin.DONOR
 
 
 def test_python_provider_rejects_symlinked_source(tmp_path: Path) -> None:

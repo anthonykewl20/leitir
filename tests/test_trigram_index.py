@@ -15,7 +15,7 @@ import pytest
 from leitir.adapters import PythonAdapter, RustAdapter
 from leitir.adapters.registry import build_adapters
 from leitir.cli import ExitCode, main
-from leitir.corpus import write_sources
+from leitir.corpus import load_sources, write_sources
 from leitir.doctor import check_search_indexes
 from leitir.engine import ScopedSearcher
 from leitir.index.builder import ShelfRef, build_shelf_index
@@ -53,8 +53,16 @@ class LocalTree:
         yield self.read_blob(slug, blob_sha)
 
 
-def _corpus(root: Path, files: dict[str, bytes]) -> ShelfRef:
-    target = root / "repos/github.com/example/demo" / SHA
+def _corpus(
+    root: Path,
+    files: dict[str, bytes],
+    *,
+    owner: str = "example",
+    repo: str = "demo",
+    commit: str = SHA,
+    parity: str = "exact",
+) -> ShelfRef:
+    target = root / "repos/github.com" / owner / repo / commit
     target.mkdir(parents=True)
     for relative, data in files.items():
         path = target / relative
@@ -62,37 +70,41 @@ def _corpus(root: Path, files: dict[str, bytes]) -> ShelfRef:
         path.write_bytes(data)
     tree_hash, scope = compute_materialized_tree_hash(target)
     manifest = {
-        "commit_sha": SHA,
+        "commit_sha": commit,
         "fetch_method": "codeload-tarball",
         "fetched_at": "2026-01-01T00:00:00Z",
         "host": "github.com",
         "materialized_tree_hash": tree_hash,
         "materialized_tree_hash_algorithm": TREE_HASH_ALGORITHM,
         "materialized_tree_hash_scope": scope,
-        "owner": "example",
-        "parity": "exact",
-        "repo": "demo",
-        "repo_url": "https://github.com/example/demo",
+        "owner": owner,
+        "parity": parity,
+        "repo": repo,
+        "repo_url": f"https://github.com/{owner}/{repo}",
         "source": "git-commit",
-        "spec": f"example/demo@{SHA}",
+        "spec": f"{owner}/{repo}@{commit}",
         "verified": False,
     }
     (target / "leitir-manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
-    write_sources(
-        root,
-        [
-            {
-                "commit_sha": SHA,
-                "fetched_at": "2026-01-01T00:00:00Z",
-                "host": "github.com",
-                "name": "example/demo",
-                "owner": "example",
-                "path": f"repos/github.com/example/demo/{SHA}",
-                "repo": "demo",
-            }
-        ],
+    entries = [
+        entry
+        for entry in load_sources(root)
+        if (entry["host"], entry["owner"], entry["repo"], entry["commit_sha"])
+        != ("github.com", owner, repo, commit)
+    ]
+    entries.append(
+        {
+            "commit_sha": commit,
+            "fetched_at": "2026-01-01T00:00:00Z",
+            "host": "github.com",
+            "name": f"{owner}/{repo}",
+            "owner": owner,
+            "path": f"repos/github.com/{owner}/{repo}/{commit}",
+            "repo": repo,
+        }
     )
-    return ShelfRef("github.com", "example", "demo", SHA)
+    write_sources(root, entries)
+    return ShelfRef("github.com", owner, repo, commit)
 
 
 def _spec(value: str = "needle", kind: PredicateKind = PredicateKind.EXACT_TEXT) -> SearchSpec:
@@ -126,6 +138,60 @@ def test_cli_indexed_search_has_exhaustive_recall_and_order(tmp_path, monkeypatc
     assert code == ExitCode.SUCCESS
     assert output["coverage"]["status"] == "complete_for_declared_universe"
     assert [match["source"]["path"] for match in output["matches"]] == ["a.py", "z.py"]
+
+
+def test_cli_index_skips_ineligible_shelves_without_blocking_eligible_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _corpus(tmp_path, {"exact.py": b"needle\n"})
+    _corpus(
+        tmp_path,
+        {"drift.py": b"needle\n"},
+        repo="drift",
+        commit="b" * 40,
+        parity="drift",
+    )
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+
+    assert main(["index", "--root", str(tmp_path)]) == ExitCode.SUCCESS
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["count"] == 1
+    assert len(payload["indexes"]) == 1
+    assert Path(payload["indexes"][0]).is_file()
+    assert payload["hard_errors"] == []
+    assert payload["skipped_ineligible"] == [
+        {
+            "conditions": ["parity"],
+            "spec": "github.com:example/drift@" + "b" * 40,
+            "shelf": {
+                "commit": "b" * 40,
+                "host": "github.com",
+                "owner": "example",
+                "repo": "drift",
+            },
+        }
+    ]
+    assert "github.com:example/drift@" + "b" * 40 in captured.err
+    assert "parity" in captured.err
+
+
+def test_cli_index_all_ineligible_shelves_fail_with_named_reasons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _corpus(tmp_path, {"drift.py": b"needle\n"}, parity="drift")
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+
+    assert main(["index", "--root", str(tmp_path)]) == ExitCode.CORPUS_FAILURE
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["count"] == 0
+    assert payload["hard_errors"] == []
+    assert payload["skipped_ineligible"][0]["conditions"] == ["parity"]
+    assert "github.com:example/demo@" + SHA in captured.err
+    assert "parity" in captured.err
 
 
 def test_indexed_and_exhaustive_reports_have_identical_source_identities(tmp_path):

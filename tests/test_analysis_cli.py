@@ -29,6 +29,7 @@ EXPECTED_ARCHITECTURE_SUMMARY: dict[str, object] = {
     "architecture_algorithm_version": "leitir-architecture-v1",
     "subject": {
         "candidate_key": ["fixture-subject"],
+        "provenance": "caller-declared-label",
         "bts_digest": "sha256:b674f65fb7cf46ecd8969909566089f6ca1f8320ccc470247eff6cd8c988970b",
         "candidate_manifest_digest": "sha256:980e7b40c31399f68ca68582da3fcc157c9fb9129c49badab50ec70aa1e6b204",
         "graph_digest": "sha256:b4f6df2108221d20a8af1c7735cd4c1dc4def96635f90ad7c23cd5edbabd0197",
@@ -39,6 +40,7 @@ EXPECTED_ARCHITECTURE_SUMMARY: dict[str, object] = {
         {
             "subject": {
                 "candidate_key": ["fixture-subject"],
+                "provenance": "caller-declared-label",
                 "bts_digest": "sha256:b674f65fb7cf46ecd8969909566089f6ca1f8320ccc470247eff6cd8c988970b",
                 "candidate_manifest_digest": "sha256:980e7b40c31399f68ca68582da3fcc157c9fb9129c49badab50ec70aa1e6b204",
                 "graph_digest": "sha256:b4f6df2108221d20a8af1c7735cd4c1dc4def96635f90ad7c23cd5edbabd0197",
@@ -181,6 +183,25 @@ def test_default_catalog_is_pinned_empty_and_yields_unknown_external_effect() ->
     assert summary["status"] == "unknown"
     assert summary["concurrency_model"] == "mixed"
     assert any(node.id.origin is NodeOrigin.DECLARED_EXTERNAL for node in graph.nodes)
+
+
+@pytest.mark.parametrize("subject", ["", "has spaces", "not!slug"])
+def test_architecture_assessment_rejects_non_slug_subject(subject: str) -> None:
+    with pytest.raises(BTSError) as failure:
+        run_architecture_assessment(GRAPH_FIXTURE, subject=subject)
+
+    assert failure.value.evidence.detail_code == "analysis_cli_subject_invalid_v1"
+
+
+def test_graph_read_failure_names_path_and_os_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-graph.json"
+
+    with pytest.raises(BTSError) as failure:
+        load_graph_artifact(missing)
+
+    assert failure.value.evidence.detail_code == "analysis_cli_artifact_read_v1"
+    assert str(missing) in failure.value.evidence.message
+    assert "No such file or directory" in failure.value.evidence.message
 
 
 def test_custom_catalog_is_used_for_a_blocking_async_call(tmp_path: Path) -> None:

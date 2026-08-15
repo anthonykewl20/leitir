@@ -29,6 +29,7 @@ _EXCLUSION_REASONS = frozenset(
         "path_mismatch",
         "parser_unavailable",
         "provenance_mismatch",
+        "registry_artifact_git_only",
         "pin_disagreement",
         "unpinned_hit",
     }

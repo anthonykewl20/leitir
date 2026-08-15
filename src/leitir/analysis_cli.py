@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from leitir.architecture import (
@@ -45,6 +46,7 @@ from leitir.lineage import LineageManifest
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 ANALYSIS_ARCHITECTURE_SCHEMA_VERSION = "leitir-analysis-cli-architecture-v1"
 ANALYSIS_LINEAGE_SCHEMA_VERSION = "leitir-analysis-cli-lineage-validation-v1"
+_SUBJECT_RE = re.compile(r"[A-Za-z0-9_.-]+\Z")
 
 # This policy has no effect entries by design.  Its schema and authority are
 # pinned by architecture.py; its version records the assessment algorithm it is
@@ -123,7 +125,7 @@ def run_architecture_assessment(
     catalog_path: Path | None = None,
     declared_concurrency: str | None = None,
 ) -> dict[str, object]:
-    """Assess a persisted graph using default architecture budgets and project JSON data."""
+    """Assess a graph using a caller-declared subject label, not derived authority."""
 
     graph = load_graph_artifact(graph_path)
     catalog = load_blocking_catalog(catalog_path)
@@ -177,9 +179,10 @@ def _read_artifact(path: Path) -> bytes:
         with path.open("rb") as artifact:
             data = artifact.read(MAX_ARTIFACT_BYTES + 1)
     except (OSError, TypeError, ValueError) as exc:
+        detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
         raise _reject(
             BTSRejectReason.REJECT_BUNDLE_INVALID,
-            "analysis artifact could not be read",
+            f"analysis artifact could not be read: {path}: {detail}",
             "analysis_cli_artifact_read_v1",
             exc,
         ) from exc
@@ -211,10 +214,10 @@ def _catalog_entry(value: object) -> BlockingCallCatalogEntry:
 
 
 def _subject_ref(subject: str, graph: Graph) -> CompositionCandidateRef:
-    if not isinstance(subject, str) or not subject:
+    if not isinstance(subject, str) or _SUBJECT_RE.fullmatch(subject) is None:
         raise _reject(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,
-            "architecture subject must be a non-empty string",
+            "architecture subject must contain only letters, digits, '-', '_', or '.'",
             "analysis_cli_subject_invalid_v1",
         )
     try:
@@ -268,6 +271,7 @@ def _async_path_value(item: AsyncPathEvidence) -> dict[str, object]:
 def _subject_value(subject: CompositionCandidateRef) -> dict[str, object]:
     return {
         "candidate_key": list(subject.candidate_key),
+        "provenance": "caller-declared-label",
         "bts_digest": subject.bts_digest,
         "candidate_manifest_digest": subject.candidate_manifest_digest,
         "graph_digest": subject.graph_digest,

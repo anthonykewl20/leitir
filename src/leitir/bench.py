@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -245,16 +246,19 @@ class BenchmarkRun:
 class BenchmarkRunner:
     """Execute every pinned task through one scoped searcher."""
 
-    def __init__(self, searcher: object) -> None:
+    def __init__(self, searcher: object, *, progress: Callable[[BenchmarkTask], None] | None = None) -> None:
         if not callable(getattr(searcher, "search", None)):
             raise TypeError("searcher must provide a callable search method")
         self._searcher = cast(_Searcher, searcher)
+        self._progress = progress
 
     def run(self, manifest: BenchmarkManifest) -> BenchmarkRun:
         if not isinstance(manifest, BenchmarkManifest):
             raise TypeError("manifest must be a BenchmarkManifest")
         task_runs: list[BenchmarkTaskRun] = []
         for task in sorted(manifest.tasks, key=lambda item: item.task_id):
+            if self._progress is not None:
+                self._progress(task)
             report = self._searcher.search(task.spec)
             if not isinstance(report, SearchReport):
                 raise TypeError("searcher must return a SearchReport")

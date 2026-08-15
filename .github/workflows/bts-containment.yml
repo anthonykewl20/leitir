@@ -110,6 +110,7 @@ jobs:
           sources = Path(os.environ["SMOKE_SOURCES"])
           for directory in (
               rootfs / "bin",
+              rootfs / "proc",
               rootfs / "work",
               rootfs / "staging-v1" / "donor",
               rootfs / "staging-v1" / "contract",
@@ -153,7 +154,7 @@ jobs:
               POLICY_SCHEMA, "/usr/bin/nsjail", "sha256:" + "0" * 64, "smoke", "sha256:" + "0" * 64,
               "sha256:" + "0" * 64, platform.machine(), rootfs_digest, _digest_payload(mount_payload), mounts,
               "/work", 1_048_576, 128, "/work", "ONCE", False, True, True, True, True, True, True, True,
-              67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536,
+              67_108_864, 16, 500, 10, 64, 1, 1, 32, 16, 8, 0, 65_536,
               ("LANG=C.UTF-8", "PYTHONHASHSEED=0", "TZ=UTC"), True,
           )
           _validate_policy(policy)
@@ -171,6 +172,18 @@ jobs:
           if any(item not in config for item in required):
               raise RuntimeError("rendered containment smoke policy omitted a required control")
           print(config, end="")
+          PY
+          # The renderer intentionally uses FATAL in production.  DEBUG is
+          # required here so a failed integration smoke exposes nsjail's
+          # exact diagnostic without altering the production policy.
+          python3 - "$RUNNER_TEMP/nsjail-rendered-phase1.cfg" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          config = path.read_text(encoding="utf-8")
+          if "log_level: FATAL" not in config:
+              raise SystemExit("rendered smoke config has no FATAL log level")
+          path.write_text(config.replace("log_level: FATAL", "log_level: DEBUG", 1), encoding="utf-8")
           PY
           sudo nsjail --config "$RUNNER_TEMP/nsjail-rendered-phase1.cfg" -- /bin/true
       - name: Run informational live containment tests
@@ -452,7 +465,7 @@ jobs:
           LEITIR_ENABLE_LIVE_E2E: '1'
           PYTHONPATH: src
         run: >-
-          python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
+          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
           --corpus-root benchmarks/exit-corpus --donors-dir ${{ runner.temp }}/leitir-corpus-root
           --out runs/exit-gate
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
@@ -475,7 +488,7 @@ jobs:
           LEITIR_ENABLE_LIVE_E2E: '1'
           PYTHONPATH: src
         run: >-
-          python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
+          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
           --substrate-rootfs-digest ${{ steps.substrate.outputs.rootfs_digest }}
           --nsjail-version "${{ steps.substrate.outputs.nsjail_version }}"

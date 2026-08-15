@@ -111,6 +111,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - canonicalize predicate-vs-flag language comparison (`search`)
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
+- containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
 - correct typing for mypy strict mode (`cost`)
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)

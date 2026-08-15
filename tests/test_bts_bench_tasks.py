@@ -158,6 +158,16 @@ def test_real_task_baseline_sidecars_are_canonical_and_match_manifest_baselines(
         assert isinstance(raw["runner_convention"], str) and raw["runner_convention"]
 
 
+def test_url_task_span_sidecars_are_canonical_and_receipted() -> None:
+    receipts = json.loads(RECEIPTS.read_text(encoding="utf-8"))["seed_span_receipts"]
+    for task_id in ("three-repo-combine", "url-normalization-compare"):
+        path = TASK_DIRECTORY / task_id / "span.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data == {"end_line": 27, "start_line": 1}
+        assert path.read_bytes() == b'{"end_line":27,"start_line":1}\n'
+        assert receipts[task_id] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_canonical_test_id_consistency_matrix_for_tasks_and_exit_corpus() -> None:
     """Every offline baseline, sidecar, and runner frame uses filename IDs."""
 

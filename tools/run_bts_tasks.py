@@ -71,6 +71,7 @@ class TaskSidecars:
     contract_tests: tuple[ContractTest, ...]
     baseline_sidecar: Path
     policy_sidecar: Path
+    seed_span_sidecar: Path | None
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -145,6 +146,7 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
     tests_root = directory / "contract_tests"
     baseline = directory / "baseline.json"
     policy = directory / "policy.json"
+    seed_span = directory / "span.json"
     if not tests_root.is_dir() or not baseline.is_file() or not policy.is_file():
         raise BTSError(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,
@@ -182,6 +184,11 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
         policy_bytes = read_regular_file(policy, maximum_bytes=1 << 20, no_follow=False)
         if policy_receipt != "sha256:" + hashlib.sha256(policy_bytes).hexdigest():
             raise ValueError("policy receipt mismatch")
+        if seed_span.is_file():
+            span_receipt = receipts["seed_span_receipts"][task.task_id]
+            span_bytes = read_regular_file(seed_span, maximum_bytes=1 << 20, no_follow=False)
+            if span_receipt != "sha256:" + hashlib.sha256(span_bytes).hexdigest():
+                raise ValueError("seed span receipt mismatch")
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise BTSError(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,
@@ -189,7 +196,7 @@ def discover_task_sidecars(tasks_directory: Path, task: BTSEvalTask) -> TaskSide
             detail_code="pipeline_cli_task_policy_receipt_v1",
             cause=exc,
         ) from exc
-    return TaskSidecars(tuple(tests), baseline, policy)
+    return TaskSidecars(tuple(tests), baseline, policy, seed_span if seed_span.is_file() else None)
 
 
 def load_tasks(directory: Path | None = None) -> tuple[BTSEvalTask, ...]:
@@ -313,6 +320,7 @@ class _PipelineTaskRunner:
             contract_tests=primary_tests,
             baseline_sidecar=sidecars.baseline_sidecar,
             resolution_policy_path=sidecars.policy_sidecar,
+            seed_span_sidecar=sidecars.seed_span_sidecar,
             substrate=self.substrate,
         )
         request = getattr(assembly, "request", None)
@@ -354,6 +362,7 @@ class _PipelineTaskRunner:
                 contract_tests=extra_tests,
                 baseline_sidecar=sidecars.baseline_sidecar,
                 resolution_policy_path=sidecars.policy_sidecar,
+                seed_span_sidecar=sidecars.seed_span_sidecar,
                 substrate=self.substrate,
                 execution_identity=identity,
             )

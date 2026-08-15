@@ -741,14 +741,17 @@ def _materialized_candidate(identity: CandidateIdentity, root: Path, spec: Capab
     owner, separator, repo = identity.slug.partition("/")
     if not owner or separator != "/" or not repo:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "task candidate slug is malformed", detail_code="pipeline_cli_task_candidate_evidence_v1")
-    snapshot = bts_cli.load_donor_snapshot(root, owner, repo, identity.commit_sha)
+    # C3 discovery/ranking is evidence over the candidate search space, not a
+    # transplant.  It deliberately has structural materialization authority
+    # only; exact snapshot parity is checked immediately before execution.
+    source_root = bts_cli.load_donor_materialization(root, owner, repo, identity.commit_sha)
     try:
-        source = read_regular_file(snapshot.source_root / identity.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
+        source = read_regular_file(source_root / identity.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
     except (OSError, ValueError) as exc:
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "task candidate source cannot be read", detail_code="pipeline_cli_task_candidate_evidence_v1", cause=exc) from exc
     if hashlib.sha1(b"blob %d\0" % len(source) + source).hexdigest() != identity.blob_sha:
         raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "task candidate source does not match its pinned blob", detail_code="pipeline_cli_task_candidate_evidence_v1")
-    license_value = _license_from_materialized_donor(snapshot.source_root)
+    license_value = _license_from_materialized_donor(source_root)
     if license_value is None:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "task candidate license cannot be classified", detail_code="pipeline_cli_task_candidate_evidence_v1")
     # A materialized blob proves provenance and permits license classification;

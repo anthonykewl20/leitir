@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from leitir.bts import BTSDisposition
+from leitir.bts_errors import BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineResult
 from leitir.exec_sandbox import ValidationAbortEnvelope
 from leitir.relocate import FileRole
@@ -423,6 +424,9 @@ class BTSTaskObservation:
     probe_total: int
     ranking_unranked: bool = False
     composition_mode: str = "single-recipient-run"
+    not_applicable_metrics: tuple[str, ...] = ()
+    not_applicable_reason: str | None = None
+    execution_failure: TaskExecutionFailure | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or _TASK_ID.fullmatch(self.task_id) is None:
@@ -436,6 +440,15 @@ class BTSTaskObservation:
             raise TypeError("ranking_unranked must be bool")
         if self.composition_mode not in {"single-recipient-run", "coexisting-recipient-three-runs"}:
             raise ValueError("composition_mode is unsupported")
+        _strings(self.not_applicable_metrics, "not_applicable_metrics", sorted_=True)
+        if self.not_applicable_metrics:
+            if any(metric not in _METRICS for metric in self.not_applicable_metrics):
+                raise ValueError("not_applicable_metrics contains an unknown metric")
+            _text(self.not_applicable_reason, "not_applicable_reason")
+        elif self.not_applicable_reason is not None:
+            raise ValueError("not_applicable_reason requires not_applicable_metrics")
+        if self.execution_failure is not None and not isinstance(self.execution_failure, TaskExecutionFailure):
+            raise TypeError("execution_failure must be TaskExecutionFailure or None")
         _tuple(self.bts_members, "bts_members", MemberObs)
         if len({item.node for item in self.bts_members}) != len(self.bts_members):
             raise ValueError("bts_members contains duplicate nodes")
@@ -545,10 +558,36 @@ class MetricRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskExecutionFailure:
+    """Typed evidence that a task's selected donor could not reach execution."""
+
+    reason: str
+    detail_code: str
+    message: str
+    identities: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.reason not in {item.value for item in BTSRejectReason}:
+            raise ValueError("execution failure reason is unknown")
+        _text(self.detail_code, "execution failure detail_code")
+        _text(self.message, "execution failure message")
+        _strings(self.identities, "execution failure identities", sorted_=True)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "detail_code": self.detail_code,
+            "identities": list(self.identities),
+            "message": self.message,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BTSEvalTaskRun:
     task_id: str
     task_digest: str
     metrics: tuple[MetricRecord, ...]
+    execution_failure: TaskExecutionFailure | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or _TASK_ID.fullmatch(self.task_id) is None:
@@ -562,7 +601,10 @@ class BTSEvalTaskRun:
             raise ValueError("metric names must be unique")
 
     def to_dict(self) -> dict[str, object]:
-        return {"metrics": [item.to_dict() for item in self.metrics], "task_digest": self.task_digest, "task_id": self.task_id}
+        result: dict[str, object] = {"metrics": [item.to_dict() for item in self.metrics], "task_digest": self.task_digest, "task_id": self.task_id}
+        if self.execution_failure is not None:
+            result["execution_failure"] = self.execution_failure.to_dict()
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -846,7 +888,17 @@ def grade_task(gold: BTSGold, obs: BTSTaskObservation) -> tuple[MetricRecord, ..
         grade_test_recall,
         grade_time_saved,
     )
-    return tuple(sorted((grader(gold, obs) for grader in graders), key=lambda item: item.metric))
+    records = tuple(sorted((grader(gold, obs) for grader in graders), key=lambda item: item.metric))
+    if not obs.not_applicable_metrics:
+        return records
+    assert obs.not_applicable_reason is not None
+    excluded = set(obs.not_applicable_metrics)
+    return tuple(
+        _excluded(record.metric, obs.not_applicable_reason, diagnostic=record.diagnostic)
+        if record.metric in excluded
+        else record
+        for record in records
+    )
 
 
 def aggregate_task_runs(tasks: tuple[BTSEvalTaskRun, ...]) -> BTSAggregate:
@@ -886,7 +938,7 @@ class BTSEvalBenchmark:
                 raise ValueError(f"observation task_id mismatch for {task.task_id}")
             if observation.task_digest != task.digest():
                 raise ValueError(f"observation task_digest mismatch for {task.task_id}")
-            runs.append(BTSEvalTaskRun(task.task_id, task.digest(), grade_task(task.gold, observation)))
+            runs.append(BTSEvalTaskRun(task.task_id, task.digest(), grade_task(task.gold, observation), observation.execution_failure))
         if set(observed_ids) != {task.task_id for task in manifest.tasks} or len(observed_ids) != len(manifest.tasks):
             raise ValueError("observed task IDs must exactly equal manifest task IDs")
         task_runs = tuple(runs)
@@ -1240,6 +1292,7 @@ __all__ = [
     "MetricApplicability",
     "MetricRecord",
     "SeedSpan",
+    "TaskExecutionFailure",
     "TaskObservationPlan",
     "aggregate_task_runs",
     "compute_run_with_timing",

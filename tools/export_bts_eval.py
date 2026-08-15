@@ -19,6 +19,7 @@ from leitir.bts_bench import (
     CandidateIdentity,
     Exclusion,
     MetricRecord,
+    TaskExecutionFailure,
 )
 
 MAX_RUN_BYTES = 64 * 1024 * 1024
@@ -102,11 +103,25 @@ def _metric_from_dict(raw: object) -> MetricRecord:
 
 def _task_run_from_dict(raw: object) -> BTSEvalTaskRun:
     value = _mapping(raw, "task run")
-    _exact(value, {"task_id", "task_digest", "metrics"}, "task run")
+    if set(value) not in ({"task_id", "task_digest", "metrics"}, {"task_id", "task_digest", "metrics", "execution_failure"}):
+        raise ValueError("task run has missing or unknown fields")
+    failure = None if "execution_failure" not in value else _execution_failure_from_dict(value["execution_failure"])
     return BTSEvalTaskRun(
         _string(value["task_id"], "task_id"),
         _string(value["task_digest"], "task_digest"),
         tuple(_metric_from_dict(item) for item in _list(value["metrics"], "metrics")),
+        failure,
+    )
+
+
+def _execution_failure_from_dict(raw: object) -> TaskExecutionFailure:
+    value = _mapping(raw, "task execution failure")
+    _exact(value, {"reason", "detail_code", "message", "identities"}, "task execution failure")
+    return TaskExecutionFailure(
+        _string(value["reason"], "task execution failure.reason"),
+        _string(value["detail_code"], "task execution failure.detail_code"),
+        _string(value["message"], "task execution failure.message"),
+        tuple(_string(item, "task execution failure.identities") for item in _list(value["identities"], "task execution failure.identities")),
     )
 
 
@@ -190,6 +205,20 @@ def metrics_markdown(run: BTSEvalRun) -> str:
             lines.append(f"| {record.metric} | — | excluded: {reasons} |")
         else:
             lines.append(f"| {record.metric} | {record.score_bps} bps ({record.numerator}/{record.denominator}) | applicable |")
+    failures = tuple(task for task in run.tasks if task.execution_failure is not None)
+    if failures:
+        lines.extend((
+            "",
+            "## Execution failures",
+            "",
+            "| Task ID | Donor | Reason | Detail code |",
+            "| --- | --- | --- | --- |",
+        ))
+        for task in failures:
+            assert task.execution_failure is not None
+            failure = task.execution_failure
+            donor = ", ".join(failure.identities) or "—"
+            lines.append(f"| {task.task_id} | {donor} | {failure.reason} | {failure.detail_code} |")
     return "\n".join(lines) + "\n"
 
 

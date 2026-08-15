@@ -24,6 +24,7 @@ from leitir.bts_bench import (
     CandidateJudgment,
     MemberObs,
     SeedSpan,
+    TaskExecutionFailure,
     _normalize_staging_test_path,
     load_manifest,
 )
@@ -41,14 +42,17 @@ from leitir.relocate import ContractTest, ModuleMap, SourceFile, relocate_tests
 from leitir.rerun import canonical_test_id
 from leitir.treehash import compute_materialized_tree_hash
 from tests.test_relocate import _bts, _relocate
-from tools.export_bts_eval import export, load_run
+from tools.export_bts_eval import export, load_run, metrics_markdown
 from tools.run_bts_tasks import (
+    _ContinuingTaskRunner,
     _PipelineTaskRunner,
     build_plan,
     combined_manifest,
     discover_task_sidecars,
     load_tasks,
     validate_donor_pins,
+    validate_task_snapshot_pins,
+    write_run,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -383,6 +387,140 @@ def test_task_driver_dry_run_plan_is_pinned_and_runner_seam_is_fail_closed(tmp_p
     assert "timestamp" not in first
     three_repo = next(item for item in json.loads(first)["tasks"] if item["task_id"] == "three-repo-combine")
     assert len(three_repo["requests"]) == 3
+
+
+def test_candidate_pin_validation_is_structural_but_selected_snapshot_stays_exact(tmp_path: Path) -> None:
+    """A sampled candidate can be ranked but can never reach transplant execution."""
+
+    task = next(item for item in load_tasks(TASK_DIRECTORY) if item.task_id == "async-retry-backoff")
+    identity = CandidateIdentity("owner/donor", "a" * 40, "package/policy.py", "d3400504c93fd42b1fd39d180e08940d2443bf63", "package.policy.normalize_contract", 5, 6)
+    task = replace(task, observation=replace(task.observation, candidates=(identity,), execution_candidates=(identity,), seed=identity))
+    shelf = target_path(tmp_path, "owner", "donor", identity.commit_sha)
+    shutil.copytree(ROOT / "tests" / "fixtures" / "bts_cli" / "donor", shelf)
+    tree_hash, scope = compute_materialized_tree_hash(shelf)
+    manifest = {
+        "commit_sha": identity.commit_sha, "fetch_method": "codeload-tarball", "fetched_at": "2026-08-15T00:00:00Z",
+        "host": "github.com", "owner": "owner", "repo": "donor", "repo_url": "https://github.com/owner/donor",
+        "source": "git-commit", "parity": "unknown", "spec": "github:owner/donor", "tag": None,
+        "verified": "sampled", "verified_at": "2026-08-15T00:00:00Z", "verification_notes": [],
+    }
+    manifest.update(manifest_digest_fields(tree_hash, scope=scope))
+    (shelf / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    plan = build_plan((task,))
+
+    validate_donor_pins(tmp_path, plan)
+    with pytest.raises(BTSError) as caught:
+        validate_task_snapshot_pins(tmp_path, task)
+    assert caught.value.evidence.detail_code == "bts_cli_parity_v1"
+
+
+def test_sampled_selected_donor_records_typed_na_and_other_tasks_continue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    task = next(item for item in load_tasks(TASK_DIRECTORY) if item.task_id == "async-retry-backoff")
+    identity = CandidateIdentity("owner/donor", "a" * 40, "package/policy.py", "d3400504c93fd42b1fd39d180e08940d2443bf63", "package.policy.normalize_contract", 5, 6)
+    task = replace(task, observation=replace(task.observation, candidates=(identity,), execution_candidates=(identity,), seed=identity))
+    shelf = target_path(tmp_path, "owner", "donor", identity.commit_sha)
+    shutil.copytree(ROOT / "tests" / "fixtures" / "bts_cli" / "donor", shelf)
+    tree_hash, scope = compute_materialized_tree_hash(shelf)
+    manifest = {
+        "commit_sha": identity.commit_sha, "fetch_method": "codeload-tarball", "fetched_at": "2026-08-15T00:00:00Z",
+        "host": "github.com", "owner": "owner", "repo": "donor", "repo_url": "https://github.com/owner/donor",
+        "source": "git-commit", "parity": "unknown", "spec": "github:owner/donor", "tag": None,
+        "verified": "sampled", "verified_at": "2026-08-15T00:00:00Z", "verification_notes": [],
+    }
+    manifest.update(manifest_digest_fields(tree_hash, scope=scope))
+    (shelf / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    class DiscoveryOnlyModule:
+        @staticmethod
+        def _rank_materialized_candidates(current: BTSEvalTask, _root: Path):
+            assert current == task
+            return (identity,), "MIT", False
+
+    monkeypatch.setattr("tools.run_bts_tasks._pipeline_cli", lambda: DiscoveryOnlyModule)
+    failed = _PipelineTaskRunner(tmp_path, substrate=object()).run(task)
+    assert failed.candidate_ranking == (identity,)
+    assert failed.classified_license == "MIT"
+    assert "integration_success" in failed.not_applicable_metrics
+    assert failed.not_applicable_reason == f"snapshot_validation:reject_provenance_mismatch:bts_cli_parity_v1:owner/donor@{identity.commit_sha}"
+    assert failed.execution_failure is not None
+    assert failed.execution_failure.to_dict() == {
+        "detail_code": "bts_cli_parity_v1",
+        "identities": [f"owner/donor@{identity.commit_sha}"],
+        "message": "donor parity is not exact",
+        "reason": "reject_provenance_mismatch",
+    }
+
+    other = replace(task, task_id="other-task")
+
+    class ContinuingRunner:
+        def run(self, current: BTSEvalTask) -> BTSTaskObservation:
+            return failed if current.task_id == task.task_id else GoldDerivedSyntheticRunner().run(current)
+
+    run = BTSEvalBenchmark().execute(combined_manifest((task, other)), ContinuingRunner())
+    failed_run = next(item for item in run.tasks if item.task_id == task.task_id)
+    integration = next(item for item in failed_run.metrics if item.metric == "integration_success")
+    candidate = next(item for item in failed_run.metrics if item.metric == "candidate_top1")
+    assert failed_run.execution_failure == failed.execution_failure
+    assert integration.score_bps is None
+    assert integration.exclusions[0].reason == failed.not_applicable_reason
+    assert candidate.denominator == 1
+    assert tuple(item.task_id for item in run.tasks) == (task.task_id, other.task_id)
+    artifact = json.loads(run.to_json())
+    failed_artifact = next(item for item in artifact["tasks"] if item["task_id"] == task.task_id)
+    assert failed_artifact["execution_failure"] == failed.execution_failure.to_dict()
+
+
+def test_driver_records_unexpected_task_failure_and_continues_all_six_tasks(tmp_path: Path) -> None:
+    tasks = load_tasks(TASK_DIRECTORY)
+    failing_task = "lru-ttl-decisions"
+
+    class FailingRunner(GoldDerivedSyntheticRunner):
+        def run(self, task: BTSEvalTask) -> BTSTaskObservation:
+            if task.task_id == failing_task:
+                raise RuntimeError("simulated pipeline assembly failure")
+            return super().run(task)
+
+    manifest = combined_manifest(tasks)
+    first = BTSEvalBenchmark().execute(manifest, _ContinuingTaskRunner(FailingRunner()))
+    second = BTSEvalBenchmark().execute(manifest, _ContinuingTaskRunner(FailingRunner()))
+
+    assert tuple(item.task_id for item in first.tasks) == tuple(item.task_id for item in tasks)
+    failed = next(item for item in first.tasks if item.task_id == failing_task)
+    assert failed.execution_failure is not None
+    assert failed.execution_failure.to_dict() == {
+        "detail_code": "bts_task_execution_error_v1",
+        "identities": [
+            f"{identity.slug}@{identity.commit_sha}"
+            for identity in tasks[2].observation.execution_candidates
+        ],
+        "message": "BTS task execution failed",
+        "reason": "reject_hard_gate_failed",
+    }
+    assert all(record.score_bps is None for record in failed.metrics)
+    assert first.digest() == second.digest()
+    artifact = write_run(tmp_path / "run", first.to_json().encode("utf-8"))
+    artifact_tasks = json.loads(artifact.read_text(encoding="utf-8"))["tasks"]
+    assert [item["task_id"] for item in artifact_tasks] == [item.task_id for item in tasks]
+    assert sum("execution_failure" in item for item in artifact_tasks) == 1
+
+
+def test_metrics_markdown_lists_execution_failures() -> None:
+    run = _reference_run()
+    failed_task = replace(
+        run.tasks[0],
+        execution_failure=TaskExecutionFailure(
+            "reject_hard_gate_failed",
+            "bts_task_execution_error_v1",
+            "BTS task execution failed",
+            ("owner/donor@" + "a" * 40,),
+        ),
+    )
+    failed_run = replace(run, tasks=(failed_task,), timing=None)
+
+    metrics = metrics_markdown(failed_run)
+
+    assert "## Execution failures" in metrics
+    assert "| reference-synthetic-v1 | owner/donor@" + "a" * 40 + " | reject_hard_gate_failed | bts_task_execution_error_v1 |" in metrics
 
 
 def test_task_sidecar_discovery_rejects_missing_sidecars_before_materialization(tmp_path: Path) -> None:

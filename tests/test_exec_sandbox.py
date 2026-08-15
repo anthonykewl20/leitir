@@ -431,8 +431,10 @@ def test_malformed_nsjail_identity_inputs_reject() -> None:
 
 
 def test_duplicate_mount_destination_rejects_before_execution(fake_nsjail: tuple[Path, str, str]) -> None:
-    policy = _policy(fake_nsjail)
-    root_mount = policy.readonly_mounts[0]
+    policy = replace(_policy(fake_nsjail), nsjail_path="/fixture-nsjail", scratch_dir="/fixture-scratch")
+    # _validate_policy's contract is POSIX paths even when this unit test runs
+    # on Windows, whose temporary paths are drive-letter paths.
+    root_mount = replace(policy.readonly_mounts[0], source="/fixture-root")
     duplicate = replace(root_mount, source="/different-rootfs")
     duplicate_mounts = tuple(sorted((root_mount, duplicate)))
     invalid = replace(policy, readonly_mounts=duplicate_mounts)
@@ -444,10 +446,12 @@ def test_duplicate_mount_destination_rejects_before_execution(fake_nsjail: tuple
 
 
 def test_scratch_source_cannot_overlap_readonly_inputs(fake_nsjail: tuple[Path, str, str]) -> None:
-    policy = _policy(fake_nsjail)
+    policy = replace(_policy(fake_nsjail), nsjail_path="/fixture-nsjail", scratch_dir="/fixture-scratch")
+    root_mount = replace(policy.readonly_mounts[0], source="/fixture-root")
+    policy = replace(policy, readonly_mounts=(root_mount,))
 
     with pytest.raises(TransplantError) as caught:
-        sandbox._validate_policy(replace(policy, scratch_dir=policy.readonly_mounts[0].source + "/scratch"))
+        sandbox._validate_policy(replace(policy, scratch_dir=root_mount.source + "/scratch"))
 
     assert caught.value.evidence.detail_code == "scratch_source_overlap"
 

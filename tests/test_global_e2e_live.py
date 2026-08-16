@@ -255,6 +255,9 @@ class TestLiveGlobalRealDataOrdering:
             "spec_digest": report.spec_digest,
             "coverage": report.coverage.to_dict(),
             "matches": [match.to_dict() for match in report.matches],
+            "query_translation": [
+                item.to_dict() for item in report.query_translation
+            ],
         }
         independently_encoded = json.dumps(
             identity_payload,

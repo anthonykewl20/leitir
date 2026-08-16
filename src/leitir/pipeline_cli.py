@@ -237,6 +237,7 @@ def containment_attestation(parent_namespace_identities=PARENT_NAMESPACE_IDENTIT
 startup_attestation=containment_attestation()
 sys.stdout.buffer.write(json.dumps(startup_attestation,sort_keys=True,separators=(",",":")).encode()+b"\n")
 sys.stdout.buffer.flush()
+sys.path.extend(json.loads(os.environ.get("LEITIR_DONOR_IMPORT_ROOTS","[]")))
 aliases=json.loads(os.environ.get("LEITIR_TEST_IMPORT_ALIASES","[]"))
 if aliases:
  sys.modules.setdefault("aiorpcx",types.ModuleType("aiorpcx"))
@@ -274,6 +275,7 @@ def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, 
     # policy's test mount explicit and lets callers use the staged original
     # tests from the same two-phase relocation assembly as S2.
     mounts = [ReadOnlyMount("/contract", str(test_root), test_digest), ReadOnlyMount("/donor", str(donor_root), donor_digest)]
+    donor_import_roots = tuple("/donor" if root == "." else "/donor/" + root for root in roots)
     return build_containment_policy(
         nsjail_sha256=substrate.nsjail_sha256,
         nsjail_version=substrate.nsjail_version,
@@ -283,7 +285,11 @@ def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, 
         rootfs_digest=substrate.rootfs_digest,
         scratch_dir=scratch_dir,
         readonly_mounts=tuple(mounts),
-        environment=("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC", "LEITIR_TEST_IMPORT_ALIASES=" + json.dumps(test_import_aliases, separators=(",", ":")), "PYTHONPATH=/opt/leitir/site-packages:" + ":".join("/donor" if root == "." else "/donor/" + root for root in roots)),
+        # PYTHONPATH precedes the copied stdlib at interpreter startup.  Keep
+        # donor roots out of it so donor files such as ``enum.py`` cannot
+        # shadow the stdlib while the runner imports its own dependencies; the
+        # child appends the pinned donor roots after startup instead.
+        environment=("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC", "LEITIR_DONOR_IMPORT_ROOTS=" + json.dumps(donor_import_roots, separators=(",", ":")), "LEITIR_TEST_IMPORT_ALIASES=" + json.dumps(test_import_aliases, separators=(",", ":")), "PYTHONPATH=/opt/leitir/site-packages"),
     )
 
 

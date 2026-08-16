@@ -120,6 +120,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
 - correct typing for mypy strict mode (`cost`)
+- defer donor imports until baseline startup
 - diagnose mount-source digest mismatches
 - expose nsjail mount sources in CI
 - fail closed on enabled collection and mixed-phase skips (`canary`)

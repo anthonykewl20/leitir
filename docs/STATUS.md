@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-14)
+# Leitir — Status (2026-08-16)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -32,15 +32,18 @@ and #119 are closed.
 
 The Behavioral Transplant Set code landed on `main` via PR #127. ADR-0008
 through ADR-0011 are Accepted and Implemented, and issues #55, #60, #61, #62,
-#63, #64, and #72 are closed. The v0.1.2 milestone remains open: #73's
-five-donor runnable corpus and #75's six real task manifests/drivers are
-landed, but both await contained Phase-A evidence runs, publication, and owner
-sign-off; no release-pinned rootfs or successful contained execution is claimed.
+#63, #64, and #72 are closed. The v0.1.2 milestone remains open only for epic
+#52 and exit gate #73: all five Phase-A donors have repeatedly completed under
+containment with 2/0/0 baseline and rerun outcomes. The final honest run
+[31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924)
+is an overall reject solely because `ratified_runtime_digest` remains null
+until a stable runtime digest can be ratified. The six-task #75 benchmark is
+published; its one `worker-shutdown-predicate` result remains an honest partial.
 
 ### v0.1.3 — composition and multi-language
 
-ADR-0012 through ADR-0017 and ADR-0019 are Accepted; ADR-0012 is fully
-implemented in this PR. Its stage-1 policy/registry and stage-2 JavaScript,
+ADR-0012 through ADR-0017 and ADR-0019 are Accepted and implemented. ADR-0012's
+stage-1 policy/registry and stage-2 JavaScript,
 TypeScript, Rust, and Go producers live in
 `src/leitir/graph/{ts_kernel,javascript,typescript,rust,go}.py`, backed by the
 hash-locked optional `tree-sitter` extra and `requirements-tree-sitter.lock`.
@@ -57,17 +60,22 @@ tamper, determinism, and budget tests.
 Composition, architecture, duplicate-abstraction detection, lineage,
 integration-cost, occupied-recipient validation, and ADR-0018's optional
 detached manifest-authentication layer landed through PRs #132–#139 and the
-2026-08-15 integration work. #82 is closed by PR #139; remaining work is CI
-evidence, dogfood, and owner sign-off rather than an ADR-0018 implementation
-gap. #148 remains owner-gated for further design.
+2026-08-15 integration work. v0.1.3 is complete; #148's evidence-backed CLI
+surface is complete and its tracker closure is pending.
 
-2026-08-15: GitHub/git parity now records exact versus drift outcomes, the
-recorded capability funnel, BTS pipeline, occupied-artifact validator, and
-runnable exit-corpus surfaces are wired at the CLI boundary. The five-donor
-v1.1 corpus and six BTS tasks are assembled, while Phase 2 containment CI is
-intentionally non-required evidence. ADR-0018's optional manifest-auth layer
-is landed. Remaining owner gates are successful CI evidence runs, external
-dogfood, and human sign-off; a release-pinned rootfs is not yet claimed.
+2026-08-16: PRs #163–#179 completed containment, security, benchmark, rootfs,
+and ratification follow-up. The release-pinned, published
+`containment-rootfs-v1` asset verifies to
+`sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
+PR #166 remediated the security P2 findings (evidence redaction, scratch quota,
+uid-map fail-closed handling, nsjail golden hash, idna pin, and Go-zip golden
+vector) after two independent reviews recorded no P0/P1 findings.
+
+Ratification is held rather than claimed: the Ed25519 ceremony sidecar and
+trusted-key record exist, but `ratified_runtime_digest` is null while staged
+mount-source tree digests drift run to run. Entry-level instrumentation is the
+next step; re-sign only after it establishes a stable digest. See
+[`benchmarks/exit-corpus/README.md`](../benchmarks/exit-corpus/README.md).
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
 
@@ -133,22 +141,19 @@ originating #17 is also closed. Broader audit work is tracked by the
 
 ## Operational readiness
 
-Epic #42 documentation gates:
+| Gate | State | Evidence / remaining work |
+| --- | --- | --- |
+| Load test | **MET** | 116 packages, including 29 sampled-boundary cases, completed the required load/search/integrity phases: [`loadtest-100-2026-08.md`](evidence/loadtest-100-2026-08.md). |
+| Dogfood | **MET** | Independent evidence is recorded in [`dogfood-2026-08-15.md`](evidence/dogfood-2026-08-15.md). The tracked friction backlog is L1, L3, L4, L7, L8, L9, M3 items 1/2, and M4. |
+| Live canary | **GREEN** | `GH_TOKEN`-gated probes are enabled daily; main runs 31934680140 and 31934798266 are green. Three v2 surfaces skip by design because their test files are not landed. |
+| Security sign-off | **DONE** | Two independent reviews on post-#163 state recorded no P0/P1; PR #166 remediated all reported P2 findings. |
+| Phase-A containment | **5/5 COMPLETE** | Each donor repeatedly completed contained baseline/rerun at 2/0/0. Run 31967278924 is intentionally overall-reject only for pending runtime ratification. |
+| Runtime ratification | **PENDING** | Ceremony key/sidecar are committed, but staged mount-source tree digests drift. Add entry-level instrumentation, establish stability, then re-sign. |
+| BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
-- [x] **MET by documentation:** corpus-cache backup and restore runbook,
-  including snapshot lock/tarball handling, trusted lock digest restore,
-  cleanup, and interrupted-materialization recovery. See
-  [Corpus cache operations](operations.md).
-- [x] **MET by documentation:** versioning and compatibility policy for 0.x
-  releases, manifest integrity changes, and snapshot format changes. See
-  [Versioning and compatibility](versioning.md).
-- [x] **MET by documentation:** public operational and compatibility guidance
-  reviewed against the current CLI and cache implementation, with the
-  historical v1 material explicitly separated from current behavior.
-- [ ] **REMAINING HUMAN GATE:** external dogfood run with feedback.
-- [x] **MET WITH EVIDENCE:** 100-package corpus load test recorded at
-  [`docs/evidence/loadtest-100-2026-08.md`](evidence/loadtest-100-2026-08.md).
-- [ ] **REMAINING HUMAN GATE:** final human security sign-off.
+Milestone state: v0.1.1/#42 is **closed-pending** (all evidence is complete;
+tracker closure is in progress); v0.1.2 remains open for #73 ratification and
+#52; v0.1.3 and v0.1.4 are complete, with the v0.1.4 release owner-gated.
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact
@@ -161,7 +166,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2537 passed, 122 skipped**. The skips are opt-in live tests
+Offline suite: **2647 passed, 122 skipped**. The skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1` and polyglot
 tests that require the optional tree-sitter extra; with that extra installed,
 the four polyglot test files run **105 additional tests**.

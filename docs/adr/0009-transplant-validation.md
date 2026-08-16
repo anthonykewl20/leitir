@@ -295,10 +295,9 @@ temporary-directory locations) are operational handles and are deliberately
 excluded from authority digests: their inclusion would make identical verified
 inputs differ between runners. Source existence, absolute-path validity, mount
 isolation, and the pinned source digest remain fail-closed checks at execution.
-`rlimit_fsize` bounds each file written by the child. Unlike the replaced tmpfs,
-the bind has no policy-enforced aggregate byte or inode cap: output/frame
-retention remains bounded, but staging storage capacity is an explicit
-operational tradeoff managed by the execution host.
+`rlimit_fsize` bounds each child-written file. After every launch, the controller
+measures the writable bind without following links and rejects if its
+policy-pinned aggregate byte or inode quota is exceeded or cannot be measured.
 
 The containment rootfs is built once and published as a release asset, rather
 than reconstructed for each corpus run. Publication uses a lexically sorted tar
@@ -505,7 +504,12 @@ signature over the exact `{corpus_id, corpus_manifest_digest,
 ratified_runtime_digest}` projection. The trusted public-key configuration is
 outside the materialized donor shelf, and the ratified runtime digest must equal
 the independently measured gate digest; corpus content and its self-hash cannot
-ratify either value.
+ratify either value. As recorded in the exit-corpus README on 2026-08-16, the
+ceremony sidecar and trusted key are present but ratification is held:
+`ratified_runtime_digest` is null while staged mount-source tree digests drift
+between runs. The current Phase-A outcome therefore rejects solely for pending
+ratification; entry-level instrumentation must establish a stable digest before
+a fresh signature can authorize acceptance.
 
 For v0.1.2, membership is monotonic and `N >= 5` materially different donor
 repositories are retained. Ordinary changes are additive expansion only.
@@ -606,8 +610,8 @@ The decision was checked against current upstream documentation:
    bytes are read-only in baseline and absent in rerun.
 4. All authorizing bytes are read-only and hash-stable; only the policy-pinned,
    per-launch-cleared `/work` scratch bind is writable. It is `rw,noexec,nosuid,
-   nodev`, and `rlimit_fsize` bounds each child-written file rather than imposing
-   a total scratch-byte cap.
+   nodev`; `rlimit_fsize` bounds each child-written file and a post-run,
+   no-follow measurement enforces aggregate byte and inode quotas.
 5. Donor absence is an OS/filesystem claim. Import recording is diagnostic-only;
    an observation rejects, while non-observation proves nothing.
 6. Module paths and recipient binding scopes are collision-checked against a
@@ -652,10 +656,9 @@ The decision was checked against current upstream documentation:
   and complex donor test suites.
 - Kernel, nsjail, CPython, runner, or native-extension defects remain residual
   escape or reproducibility risks and require security maintenance.
-- The writable scratch bind trades tmpfs's aggregate byte/inode cap for a
-  policy-pinned host staging directory: per-file `rlimit_fsize` and bounded
-  retained output do not bound aggregate scratch consumption, so operators must
-  provision and monitor its storage capacity.
+- The writable scratch bind is a policy-pinned host staging directory. Its
+  post-run byte/inode quota and per-file `rlimit_fsize` fail closed, but hosts
+  must still provision enough storage for the configured limits.
 - Generic parity may preserve existing donor failures, although E4b requires a
   green baseline.
 

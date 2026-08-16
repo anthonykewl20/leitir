@@ -52,5 +52,9 @@ the remaining tasks.
 
 ## Current state
 
-The deterministic evaluation harness is landed. The six real tasks remain an
-owner-external responsibility, and the timing envelope comparison is deferred.
+Published [run `88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860`](runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/)
+records a green run with exact baselines and metrics for five of the six real
+tasks. `worker-shutdown-predicate` is honestly partial:
+its selected `python/mypy` snapshot is sampled and therefore rejects execution
+with `bts_cli_parity_v1`. E5b timing-envelope comparison is deliberately
+deferred while the owner is offline.

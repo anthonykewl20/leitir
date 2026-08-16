@@ -71,21 +71,25 @@ not the out-of-band authority. The ratified runtime authority is recorded in
    Missing, tampered, self-made, or untrusted signatures reject; equality alone
    cannot create authority.
 
-### 2026-08-16 Phase-B/C ceremony and release-pinned rerun
+### 2026-08-16 ceremony held pending stable runtime digest
 
-The owner explicitly delegated closure decisions to this session on 2026-08-16.
-An Ed25519 ratifier key was generated out of band from the corpus for this
-delegated session ceremony; its private-key location is disclosed only in the
-PR description and the private key is never committed. The public key is in
-`trusted-keys-v1.json`; its key ID is
+The out-of-band ceremony was performed and retained as audit evidence. The
+public key is in `trusted-keys-v1.json`; its key ID is
 `8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
-The detached `ratification-v1.json` signs the canonical projection for
-`bts-exit-v0-1-2-real-five`, where both runtime-digest fields are
-`sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43`.
-That is the release-rootfs Phase-A runtime digest measured on
-[run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451).
+The detached `ratification-v1.json` is retained as a ceremony artifact. The
+private key is held out of band by the owner ceremony and is never committed.
 
-The same run measured and this manifest now pins:
+Ratification is **HELD**: `ratified_runtime_digest` is `null` because the
+runtime corpus digest drifts run-to-run through staged mount-source tree
+digests. Phase-A [run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451)
+measured `sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43`,
+while same-main diagnostic [run 31966286416](https://github.com/anthonykewl20/leitir/actions/runs/31966286416)
+measured `sha256:a76e3c68…`. The baseline mount-plan digest changed
+`a8116078…` → `ad54fb29…`, the execution-policy digest changed
+`9c3faf85…` → `54bb6aae…`, and the baseline digest changed
+`2f889172…` → `b20f5b5e…`.
+
+The substrate pins are stable and remain pinned:
 
 * `nsjail_sha256`: `sha256:2a740ac196d27176216788f6213d585cd5b5933f83f2c9bff31ce95cd64939d4`
 * `nsjail_version`: `nsjail@f78475530b46d0186111a9096b30725f816b55fe`
@@ -102,18 +106,13 @@ preservation and recompute this canonical tree digest before any policy is
 built. Its recorded tarball SHA-256 is
 `sha256:50cd430be18d424453569ed02a0f95b937ca44505762af446a001cdc7f72ddd2`.
 
-An intentional substrate change follows the monotonic path: dispatch the
-workflow with `rebuild_rootfs: true`, publish the resulting rootfs, update this
-manifest pin, obtain a new Phase-A digest, and re-ratify the detached sidecar.
-The sidecar above was re-signed by the same out-of-band delegated ceremony for
-the published-rootfs Phase-A digest; no donor, baseline, or gold artifact was
-changed.
-
-The workflow passes the trusted-key file by its absolute workspace path because
-the trust-anchor loader rejects relative paths; it is outside the donor shelf
-(`$RUNNER_TEMP/leitir-corpus-root`). The owner should rotate this delegated
-session key to an owner-controlled long-term key before any future
-re-ratification.
+Next, add entry-level instrumentation for staged-tree digests using the existing
+`LEITIR_NSJAIL_DEBUG` diagnostic path, then re-sign only after the runtime
+digest is stable. The workflow passes the trusted-key file by its absolute
+workspace path because the trust-anchor loader rejects relative paths; it is
+outside the donor shelf (`$RUNNER_TEMP/leitir-corpus-root`). The owner should
+rotate this delegated session key to an owner-controlled long-term key before
+any future re-ratification.
 
 A digest computed by this repository only binds content and cannot ratify it.
 

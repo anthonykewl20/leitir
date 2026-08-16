@@ -158,6 +158,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
+- relocate authorized module preambles
 - render mandatory root mount for nsjail mount tree
 - replace ref-name regex with linear validation (`lineage`)
 - restore containment smoke mount chain

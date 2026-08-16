@@ -1195,6 +1195,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     _verify_backend(plan.policy)
     config_fd: int | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     config_path: str | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    debug_trace_path: str | None = None  # pragma: no cover - controller-only CI diagnostics
     try:
         config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         os.fchmod(config_fd, 0o600)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1208,6 +1209,14 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             config_file.flush()  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             os.fsync(config_file.fileno())  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if os.environ.get(NSJAIL_DEBUG_ENV) == "1" and Path("/usr/bin/strace").is_file():
+            # Debug-only controller tracing records ioctl request arguments from
+            # NsJail's child process.  It never reaches the contained argv or
+            # changes the digest-bound policy; the trace is deleted after its
+            # bounded controller-side diagnostic is emitted.
+            trace_fd, debug_trace_path = tempfile.mkstemp(prefix=".leitir-seccomp-", suffix=".strace")
+            os.close(trace_fd)
+            launch_argv = ("/usr/bin/strace", "-f", "-e", "trace=ioctl", "-o", debug_trace_path, *launch_argv)
         # Re-read all mount sources immediately before the backend can open them.
         _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         _clear_scratch_source(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1228,6 +1237,12 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             # receipt before it opens relocated or donor input.
             applied_state=None,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
+        if debug_trace_path is not None:
+            try:
+                trace = Path(debug_trace_path).read_text(encoding="utf-8", errors="replace")
+                print("leitir debug seccomp ioctl trace\n" + trace, file=sys.stderr, flush=True)
+            except OSError:
+                pass
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     finally:
@@ -1238,6 +1253,11 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
                 os.unlink(config_path)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             except FileNotFoundError:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
                 pass  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if debug_trace_path is not None:
+            try:
+                os.unlink(debug_trace_path)
+            except FileNotFoundError:
+                pass
     # ADR-0009 requires immutable authorizing inputs across the complete run.
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

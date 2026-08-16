@@ -598,6 +598,31 @@ def test_mount_source_digest_tamper_rejects_before_launch(
     assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="nsjail containment is Linux-only (ADR-0009 §3)")
+def test_mount_source_digest_debug_reports_per_entry_diff(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    monkeypatch.setenv("LEITIR_NSJAIL_DEBUG", "1")
+    policy = _policy(fake_nsjail)
+    sandbox.record_debug_mount_source_manifests(policy)
+    root_file = Path(policy.readonly_mounts[0].source, "python")
+    root_file.chmod(0o755)
+    root_file.write_bytes(b"tampered")
+    with pytest.raises(TransplantError):
+        prepare_execution(policy)
+    diagnostic = capsys.readouterr().err.removeprefix("leitir mount-source digest mismatch ")
+    payload = json.loads(diagnostic)
+    assert payload["actual_digest"] != payload["expected_digest"]
+    assert payload["entry_diff"] == [
+        {
+            "actual": {"mode": 0o755, "path": "python", "sha256": _digest(b"tampered"), "size": 8, "type": "file"},
+            "expected": {"mode": 0o555, "path": "python", "sha256": _digest(b"rootfs"), "size": 6, "type": "file"},
+            "path": "python",
+        }
+    ]
+
+
 @pytest.mark.skipif(
     sys.platform != "linux",
     reason="nsjail containment is Linux-only (ADR-0009 §3)",

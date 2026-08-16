@@ -17,6 +17,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -39,6 +40,7 @@ _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
 STARTUP_ATTESTATION_SCHEMA = "leitir-contained-startup-attestation-v1"
 _ATTESTED_NAMESPACES = ("net", "user", "mnt", "pid", "ipc", "uts")
+_DEBUG_MOUNT_ENTRY_MANIFESTS: dict[tuple[str, str], tuple[dict[str, object], ...]] = {}
 _FORBIDDEN_SYSCALLS = frozenset(
     {
         "accept",
@@ -732,6 +734,107 @@ def _verified_directory_tree_digest(root: Path) -> str:  # pragma: no cover  # e
     return _digest_payload({"entries": entries, "schema_version": "leitir-directory-tree-v1"})
 
 
+def _mount_source_entry_manifest(source: Path) -> tuple[dict[str, object], ...]:
+    """Return debug-only, deterministic per-entry facts for a mount source."""
+
+    metadata = source.stat(follow_symlinks=False)
+    if stat.S_ISREG(metadata.st_mode):
+        return ({
+            "mode": stat.S_IMODE(metadata.st_mode),
+            "path": ".",
+            "sha256": _verified_regular_file_digest(source),
+            "size": metadata.st_size,
+            "type": "file",
+        },)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise OSError("mount source is not a regular file or directory")
+    entries: list[dict[str, object]] = []
+
+    def visit(directory: Path, relative: PurePosixPath) -> None:
+        directory_metadata = directory.stat(follow_symlinks=False)
+        entries.append({
+            "mode": stat.S_IMODE(directory_metadata.st_mode),
+            "path": relative.as_posix() or ".",
+            "size": directory_metadata.st_size,
+            "type": "directory",
+        })
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: os.fsencode(item.name))
+        for child in children:
+            child_path = Path(child.path)
+            child_relative = relative / child.name
+            child_metadata = child.stat(follow_symlinks=False)
+            if stat.S_ISDIR(child_metadata.st_mode):
+                visit(child_path, child_relative)
+            elif stat.S_ISREG(child_metadata.st_mode):
+                entries.append({
+                    "mode": stat.S_IMODE(child_metadata.st_mode),
+                    "path": child_relative.as_posix(),
+                    "sha256": _verified_regular_file_digest(child_path),
+                    "size": child_metadata.st_size,
+                    "type": "file",
+                })
+            else:
+                raise OSError("mount source contains a symlink or special file")
+
+    visit(source, PurePosixPath())
+    return tuple(entries)
+
+
+def record_debug_mount_source_manifests(policy: ContainmentPolicy) -> None:
+    """Capture nonauthorizing source inventories at policy construction time."""
+
+    if os.environ.get(NSJAIL_DEBUG_ENV) != "1":
+        return
+    for mount in policy.readonly_mounts:
+        try:
+            _DEBUG_MOUNT_ENTRY_MANIFESTS[(mount.source, mount.source_digest)] = _mount_source_entry_manifest(Path(mount.source))
+        except (OSError, UnicodeError, ValueError):
+            # The authoritative verifier remains responsible for rejecting an
+            # unavailable or malformed source. Diagnostics must not change it.
+            continue
+
+
+def _debug_mount_source_mismatch(mount: ReadOnlyMount, actual: str) -> None:
+    """Emit controller-only entry diffs without changing integrity decisions."""
+
+    if os.environ.get(NSJAIL_DEBUG_ENV) != "1":
+        return
+    expected = _DEBUG_MOUNT_ENTRY_MANIFESTS.get((mount.source, mount.source_digest), ())
+    observed_manifest: tuple[dict[str, object], ...]
+    try:
+        observed_manifest = _mount_source_entry_manifest(Path(mount.source))
+    except (OSError, UnicodeError, ValueError) as exc:
+        observed_manifest = ({"error": type(exc).__name__},)
+    expected_by_path = {str(item.get("path")): item for item in expected}
+    observed_by_path = {str(item.get("path")): item for item in observed_manifest}
+    diff = [
+        {
+            "actual": observed_by_path.get(path),
+            "expected": expected_by_path.get(path),
+            "path": path,
+        }
+        for path in sorted(set(expected_by_path) | set(observed_by_path))
+        if expected_by_path.get(path) != observed_by_path.get(path)
+    ]
+    print(
+        "leitir mount-source digest mismatch "
+        + json.dumps(
+            {
+                "actual_digest": actual,
+                "destination": mount.destination,
+                "entry_diff": diff,
+                "expected_digest": mount.source_digest,
+                "source": mount.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     rootfs: ReadOnlyMount | None = None
     for mount in policy.readonly_mounts:
@@ -744,6 +847,7 @@ def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cove
         except (OSError, UnicodeError, ValueError) as exc:
             raise _reject("read-only mount source cannot be verified", "mount_source_unverifiable") from exc
         if actual != mount.source_digest:
+            _debug_mount_source_mismatch(mount, actual)
             raise _reject("read-only mount source digest does not match policy", "mount_source_digest_mismatch")
         if mount.destination == "/":
             rootfs = mount

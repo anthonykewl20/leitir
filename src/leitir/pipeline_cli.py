@@ -80,6 +80,7 @@ from leitir.exec_sandbox import (
     ReadOnlyMount,
     donor_execution_enabled,
     prepare_execution,
+    record_debug_mount_source_manifests,
     run_contained,
     validate_startup_attestation,
 )
@@ -464,7 +465,9 @@ def build_containment_policy(*, nsjail_sha256: str, nsjail_version: str, nsjail_
     _require_substrate()
     mounts = tuple(sorted((ReadOnlyMount("/", str(rootfs_source), rootfs_digest), *readonly_mounts)))
     payload = {"readonly_mounts": [{"destination": item.destination, "source": item.source, "source_digest": item.source_digest} for item in mounts], "rootfs_digest": rootfs_digest, "scratch_dir": str(scratch_dir), "writable_tmpfs": "/work", "writable_tmpfs_bytes": 1_048_576, "writable_tmpfs_inodes": 128}
-    return ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, str(scratch_dir), "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
+    policy = ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, str(scratch_dir), "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
+    record_debug_mount_source_manifests(policy)
+    return policy
 
 
 def _stage_relocation(relocation: Relocation, directory: Path) -> Path:

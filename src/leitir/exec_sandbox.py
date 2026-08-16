@@ -116,6 +116,11 @@ class PermittedSyscall(StrEnum):
     # expected filesystem error instead of a seccomp SIGSYS.
     MKDIR = "mkdir"
     MMAP = "mmap"
+    # GitHub's CPython 3.12.13 runtime grows its allocator arena with mremap
+    # while importing backoff.  Audit evidence from the contained runner records
+    # the denied x86_64 syscall number 25; this only resizes existing process
+    # mappings and cannot grant I/O or namespace capabilities.
+    MREMAP = "mremap"
     MPROTECT = "mprotect"
     MUNMAP = "munmap"
     NEWFSTATAT = "newfstatat"

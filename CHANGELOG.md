@@ -125,6 +125,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - defer donor imports until baseline startup
 - diagnose mount-source digest mismatches
 - expose nsjail mount sources in CI
+- expose ratification rejection evidence
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)

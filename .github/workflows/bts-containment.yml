@@ -663,4 +663,5 @@ jobs:
           printf '%s\n' '- This job records a pinned corpus-run experiment; it is not a required check.' >>"$GITHUB_STEP_SUMMARY"
           printf '%s\n' '- Its rootfs digest is the canonical tree digest of the donor-free interpreter, stdlib, harness, and pinned runtime-dependency image.' >>"$GITHUB_STEP_SUMMARY"
           printf -- '- Pinned interpreter: `%s`\n' "${{ steps.substrate.outputs.python_version }}" >>"$GITHUB_STEP_SUMMARY"
-          printf '%s\n' '- A release-pinned rootfs and external ratification remain required for #73 sign-off.' >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- The rootfs is consumed from the release asset and tree-digest-verified against the corpus pin before policy construction.' >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- `rebuild_rootfs: true` is the intentional substrate-change path; publish, repin, and re-ratify before accepting a new run.' >>"$GITHUB_STEP_SUMMARY"

@@ -294,6 +294,15 @@ The bind is `rw,noexec,nosuid,nodev`; its target and source path are pinned.
 the bind has no policy-enforced aggregate byte or inode cap: output/frame
 retention remains bounded, but staging storage capacity is an explicit
 operational tradeoff managed by the execution host.
+
+The containment rootfs is built once and published as a release asset, rather
+than reconstructed for each corpus run. Publication uses a lexically sorted tar
+with fixed mtime/uid/gid and preserved modes. A consumer obtains only that
+asset, extracts it with mode preservation, recomputes the canonical tree digest,
+and rejects before policy construction unless it equals the manifest pin. A
+substrate change requires a new published asset, manifest-pin update, fresh
+Phase-A measurement, and out-of-band re-ratification; an image rollout cannot
+silently repin a passing run.
 Interpreter binaries/libraries, baseline donor bytes,
 relocated source, original/rewritten tests, probes, runner, bootstrap, and every
 authorizing manifest remain read-only. The controller hashes them before and

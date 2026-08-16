@@ -813,6 +813,7 @@ def test_l5_ratification_missing_sidecar_rejects_typed(tmp_path: Path) -> None:
         _require_runtime_ratification(manifest, corpus_manifest_digest="sha256:" + "a" * 64, donors_dir=donors, trusted_keys_path=keys, ratification_sidecar=sidecar, default_sidecar=sidecar)
 
     assert caught.value.evidence.detail_code == "pipeline_cli_ratification_invalid_v1"
+    assert caught.value.evidence.message == "runtime ratification rejected for corpus manifest sha256:" + "a" * 64 + ": ManifestAuthMalformedError"
 
 
 @pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")

@@ -596,25 +596,28 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
-    # NsJail creates a target for each bind after mounting its root.  Establish
-    # the non-authorizing writable bind first so direct rerun-file targets below
-    # /work never become post-digest writes to the immutable rootfs.
-    lines.append(
-        "mount { src: "
-        f"{_protobuf_string(policy.scratch_dir)} dst: {_protobuf_string(policy.writable_tmpfs)} "
-        'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
-    )
-    for mount in policy.readonly_mounts:
+    def render_readonly_mount(mount: ReadOnlyMount) -> str:
         # NsJail applies the user mapping before it builds this mount tree.  Do
         # not let its source-path heuristic misclassify a rootfs below a
         # non-traversable CI temporary directory as a file mount.
         source_mode = Path(mount.source).stat(follow_symlinks=False).st_mode
         is_dir = mount.destination == "/" or stat.S_ISDIR(source_mode)
-        lines.append(
+        return (
             "mount { src: "
             f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
             f'fstype: "bind" is_bind: true rw: false is_dir: {str(is_dir).lower()} mandatory: true nosuid: true nodev: true }}'
         )
+    # NsJail creates bind targets in order. Mount the root first, then expose
+    # the non-authorizing writable source, then overlay exact rerun files below
+    # /work; mounting the root after /work would hide that writable bind.
+    root_mount = next(mount for mount in policy.readonly_mounts if mount.destination == "/")
+    lines.append(render_readonly_mount(root_mount))
+    lines.append(
+        "mount { src: "
+        f"{_protobuf_string(policy.scratch_dir)} dst: {_protobuf_string(policy.writable_tmpfs)} "
+        'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
+    )
+    lines.extend(render_readonly_mount(mount) for mount in policy.readonly_mounts if mount.destination != "/")
     return "\n".join(lines) + "\n"
 
 

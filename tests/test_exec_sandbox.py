@@ -435,9 +435,10 @@ def test_generated_nsjail_config_mounts_exact_files_below_work_after_its_writabl
     )
 
     writable = f'mount {{ src: {json.dumps(policy.scratch_dir)} dst: "/work" '
+    root = f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
     exact_file = f'mount {{ src: {json.dumps(str(source))} dst: "/work/staging-v1/manifests/input.json" '
-    assert writable in config_text and exact_file in config_text
-    assert config_text.index(writable) < config_text.index(exact_file)
+    assert root in config_text and writable in config_text and exact_file in config_text
+    assert config_text.index(root) < config_text.index(writable) < config_text.index(exact_file)
     assert 'is_dir: false mandatory: true nosuid: true nodev: true }' in config_text[config_text.index(exact_file):]
 
 

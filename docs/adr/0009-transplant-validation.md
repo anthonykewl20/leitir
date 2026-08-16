@@ -252,10 +252,11 @@ There are two explicit sorted mount manifests:
 
 - **Baseline:** mounts the verified donor snapshot read-only, original selected
   tests read-only, trusted interpreter/rootfs/runner/bootstrap/manifests
-  read-only, and one bounded writable tmpfs.
+  read-only, and one policy-pinned writable staging scratch bind at `/work`.
 - **Rerun:** does not mount the donor or any donor parent; mounts relocated
   source, rewritten tests, probes, trusted interpreter/rootfs/runner/bootstrap,
-  and manifests read-only, plus a separate bounded writable tmpfs.
+  and manifests read-only, plus a separate policy-pinned writable staging
+  scratch bind at `/work`.
 
 At rerun entry the controller re-derives the relocation digest from the complete
 canonical file and authorization records and requires exact mount-destination
@@ -267,9 +268,17 @@ report wrapped around substituted BTS records has no authority.
 The rootfs source is a directory pinned by a canonical sorted tree digest that
 includes every directory path/mode and every regular-file path/mode/SHA-256;
 symlinks and special files reject. Other read-only mount sources remain
-regular-file SHA-256 pins. The tmpfs is the only writable mount and supplies CWD, temporary files, result
-frames, and bytecode cache if enabled. Its mount/size/inode limits and post-run
-write manifest are pinned. Interpreter binaries/libraries, baseline donor bytes,
+regular-file SHA-256 pins. A pre-created, writable `<staging>/scratch` directory
+is a policy-pinned bind source over the immutable rootfs's pre-created `/work`
+target; it is the only writable mount and supplies CWD, temporary files, result
+frames, and bytecode cache if enabled. The controller clears it before every
+launch so baseline and rerun cannot communicate through stale writable state.
+The bind is `rw,noexec,nosuid,nodev`; its target and source path are pinned.
+`rlimit_fsize` bounds each file written by the child. Unlike the replaced tmpfs,
+the bind has no policy-enforced aggregate byte or inode cap: output/frame
+retention remains bounded, but staging storage capacity is an explicit
+operational tradeoff managed by the execution host.
+Interpreter binaries/libraries, baseline donor bytes,
 relocated source, original/rewritten tests, probes, runner, bootstrap, and every
 authorizing manifest remain read-only. The controller hashes them before and
 after execution; any change or inability to re-read rejects. No host home,
@@ -434,7 +443,7 @@ and cannot authorize acceptance.
 
 Abort ordering is `(stage_ordinal, role_ordinal, reason_ordinal,
 detail_category, subject_digest)`; duplicate keys reject the envelope. Explicit
-mappings are: wall/CPU/memory/pids/output/tmpfs limit or child leak ->
+mappings are: wall/CPU/memory/pids/output/scratch-storage limit or child leak ->
 `REJECT_EXECUTION_THREAT`; frame corruption/truncation, child crash, incomplete
 non-leak teardown, or recorder failure -> `REJECT_HARD_GATE_FAILED`. A directly
 observed donor import retains the higher-precedence
@@ -550,8 +559,10 @@ The decision was checked against current upstream documentation:
    unproved controls reject before execution; no fallback runs donor code.
 3. Baseline and rerun bind distinct role/mount-plan execution digests. Donor
    bytes are read-only in baseline and absent in rerun.
-4. All authorizing bytes are read-only and hash-stable; only bounded tmpfs is
-   writable.
+4. All authorizing bytes are read-only and hash-stable; only the policy-pinned,
+   per-launch-cleared `/work` scratch bind is writable. It is `rw,noexec,nosuid,
+   nodev`, and `rlimit_fsize` bounds each child-written file rather than imposing
+   a total scratch-byte cap.
 5. Donor absence is an OS/filesystem claim. Import recording is diagnostic-only;
    an observation rejects, while non-observation proves nothing.
 6. Module paths and recipient binding scopes are collision-checked against a
@@ -596,6 +607,10 @@ The decision was checked against current upstream documentation:
   and complex donor test suites.
 - Kernel, nsjail, CPython, runner, or native-extension defects remain residual
   escape or reproducibility risks and require security maintenance.
+- The writable scratch bind trades tmpfs's aggregate byte/inode cap for a
+  policy-pinned host staging directory: per-file `rlimit_fsize` and bounded
+  retained output do not bound aggregate scratch consumption, so operators must
+  provision and monitor its storage capacity.
 - Generic parity may preserve existing donor failures, although E4b requires a
   green baseline.
 
@@ -624,8 +639,9 @@ The decision was checked against current upstream documentation:
 
 ### Pinned nsjail backend
 
-- Good, because it composes Linux namespaces, read-only mounts/tmpfs, cgroups,
-  rlimits, and seccomp in one inspectable native configuration.
+- Good, because it composes Linux namespaces, read-only and policy-pinned
+  scratch bind mounts, cgroups, rlimits, and seccomp in one inspectable native
+  configuration.
 - Good, because unsupported capability sets can reject before execution.
 - Bad, because support is Linux-only and backend/kernel defects remain in the
   trusted computing base.

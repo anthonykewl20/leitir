@@ -104,6 +104,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - accept sampled structural candidate pins (`bench`)
 - address review findings (qwen) (`corpus`)
+- align containment smoke root and evidence
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
 - bind adapter language routing to trusted registry identity (`search`)
 - bound SumDB HTTP response reads to 1 MiB fail-closed (`sumdb`)
@@ -113,6 +114,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
 - correct typing for mypy strict mode (`cost`)
+- expose nsjail mount sources in CI
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
@@ -132,17 +134,21 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)
 - make nsjail --version capture non-fatal in build script (`bts`)
 - make validate_report fail-closed on span bounds without line_counts (`search`)
+- map invoking user for nsjail mounts
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
 - phase-a4 root causes — recipient ids, nsjail probe, licence variants, spans, haversine donor (#73 #75)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - pre-donor startup attestation, dynamic donors, electrumx policy, stable seed identity (#73 #75)
+- precreate nsjail rootfs mount targets
 - preserve collection skip nodeid on Windows (`canary`)
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
+- render mandatory root mount for nsjail mount tree
 - replace ref-name regex with linear validation (`lineage`)
+- restore containment smoke mount chain
 - seed origin filter, comprehension scope fix, drift-shelf search exclusions, nsjail identity, dogfood feedback (#42 #73)
 - skip directory fsync on Windows in publish_packet (#128) (`transplant`)
 - stop rewriting Tier-2 class __module__ to restore get_type_hints/getsource (`adapters`)
@@ -155,6 +161,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - use portable child PYTHONPATH (`bts`)
 - verify buffered blob SHA, bind tree response SHA, and require truncated field (`search`)
 - verify global hits, paginate to validated count, account exclusions (#45, #46, #47) (`search`)
+- writable scratch bind replaces tmpfs; mount-target and evidence hardening
 
 ### Security
 - bind gate evidence to pinned attachment policy (`occupied`)

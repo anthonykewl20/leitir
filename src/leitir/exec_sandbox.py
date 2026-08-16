@@ -13,6 +13,7 @@ import os
 import platform
 import re
 import selectors
+import shutil
 import signal
 import stat
 import subprocess
@@ -177,6 +178,7 @@ class ContainmentPolicy:
     writable_tmpfs: str
     writable_tmpfs_bytes: int
     writable_tmpfs_inodes: int
+    scratch_dir: str
     cwd: str
     mode: str
     keep_env: bool
@@ -393,6 +395,7 @@ def _policy_payload(policy: ContainmentPolicy) -> dict[str, object]:
         "rootfs_digest": policy.rootfs_digest,
         "schema_version": policy.schema_version,
         "seccomp_string": policy.seccomp_string,
+        "scratch_dir": policy.scratch_dir,
         "wall_time_seconds": policy.wall_time_seconds,
         "writable_tmpfs": policy.writable_tmpfs,
         "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
@@ -444,7 +447,10 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
         raise _reject("containment integrity digest is missing or malformed", "invalid_integrity_digest")
     if not policy.nsjail_version or not policy.nsjail_build_identity or not policy.architecture:
         raise _reject("backend identity fields are required", "missing_backend_identity")
-    if not _absolute_clean_path(policy.nsjail_path) or not _absolute_clean_path(policy.writable_tmpfs) or not _absolute_clean_path(policy.cwd):
+    if not all(
+        _absolute_clean_path(value)
+        for value in (policy.nsjail_path, policy.writable_tmpfs, policy.scratch_dir, policy.cwd)
+    ):
         raise _reject("containment paths must be normalized absolute paths", "invalid_containment_path")
     tmpfs = PurePosixPath(policy.writable_tmpfs)
     if PurePosixPath(policy.cwd) != tmpfs and tmpfs not in PurePosixPath(policy.cwd).parents:
@@ -455,11 +461,15 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
         raise _reject("mount plan must be sorted and unique", "noncanonical_mount_plan")
     destinations: set[str] = set()
     has_root = False
+    scratch = PurePosixPath(policy.scratch_dir)
     for mount in policy.readonly_mounts:
         if not _absolute_clean_path(mount.source) or not _absolute_clean_path(mount.destination) or not _valid_digest(mount.source_digest):
             raise _reject("mount entry is malformed", "invalid_mount_entry")
         if mount.destination in destinations or mount.destination == policy.writable_tmpfs:
             raise _reject("mount destinations collide", "duplicate_mount_destination")
+        source = PurePosixPath(mount.source)
+        if scratch == source or scratch in source.parents or source in scratch.parents:
+            raise _reject("writable scratch source overlaps a read-only mount source", "scratch_source_overlap")
         destinations.add(mount.destination)
         has_root = has_root or mount.destination == "/"
     if not has_root:
@@ -470,6 +480,7 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
             for mount in policy.readonly_mounts
         ],
         "rootfs_digest": policy.rootfs_digest,
+        "scratch_dir": policy.scratch_dir,
         "writable_tmpfs": policy.writable_tmpfs,
         "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
         "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
@@ -488,7 +499,48 @@ def _protobuf_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _host_mapping_id(sudo_name: str, fallback: int) -> int:
+    """Return the invoking host identity for a mount-source user mapping."""
+
+    sudo_identity = os.environ.get(sudo_name)
+    if getattr(os, "geteuid", lambda: -1)() == 0 and sudo_identity is not None and sudo_identity.isdecimal():
+        return int(sudo_identity)
+    return fallback
+
+
+# Immutable rootfs builders must create these targets before ``chmod -R a-w``.
+# NsJail's createMountTarget runs after the read-only root bind and therefore
+# cannot create a missing destination itself.  This deterministic union covers
+# every fixed destination rendered below: mount_proc's /proc, the writable
+# workdir bind, and the baseline/rerun staging mounts.  File-granular rerun mounts
+# land below the pre-created staging directories.
+ROOTFS_MOUNT_TARGETS = (
+    "/",
+    "/contract",
+    "/donor",
+    "/proc",
+    "/staging-v1",
+    "/staging-v1/contract",
+    "/staging-v1/donor",
+    "/staging-v1/harness",
+    "/staging-v1/manifests",
+    "/staging-v1/probes",
+    "/staging-v1/src",
+    "/staging-v1/tests",
+    "/staging-v1/tests/original",
+    "/staging-v1/tests/rewritten",
+    "/work",
+)
+
+
 def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str, ...] = ()) -> str:
+    # GitHub's runner-class mount sources are owned by the invoking runner user.
+    # NsJail drops to this mapping before building the bind-mounted root, so
+    # mapping it to sudo's host root makes the source path inaccessible. Match
+    # the passing hand-written CI smoke mapping; that smoke structurally checks
+    # renderer parity so runner mount-permission behavior cannot silently drift.
+    host_uid = _host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = _host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
     lines = [
         "mode: ONCE",
         "keep_env: false",
@@ -508,6 +560,7 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         # NsJail's iface_no_lo switch suppresses loopback setup when true.
         "iface_no_lo: true",
         "use_cgroupv2: true",
+        'cgroupv2_mount: "/sys/fs/cgroup"',
         f"cgroup_mem_max: {policy.cgroup_mem_max}",
         f"cgroup_pids_max: {policy.cgroup_pids_max}",
         f"cgroup_cpu_ms_per_sec: {policy.cgroup_cpu_ms_per_sec}",
@@ -528,21 +581,23 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f"rlimit_core: {policy.rlimit_core_mb}",
         "rlimit_core_type: VALUE",
         f"seccomp_string: {_protobuf_string(policy.seccomp_string)}",
-        'uidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
-        'gidmap { inside_id: "65534" outside_id: "" count: 1 use_newidmap: false }',
+        f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}',
+        f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     for mount in policy.readonly_mounts:
+        # NsJail applies the user mapping before it builds this mount tree.  Do
+        # not let its source-path heuristic misclassify a rootfs below a
+        # non-traversable CI temporary directory as a file mount.
         lines.append(
             "mount { src: "
             f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
-            'is_bind: true rw: false mandatory: true nosuid: true nodev: true }'
+            'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
         )
-    tmpfs_options = f"size={policy.writable_tmpfs_bytes},nr_inodes={policy.writable_tmpfs_inodes},nosuid,nodev,noexec"
     lines.append(
-        "mount { dst: "
-        f"{_protobuf_string(policy.writable_tmpfs)} fstype: \"tmpfs\" options: {_protobuf_string(tmpfs_options)} "
-        "rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }"
+        "mount { src: "
+        f"{_protobuf_string(policy.scratch_dir)} dst: {_protobuf_string(policy.writable_tmpfs)} "
+        'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
     )
     return "\n".join(lines) + "\n"
 
@@ -684,6 +739,29 @@ def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cove
             rootfs = mount
     if rootfs is None or rootfs.source_digest != policy.rootfs_digest:
         raise _reject("rootfs mount does not bind the policy rootfs digest", "rootfs_digest_mismatch")
+    try:
+        metadata = Path(policy.scratch_dir).stat(follow_symlinks=False)
+        if not stat.S_ISDIR(metadata.st_mode) or not (stat.S_IMODE(metadata.st_mode) & 0o222):
+            raise OSError("scratch source is not a writable directory")
+    except OSError as exc:
+        raise _reject("writable scratch source is unavailable", "scratch_source_unavailable") from exc
+
+
+def _clear_scratch_source(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    """Start each contained launch with no writable state from another role."""
+
+    try:
+        with os.scandir(policy.scratch_dir) as entries:
+            for entry in entries:
+                metadata = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(metadata.st_mode):
+                    shutil.rmtree(entry.path)
+                elif stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                    os.unlink(entry.path)
+                else:
+                    raise OSError("scratch source contains a special file")
+    except OSError as exc:
+        raise _reject("writable scratch source cannot be reset", "scratch_source_reset_failed") from exc
 
 
 def prepare_execution(policy: ContainmentPolicy) -> ExecutionPlan:
@@ -905,7 +983,17 @@ def _bounded_communicate(  # pragma: no cover  # exercised only by the containme
     return capture
 
 
-def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_bytes: int, stderr_bytes: int) -> ExecutionResult:
+def _abort(
+    plan: ExecutionPlan,
+    detail: str,
+    reason: BTSRejectReason,
+    stdout_bytes: int,
+    stderr_bytes: int,
+    *,
+    exit_code: int | None = None,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> ExecutionResult:
     envelope = ValidationAbortEnvelope(
         schema_version="leitir-validation-abort-v1",
         stage="execution",
@@ -919,9 +1007,9 @@ def _abort(plan: ExecutionPlan, detail: str, reason: BTSRejectReason, stdout_byt
     return ExecutionResult(
         completed=False,
         subject_digest=plan.plan_digest,
-        exit_code=None,
-        stdout=b"",
-        stderr=b"",
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
         stdout_digest=None,
         stderr_digest=None,
         result_digest=None,
@@ -974,6 +1062,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         # Re-read all mount sources immediately before the backend can open them.
         _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        _clear_scratch_source(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         process = subprocess.Popen(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             launch_argv,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             stdin=subprocess.DEVNULL,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1004,21 +1093,42 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     # ADR-0009 requires immutable authorizing inputs across the complete run.
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             "noncanonical_killpg_fallback",  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             BTSRejectReason.REJECT_EXECUTION_THREAT,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             len(capture.stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             len(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            exit_code=process.returncode,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stdout=bytes(capture.stdout),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            stderr=bytes(capture.stderr),  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
     if capture.timed_out:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            plan, "wall_time_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if capture.truncated:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            plan, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if capture.leaked:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr))
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, len(capture.stdout), len(capture.stderr),
+            exit_code=process.returncode, stdout=bytes(capture.stdout), stderr=bytes(capture.stderr),
+        )
     if process.returncode != 0:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "child_crash", BTSRejectReason.REJECT_HARD_GATE_FAILED, len(capture.stdout), len(capture.stderr))
+        return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            plan,
+            "child_crash",
+            BTSRejectReason.REJECT_HARD_GATE_FAILED,
+            len(capture.stdout),
+            len(capture.stderr),
+            exit_code=process.returncode,
+            stdout=bytes(capture.stdout),
+            stderr=bytes(capture.stderr),
+        )
     stdout = bytes(capture.stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     stderr = bytes(capture.stderr)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     stdout_digest = _digest_bytes(stdout)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

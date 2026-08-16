@@ -6,6 +6,7 @@ import os
 import platform
 import subprocess
 import sys
+import textwrap
 from dataclasses import replace
 from pathlib import Path
 
@@ -65,9 +66,13 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
     (rootfs / "python").chmod(0o555)
     root_digest = sandbox._verified_directory_tree_digest(rootfs)
     mount = ReadOnlyMount("/", str(rootfs), root_digest)
+    scratch = path.parent / "scratch"
+    scratch.mkdir()
+    scratch.chmod(0o777)
     mount_payload = {
         "readonly_mounts": [{"destination": "/", "source": str(rootfs), "source_digest": root_digest}],
         "rootfs_digest": root_digest,
+        "scratch_dir": str(scratch),
         "writable_tmpfs": "/work",
         "writable_tmpfs_bytes": 1_048_576,
         "writable_tmpfs_inodes": 128,
@@ -86,6 +91,7 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
         writable_tmpfs="/work",
         writable_tmpfs_bytes=1_048_576,
         writable_tmpfs_inodes=128,
+        scratch_dir=str(scratch),
         cwd="/work",
         mode="ONCE",
         keep_env=False,
@@ -253,6 +259,7 @@ def test_startup_attestation_rejects_missing_applied_control(
         ({"nsjail_sha256": "bad"}, "invalid_integrity_digest"),
         ({"nsjail_version": ""}, "missing_backend_identity"),
         ({"cwd": "relative"}, "invalid_containment_path"),
+        ({"scratch_dir": "relative"}, "invalid_containment_path"),
         ({"cwd": "/outside"}, "cwd_outside_tmpfs"),
         ({"readonly_mounts": ()}, "empty_mount_plan"),
         ({"environment": ("TZ=UTC", "LANG=C.UTF-8")}, "noncanonical_environment"),
@@ -307,6 +314,17 @@ def test_abort_bounds_reported_stream_lengths(fake_nsjail: tuple[Path, str, str]
     result = sandbox._abort(draft, "output_limit", BTSRejectReason.REJECT_EXECUTION_THREAT, 99, 98)
     assert result.abort is not None
     assert (result.abort.stdout_bytes, result.abort.stderr_bytes) == (3, 3)
+    child_abort = sandbox._abort(
+        draft,
+        "child_crash",
+        BTSRejectReason.REJECT_HARD_GATE_FAILED,
+        1,
+        2,
+        exit_code=137,
+        stdout=b"o",
+        stderr=b"ab",
+    )
+    assert (child_abort.completed, child_abort.exit_code, child_abort.stdout, child_abort.stderr) == (False, 137, b"o", b"ab")
 
 
 @pytest.mark.parametrize(
@@ -341,7 +359,8 @@ def test_missing_or_unapplied_v1_control_rejects_before_launch(
 
 def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]) -> None:
     monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
-    config_text = sandbox._render_config(_policy(fake_nsjail))
+    policy = _policy(fake_nsjail)
+    config_text = sandbox._render_config(policy)
     required = (
         "mode: ONCE",
         "keep_env: false",
@@ -354,6 +373,7 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
         "clone_newcgroup: true",
         "iface_no_lo: true",
         "use_cgroupv2: true",
+        'cgroupv2_mount: "/sys/fs/cgroup"',
         "cgroup_mem_max: 67108864",
         "cgroup_pids_max: 16",
         "cgroup_cpu_ms_per_sec: 500",
@@ -362,6 +382,137 @@ def test_generated_nsjail_config_explicitly_applies_required_controls(monkeypatc
     )
     for control in required:
         assert control in config_text
+    host_uid = sandbox._host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = sandbox._host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
+    assert f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}' in config_text
+    assert f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}' in config_text
+    assert (
+        f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
+        'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
+    ) in config_text
+    assert (
+        f'mount {{ src: {json.dumps(policy.scratch_dir)} dst: "/work" '
+        'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
+    ) in config_text
+    assert 'fstype: "tmpfs"' not in config_text
+
+
+def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_sources(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setenv("SUDO_UID", "1001")
+    monkeypatch.setenv("SUDO_GID", "1002")
+
+    config_text = sandbox._render_config(_policy(fake_nsjail))
+
+    assert 'uidmap { inside_id: "65534" outside_id: "1001" count: 1 use_newidmap: false }' in config_text
+    assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
+
+
+def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_invoker(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(sandbox.os, "getuid", lambda: 1003, raising=False)
+    monkeypatch.setattr(sandbox.os, "getgid", lambda: 1004, raising=False)
+    monkeypatch.setenv("SUDO_UID", "not-an-id")
+    monkeypatch.setenv("SUDO_GID", "also-not-an-id")
+
+    config_text = sandbox._render_config(_policy(fake_nsjail))
+
+    assert 'uidmap { inside_id: "65534" outside_id: "1003" count: 1 use_newidmap: false }' in config_text
+    assert 'gidmap { inside_id: "65534" outside_id: "1004" count: 1 use_newidmap: false }' in config_text
+
+
+def test_malformed_nsjail_identity_inputs_reject() -> None:
+    with pytest.raises(ValueError, match="identity inputs are malformed"):
+        sandbox._nsjail_build_identity("not-a-commit", "sha256:" + "0" * 64)
+
+
+def test_duplicate_mount_destination_rejects_before_execution(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = replace(_policy(fake_nsjail), nsjail_path="/fixture-nsjail", scratch_dir="/fixture-scratch")
+    # _validate_policy's contract is POSIX paths even when this unit test runs
+    # on Windows, whose temporary paths are drive-letter paths.
+    root_mount = replace(policy.readonly_mounts[0], source="/fixture-root")
+    duplicate = replace(root_mount, source="/different-rootfs")
+    duplicate_mounts = tuple(sorted((root_mount, duplicate)))
+    invalid = replace(policy, readonly_mounts=duplicate_mounts)
+
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(invalid)
+
+    assert caught.value.evidence.detail_code == "duplicate_mount_destination"
+
+
+def test_scratch_source_cannot_overlap_readonly_inputs(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = replace(_policy(fake_nsjail), nsjail_path="/fixture-nsjail", scratch_dir="/fixture-scratch")
+    root_mount = replace(policy.readonly_mounts[0], source="/fixture-root")
+    policy = replace(policy, readonly_mounts=(root_mount,))
+
+    with pytest.raises(TransplantError) as caught:
+        sandbox._validate_policy(replace(policy, scratch_dir=root_mount.source + "/scratch"))
+
+    assert caught.value.evidence.detail_code == "scratch_source_overlap"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_missing_policy_pinned_scratch_source_rejects_before_execution(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy = _policy(fake_nsjail)
+    Path(policy.scratch_dir).rmdir()
+
+    with pytest.raises(TransplantError) as caught:
+        prepare_execution(policy)
+
+    assert caught.value.evidence.detail_code == "scratch_source_unavailable"
+
+
+def test_generated_config_matches_the_passing_handwritten_smoke_except_policy_mounts(
+    fake_nsjail: tuple[Path, str, str]
+) -> None:
+    """Pin the runner-class smoke shape, including its direct bind-mounted root."""
+
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "bts-containment.yml"
+    source = workflow.read_text(encoding="utf-8")
+    marker = 'cat >"$config" <<EOF\n'
+    pieces = source.split(marker, 1)
+    assert len(pieces) == 2, f"workflow handwritten-smoke marker {marker!r} is missing"
+    source_lines = pieces[1].splitlines()
+    eof_index = next((index for index, line in enumerate(source_lines) if line.strip() == "EOF"), None)
+    assert eof_index is not None, "workflow handwritten-smoke terminator is missing"
+    handwritten = "\n".join(source_lines[:eof_index])
+    host_uid = sandbox._host_mapping_id("SUDO_UID", getattr(os, "getuid", lambda: 0)())
+    host_gid = sandbox._host_mapping_id("SUDO_GID", getattr(os, "getgid", lambda: 0)())
+    expected = textwrap.dedent(handwritten).replace("$host_uid", str(host_uid)).replace("$host_gid", str(host_gid))
+    policy = _policy(fake_nsjail)
+    actual = sandbox._render_config(policy)
+
+    def non_mount_lines(config: str) -> tuple[str, ...]:
+        policy_bound = ("mount {", "cgroup_mem_max:", "cgroup_pids_max:", "cgroup_cpu_ms_per_sec:", "time_limit:", "cwd:", "rlimit_", "envar:")
+        return tuple(line.strip() for line in config.splitlines() if not line.strip().startswith((*policy_bound, "#")))
+
+    actual_root_mount = next(line for line in actual.splitlines() if ' dst: "/" ' in line)
+    expected_root_mount = next(line for line in expected.splitlines() if ' dst: "/" ' in line)
+    rendered_destinations = {
+        json.loads(line.split(" dst: ", 1)[1].split(" fstype:", 1)[0])
+        for line in actual.splitlines()
+        if line.startswith("mount {")
+    }
+    assert rendered_destinations <= set(sandbox.ROOTFS_MOUNT_TARGETS)
+    assert policy.writable_tmpfs == "/work" and "/work" in sandbox.ROOTFS_MOUNT_TARGETS
+    assert "mount_proc: true" in actual and "/proc" in sandbox.ROOTFS_MOUNT_TARGETS
+    assert non_mount_lines(actual) == non_mount_lines(expected)
+    # Only the policy-pinned source differs; the root bind's destination and
+    # security shape must remain identical to the passing handwritten smoke.
+    assert actual_root_mount.split(" dst:", 1)[1] == expected_root_mount.split(" dst:", 1)[1]
+    assert 'cgroupv2_mount: "/sys/fs/cgroup"' in actual
+    assert 'cgroupv2_mount: "/sys/fs/cgroup"' in expected
 
 
 @pytest.mark.skipif(
@@ -452,6 +603,7 @@ def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
             for item in policy.readonly_mounts
         ],
         "rootfs_digest": wrong,
+        "scratch_dir": policy.scratch_dir,
         "writable_tmpfs": policy.writable_tmpfs,
         "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
         "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
@@ -477,6 +629,23 @@ def test_offline_execution_reaches_backend_after_static_containment_validation(
     # real rootfs runner's mandatory startup frame is verified by rerun.py.
     assert result.completed
     assert marker.read_text(encoding="utf-8") == "ok"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_contained_launch_clears_state_left_in_the_policy_pinned_scratch_source(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy = _policy(fake_nsjail)
+    stale = Path(policy.scratch_dir) / "from-prior-role"
+    stale.write_text("untrusted", encoding="utf-8")
+
+    result = run_contained(prepare_execution(policy), (sys.executable, "-c", "pass"))
+
+    assert result.completed and not stale.exists()
 
 
 def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(
@@ -563,9 +732,12 @@ root_path = {str(path.parent / 'rootfs')!r}
 import leitir.exec_sandbox as sandbox
 root = sandbox._verified_directory_tree_digest(__import__('pathlib').Path(root_path))
 mounts = (ReadOnlyMount('/', root_path, root),)
-payload = {{'readonly_mounts':[{{'destination':'/','source':root_path,'source_digest':root}}], 'rootfs_digest':root, 'writable_tmpfs':'/work', 'writable_tmpfs_bytes':1048576, 'writable_tmpfs_inodes':128}}
+scratch_path = {str(path.parent / 'scratch')!r}
+__import__('pathlib').Path(scratch_path).mkdir(exist_ok=True)
+__import__('pathlib').Path(scratch_path).chmod(0o777)
+payload = {{'readonly_mounts':[{{'destination':'/','source':root_path,'source_digest':root}}], 'rootfs_digest':root, 'scratch_dir':scratch_path, 'writable_tmpfs':'/work', 'writable_tmpfs_bytes':1048576, 'writable_tmpfs_inodes':128}}
 md = 'sha256:' + hashlib.sha256((json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\\n').encode()).hexdigest()
-p = ContainmentPolicy(POLICY_SCHEMA, {str(path)!r}, {_digest(path.read_bytes())!r}, {version!r}, {build_identity!r}, 'sha256:'+'2'*64, platform.machine(), root, md, mounts, '/work', 1048576, 128, '/work', 'ONCE', False, True, True, True, True, True, True, True, 67108864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 4096, ('LANG=C.UTF-8','PYTHONHASHSEED=0','TZ=UTC'), True)
+p = ContainmentPolicy(POLICY_SCHEMA, {str(path)!r}, {_digest(path.read_bytes())!r}, {version!r}, {build_identity!r}, 'sha256:'+'2'*64, platform.machine(), root, md, mounts, '/work', 1048576, 128, scratch_path, '/work', 'ONCE', False, True, True, True, True, True, True, True, 67108864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 4096, ('LANG=C.UTF-8','PYTHONHASHSEED=0','TZ=UTC'), True)
 print(sandbox._canonical_json({{'config_text': sandbox._render_config(p), 'policy': sandbox._policy_payload(p)}}), end='')
 """
     outputs = []

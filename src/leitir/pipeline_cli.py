@@ -114,7 +114,9 @@ from leitir.transplant import PacketInputs, build_reference_packet, publish_pack
 
 PIPELINE_CLI_SCHEMA_VERSION = "leitir-pipeline-cli-v1"
 CONTRACT_TESTS_SCHEMA_VERSION = "leitir-pipeline-contract-tests-v1"
+BASELINE_RECORDING_SCHEMA_VERSION = "leitir-baseline-recording-v1"
 _MAX_SPEC_BYTES = 1 << 20
+_MAX_CHILD_STDERR_TAIL_BYTES = 2 * 1024
 _SHA256_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -252,7 +254,7 @@ print(json.dumps({"outcome":result},sort_keys=True,separators=(",",":")))
 '''
 
 
-def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, test_root: Path, import_roots: tuple[str, ...], test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContainmentPolicy:
+def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, test_root: Path, scratch_dir: Path, import_roots: tuple[str, ...], test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContainmentPolicy:
     """Build the donor-present variant: rootfs plus read-only donor/test mounts."""
 
     from leitir.exec_sandbox import _verified_directory_tree_digest
@@ -272,6 +274,7 @@ def _baseline_containment_policy(substrate: BTSSubstratePins, donor_root: Path, 
         config_schema_digest=substrate.config_schema_digest,
         rootfs_source=substrate.rootfs_source,
         rootfs_digest=substrate.rootfs_digest,
+        scratch_dir=scratch_dir,
         readonly_mounts=tuple(mounts),
         environment=("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC", "LEITIR_TEST_IMPORT_ALIASES=" + json.dumps(test_import_aliases, separators=(",", ":")), "PYTHONPATH=/opt/leitir/site-packages:" + ":".join("/donor" if root == "." else "/donor/" + root for root in roots)),
     )
@@ -286,7 +289,57 @@ def _baseline_execution_digest(policy: ContainmentPolicy) -> str:
     return _digest(_canonical({"role": "donor-present-contained-v1", "runner_argv": list(_BASELINE_RUNNER_ARGV), "mount_plan_digest": policy.mount_plan_digest}))
 
 
-def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContractBaselineEvidence:
+@dataclass(frozen=True, slots=True)
+class BaselineTestExecutionEvidence:
+    """Bounded operational evidence that distinguishes runner aborts from test failures."""
+
+    canonical_test_id: str
+    completed: bool
+    returncode: int | None
+    child_stderr_tail: str
+
+    def to_json_value(self) -> dict[str, object]:
+        return {
+            "canonical_test_id": self.canonical_test_id,
+            "child_stderr_tail": self.child_stderr_tail,
+            "completed": self.completed,
+            "returncode": self.returncode,
+        }
+
+
+def _baseline_test_execution_evidence(identifier: str, result: object) -> BaselineTestExecutionEvidence:
+    """Project the bounded executor result without making it baseline authority."""
+
+    completed = getattr(result, "completed", False)
+    returncode = getattr(result, "exit_code", None)
+    stderr = getattr(result, "stderr", b"")
+    if type(completed) is not bool or (returncode is not None and type(returncode) is not int) or not isinstance(stderr, bytes):
+        raise TypeError("contained baseline result has an invalid shape")
+    return BaselineTestExecutionEvidence(
+        identifier,
+        completed,
+        returncode,
+        stderr[-_MAX_CHILD_STDERR_TAIL_BYTES:].decode("utf-8", "replace"),
+    )
+
+
+def _baseline_recording_bytes(
+    baseline: ContractBaselineEvidence, observations: tuple[BaselineTestExecutionEvidence, ...]
+) -> bytes:
+    """Render inspectable, nonauthorizing per-test launch evidence beside the baseline."""
+
+    if tuple(item.canonical_test_id for item in observations) != baseline.selected_test_ids:
+        raise ValueError("baseline execution observations do not match the recorded tests")
+    return _canonical(
+        {
+            "baseline": json.loads(baseline.to_bytes().decode("utf-8", "strict")),
+            "per_test": [item.to_json_value() for item in observations],
+            "schema_version": BASELINE_RECORDING_SCHEMA_VERSION,
+        }
+    )
+
+
+def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, scratch_dir: Path, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContractBaselineEvidence:
     """Record donor-present outcomes through the verified contained executor."""
 
     if not isinstance(donor_root, Path) or not isinstance(contract_tests, list):
@@ -302,26 +355,61 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "contract test cannot be read", detail_code="pipeline_cli_contract_read_v1", cause=exc) from exc
         if test.content is not None and source != test.content:
             raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "inline contract bytes differ from donor bytes", detail_code="pipeline_cli_contract_content_mismatch_v1")
-    policy = _baseline_containment_policy(substrate, donor_root, test_root, import_roots, test_import_aliases)
+    policy = _baseline_containment_policy(substrate, donor_root, test_root, scratch_dir, import_roots, test_import_aliases)
     outcomes: list[TestOutcomeEvidence] = []
     for test in sorted(contract_tests):
         source_path = test_root / test.path
         source = read_regular_file(source_path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         for name in _test_functions(source):
             identifier = canonical_test_id(test.path, name)
-            outcome, category = _run_donor_present_test(policy, "/contract/" + test.path, name)
+            outcome, category, _observation = _run_donor_present_test(policy, "/contract/" + test.path, name, identifier)
             outcomes.append(TestOutcomeEvidence(identifier, outcome, category, _digest(_canonical({"id": identifier, "outcome": outcome.value}))))
     ordered = tuple(sorted(outcomes))
     return ContractBaselineEvidence.create(ordered, baseline_mount_plan_digest=policy.mount_plan_digest, baseline_execution_policy_digest=_baseline_execution_digest(policy))
 
 
-def _run_donor_present_test(policy: ContainmentPolicy, source_path: str, name: str) -> tuple[TestOutcome, str]:
+def _record_baseline_with_evidence(
+    donor_root: Path,
+    contract_tests: list[ContractTestSpec],
+    *,
+    substrate: BTSSubstratePins,
+    scratch_dir: Path,
+    import_roots: tuple[str, ...],
+    contract_root: Path,
+    test_import_aliases: tuple[tuple[str, str], ...] = (),
+) -> tuple[ContractBaselineEvidence, tuple[BaselineTestExecutionEvidence, ...]]:
+    """Record the canonical baseline plus nonauthorizing per-test launch facts."""
+
+    test_root = contract_root
+    for test in sorted(contract_tests):
+        source = read_regular_file(test_root / test.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
+        if test.content is not None and source != test.content:
+            raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "inline contract bytes differ from donor bytes", detail_code="pipeline_cli_contract_content_mismatch_v1")
+    policy = _baseline_containment_policy(substrate, donor_root, test_root, scratch_dir, import_roots, test_import_aliases)
+    outcomes: list[TestOutcomeEvidence] = []
+    observations: list[BaselineTestExecutionEvidence] = []
+    for test in sorted(contract_tests):
+        source = read_regular_file(test_root / test.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
+        for name in _test_functions(source):
+            identifier = canonical_test_id(test.path, name)
+            outcome, category, observation = _run_donor_present_test(policy, "/contract/" + test.path, name, identifier)
+            outcomes.append(TestOutcomeEvidence(identifier, outcome, category, _digest(_canonical({"id": identifier, "outcome": outcome.value}))))
+            observations.append(observation)
+    ordered = tuple(sorted(outcomes))
+    baseline = ContractBaselineEvidence.create(ordered, baseline_mount_plan_digest=policy.mount_plan_digest, baseline_execution_policy_digest=_baseline_execution_digest(policy))
+    return baseline, tuple(sorted(observations, key=lambda item: item.canonical_test_id))
+
+
+def _run_donor_present_test(
+    policy: ContainmentPolicy, source_path: str, name: str, identifier: str
+) -> tuple[TestOutcome, str, BaselineTestExecutionEvidence]:
     """Run one bare donor-present function only through the containment seam."""
 
+    result = run_contained(prepare_execution(policy), (*_BASELINE_RUNNER_ARGV, source_path, name))
+    observation = _baseline_test_execution_evidence(identifier, result)
+    if not result.completed or result.exit_code != 0:
+        return TestOutcome.FAIL, "pipeline_cli_baseline_fail_v1", observation
     try:
-        result = run_contained(prepare_execution(policy), (*_BASELINE_RUNNER_ARGV, source_path, name))
-        if not result.completed or result.exit_code != 0:
-            return TestOutcome.FAIL, "pipeline_cli_baseline_fail_v1"
         attestation_bytes, separator, payload_bytes = result.stdout.partition(b"\n")
         if not separator:
             raise ValueError("baseline runner omitted its startup attestation frame")
@@ -331,12 +419,20 @@ def _run_donor_present_test(policy: ContainmentPolicy, source_path: str, name: s
             raise ValueError("baseline runner payload is malformed")
         value = payload.get("outcome") if isinstance(payload, dict) else "fail"
         outcome = {"pass": TestOutcome.PASS, "fail": TestOutcome.FAIL, "skip": TestOutcome.SKIP}.get(value if isinstance(value, str) else "fail", TestOutcome.FAIL)
-        return outcome, f"pipeline_cli_baseline_{outcome.value}_v1"
+        return outcome, f"pipeline_cli_baseline_{outcome.value}_v1", observation
     except (UnicodeError, ValueError, json.JSONDecodeError):
-        return TestOutcome.FAIL, "pipeline_cli_baseline_runner_failure_v1"
+        return TestOutcome.FAIL, "pipeline_cli_baseline_runner_failure_v1", observation
 
 
-def _record_runnable_baseline(donor_root: Path, contract_tests: tuple[ContractTest, ...], *, substrate: BTSSubstratePins, import_roots: tuple[str, ...], contract_root: Path) -> ContractBaselineEvidence:
+def _record_runnable_baseline(
+    donor_root: Path,
+    contract_tests: tuple[ContractTest, ...],
+    *,
+    substrate: BTSSubstratePins,
+    scratch_dir: Path,
+    import_roots: tuple[str, ...],
+    contract_root: Path,
+) -> tuple[ContractBaselineEvidence, tuple[BaselineTestExecutionEvidence, ...]]:
     """Record a donor-present baseline for corpus-owned contract-test bytes.
 
     The committed corpus deliberately keeps its contract tests outside donor
@@ -345,7 +441,14 @@ def _record_runnable_baseline(donor_root: Path, contract_tests: tuple[ContractTe
     """
 
     specs = [ContractTestSpec(item.path, item.module, item.content) for item in contract_tests]
-    return record_baseline(donor_root, specs, substrate=substrate, import_roots=import_roots, contract_root=contract_root)
+    return _record_baseline_with_evidence(
+        donor_root,
+        specs,
+        substrate=substrate,
+        scratch_dir=scratch_dir,
+        import_roots=import_roots,
+        contract_root=contract_root,
+    )
 
 
 def _require_substrate() -> None:
@@ -355,13 +458,13 @@ def _require_substrate() -> None:
         _reject("the required nsjail substrate and exact opt-in are unavailable", "pipeline_cli_substrate_unavailable_v1")
 
 
-def build_containment_policy(*, nsjail_sha256: str, nsjail_version: str, nsjail_build_identity: str, config_schema_digest: str, rootfs_source: Path, rootfs_digest: str, readonly_mounts: tuple[ReadOnlyMount, ...] = (), environment: tuple[str, ...] = ("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC")) -> ContainmentPolicy:
+def build_containment_policy(*, nsjail_sha256: str, nsjail_version: str, nsjail_build_identity: str, config_schema_digest: str, rootfs_source: Path, rootfs_digest: str, scratch_dir: Path, readonly_mounts: tuple[ReadOnlyMount, ...] = (), environment: tuple[str, ...] = ("LANG=C.UTF-8", "LD_LIBRARY_PATH=/usr/lib/leitir-native", "PYTHONHASHSEED=0", "TZ=UTC")) -> ContainmentPolicy:
     """Build the fixed S2 policy template from caller-supplied pinned inputs."""
 
     _require_substrate()
     mounts = tuple(sorted((ReadOnlyMount("/", str(rootfs_source), rootfs_digest), *readonly_mounts)))
-    payload = {"readonly_mounts": [{"destination": item.destination, "source": item.source, "source_digest": item.source_digest} for item in mounts], "rootfs_digest": rootfs_digest, "writable_tmpfs": "/work", "writable_tmpfs_bytes": 1_048_576, "writable_tmpfs_inodes": 128}
-    return ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
+    payload = {"readonly_mounts": [{"destination": item.destination, "source": item.source, "source_digest": item.source_digest} for item in mounts], "rootfs_digest": rootfs_digest, "scratch_dir": str(scratch_dir), "writable_tmpfs": "/work", "writable_tmpfs_bytes": 1_048_576, "writable_tmpfs_inodes": 128}
+    return ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, str(scratch_dir), "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
 
 
 def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
@@ -438,6 +541,12 @@ def _complete_stage_matches(stage: Path, relocation: Relocation) -> bool:
                 if child.is_symlink():
                     return False
                 relative = (Path(relative_directory) / name).as_posix()
+                if relative == "scratch" and relative_directory == ".":
+                    # Scratch is deliberately excluded from E1's immutable
+                    # projection: it is the separately policy-pinned writable
+                    # bind source for an execution, not relocation evidence.
+                    directories.remove(name)
+                    continue
                 if relative != "recipient" and not any(path.startswith(relative + "/") for path in expected):
                     return False
             for name in sorted(files):
@@ -500,6 +609,13 @@ def _prepare_shared_stage(corpus_root: Path, identity: object, relocation: Reloc
                     os.chmod(stage / _STAGING_COMPLETE_NAME, 0o444)
                     if not _complete_stage_matches(stage, relocation):
                         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging completion verification failed", detail_code="pipeline_cli_staging_integrity_v1")
+                scratch = stage / "scratch"
+                if scratch.is_symlink():
+                    raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS scratch path must not be a symlink", detail_code="pipeline_cli_scratch_path_v1")
+                scratch.mkdir(mode=0o777, exist_ok=True)
+                if not scratch.is_dir() or scratch.is_symlink():
+                    raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS scratch path is not a directory", detail_code="pipeline_cli_scratch_path_v1")
+                os.chmod(scratch, 0o777)
                 return stage, stage / "recipient"
             finally:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -537,6 +653,7 @@ def _rerun_policy_for_relocation(
         config_schema_digest=substrate.config_schema_digest,
         rootfs_source=substrate.rootfs_source,
         rootfs_digest=substrate.rootfs_digest,
+        scratch_dir=staged_root.parent / "scratch",
         readonly_mounts=mounts,
     )
     return RerunExecutionPolicy(
@@ -960,7 +1077,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             nsjail_sha256=substrate.nsjail_sha256, nsjail_version=substrate.nsjail_version,
             nsjail_build_identity=substrate.nsjail_build_identity,
             config_schema_digest=substrate.config_schema_digest, rootfs_source=substrate.rootfs_source,
-            rootfs_digest=substrate.rootfs_digest,
+            rootfs_digest=substrate.rootfs_digest, scratch_dir=root / ".leitir-bts-staging" / "scratch",
         )
         rerun_policy = RerunExecutionPolicy(
             RERUN_POLICY_SCHEMA_VERSION, containment,
@@ -987,6 +1104,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot.source_root,
             specs,
             substrate=substrate,
+            scratch_dir=staging / "scratch",
             contract_root=staged / "staging-v1" / "tests" / "original",
             import_roots=_task_baseline_import_roots(task),
             test_import_aliases=test_import_aliases,
@@ -1126,6 +1244,7 @@ def run_pipeline(root: Path, owner: str, repo: str, commit_sha: str, *, seed: bt
         snapshot.source_root,
         specs,
         substrate=substrate,
+        scratch_dir=_stage / "scratch",
         contract_root=staged / "staging-v1" / "tests" / "original",
     )
     rerun_policy = _rerun_policy_for_relocation(relocation, staged, substrate=substrate, baseline=baseline)
@@ -1507,15 +1626,16 @@ def exit_gate_run(
             {"kind": "exit-corpus", "case_id": case_id, "relocation_digest": relocation.relocation_digest},
             relocation,
         )
-        baseline = _record_runnable_baseline(
+        baseline, baseline_observations = _record_runnable_baseline(
             snapshot.source_root, tests, substrate=substrate_pins,
+            scratch_dir=_stage / "scratch",
             import_roots=import_roots,
             contract_root=staged / "staging-v1" / "tests" / "original",
         )
         recorded_baseline = baseline
         # Preserve this contained observation even when the following pin
         # comparison rejects the case.
-        _write_atomic(destination / case_id / "baseline-recording.json", baseline.to_bytes())
+        _write_atomic(destination / case_id / "baseline-recording.json", _baseline_recording_bytes(baseline, baseline_observations))
         baseline_counts = raw_case["baseline"]
         expected_baseline = _expected_runnable_baseline(tests, baseline_counts)
         if not isinstance(baseline_counts, dict) or (

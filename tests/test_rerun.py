@@ -95,6 +95,7 @@ def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> Cont
             for item in ordered
         ],
         "rootfs_digest": root_digest,
+        "scratch_dir": "/scratch",
         "writable_tmpfs": "/work",
         "writable_tmpfs_bytes": 1_048_576,
         "writable_tmpfs_inodes": 128,
@@ -113,6 +114,7 @@ def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> Cont
         "/work",
         1_048_576,
         128,
+        "/scratch",
         "/work",
         "ONCE",
         True,

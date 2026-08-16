@@ -89,6 +89,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - parity derivation, manifest auth, and S2 pipeline surfaces (#148 #40 #73) (`core`)
 - polyglot tree-sitter graph per ADR-0012 (#81) (`graph`)
 - publish reproducible offline decision=pass (#41) (`scorecard`)
+- ratify exit corpus runtime digest (Phase B/C)
 - real-donor exit corpus and runnable validation (#73) (`gate`)
 - relocate authorized donor sibling sources
 - six real agent tasks with gold and run driver (#75) (`bench`)

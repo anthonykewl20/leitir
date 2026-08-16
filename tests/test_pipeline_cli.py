@@ -438,6 +438,7 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
     assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory search permissions are required by nsjail")
 def test_deterministic_stage_ancestors_are_searchable_without_being_writable(tmp_path: Path) -> None:
     stage = pipeline_cli._deterministic_stage_directory(tmp_path, {"case": "fixture"})
 

@@ -342,7 +342,7 @@ def _baseline_recording_bytes(
     )
 
 
-def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, scratch_dir: Path, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContractBaselineEvidence:
+def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, scratch_dir: Path, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), canonical_test_paths: Mapping[str, str] | None = None) -> ContractBaselineEvidence:
     """Record donor-present outcomes through the verified contained executor."""
 
     if not isinstance(donor_root, Path) or not isinstance(contract_tests, list):
@@ -364,7 +364,7 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
         source_path = test_root / test.path
         source = read_regular_file(source_path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         for name in _test_functions(source):
-            identifier = canonical_test_id(test.path, name)
+            identifier = canonical_test_id(test.path if canonical_test_paths is None else canonical_test_paths[test.path], name)
             outcome, category, _observation = _run_donor_present_test(policy, "/contract/" + test.path, name, identifier)
             outcomes.append(TestOutcomeEvidence(identifier, outcome, category, _digest(_canonical({"id": identifier, "outcome": outcome.value}))))
     ordered = tuple(sorted(outcomes))
@@ -1153,6 +1153,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             contract_root=staged / "staging-v1" / "tests" / "original",
             import_roots=_task_baseline_import_roots(task),
             test_import_aliases=test_import_aliases,
+            canonical_test_paths={item.path: Path(item.path).name for item in contract_tests},
         )
         sidecar = _task_baseline_from_sidecar(baseline_sidecar, task, contract_test_paths=expected_paths)
         if (baseline.counts, baseline.selected_test_ids) != (sidecar.counts, sidecar.selected_test_ids):

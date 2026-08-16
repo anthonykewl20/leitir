@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 from leitir.bts_errors import BTSRejectReason, TransplantError
 
 DONOR_EXECUTION_ENV = "LEITIR_ENABLE_DONOR_EXECUTION"
+NSJAIL_DEBUG_ENV = "LEITIR_NSJAIL_DEBUG"
 POLICY_SCHEMA = "leitir-containment-policy-v1"
 PLAN_SCHEMA = "leitir-execution-plan-v1"
 RESULT_SCHEMA = "leitir-execution-result-v1"
@@ -844,6 +845,20 @@ def _startup_attestation_environment() -> tuple[str, ...]:  # pragma: no cover -
     return tuple(values)
 
 
+def _launch_config(plan: ExecutionPlan) -> str:
+    """Render per-launch facts and an explicitly opted-in nsjail diagnostic log level.
+
+    Debug logging is nonauthorizing and never reaches the contained child: the
+    static, digest-bound policy remains ``FATAL`` and this exact opt-in changes
+    only nsjail's parent-process diagnostics retained in abort evidence.
+    """
+
+    config = _render_config(plan.policy, startup_environment=_startup_attestation_environment())
+    if os.environ.get(NSJAIL_DEBUG_ENV) == "1":
+        return config.replace("log_level: FATAL", "log_level: DEBUG", 1)
+    return config
+
+
 def startup_attestation_from_proc(
     status_text: str,
     namespace_identities: Mapping[str, tuple[int, int]],
@@ -1060,9 +1075,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
         # The static plan is integrity-bound.  Parent namespace identities are
         # launch facts, not authorization inputs, and are consumed solely by
         # the immutable child startup probe.
-        config_bytes = _render_config(
-            plan.policy, startup_environment=_startup_attestation_environment()
-        ).encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        config_bytes = _launch_config(plan).encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         with os.fdopen(config_fd, "wb", closefd=True) as config_file:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_fd = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_file.write(config_bytes)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

@@ -234,6 +234,19 @@ def test_startup_attestation_accepts_faked_applied_procfs_receipt() -> None:
     sandbox.validate_startup_attestation(receipt)
 
 
+def test_launch_config_debug_opt_in_does_not_change_the_static_policy(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    plan = sandbox.ExecutionPlan("leitir-execution-plan-v1", policy, str(fake_nsjail[0]), policy.nsjail_sha256, platform.machine(), (), "", (), 2, 4096, "sha256:" + "0" * 64, "sha256:" + "0" * 64, True)
+    monkeypatch.setattr(sandbox, "_startup_attestation_environment", lambda: ())
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+
+    assert "log_level: FATAL" in plan.config_text or plan.config_text == ""
+    assert "log_level: DEBUG" in sandbox._launch_config(plan)
+    assert policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
+
+
 @pytest.mark.parametrize(
     ("status", "child", "pid"),
     [

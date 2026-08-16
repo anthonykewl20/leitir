@@ -451,7 +451,9 @@ mappings are: wall/CPU/memory/pids/output/scratch-storage limit or child leak ->
 non-leak teardown, or recorder failure -> `REJECT_HARD_GATE_FAILED`. A directly
 observed donor import retains the higher-precedence
 `REJECT_DONOR_IMPORT_OBSERVED`. No raw child output is copied canonically or into
-the abort envelope.
+the abort envelope. An exact, controller-only `LEITIR_NSJAIL_DEBUG=1` opt-in may
+raise nsjail's parent-process log level for noncanonical abort diagnostics; it
+does not alter the digest-bound `FATAL` policy or the child environment.
 
 ### 10. E4a and ratified E4b corpus authority
 

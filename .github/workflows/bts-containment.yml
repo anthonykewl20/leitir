@@ -522,9 +522,10 @@ jobs:
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
+          LEITIR_NSJAIL_DEBUG: '1'
           PYTHONPATH: src
         run: >-
-          chmod a+rx "$RUNNER_TEMP" && sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
+          chmod a+rx "$RUNNER_TEMP" && sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,LEITIR_NSJAIL_DEBUG,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
           --corpus-root benchmarks/exit-corpus --donors-dir ${{ runner.temp }}/leitir-corpus-root
           --out runs/exit-gate
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
@@ -553,9 +554,10 @@ jobs:
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
+          LEITIR_NSJAIL_DEBUG: '1'
           PYTHONPATH: src
         run: >-
-          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
+          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,LEITIR_NSJAIL_DEBUG,PYTHONPATH python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
           --substrate-rootfs-digest ${{ steps.substrate.outputs.rootfs_digest }}
           --nsjail-version "${{ steps.substrate.outputs.nsjail_version }}"

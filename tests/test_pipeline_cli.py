@@ -457,10 +457,10 @@ def test_stage_relocation_preserves_modes_while_mapping_sudo_runner_ownership(tm
             (target / "private" / "input.py").chmod(0o400)
 
     ownership: list[tuple[Path, int, int]] = []
-    monkeypatch.setattr(pipeline_cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(pipeline_cli.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setenv("SUDO_UID", "1001")
     monkeypatch.setenv("SUDO_GID", "1002")
-    monkeypatch.setattr(pipeline_cli.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)))
+    monkeypatch.setattr(pipeline_cli.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
 
     staged = pipeline_cli._stage_relocation(cast(Any, _Relocation()), tmp_path)
 

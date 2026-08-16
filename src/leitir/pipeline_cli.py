@@ -477,7 +477,7 @@ def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
     # changes the directory-tree digest pinned by the rerun policy.  When this
     # process is sudo-root, hand ownership to that mapped runner identity while
     # retaining every mode and byte exactly as E1 emitted them.
-    if os.geteuid() == 0:
+    if getattr(os, "geteuid", lambda: -1)() == 0:
         sudo_uid = os.environ.get("SUDO_UID")
         sudo_gid = os.environ.get("SUDO_GID")
         if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():

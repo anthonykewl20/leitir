@@ -423,7 +423,7 @@ def test_exit_corpus_url_seed_span_authorizes_the_module_future_import() -> None
     assert _exit_seed_span(_ROOT / "benchmarks" / "exit-corpus", "url-normalize-fragment", case["seed"]) == (1, 27)
 
 
-def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_baseline_policy_defers_donor_paths_until_after_stdlib_startup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
     rootfs = tmp_path / "rootfs"
     donor = tmp_path / "donor"
@@ -435,7 +435,9 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
     policy = pipeline_cli._baseline_containment_policy(
         BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, scratch, (".",)
     )
-    assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
+    assert "PYTHONPATH=/opt/leitir/site-packages" in policy.environment
+    assert "LEITIR_DONOR_IMPORT_ROOTS=[\"/donor\"]" in policy.environment
+    assert "sys.path.extend(json.loads(os.environ.get(\"LEITIR_DONOR_IMPORT_ROOTS\",\"[]\")))" in pipeline_cli._BASELINE_CHILD
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory search permissions are required by nsjail")

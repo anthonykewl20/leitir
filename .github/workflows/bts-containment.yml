@@ -94,7 +94,7 @@ jobs:
           rlimit_stack_type: VALUE
           rlimit_core: 0
           rlimit_core_type: VALUE
-          seccomp_string: "DEFAULT KILL\nALLOW { access, arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, futex, getcwd, getdents64, getpid, getrandom, gettid, lseek, mmap, mprotect, munmap, newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rseq, rt_sigaction, rt_sigprocmask, sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
+          seccomp_string: "DEFAULT KILL\nALLOW { access, arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, futex, getcwd, getdents64, getpid, getrandom, gettid, ioctl { cmd == 21505 }, lseek, mkdir, mmap, mprotect, munmap, newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rename, rseq, rt_sigaction, rt_sigprocmask, sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
           uidmap { inside_id: "65534" outside_id: "$host_uid" count: 1 use_newidmap: false }
           gidmap { inside_id: "65534" outside_id: "$host_gid" count: 1 use_newidmap: false }
           envar: "LANG=C.UTF-8"

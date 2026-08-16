@@ -98,7 +98,15 @@ class PermittedSyscall(StrEnum):
     # glibc records the calling thread while initializing thread-local state.
     GETTID = "gettid"
     GETRANDOM = "getrandom"
+    # CPython asks whether any inherited descriptor is a terminal. Permit only
+    # TCGETS (0x5401), which only reports terminal attributes. Kafel compares
+    # this 32-bit argument as a signed value, so its typed rendering is decimal.
+    IOCTL_TCGETS = "ioctl { cmd == 21505 }"
     LSEEK = "lseek"
+    # Importlib may attempt bytecode-cache creation beside a read-only module.
+    # Immutable mounts reject the write; these calls let CPython receive that
+    # expected filesystem error instead of a seccomp SIGSYS.
+    MKDIR = "mkdir"
     MMAP = "mmap"
     MPROTECT = "mprotect"
     MUNMAP = "munmap"
@@ -112,6 +120,7 @@ class PermittedSyscall(StrEnum):
     READ = "read"
     READLINK = "readlink"
     READLINKAT = "readlinkat"
+    RENAME = "rename"
     RT_SIGACTION = "rt_sigaction"
     RT_SIGPROCMASK = "rt_sigprocmask"
     # glibc queries CPU affinity before selecting its startup runtime settings.

@@ -233,7 +233,10 @@ Both generated nsjail configs must explicitly set and the controller must verify
   model: one closed minimal allowlist and `DEFAULT KILL`. Caller-authored Kafel
   (including comments, `LOG` blocks, and numeric syscall forms) is not parsed or
   accepted; networking, socket, mount/namespace joining, privilege, ptrace, and
-  other policy-forbidden syscalls are absent from the allowlist; and
+  other policy-forbidden syscalls are absent from the allowlist. The sole
+  argument-constrained exception is CPython's `ioctl(TCGETS)` terminal probe,
+  rendered from a typed rule as `ioctl { cmd == 21505 }`; it cannot issue other
+  ioctl operations; and
 - pinned rlimits for address space, CPU, file size, open files, processes,
   stack/core and every applicable limit, as defense in depth rather than the
   containment boundary.

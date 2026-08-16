@@ -119,6 +119,32 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
     )
 
 
+def _with_scratch_quotas(
+    policy: ContainmentPolicy, *, byte_limit: int, inode_limit: int
+) -> ContainmentPolicy:
+    payload = {
+        "readonly_mounts": [
+            {
+                "destination": mount.destination,
+                "source": mount.source,
+                "source_digest": mount.source_digest,
+            }
+            for mount in policy.readonly_mounts
+        ],
+        "rootfs_digest": policy.rootfs_digest,
+        "scratch_dir": policy.scratch_dir,
+        "writable_tmpfs": policy.writable_tmpfs,
+        "writable_tmpfs_bytes": byte_limit,
+        "writable_tmpfs_inodes": inode_limit,
+    }
+    return replace(
+        policy,
+        writable_tmpfs_bytes=byte_limit,
+        writable_tmpfs_inodes=inode_limit,
+        mount_plan_digest=_canonical_digest(payload),
+    )
+
+
 def test_nsjail_ci_identity_derivation_is_accepted_without_running_nsjail(fake_nsjail: tuple[Path, str, str]) -> None:
     """Match bts-containment.yml: sha256(commit UTF-8 + binary-sha hex UTF-8)."""
 
@@ -421,6 +447,29 @@ def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_source
 
     assert 'uidmap { inside_id: "65534" outside_id: "1001" count: 1 use_newidmap: false }' in config_text
     assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
+
+
+def test_root_mapping_rejects_host_root_without_sudo_or_explicit_nonroot_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.delenv("SUDO_UID", raising=False)
+
+    with pytest.raises(TransplantError) as caught:
+        sandbox._host_mapping_id("SUDO_UID", 0)
+
+    assert caught.value.evidence.detail_code == "root_host_mapping_unavailable"
+
+
+def test_root_mapping_accepts_nonroot_sudo_or_explicit_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sandbox.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setenv("SUDO_UID", "1001")
+    assert sandbox._host_mapping_id("SUDO_UID", 0) == 1001
+
+    monkeypatch.setenv("SUDO_UID", "0")
+    assert sandbox._host_mapping_id("SUDO_UID", 1002) == 1002
 
 
 def test_generated_nsjail_config_mounts_exact_files_below_work_after_its_writable_bind(
@@ -737,6 +786,67 @@ def test_contained_launch_clears_state_left_in_the_policy_pinned_scratch_source(
     result = run_contained(prepare_execution(policy), (sys.executable, "-c", "pass"))
 
     assert result.completed and not stale.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_post_run_scratch_quota_rejects_byte_overage(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy = _with_scratch_quotas(_policy(fake_nsjail), byte_limit=2, inode_limit=8)
+    script = (
+        "from pathlib import Path; "
+        f"Path({str(Path(policy.scratch_dir) / 'written')!r}).write_bytes(b'abc')"
+    )
+
+    with pytest.raises(TransplantError) as caught:
+        run_contained(prepare_execution(policy), (sys.executable, "-c", script))
+
+    assert caught.value.evidence.detail_code == "scratch_quota_exceeded"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_post_run_scratch_quota_rejects_inode_overage(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy = _with_scratch_quotas(_policy(fake_nsjail), byte_limit=3, inode_limit=1)
+    script = (
+        "from pathlib import Path; "
+        f"Path({str(Path(policy.scratch_dir) / 'written')!r}).write_bytes(b'abc')"
+    )
+
+    with pytest.raises(TransplantError) as caught:
+        run_contained(prepare_execution(policy), (sys.executable, "-c", script))
+
+    assert caught.value.evidence.detail_code == "scratch_quota_exceeded"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="nsjail containment is Linux-only (ADR-0009 §3)",
+)
+def test_post_run_scratch_quota_accepts_under_limit_deterministically(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy = _with_scratch_quotas(_policy(fake_nsjail), byte_limit=3, inode_limit=2)
+    script = (
+        "from pathlib import Path; "
+        f"Path({str(Path(policy.scratch_dir) / 'written')!r}).write_bytes(b'abc')"
+    )
+
+    result = run_contained(prepare_execution(policy), (sys.executable, "-c", script))
+
+    assert result.completed
+    assert sandbox._scratch_tree_usage(Path(policy.scratch_dir)) == (3, 2)
+    assert sandbox._scratch_tree_usage(Path(policy.scratch_dir)) == (3, 2)
 
 
 def test_cgroup_tree_kill_writes_kill_and_verifies_unpopulated(

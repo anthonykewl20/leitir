@@ -597,6 +597,41 @@ def test_exit_gate_writes_rejected_report_for_untyped_case_preparation_error(
     )
 
 
+def test_exit_gate_redacts_registered_secret_from_preparation_cause(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from leitir.logging import REDACTED, register_secret
+
+    secret = "exit-preparation-secret-5cf10f"
+    register_secret(secret)
+    _exit_sidecars(tmp_path)
+    manifest_path = _FIXTURE / "corpus-runnable-v1.1.json"
+    substrate = json.loads(manifest_path.read_text())["runnable"]["substrate"]
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+
+    def unavailable_snapshot(*args: object, **kwargs: object) -> object:
+        raise OSError(f"donor shelf token={secret}")
+
+    monkeypatch.setattr(pipeline_cli.bts_cli, "load_donor_snapshot", unavailable_snapshot)
+    exit_gate_run(
+        manifest_path,
+        tmp_path / "donors",
+        corpus_root=tmp_path,
+        out_dir=tmp_path / "out",
+        nsjail_version="fixture",
+        nsjail_build_identity=_DIGEST,
+        config_schema_digest=_DIGEST,
+        rootfs_source=tmp_path / "rootfs",
+        substrate_nsjail_sha256=substrate["nsjail_sha256"],
+        substrate_rootfs_digest=substrate["rootfs_digest"],
+    )
+
+    report = json.loads((tmp_path / "out" / "exit-gate-report.json").read_text())
+    details = str(report["donors"])
+    assert secret not in details
+    assert REDACTED in details
+
+
 def test_exit_gate_sanitizes_hyphenated_case_ids_for_relocation_recipient_package(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

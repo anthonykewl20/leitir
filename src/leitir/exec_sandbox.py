@@ -529,8 +529,18 @@ def _host_mapping_id(sudo_name: str, fallback: int) -> int:
     """Return the invoking host identity for a mount-source user mapping."""
 
     sudo_identity = os.environ.get(sudo_name)
-    if getattr(os, "geteuid", lambda: -1)() == 0 and sudo_identity is not None and sudo_identity.isdecimal():
-        return int(sudo_identity)
+    if getattr(os, "geteuid", lambda: -1)() == 0:
+        if sudo_identity is not None and sudo_identity.isdecimal() and int(sudo_identity) != 0:
+            return int(sudo_identity)
+        # A caller that explicitly supplies a non-root fallback remains usable
+        # for a controlled root launcher. Never map an unprivileged child back
+        # to host root when sudo did not identify the invoking user.
+        if type(fallback) is int and fallback > 0:
+            return fallback
+        raise _reject(
+            "root containment launcher requires a non-root invoking identity",
+            "root_host_mapping_unavailable",
+        )
     return fallback
 
 
@@ -904,6 +914,57 @@ def _clear_scratch_source(policy: ContainmentPolicy) -> None:  # pragma: no cove
         raise _reject("writable scratch source cannot be reset", "scratch_source_reset_failed") from exc
 
 
+def _scratch_tree_usage(scratch_dir: Path) -> tuple[int, int]:
+    """Measure logical data bytes and inode entries without following links."""
+
+    try:
+        root = scratch_dir.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(root.st_mode):
+            raise OSError("scratch source is not a directory")
+        total_bytes = 0
+        inode_count = 1
+
+        def visit(directory: Path) -> None:
+            nonlocal total_bytes, inode_count
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda entry: os.fsencode(entry.name))
+            for entry in children:
+                metadata = entry.stat(follow_symlinks=False)
+                inode_count += 1
+                if stat.S_ISDIR(metadata.st_mode):
+                    visit(Path(entry.path))
+                elif stat.S_ISREG(metadata.st_mode):
+                    total_bytes += metadata.st_size
+                elif stat.S_ISLNK(metadata.st_mode):
+                    # Symlinks consume an inode and their link text is data, but
+                    # never resolve a child-controlled target while measuring.
+                    total_bytes += metadata.st_size
+                else:
+                    raise OSError("scratch source contains a special file")
+
+        visit(scratch_dir)
+        return total_bytes, inode_count
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise _reject(
+            "writable scratch source quota cannot be measured",
+            "scratch_quota_unverifiable",
+        ) from exc
+
+
+def _enforce_scratch_quota(policy: ContainmentPolicy) -> None:
+    """Reject a completed launch whose writable bind exceeded policy limits."""
+
+    total_bytes, inode_count = _scratch_tree_usage(Path(policy.scratch_dir))
+    if (
+        total_bytes > policy.writable_tmpfs_bytes
+        or inode_count > policy.writable_tmpfs_inodes
+    ):
+        raise _reject(
+            "writable scratch source exceeded its policy quota",
+            "scratch_quota_exceeded",
+        )
+
+
 def prepare_execution(policy: ContainmentPolicy) -> ExecutionPlan:
     """Validate all controls and return a canonical plan without running donor code."""
 
@@ -1264,6 +1325,10 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
                 pass
     # ADR-0009 requires immutable authorizing inputs across the complete run.
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    # /work is deliberately a bind because tmpfs mounts do not launch on the
+    # supported runner class. Enforce its policy quotas after the child and its
+    # process tree have completed, before accepting any execution result.
+    _enforce_scratch_quota(plan.policy)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             plan,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

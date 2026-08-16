@@ -69,7 +69,7 @@ not the out-of-band authority. The ratified runtime authority is recorded in
    Missing, tampered, self-made, or untrusted signatures reject; equality alone
    cannot create authority.
 
-### 2026-08-16 Phase-B/C ceremony and pinned rerun
+### 2026-08-16 Phase-B/C ceremony and release-pinned rerun
 
 The owner explicitly delegated closure decisions to this session on 2026-08-16.
 An Ed25519 ratifier key was generated out of band from the corpus for this
@@ -79,9 +79,9 @@ PR description and the private key is never committed. The public key is in
 `8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
 The detached `ratification-v1.json` signs the canonical projection for
 `bts-exit-v0-1-2-real-five`, where both runtime-digest fields are
-`sha256:6d343db6f8e94186cc18052533ddf5f10c75ac569d2dc43a5b2e69c2881f2227`.
-That is the Phase-A runtime digest measured on
-[run 31954515706](https://github.com/anthonykewl20/leitir/actions/runs/31954515706).
+`sha256:ec51f34b39fae2e400813d02fce26faf5ecdef2591b78974f9a65d03c97fb904`.
+That is the release-rootfs Phase-A runtime digest measured on
+[run 31957735164](https://github.com/anthonykewl20/leitir/actions/runs/31957735164).
 
 The same run measured and this manifest now pins:
 
@@ -89,13 +89,23 @@ The same run measured and this manifest now pins:
 * `nsjail_version`: `nsjail@f78475530b46d0186111a9096b30725f816b55fe`
 * `nsjail_build_identity`: `sha256:9fc7783e8fee63cf059bb5e48053f3ac77e80fda34128917bae956bda90c0c4b`
 * `config_schema_digest`: `sha256:39803af3291a1f08860ec1ec4b028aba5d000df53d2f0f73781718f75ff16c80`
-* `rootfs_digest`: `sha256:5793b4f625038eb2dc0319a2024de176e61c86c68b0d5a14ed3728cf16bb740c`
+* `rootfs_digest`: `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`
 
-The Phase-C rerun measured the rootfs digest above. The historical Phase-A run
-reported `sha256:e82de50658175072ae7cd26e5741aafd2b28d3c8e3e1abd28ca4f0768489e0a2`;
-the CI image's reconstructed rootfs drifted while the pinned nsjail, policy,
-and gate corpus digest remained exact. The manifest therefore pins the actual
-Phase-C measurement, which the gate requires for a complete rerun.
+The first pin raced a GitHub runner-image rollout: Phase A measured
+`sha256:e82de50658175072ae7cd26e5741aafd2b28d3c8e3e1abd28ca4f0768489e0a2`,
+while a later per-run rebuild measured another tree. It is superseded by the
+[published `containment-rootfs-v1` release asset](https://github.com/anthonykewl20/leitir/releases/tag/containment-rootfs-v1).
+The asset is a sorted, fixed-metadata tarball; consumers extract it with mode
+preservation and recompute this canonical tree digest before any policy is
+built. Its recorded tarball SHA-256 is
+`sha256:50cd430be18d424453569ed02a0f95b937ca44505762af446a001cdc7f72ddd2`.
+
+An intentional substrate change follows the monotonic path: dispatch the
+workflow with `rebuild_rootfs: true`, publish the resulting rootfs, update this
+manifest pin, obtain a new Phase-A digest, and re-ratify the detached sidecar.
+The sidecar above was re-signed by the same out-of-band delegated ceremony for
+the published-rootfs Phase-A digest; no donor, baseline, or gold artifact was
+changed.
 
 The workflow passes the trusted-key file by its absolute workspace path because
 the trust-anchor loader rejects relative paths; it is outside the donor shelf

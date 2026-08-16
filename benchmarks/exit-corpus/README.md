@@ -81,9 +81,9 @@ PR description and the private key is never committed. The public key is in
 `8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
 The detached `ratification-v1.json` signs the canonical projection for
 `bts-exit-v0-1-2-real-five`, where both runtime-digest fields are
-`sha256:7f12baa1b24dec4a5b4d90d55b36ee55138e9edc3dc3f1fa53bae11dd4fbacb7`.
+`sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43`.
 That is the release-rootfs Phase-A runtime digest measured on
-[run 31957735164](https://github.com/anthonykewl20/leitir/actions/runs/31957735164).
+[run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451).
 
 The same run measured and this manifest now pins:
 

@@ -181,11 +181,10 @@ jobs:
           )
           mount_payload = {
               "readonly_mounts": [
-                  {"destination": mount.destination, "source": mount.source, "source_digest": mount.source_digest}
+                  {"destination": mount.destination, "source_digest": mount.source_digest}
                   for mount in mounts
               ],
               "rootfs_digest": rootfs_digest,
-              "scratch_dir": str(scratch),
               "writable_tmpfs": "/work",
               "writable_tmpfs_bytes": 1_048_576,
               "writable_tmpfs_inodes": 128,

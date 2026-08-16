@@ -452,13 +452,14 @@ def test_map_sudo_runner_ownership_preserves_modes(tmp_path: Path, monkeypatch: 
     staged.mkdir()
     (staged / "private").mkdir()
     (staged / "private" / "input.py").write_text("x = 1\n", encoding="utf-8")
+    (staged / "dangling-link").symlink_to("missing-target")
     (staged / "private").chmod(0o500)
     (staged / "private" / "input.py").chmod(0o400)
     ownership: list[tuple[Path, int, int]] = []
     monkeypatch.setattr(pipeline_cli.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setenv("SUDO_UID", "1001")
     monkeypatch.setenv("SUDO_GID", "1002")
-    monkeypatch.setattr(pipeline_cli.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
+    monkeypatch.setattr(pipeline_cli.os, "lchown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
 
     pipeline_cli.map_sudo_runner_ownership(staged)
 
@@ -466,6 +467,7 @@ def test_map_sudo_runner_ownership_preserves_modes(tmp_path: Path, monkeypatch: 
     assert (staged / "private" / "input.py").stat().st_mode & 0o777 == 0o400
     assert ownership == [
         (staged, 1001, 1002),
+        (staged / "dangling-link", 1001, 1002),
         (staged / "private", 1001, 1002),
         (staged / "private" / "input.py", 1001, 1002),
     ]

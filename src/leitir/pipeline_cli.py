@@ -493,9 +493,12 @@ def map_sudo_runner_ownership(path: Path) -> None:
         if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():
             for current, directories, files in os.walk(path):
                 directories.sort()
-                os.chown(current, int(sudo_uid), int(sudo_gid))
+                os.lchown(current, int(sudo_uid), int(sudo_gid))
                 for name in sorted(files):
-                    os.chown(Path(current, name), int(sudo_uid), int(sudo_gid))
+                    # Donor shelves may contain dangling links.  Change the
+                    # link itself; following it would fail before NsJail can
+                    # mount the otherwise valid, digest-pinned shelf.
+                    os.lchown(Path(current, name), int(sudo_uid), int(sudo_gid))
 
 
 def _stage_relocation(relocation: Relocation, directory: Path) -> Path:

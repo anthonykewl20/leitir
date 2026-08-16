@@ -155,6 +155,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - pre-donor startup attestation, dynamic donors, electrumx policy, stable seed identity (#73 #75)
 - precreate nsjail rootfs mount targets
 - preserve collection skip nodeid on Windows (`canary`)
+- preserve dangling donor links during ownership handoff
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)

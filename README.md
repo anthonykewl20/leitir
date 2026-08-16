@@ -2,7 +2,8 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Status: implementation-complete; design-stage software. Not production-ready.**
+**Status: implementation-complete; production-readiness evidence is complete.
+No public release has been cut.**
 
 ## Why
 
@@ -404,7 +405,31 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2537 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2647 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
+
+## Current state
+
+- Production-readiness gate #42 has recorded dogfood and 116-package load-test
+  evidence. Two independent security reviews recorded no P0/P1 findings; PR #166
+  remediated the reported P2 findings.
+- The contained Phase-A exit corpus has repeatedly completed all five donors
+  (each 2/0/0). Its most recent honest run,
+  [31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924),
+  rejects solely because runtime ratification is deliberately pending: the
+  staged mount-source tree digest still drifts between runs. The published
+  `containment-rootfs-v1` asset is pinned to
+  `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
+  The next owner step is entry-level staged-tree instrumentation, followed by a
+  fresh signature only after the digest stabilizes.
+- BTS benchmark evidence is published at
+  `benchmarks/bts-v1/runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/`:
+  five of six tasks have exact baselines and metrics; the
+  `worker-shutdown-predicate` result is an honest partial caused by the pinned
+  `bts_cli_parity_v1` provenance mismatch. The E5b timing envelope remains
+  intentionally deferred offline.
+- The credential-gated live provider canary is enabled on its daily schedule.
+  Its main-branch probes are green; three v2 probes intentionally skip because
+  their test files have not landed.
 
 ## Repository layout
 

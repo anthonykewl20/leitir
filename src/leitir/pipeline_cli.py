@@ -473,11 +473,19 @@ def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
     staged = directory / "recipient"
     relocation.publish(staged)
     # NsJail maps the invoking runner identity before opening mount sources.
-    # Relocation intentionally emits owner-only directories, so make directories
-    # readable/searchable without granting write permission. File modes remain
-    # content-pinned and immutable.
-    for current, _directories, _files in os.walk(staged):
-        os.chmod(current, 0o555)
+    # Relocation deliberately preserves owner-only modes, and changing them
+    # changes the directory-tree digest pinned by the rerun policy.  When this
+    # process is sudo-root, hand ownership to that mapped runner identity while
+    # retaining every mode and byte exactly as E1 emitted them.
+    if os.geteuid() == 0:
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():
+            for current, directories, files in os.walk(staged):
+                directories.sort()
+                os.chown(current, int(sudo_uid), int(sudo_gid))
+                for name in sorted(files):
+                    os.chown(Path(current, name), int(sudo_uid), int(sudo_gid))
     return staged
 
 

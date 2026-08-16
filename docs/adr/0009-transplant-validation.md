@@ -289,9 +289,10 @@ repository, corpus, credential/socket, arbitrary `/tmp`, device, or package site
 is visible.
 
 Because nsjail opens bind sources as the mapped invoking identity, immutable
-staging ancestors are searchable and mounted source directories are
-readable/searchable but never writable; this is required for mount construction
-and does not alter the content-pinned file modes.
+staging ancestors are searchable. When a sudo-root controller published an
+owner-only relocation tree, it transfers that tree's ownership to the mapped
+invoking identity without changing its modes or bytes. This is required for
+mount construction while preserving the directory-tree digest pinned by policy.
 
 Execution additionally requires exact opt-in
 `LEITIR_ENABLE_DONOR_EXECUTION=1`; only `opt_in_satisfied` is retained. Live

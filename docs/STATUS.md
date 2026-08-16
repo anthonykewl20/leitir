@@ -61,7 +61,7 @@ Composition, architecture, duplicate-abstraction detection, lineage,
 integration-cost, occupied-recipient validation, and ADR-0018's optional
 detached manifest-authentication layer landed through PRs #132–#139 and the
 2026-08-15 integration work. v0.1.3 is complete; #148's evidence-backed CLI
-surface is complete and its tracker closure is pending.
+surface is complete and its tracker is closed.
 
 2026-08-16: PRs #163–#179 completed containment, security, benchmark, rootfs,
 and ratification follow-up. The release-pinned, published
@@ -151,9 +151,9 @@ originating #17 is also closed. Broader audit work is tracked by the
 | Runtime ratification | **PENDING** | Ceremony key/sidecar are committed, but staged mount-source tree digests drift. Add entry-level instrumentation, establish stability, then re-sign. |
 | BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
-Milestone state: v0.1.1/#42 is **closed-pending** (all evidence is complete;
-tracker closure is in progress); v0.1.2 remains open for #73 ratification and
-#52; v0.1.3 and v0.1.4 are complete, with the v0.1.4 release owner-gated.
+Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;
+v0.1.2 remains open for #73 ratification and #52; v0.1.3 and v0.1.4 are
+complete, with the v0.1.4 release owner-gated. #75 and #148 are also closed.
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact

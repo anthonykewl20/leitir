@@ -112,6 +112,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bound SumDB HTTP response reads to 1 MiB fail-closed (`sumdb`)
 - bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - canonicalize predicate-vs-flag language comparison (`search`)
+- capture nsjail launch diagnostics
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports

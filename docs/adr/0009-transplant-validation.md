@@ -183,6 +183,16 @@ docstring, or other span, it returns `REJECT_UNDER_COLLECTION` with
 `RequiredSpanExpansionEvidence`. A caller must recompute ADR-0008 and obtain a
 new `bts_digest`; relocation never silently expands authorizing bytes.
 
+A task policy may additionally content-bind a sorted, duplicate-free
+`sibling_source_modules` closure.  Each named donor module must have an exact
+safe recipient mapping, must be disjoint from BTS member modules, and is copied
+as whole source bytes into E1 before its imports are rewritten.  The closure is
+not donor mounting: its source-byte digest is included in the relocation input
+manifest and no donor shelf path is available to E2.  Imports outside that
+closure and the already-authorized stdlib/adapter/external mappings remain
+unresolved and reject; path, package, and binding collisions reject rather than
+selecting an import-precedence winner.
+
 The interim canonical staging layout is fixed now, while ADR-011 owns eventual
 public packet paths:
 
@@ -233,7 +243,10 @@ Both generated nsjail configs must explicitly set and the controller must verify
   model: one closed minimal allowlist and `DEFAULT KILL`. Caller-authored Kafel
   (including comments, `LOG` blocks, and numeric syscall forms) is not parsed or
   accepted; networking, socket, mount/namespace joining, privilege, ptrace, and
-  other policy-forbidden syscalls are absent from the allowlist; and
+  other policy-forbidden syscalls are absent from the allowlist. The sole
+  argument-constrained exception is CPython's `ioctl(TCGETS)` terminal probe,
+  rendered from a typed rule as `ioctl { cmd == 21505 }`; it cannot issue other
+  ioctl operations; and
 - pinned rlimits for address space, CPU, file size, open files, processes,
   stack/core and every applicable limit, as defense in depth rather than the
   containment boundary.
@@ -255,8 +268,11 @@ There are two explicit sorted mount manifests:
   read-only, and one policy-pinned writable staging scratch bind at `/work`.
 - **Rerun:** does not mount the donor or any donor parent; mounts relocated
   source, rewritten tests, probes, trusted interpreter/rootfs/runner/bootstrap,
-  and manifests read-only, plus a separate policy-pinned writable staging
-  scratch bind at `/work`.
+  and manifests read-only below the separate policy-pinned writable staging
+  scratch bind at `/work`. NsJail creates each bind target while building the
+  mount tree, so file-granular rerun targets are below `/work/staging-v1`, not
+  the digest-bound rootfs; exact source digests and read-only mount flags are
+  unchanged.
 
 At rerun entry the controller re-derives the relocation digest from the complete
 canonical file and authorization records and requires exact mount-destination
@@ -284,6 +300,12 @@ authorizing manifest remain read-only. The controller hashes them before and
 after execution; any change or inability to re-read rejects. No host home,
 repository, corpus, credential/socket, arbitrary `/tmp`, device, or package site
 is visible.
+
+Because nsjail opens bind sources as the mapped invoking identity, immutable
+staging ancestors are searchable. When a sudo-root controller published an
+owner-only relocation tree, it transfers that tree's ownership to the mapped
+invoking identity without changing its modes or bytes. This is required for
+mount construction while preserving the directory-tree digest pinned by policy.
 
 Execution additionally requires exact opt-in
 `LEITIR_ENABLE_DONOR_EXECUTION=1`; only `opt_in_satisfied` is retained. Live
@@ -448,7 +470,9 @@ mappings are: wall/CPU/memory/pids/output/scratch-storage limit or child leak ->
 non-leak teardown, or recorder failure -> `REJECT_HARD_GATE_FAILED`. A directly
 observed donor import retains the higher-precedence
 `REJECT_DONOR_IMPORT_OBSERVED`. No raw child output is copied canonically or into
-the abort envelope.
+the abort envelope. An exact, controller-only `LEITIR_NSJAIL_DEBUG=1` opt-in may
+raise nsjail's parent-process log level for noncanonical abort diagnostics; it
+does not alter the digest-bound `FATAL` policy or the child environment.
 
 ### 10. E4a and ratified E4b corpus authority
 

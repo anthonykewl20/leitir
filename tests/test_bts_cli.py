@@ -330,6 +330,7 @@ def test_non_python_compute_requires_an_explicit_lock_path(tmp_path: Path) -> No
         {"schema_version": "leitir-bts-cli-policy-v1", "stdlib_modules": ["os", "os"], "adapters": []},
         {"schema_version": "leitir-bts-cli-policy-v1", "stdlib_modules": ["os"], "adapters": [{"module": "", "disposition": "adapter"}]},
         {"schema_version": "leitir-bts-cli-policy-v1", "stdlib_modules": [], "adapters": [{"module": "remote", "disposition": "guess"}]},
+        {"schema_version": "leitir-bts-cli-policy-v1", "stdlib_modules": [], "adapters": [], "sibling_source_modules": ["donor.b", "donor.a"]},
     ],
 )
 def test_resolution_policy_rejects_invalid_closed_schema(tmp_path: Path, value: dict[str, object]) -> None:

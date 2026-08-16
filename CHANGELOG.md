@@ -90,6 +90,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - polyglot tree-sitter graph per ADR-0012 (#81) (`graph`)
 - publish reproducible offline decision=pass (#41) (`scorecard`)
 - real-donor exit corpus and runnable validation (#73) (`gate`)
+- relocate authorized donor sibling sources
 - six real agent tasks with gold and run driver (#75) (`bench`)
 - stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - structural architecture compatibility (#77) (`architecture`)
@@ -105,16 +106,21 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - accept sampled structural candidate pins (`bench`)
 - address review findings (qwen) (`corpus`)
 - align containment smoke root and evidence
+- align exit rerun parity with ADR-0009
 - align live identity digest check
+- allow contained CPython startup syscalls
+- allow CPython close-on-exec ioctl under containment
 - apply deterministic P6 ordering to normal search output (#48) (`search`)
 - bind adapter language routing to trusted registry identity (`search`)
 - bound SumDB HTTP response reads to 1 MiB fail-closed (`sumdb`)
 - bypass interpreter shutdown on Windows success to avoid exit 120 (`doctor`)
 - canonicalize predicate-vs-flag language comparison (`search`)
+- capture nsjail launch diagnostics
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
 - correct typing for mypy strict mode (`cost`)
+- diagnose mount-source digest mismatches
 - expose nsjail mount sources in CI
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
@@ -130,13 +136,19 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - include Starred assignment targets in Python AST definitions (`search`)
 - kafel identifier set and ci artifact ownership
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
+- keep rerun mount setup off immutable rootfs
 - keep sandbox tests portable (`bts`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)
 - make nsjail --version capture non-fatal in build script (`bts`)
 - make validate_report fail-closed on span bounds without line_counts (`search`)
 - map invoking user for nsjail mounts
+- mount writable rerun bind after rootfs
+- normalize task baseline test ids
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
+- permit close-on-exec epoll setup
+- permit CPython allocator remaps
+- permit mapped user to mount staged inputs
 - phase-a4 root causes — recipient ids, nsjail probe, licence variants, spans, haversine donor (#73 #75)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - pre-donor startup attestation, dynamic donors, electrumx policy, stable seed identity (#73 #75)
@@ -147,6 +159,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)
 - reject unsupported predicates and verify global provenance (#49 #84 #44) (`search`)
+- relocate authorized module preambles
 - render mandatory root mount for nsjail mount tree
 - replace ref-name regex with linear validation (`lineage`)
 - restore containment smoke mount chain
@@ -175,6 +188,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - harden containment verification, seccomp validation, and digest binding (security review) (`bts`)
 - harden global search match integrity and adapter line model (`security`)
 - pin HOME/USERPROFILE and preserve SYSTEMROOT in sanitized collector env (`score`)
+- preserve staged mount integrity
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)

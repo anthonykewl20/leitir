@@ -65,6 +65,7 @@ class BTSPipelineRequest:
     probe_set: ProbeSet
     probe_execution_policy: ProbeExecutionPolicy
     declared_external_modules: tuple[str, ...] = ()
+    sibling_sources: tuple[tuple[str, SourceFile], ...] = ()
     recipient_bindings: RecipientBindingManifest = EMPTY_RECIPIENT_BINDINGS
     test_import_aliases: tuple[tuple[str, str], ...] = ()
     # The CLI performs relocation before it can construct the S2 policy: the
@@ -238,6 +239,7 @@ def run_bts_pipeline(request: BTSPipelineRequest) -> BTSPipelineResult:
         source_files=request.source_files,
         tests=request.contract_tests,
         declared_external_modules=request.declared_external_modules,
+        sibling_sources=request.sibling_sources,
         recipient_bindings=request.recipient_bindings,
         test_import_aliases=request.test_import_aliases,
     )

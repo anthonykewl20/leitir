@@ -12,6 +12,7 @@ import textwrap
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -436,6 +437,41 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
         BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor, tests, scratch, (".",)
     )
     assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory search permissions are required by nsjail")
+def test_deterministic_stage_ancestors_are_searchable_without_being_writable(tmp_path: Path) -> None:
+    stage = pipeline_cli._deterministic_stage_directory(tmp_path, {"case": "fixture"})
+
+    assert os.stat(stage.parent).st_mode & 0o777 == 0o711
+    assert os.stat(stage).st_mode & 0o777 == 0o711
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode semantics are required by nsjail")
+def test_stage_relocation_preserves_modes_while_mapping_sudo_runner_ownership(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Relocation:
+        def publish(self, target: Path) -> None:
+            target.mkdir()
+            (target / "private").mkdir()
+            (target / "private" / "input.py").write_text("x = 1\n", encoding="utf-8")
+            (target / "private").chmod(0o500)
+            (target / "private" / "input.py").chmod(0o400)
+
+    ownership: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(pipeline_cli.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setenv("SUDO_UID", "1001")
+    monkeypatch.setenv("SUDO_GID", "1002")
+    monkeypatch.setattr(pipeline_cli.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
+
+    staged = pipeline_cli._stage_relocation(cast(Any, _Relocation()), tmp_path)
+
+    assert (staged / "private").stat().st_mode & 0o777 == 0o500
+    assert (staged / "private" / "input.py").stat().st_mode & 0o777 == 0o400
+    assert ownership == [
+        (staged, 1001, 1002),
+        (staged / "private", 1001, 1002),
+        (staged / "private" / "input.py", 1001, 1002),
+    ]
 
 
 def test_baseline_recording_preserves_bounded_child_abort_evidence() -> None:

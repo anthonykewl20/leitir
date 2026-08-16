@@ -79,6 +79,24 @@ def _bts(source: bytes, *, start_col: int = 0) -> BTS:
     )
 
 
+def _bts_member(source: bytes, start_line: int, end_line: int, qualified_name: str = "f") -> BTS:
+    lines = source.splitlines(keepends=True)
+    member_bytes = b"".join(lines[start_line - 1:end_line]).rstrip(b"\n")
+    node = NodeId(NodeOrigin.DONOR, NodeKind.FUNCTION, "donor.mod", qualified_name, f"donor/mod.py:{start_line}")
+    source_ref = SourceRef("owner/repo", _COMMIT, "donor/mod.py", _BLOB, start_line, 0, end_line, len(lines[end_line - 1].rstrip(b"\n")))
+    member = MemberEvidence(node, source_ref, _digest(member_bytes), BTSDisposition.INCLUDE)
+    draft = BTS(
+        "leitir-bts-v1", node, (member,), (),
+        (RequiredFileEvidence(source_ref.path, source_ref.blob_sha, member.source_bytes_sha256),),
+        (RequiredSymbolEvidence(node, source_ref),), "sha256:" + _HEX, "sha256:" + "1" * 64,
+    )
+    return BTS(
+        draft.schema_version, draft.seed, draft.members, draft.dispositions, draft.required_files,
+        draft.required_symbols, draft.bts_digest,
+        _bts_digest(draft, omit=frozenset({"bts_digest", "member_equivalence_digest"})),
+    )
+
+
 def _relocate(source: bytes = b"def f():\n    return 3\n"):
     return relocate_tests(
         _bts(source),
@@ -115,6 +133,92 @@ def test_complete_bts_relocates_members_and_rewrites_only_donor_imports() -> Non
         FileRole.TEST_REWRITTEN,
         FileRole.MANIFEST,
     }
+
+
+def test_authorized_sibling_source_is_copied_and_rewritten_deterministically() -> None:
+    source = b"from donor.sibling import g\n\ndef f():\n    return g()\n"
+    sibling = SourceFile("donor/sibling.py", b"def g():\n    return 3\n")
+    kwargs = {
+        "module_map": ModuleMap.from_pairs(("donor.mod", "transplant.core"), ("donor.sibling", "transplant.sibling")),
+        "source_files": (SourceFile("donor/mod.py", source),),
+        "tests": (ContractTest("test_contract.py", b"from donor.mod import f\n", "donor.tests.test_contract"),),
+        "sibling_sources": (("donor.sibling", sibling),),
+    }
+    first = relocate_tests(_bts(source), **kwargs)
+    second = relocate_tests(_bts(source), **kwargs)
+    files = {item.path: item.content for item in first.files}
+    assert files["staging-v1/src/transplant/core.py"] == b"from transplant.sibling import g\n\ndef f():\n    return g()\n"
+    assert files["staging-v1/src/transplant/sibling.py"] == b"def g():\n    return 3\n"
+    assert first.to_bytes() == second.to_bytes()
+    assert all(b"donor." not in item.content for item in first.files if item.role is FileRole.SOURCE)
+
+
+def test_preamble_closure_carries_authorized_imports_constants_and_test_facing_types(tmp_path: Path) -> None:
+    source = b"""import random
+from enum import Enum
+
+_RADIUS = 2
+
+class Unit(str, Enum):
+    METERS = \"m\"
+
+_CONVERSIONS = {Unit.METERS: _RADIUS}
+
+def f(unit: Unit) -> float:
+    return random.uniform(0, _CONVERSIONS[unit])
+"""
+    kwargs = {
+        "module_map": ModuleMap.from_pairs(("donor.mod", "transplant.core")),
+        "source_files": (SourceFile("donor/mod.py", source),),
+        "tests": (ContractTest("test_contract.py", b"from donor.mod import Unit, f\n", "donor.tests.test_contract"),),
+        "declared_external_modules": ("random", "enum"),
+    }
+    first = relocate_tests(_bts_member(source, 11, 12), **kwargs)
+    second = relocate_tests(_bts_member(source, 11, 12), **kwargs)
+    emitted = next(item.content for item in first.files if item.path.endswith("transplant/core.py"))
+    assert emitted == (
+        b"import random\n\nfrom enum import Enum\n\n_RADIUS = 2\n\nclass Unit(str, Enum):\n    METERS = \"m\"\n\n_CONVERSIONS = {Unit.METERS: _RADIUS}\n\n"
+        b"def f(unit: Unit) -> float:\n    return random.uniform(0, _CONVERSIONS[unit])\n"
+    )
+    assert first.to_bytes() == second.to_bytes()
+    first.publish(tmp_path / "recipient")
+    subprocess.run(
+        [sys.executable, "-c", "from transplant.core import Unit, f; assert 0 <= f(Unit.METERS) <= 2"],
+        env={**os.environ, "PYTHONPATH": str(tmp_path / "recipient" / "staging-v1" / "src")},
+        check=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "externals", "detail"),
+    [
+        (b"import random\n\ndef f():\n    return random.random()\n", (), "relocate_preamble_unauthorized_import_v1"),
+        (b"def f():\n    return missing\n", (), "relocate_preamble_unresolved_name_v1"),
+    ],
+)
+def test_preamble_closure_rejects_unauthorized_or_unresolvable_dependencies(source: bytes, externals: tuple[str, ...], detail: str) -> None:
+    with pytest.raises(BTSError) as raised:
+        relocate_tests(
+            _bts_member(source, 3 if source.startswith(b"import") else 1, 4 if source.startswith(b"import") else 2),
+            module_map=ModuleMap.from_pairs(("donor.mod", "transplant.core")),
+            source_files=(SourceFile("donor/mod.py", source),),
+            tests=(),
+            declared_external_modules=externals,
+        )
+    assert raised.value.evidence.detail_code == detail
+
+
+def test_sibling_source_import_outside_authorized_closure_rejects() -> None:
+    source = b"def f():\n    return 3\n"
+    with pytest.raises(BTSError) as caught:
+        relocate_tests(
+            _bts(source),
+            module_map=ModuleMap.from_pairs(("donor.mod", "transplant.core"), ("donor.sibling", "transplant.sibling")),
+            source_files=(SourceFile("donor/mod.py", source),),
+            tests=(),
+            sibling_sources=(("donor.sibling", SourceFile("donor/sibling.py", b"from donor.unapproved import value\n")),),
+        )
+    assert caught.value.evidence.detail_code == "relocate_unresolved_import_v1"
 
 
 def test_unaliased_import_and_references_are_rewritten() -> None:

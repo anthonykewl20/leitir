@@ -17,6 +17,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -27,6 +28,7 @@ from pathlib import Path, PurePosixPath
 from leitir.bts_errors import BTSRejectReason, TransplantError
 
 DONOR_EXECUTION_ENV = "LEITIR_ENABLE_DONOR_EXECUTION"
+NSJAIL_DEBUG_ENV = "LEITIR_NSJAIL_DEBUG"
 POLICY_SCHEMA = "leitir-containment-policy-v1"
 PLAN_SCHEMA = "leitir-execution-plan-v1"
 RESULT_SCHEMA = "leitir-execution-result-v1"
@@ -38,6 +40,7 @@ _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
 STARTUP_ATTESTATION_SCHEMA = "leitir-contained-startup-attestation-v1"
 _ATTESTED_NAMESPACES = ("net", "user", "mnt", "pid", "ipc", "uts")
+_DEBUG_MOUNT_ENTRY_MANIFESTS: dict[tuple[str, str], tuple[dict[str, object], ...]] = {}
 _FORBIDDEN_SYSCALLS = frozenset(
     {
         "accept",
@@ -84,6 +87,11 @@ class PermittedSyscall(StrEnum):
     BRK = "brk"
     CLOCK_GETTIME = "clock_gettime"
     CLOSE = "close"
+    # Importing backoff's public package imports asyncio's selector support,
+    # which creates one close-on-exec epoll descriptor during CPython startup.
+    # The measured contained trace ends at epoll_create1(EPOLL_CLOEXEC); permit
+    # only that non-I/O descriptor flag, not arbitrary epoll creation flags.
+    EPOLL_CREATE1_CLOEXEC = "epoll_create1 { flags == 524288 }"
     EXECVE = "execve"
     EXIT = "exit"
     EXIT_GROUP = "exit_group"
@@ -98,8 +106,25 @@ class PermittedSyscall(StrEnum):
     # glibc records the calling thread while initializing thread-local state.
     GETTID = "gettid"
     GETRANDOM = "getrandom"
+    # CPython asks whether any inherited descriptor is a terminal. Permit only
+    # TCGETS (0x5401), which only reports terminal attributes. Kafel compares
+    # this 32-bit argument as a signed value, so its typed rendering is decimal.
+    IOCTL_TCGETS = "ioctl { cmd == 21505 }"
+    # Debug containment trace 31944059681 records CPython closing an inherited
+    # non-terminal fd with FIOCLEX (0x5451).  This only sets close-on-exec on
+    # that existing descriptor; constrain the ioctl request exactly.
+    IOCTL_FIOCLEX = "ioctl { cmd == 21585 }"
     LSEEK = "lseek"
+    # Importlib may attempt bytecode-cache creation beside a read-only module.
+    # Immutable mounts reject the write; these calls let CPython receive that
+    # expected filesystem error instead of a seccomp SIGSYS.
+    MKDIR = "mkdir"
     MMAP = "mmap"
+    # GitHub's CPython 3.12.13 runtime grows its allocator arena with mremap
+    # while importing backoff.  Audit evidence from the contained runner records
+    # the denied x86_64 syscall number 25; this only resizes existing process
+    # mappings and cannot grant I/O or namespace capabilities.
+    MREMAP = "mremap"
     MPROTECT = "mprotect"
     MUNMAP = "munmap"
     NEWFSTATAT = "newfstatat"
@@ -112,6 +137,7 @@ class PermittedSyscall(StrEnum):
     READ = "read"
     READLINK = "readlink"
     READLINKAT = "readlinkat"
+    RENAME = "rename"
     RT_SIGACTION = "rt_sigaction"
     RT_SIGPROCMASK = "rt_sigprocmask"
     # glibc queries CPU affinity before selecting its startup runtime settings.
@@ -510,10 +536,9 @@ def _host_mapping_id(sudo_name: str, fallback: int) -> int:
 
 # Immutable rootfs builders must create these targets before ``chmod -R a-w``.
 # NsJail's createMountTarget runs after the read-only root bind and therefore
-# cannot create a missing destination itself.  This deterministic union covers
-# every fixed destination rendered below: mount_proc's /proc, the writable
-# workdir bind, and the baseline/rerun staging mounts.  File-granular rerun mounts
-# land below the pre-created staging directories.
+# cannot create a missing destination itself.  The file-granular rerun mounts
+# use the separately writable ``/work`` bind, so they cannot mutate this
+# digest-bound rootfs while NsJail constructs their mount targets.
 ROOTFS_MOUNT_TARGETS = (
     "/",
     "/contract",
@@ -584,21 +609,34 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}',
         f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
+    # This changes only the kernel audit disposition for denied calls.  It is
+    # controller-only diagnostics, enabled exclusively for contained CI probes;
+    # the policy remains DEFAULT KILL and grants no additional syscall surface.
+    if os.environ.get(NSJAIL_DEBUG_ENV) == "1":
+        lines.append("seccomp_log: true")
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
-    for mount in policy.readonly_mounts:
+    def render_readonly_mount(mount: ReadOnlyMount) -> str:
         # NsJail applies the user mapping before it builds this mount tree.  Do
         # not let its source-path heuristic misclassify a rootfs below a
         # non-traversable CI temporary directory as a file mount.
-        lines.append(
+        source_mode = Path(mount.source).stat(follow_symlinks=False).st_mode
+        is_dir = mount.destination == "/" or stat.S_ISDIR(source_mode)
+        return (
             "mount { src: "
             f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
-            'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
+            f'fstype: "bind" is_bind: true rw: false is_dir: {str(is_dir).lower()} mandatory: true nosuid: true nodev: true }}'
         )
+    # NsJail creates bind targets in order. Mount the root first, then expose
+    # the non-authorizing writable source, then overlay exact rerun files below
+    # /work; mounting the root after /work would hide that writable bind.
+    root_mount = next(mount for mount in policy.readonly_mounts if mount.destination == "/")
+    lines.append(render_readonly_mount(root_mount))
     lines.append(
         "mount { src: "
         f"{_protobuf_string(policy.scratch_dir)} dst: {_protobuf_string(policy.writable_tmpfs)} "
         'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
     )
+    lines.extend(render_readonly_mount(mount) for mount in policy.readonly_mounts if mount.destination != "/")
     return "\n".join(lines) + "\n"
 
 
@@ -722,6 +760,107 @@ def _verified_directory_tree_digest(root: Path) -> str:  # pragma: no cover  # e
     return _digest_payload({"entries": entries, "schema_version": "leitir-directory-tree-v1"})
 
 
+def _mount_source_entry_manifest(source: Path) -> tuple[dict[str, object], ...]:
+    """Return debug-only, deterministic per-entry facts for a mount source."""
+
+    metadata = source.stat(follow_symlinks=False)
+    if stat.S_ISREG(metadata.st_mode):
+        return ({
+            "mode": stat.S_IMODE(metadata.st_mode),
+            "path": ".",
+            "sha256": _verified_regular_file_digest(source),
+            "size": metadata.st_size,
+            "type": "file",
+        },)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise OSError("mount source is not a regular file or directory")
+    entries: list[dict[str, object]] = []
+
+    def visit(directory: Path, relative: PurePosixPath) -> None:
+        directory_metadata = directory.stat(follow_symlinks=False)
+        entries.append({
+            "mode": stat.S_IMODE(directory_metadata.st_mode),
+            "path": relative.as_posix() or ".",
+            "size": directory_metadata.st_size,
+            "type": "directory",
+        })
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: os.fsencode(item.name))
+        for child in children:
+            child_path = Path(child.path)
+            child_relative = relative / child.name
+            child_metadata = child.stat(follow_symlinks=False)
+            if stat.S_ISDIR(child_metadata.st_mode):
+                visit(child_path, child_relative)
+            elif stat.S_ISREG(child_metadata.st_mode):
+                entries.append({
+                    "mode": stat.S_IMODE(child_metadata.st_mode),
+                    "path": child_relative.as_posix(),
+                    "sha256": _verified_regular_file_digest(child_path),
+                    "size": child_metadata.st_size,
+                    "type": "file",
+                })
+            else:
+                raise OSError("mount source contains a symlink or special file")
+
+    visit(source, PurePosixPath())
+    return tuple(entries)
+
+
+def record_debug_mount_source_manifests(policy: ContainmentPolicy) -> None:
+    """Capture nonauthorizing source inventories at policy construction time."""
+
+    if os.environ.get(NSJAIL_DEBUG_ENV) != "1":
+        return
+    for mount in policy.readonly_mounts:
+        try:
+            _DEBUG_MOUNT_ENTRY_MANIFESTS[(mount.source, mount.source_digest)] = _mount_source_entry_manifest(Path(mount.source))
+        except (OSError, UnicodeError, ValueError):
+            # The authoritative verifier remains responsible for rejecting an
+            # unavailable or malformed source. Diagnostics must not change it.
+            continue
+
+
+def _debug_mount_source_mismatch(mount: ReadOnlyMount, actual: str) -> None:
+    """Emit controller-only entry diffs without changing integrity decisions."""
+
+    if os.environ.get(NSJAIL_DEBUG_ENV) != "1":
+        return
+    expected = _DEBUG_MOUNT_ENTRY_MANIFESTS.get((mount.source, mount.source_digest), ())
+    observed_manifest: tuple[dict[str, object], ...]
+    try:
+        observed_manifest = _mount_source_entry_manifest(Path(mount.source))
+    except (OSError, UnicodeError, ValueError) as exc:
+        observed_manifest = ({"error": type(exc).__name__},)
+    expected_by_path = {str(item.get("path")): item for item in expected}
+    observed_by_path = {str(item.get("path")): item for item in observed_manifest}
+    diff = [
+        {
+            "actual": observed_by_path.get(path),
+            "expected": expected_by_path.get(path),
+            "path": path,
+        }
+        for path in sorted(set(expected_by_path) | set(observed_by_path))
+        if expected_by_path.get(path) != observed_by_path.get(path)
+    ]
+    print(
+        "leitir mount-source digest mismatch "
+        + json.dumps(
+            {
+                "actual_digest": actual,
+                "destination": mount.destination,
+                "entry_diff": diff,
+                "expected_digest": mount.source_digest,
+                "source": mount.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     rootfs: ReadOnlyMount | None = None
     for mount in policy.readonly_mounts:
@@ -734,6 +873,7 @@ def _verify_mount_sources(policy: ContainmentPolicy) -> None:  # pragma: no cove
         except (OSError, UnicodeError, ValueError) as exc:
             raise _reject("read-only mount source cannot be verified", "mount_source_unverifiable") from exc
         if actual != mount.source_digest:
+            _debug_mount_source_mismatch(mount, actual)
             raise _reject("read-only mount source digest does not match policy", "mount_source_digest_mismatch")
         if mount.destination == "/":
             rootfs = mount
@@ -833,6 +973,20 @@ def _startup_attestation_environment() -> tuple[str, ...]:  # pragma: no cover -
         device, inode = _ns_identity(os.getpid(), namespace)
         values.append(f"LEITIR_PARENT_NS_{namespace.upper()}={device}:{inode}")
     return tuple(values)
+
+
+def _launch_config(plan: ExecutionPlan) -> str:
+    """Render per-launch facts and an explicitly opted-in nsjail diagnostic log level.
+
+    Debug logging is nonauthorizing and never reaches the contained child: the
+    static, digest-bound policy remains ``FATAL`` and this exact opt-in changes
+    only nsjail's parent-process diagnostics retained in abort evidence.
+    """
+
+    config = _render_config(plan.policy, startup_environment=_startup_attestation_environment())
+    if os.environ.get(NSJAIL_DEBUG_ENV) == "1":
+        return config.replace("log_level: FATAL", "log_level: DEBUG", 1)
+    return config
 
 
 def startup_attestation_from_proc(
@@ -1045,21 +1199,28 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     _verify_backend(plan.policy)
     config_fd: int | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     config_path: str | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+    debug_trace_path: str | None = None  # pragma: no cover - controller-only CI diagnostics
     try:
         config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         os.fchmod(config_fd, 0o600)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         # The static plan is integrity-bound.  Parent namespace identities are
         # launch facts, not authorization inputs, and are consumed solely by
         # the immutable child startup probe.
-        config_bytes = _render_config(
-            plan.policy, startup_environment=_startup_attestation_environment()
-        ).encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        config_bytes = _launch_config(plan).encode("utf-8")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         with os.fdopen(config_fd, "wb", closefd=True) as config_file:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_fd = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_file.write(config_bytes)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             config_file.flush()  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             os.fsync(config_file.fileno())  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         launch_argv = (plan.nsjail_path, "--config", config_path, "--", *tuple(argv))  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if os.environ.get(NSJAIL_DEBUG_ENV) == "1" and Path("/usr/bin/strace").is_file():
+            # Debug-only controller tracing records ioctl request arguments from
+            # NsJail's child process.  It never reaches the contained argv or
+            # changes the digest-bound policy; the trace is deleted after its
+            # bounded controller-side diagnostic is emitted.
+            trace_fd, debug_trace_path = tempfile.mkstemp(prefix=".leitir-seccomp-", suffix=".strace")
+            os.close(trace_fd)
+            launch_argv = ("/usr/bin/strace", "-f", "-e", "trace=ioctl", "-o", debug_trace_path, *launch_argv)
         # Re-read all mount sources immediately before the backend can open them.
         _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         _clear_scratch_source(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1080,6 +1241,12 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             # receipt before it opens relocated or donor input.
             applied_state=None,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         )
+        if debug_trace_path is not None:
+            try:
+                trace = Path(debug_trace_path).read_text(encoding="utf-8", errors="replace")
+                print("leitir debug seccomp ioctl trace\n" + trace, file=sys.stderr, flush=True)
+            except OSError:
+                pass
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     finally:
@@ -1090,6 +1257,11 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
                 os.unlink(config_path)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             except FileNotFoundError:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
                 pass  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if debug_trace_path is not None:
+            try:
+                os.unlink(debug_trace_path)
+            except FileNotFoundError:
+                pass
     # ADR-0009 requires immutable authorizing inputs across the complete run.
     _verify_mount_sources(plan.policy)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if capture.noncanonical_kill:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

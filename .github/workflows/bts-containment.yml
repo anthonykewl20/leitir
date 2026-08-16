@@ -94,7 +94,7 @@ jobs:
           rlimit_stack_type: VALUE
           rlimit_core: 0
           rlimit_core_type: VALUE
-          seccomp_string: "DEFAULT KILL\nALLOW { access, arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, futex, getcwd, getdents64, getpid, getrandom, gettid, lseek, mmap, mprotect, munmap, newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rseq, rt_sigaction, rt_sigprocmask, sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
+          seccomp_string: "DEFAULT KILL\nALLOW { access, arch_prctl, brk, clock_gettime, close, epoll_create1 { flags == 524288 }, execve, exit, exit_group, fcntl, futex, getcwd, getdents64, getpid, getrandom, gettid, ioctl { cmd == 21505 }, ioctl { cmd == 21585 }, lseek, mkdir, mmap, mprotect, mremap, munmap, newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rename, rseq, rt_sigaction, rt_sigprocmask, sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
           uidmap { inside_id: "65534" outside_id: "$host_uid" count: 1 use_newidmap: false }
           gidmap { inside_id: "65534" outside_id: "$host_gid" count: 1 use_newidmap: false }
           envar: "LANG=C.UTF-8"
@@ -400,7 +400,7 @@ jobs:
 
           def _rootfs_paths():
               rootfs = pathlib.Path(os.environ.get("LEITIR_ROOTFS", "/"))
-              return rootfs, tuple(rootfs / path for path in ("staging-v1/src", "opt/leitir/site-packages", "usr/lib/python3.12/lib-dynload", "usr/lib/python3.12"))
+              return rootfs, tuple(rootfs / path for path in ("work/staging-v1/src", "opt/leitir/site-packages", "usr/lib/python3.12/lib-dynload", "usr/lib/python3.12"))
 
           def verify_required_stdlib():
               rootfs, paths = _rootfs_paths()
@@ -435,7 +435,7 @@ jobs:
                   return original_import(name, globals, locals, fromlist, level)
               builtins.__import__ = recording_import
               outcomes = []
-              for path in sorted((rootfs / "staging-v1/tests/rewritten").rglob("*.py")):
+              for path in sorted((rootfs / "work/staging-v1/tests/rewritten").rglob("*.py")):
                   spec = importlib.util.spec_from_file_location("leitir_contract_" + hashlib.sha256(str(path).encode()).hexdigest(), path)
                   module = importlib.util.module_from_spec(spec)
                   try:
@@ -472,7 +472,7 @@ jobs:
           print(" ".join((*modules, "hashlib")))
           PY
           )"
-          LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import importlib.util; spec=importlib.util.spec_from_file_location("leitir_scratch_runner", "'"$rootfs"'/harness/runner.py"); runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); runner.verify_required_stdlib()'
+          LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/work/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import importlib.util; spec=importlib.util.spec_from_file_location("leitir_scratch_runner", "'"$rootfs"'/harness/runner.py"); runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); runner.verify_required_stdlib()'
           chmod -R a-w "$rootfs"
       - name: Build pinned nsjail
         run: sudo tools/build-nsjail.sh
@@ -522,9 +522,10 @@ jobs:
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
+          LEITIR_NSJAIL_DEBUG: '1'
           PYTHONPATH: src
         run: >-
-          chmod a+rx "$RUNNER_TEMP" && sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
+          chmod a+rx "$RUNNER_TEMP" && sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,LEITIR_NSJAIL_DEBUG,PYTHONPATH python -m leitir.cli exit-gate-run benchmarks/exit-corpus/corpus-v1.1.json
           --corpus-root benchmarks/exit-corpus --donors-dir ${{ runner.temp }}/leitir-corpus-root
           --out runs/exit-gate
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
@@ -533,6 +534,9 @@ jobs:
           --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
           --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
           --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs --json
+      - name: Report debug seccomp denials
+        if: ${{ always() }}
+        run: sudo dmesg --color=never | tail -n 200 || true
       - name: Restore exit-gate artifact ownership
         if: ${{ always() }}
         run: |
@@ -553,9 +557,10 @@ jobs:
         env:
           LEITIR_ENABLE_DONOR_EXECUTION: '1'
           LEITIR_ENABLE_LIVE_E2E: '1'
+          LEITIR_NSJAIL_DEBUG: '1'
           PYTHONPATH: src
         run: >-
-          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,PYTHONPATH python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
+          sudo --preserve-env=LEITIR_ENABLE_DONOR_EXECUTION,LEITIR_ENABLE_LIVE_E2E,LEITIR_NSJAIL_DEBUG,PYTHONPATH python tools/run_bts_tasks.py --root "$RUNNER_TEMP/leitir-bts-task-root" --out runs/bts-tasks
           --substrate-nsjail-sha ${{ steps.substrate.outputs.nsjail_sha }}
           --substrate-rootfs-digest ${{ steps.substrate.outputs.rootfs_digest }}
           --nsjail-version "${{ steps.substrate.outputs.nsjail_version }}"

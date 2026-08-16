@@ -80,6 +80,7 @@ from leitir.exec_sandbox import (
     ReadOnlyMount,
     donor_execution_enabled,
     prepare_execution,
+    record_debug_mount_source_manifests,
     run_contained,
     validate_startup_attestation,
 )
@@ -100,6 +101,7 @@ from leitir.probes import ProbeExecutionRequest, ProbeExecutionResult, ProbeSet
 from leitir.project_profile import RecipientInputManifest, RecipientManifestEntry, profile_project
 from leitir.relocate import ContractTest, ModuleMap, Relocation, SourceFile, relocate_tests
 from leitir.rerun import (
+    RERUN_MOUNT_ROOT,
     RERUN_POLICY_SCHEMA_VERSION,
     ContractBaselineEvidence,
     OutcomeCounts,
@@ -111,6 +113,7 @@ from leitir.rerun import (
 from leitir.safeio import confined_path, read_regular_file
 from leitir.suitability import build_survivor_set
 from leitir.transplant import PacketInputs, build_reference_packet, publish_packet
+from leitir.treehash import TreeHashError, verify_materialized_tree_hash
 
 PIPELINE_CLI_SCHEMA_VERSION = "leitir-pipeline-cli-v1"
 CONTRACT_TESTS_SCHEMA_VERSION = "leitir-pipeline-contract-tests-v1"
@@ -339,7 +342,7 @@ def _baseline_recording_bytes(
     )
 
 
-def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, scratch_dir: Path, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> ContractBaselineEvidence:
+def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *, substrate: BTSSubstratePins, scratch_dir: Path, import_roots: tuple[str, ...] = (".",), contract_root: Path | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), canonical_test_paths: Mapping[str, str] | None = None) -> ContractBaselineEvidence:
     """Record donor-present outcomes through the verified contained executor."""
 
     if not isinstance(donor_root, Path) or not isinstance(contract_tests, list):
@@ -361,7 +364,7 @@ def record_baseline(donor_root: Path, contract_tests: list[ContractTestSpec], *,
         source_path = test_root / test.path
         source = read_regular_file(source_path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         for name in _test_functions(source):
-            identifier = canonical_test_id(test.path, name)
+            identifier = canonical_test_id(test.path if canonical_test_paths is None else canonical_test_paths[test.path], name)
             outcome, category, _observation = _run_donor_present_test(policy, "/contract/" + test.path, name, identifier)
             outcomes.append(TestOutcomeEvidence(identifier, outcome, category, _digest(_canonical({"id": identifier, "outcome": outcome.value}))))
     ordered = tuple(sorted(outcomes))
@@ -464,7 +467,9 @@ def build_containment_policy(*, nsjail_sha256: str, nsjail_version: str, nsjail_
     _require_substrate()
     mounts = tuple(sorted((ReadOnlyMount("/", str(rootfs_source), rootfs_digest), *readonly_mounts)))
     payload = {"readonly_mounts": [{"destination": item.destination, "source": item.source, "source_digest": item.source_digest} for item in mounts], "rootfs_digest": rootfs_digest, "scratch_dir": str(scratch_dir), "writable_tmpfs": "/work", "writable_tmpfs_bytes": 1_048_576, "writable_tmpfs_inodes": 128}
-    return ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, str(scratch_dir), "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
+    policy = ContainmentPolicy(POLICY_SCHEMA, "/usr/bin/nsjail", nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest, platform.machine(), rootfs_digest, _digest(_canonical(payload)), mounts, "/work", 1_048_576, 128, str(scratch_dir), "/work", "ONCE", False, True, True, True, True, True, True, True, 67_108_864, 16, 500, 2, 64, 1, 1, 32, 16, 8, 0, 65_536, tuple(sorted(environment)), True)
+    record_debug_mount_source_manifests(policy)
+    return policy
 
 
 def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
@@ -472,6 +477,20 @@ def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
 
     staged = directory / "recipient"
     relocation.publish(staged)
+    # NsJail maps the invoking runner identity before opening mount sources.
+    # Relocation deliberately preserves owner-only modes, and changing them
+    # changes the directory-tree digest pinned by the rerun policy.  When this
+    # process is sudo-root, hand ownership to that mapped runner identity while
+    # retaining every mode and byte exactly as E1 emitted them.
+    if getattr(os, "geteuid", lambda: -1)() == 0:
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():
+            for current, directories, files in os.walk(staged):
+                directories.sort()
+                os.chown(current, int(sudo_uid), int(sudo_gid))
+                for name in sorted(files):
+                    os.chown(Path(current, name), int(sudo_uid), int(sudo_gid))
     return staged
 
 
@@ -504,11 +523,14 @@ def _deterministic_stage_directory(corpus_root: Path, identity: object) -> Path:
     if base.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging base must not be a symlink", detail_code="pipeline_cli_staging_path_v1")
     base.mkdir(mode=0o700, exist_ok=True)
+    # This is only a source-path ancestor: permit search, not listing or writes.
+    os.chmod(base, 0o711)
     digest = hashlib.sha256(_canonical({"schema_version": "leitir-deterministic-staging-v1", "identity": identity})).hexdigest()
     stage = base / digest
     if stage.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging path must not be a symlink", detail_code="pipeline_cli_staging_path_v1")
     stage.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(stage, 0o711)
     if not stage.is_dir() or stage.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging path is not a directory", detail_code="pipeline_cli_staging_path_v1")
     return stage
@@ -640,7 +662,7 @@ def _rerun_policy_for_relocation(
     files = {item.path: item for item in relocation.files}
     mounts = tuple(
         ReadOnlyMount(
-            "/" + authorization.logical_path,
+            RERUN_MOUNT_ROOT + "/" + authorization.logical_path,
             str(staged_root.joinpath(*authorization.logical_path.split("/"))),
             files[authorization.logical_path].sha256,
         )
@@ -823,39 +845,60 @@ def _relocate_prepared(
     recipient_package: str,
     contract_tests: tuple[ContractTest, ...],
     test_import_aliases: tuple[tuple[str, str], ...] = (),
+    sibling_source_modules: tuple[str, ...] = (),
+    authorized_modules: tuple[str, ...] = (),
 ) -> Relocation:
     """Compute E1 before S2 policy assembly, without executing donor bytes."""
 
     bts = _complete_bts(preliminary)
+    try:
+        verify_materialized_tree_hash(
+            snapshot.source_root,
+            snapshot.materialized_tree_hash,
+            algorithm=snapshot.materialized_tree_hash_algorithm,
+            scope=snapshot.materialized_tree_hash_scope,
+        )
+    except TreeHashError as exc:
+        raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor snapshot changed before sibling relocation", detail_code="pipeline_cli_sibling_source_digest_v1", cause=exc) from exc
     modules = tuple(sorted({member.node.module for member in bts.members}))
-    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
+    if sibling_source_modules != tuple(sorted(set(sibling_source_modules))) or set(sibling_source_modules) & set(modules):
+        raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "sibling source authorization is malformed", detail_code="pipeline_cli_sibling_source_policy_v1")
+    all_modules = tuple(sorted((*modules, *sibling_source_modules)))
+    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in all_modules))
     source_files = tuple(
         SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for path in sorted({item.path for item in bts.required_files})
     )
-    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"} | set(authorized_modules)))
+    sibling_sources = tuple(
+        (module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)))
+        for module in sibling_source_modules
+    )
     return relocate_tests(
         preliminary,
         module_map=module_map,
         source_files=source_files,
         tests=contract_tests,
+        sibling_sources=sibling_sources,
         declared_external_modules=external_modules,
         test_import_aliases=test_import_aliases,
     )
 
 
-def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> BTSPipelineRequest:
+def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), sibling_source_modules: tuple[str, ...] = (), authorized_modules: tuple[str, ...] = ()) -> BTSPipelineRequest:
     """Build the shared non-executing request portion for CLI and bench callers."""
 
     bts = _complete_bts(preliminary)
     modules = tuple(sorted({member.node.module for member in bts.members}))
-    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
+    all_modules = tuple(sorted((*modules, *sibling_source_modules)))
+    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in all_modules))
     source_files = tuple(
         SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for path in sorted({item.path for item in bts.required_files})
     )
     probe_set = ProbeSet.pin(bts_digest=bts.bts_digest, seed=selected, bts_members=tuple(member.node for member in bts.members), catalog_edges=(), probes=())
-    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"} | set(authorized_modules)))
+    sibling_sources = tuple((module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))) for module in sibling_source_modules)
     provider = cast(Callable[[Path], Graph], bts_cli.python_graph_provider(snapshot))
     if authorized_seed_span is not None:
         base_provider = provider
@@ -865,7 +908,7 @@ def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolu
 
         provider = span_provider
 
-    return BTSPipelineRequest(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, test_import_aliases=test_import_aliases, precomputed_relocation=precomputed_relocation)
+    return BTSPipelineRequest(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, sibling_sources, test_import_aliases=test_import_aliases, precomputed_relocation=precomputed_relocation)
 
 
 def _license_from_materialized_donor(root: Path) -> str | None:
@@ -1066,6 +1109,8 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     test_import_aliases = _task_module_aliases(task, preliminary)
     package_suffix = identity.slug.replace("/", "_").replace("-", "_")
     package = f"transplant.{task.task_id.replace('-', '_')}.{package_suffix}"
+    sibling_sources = bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else ()
+    authorized_modules = bts_cli.load_relocation_authorized_modules(resolution_policy_path) if resolution_policy_path is not None else ()
     if not donor_execution_enabled():
         # The ordinary path above rejects before donor input when S2 is absent.
         # This narrow reviewed-fixture seam remains non-executable: it exists
@@ -1088,11 +1133,11 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=None, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases,
+            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, ranking_unranked=ranking_unranked)
-    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases)
+    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules)
     staging, staged = _prepare_shared_stage(
         root,
         {"kind": "task", "task_id": task.task_id, "identity": identity.to_dict(), "relocation_digest": relocation.relocation_digest},
@@ -1108,6 +1153,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             contract_root=staged / "staging-v1" / "tests" / "original",
             import_roots=_task_baseline_import_roots(task),
             test_import_aliases=test_import_aliases,
+            canonical_test_paths={item.path: Path(item.path).name for item in contract_tests},
         )
         sidecar = _task_baseline_from_sidecar(baseline_sidecar, task, contract_test_paths=expected_paths)
         if (baseline.counts, baseline.selected_test_ids) != (sidecar.counts, sidecar.selected_test_ids):
@@ -1121,7 +1167,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=relocation, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases,
+            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, staging=staging, ranking_unranked=ranking_unranked)
@@ -1614,12 +1660,16 @@ def exit_gate_run(
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "exit pipeline requires a complete static BTS", detail_code="pipeline_cli_non_complete_bts_v1")
         package = f"transplant.{case_id.replace('-', '_')}"
         test_import_aliases = _exit_module_aliases(preliminary, import_roots)
+        sibling_sources = bts_cli.load_sibling_source_modules(root / policy_path) if policy_path is not None else ()
+        authorized_modules = bts_cli.load_relocation_authorized_modules(root / policy_path) if policy_path is not None else ()
         relocation = _relocate_prepared(
             snapshot,
             preliminary,
             recipient_package=package,
             contract_tests=tests,
             test_import_aliases=test_import_aliases,
+            sibling_source_modules=sibling_sources,
+            authorized_modules=authorized_modules,
         )
         _stage, staged = _prepare_shared_stage(
             root,
@@ -1649,6 +1699,8 @@ def exit_gate_run(
             precomputed_relocation=relocation,
             authorized_seed_span=authorized_seed_span,
             test_import_aliases=test_import_aliases,
+            sibling_source_modules=sibling_sources,
+            authorized_modules=authorized_modules,
         )
         exit_cases.append(ExitCorpusCase.pin(cast(str, raw_case["case_id"]), cast(str, raw_case["source_provenance"]), "sha256:" + cast(str, raw_case["review_receipt_digest"]), request))
        except BTSError as exc:

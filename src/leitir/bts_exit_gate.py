@@ -290,7 +290,11 @@ def _run_case(case: ExitCorpusCase, pipeline: Pipeline) -> ExitDonorReport:
         and rerun.baseline_digest == case.baseline_digest
         and rerun.counts == case.request.baseline.counts
         and rerun.selected_test_ids == case.request.baseline.selected_test_ids
-        and rerun.outcomes == case.request.baseline.outcomes
+        # ADR-0009 §5 (lines 365-366) requires exact canonical-ID tuples,
+        # counts, and per-ID semantic outcomes. Detail categories and digests
+        # bind distinct baseline/rerun executors, so they may differ.
+        and tuple((item.canonical_test_id, item.outcome) for item in rerun.outcomes)
+        == tuple((item.canonical_test_id, item.outcome) for item in case.request.baseline.outcomes)
     )
     donor_ban = rerun is not None and rerun.donor_absence_authority is DonorAbsenceAuthority.FILESYSTEM_MOUNT_BOUNDARY
     # E2 makes an observed donor import terminal, so a COMPLETE bound report is
@@ -302,6 +306,15 @@ def _run_case(case: ExitCorpusCase, pipeline: Pipeline) -> ExitDonorReport:
     details = list(result.verdict.detail_categories)
     if not zero:
         details.append("exit_nonzero_baseline_failures_v1")
+    recorded_vector = None if rerun is None else tuple(
+        (item.canonical_test_id, item.outcome.value) for item in rerun.outcomes
+    )
+    recorded_counts = None if rerun is None else (
+        ("failed", rerun.counts.failed),
+        ("passed", rerun.counts.passed),
+        ("skipped", rerun.counts.skipped),
+    )
+    expected_vector, expected_counts = _baseline_observation(case.request.baseline)
     return ExitDonorReport(
         case.case_id,
         ValidationStatus.COMPLETE if passed else ValidationStatus.REJECT,
@@ -313,6 +326,10 @@ def _run_case(case: ExitCorpusCase, pipeline: Pipeline) -> ExitDonorReport:
         zero,
         result.verdict.validation_digest,
         tuple(sorted(set(details))),
+        recorded_vector,
+        recorded_counts,
+        expected_vector,
+        expected_counts,
     )
 
 

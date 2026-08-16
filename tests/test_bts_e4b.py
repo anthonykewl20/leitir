@@ -18,7 +18,7 @@ import pytest
 
 import leitir.rerun as rerun_module
 from leitir.bts import BTSStatus, compute_bts
-from leitir.bts_exit_gate import ExitCorpus, ExitCorpusCase, run_exit_gate
+from leitir.bts_exit_gate import ExitCorpus, ExitCorpusCase, _run_case, run_exit_gate
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult, run_bts_pipeline
 from leitir.probes import ProbeSet
 from leitir.relocate import relocate_tests
@@ -168,6 +168,15 @@ def test_exit_gate_is_an_and_and_still_runs_every_donor(tmp_path: Path) -> None:
     assert report.status is ValidationStatus.REJECT
     assert [item.status for item in report.donors].count(ValidationStatus.REJECT) == 1
     assert pipeline.ran == [f"donor-{number}" for number in range(5)]
+    rejected = next(item for item in report.donors if item.status is ValidationStatus.REJECT)
+    expected = report.donors[0].expected_outcome_vector
+    expected_counts = report.donors[0].expected_counts
+    assert expected is not None
+    assert expected_counts is not None
+    assert rejected.expected_outcome_vector == expected
+    assert rejected.expected_counts == expected_counts
+    assert rejected.recorded_outcome_vector is not None
+    assert rejected.recorded_counts is not None
 
 
 def test_exit_gate_rejects_nonzero_failure_baseline_even_with_exact_parity(tmp_path: Path) -> None:
@@ -180,6 +189,41 @@ def test_exit_gate_rejects_nonzero_failure_baseline_even_with_exact_parity(tmp_p
     assert not failed.zero_failure_baseline
     assert failed.status is ValidationStatus.REJECT
     assert report.status is ValidationStatus.REJECT
+
+
+def test_exit_gate_ignores_executor_specific_outcome_evidence_for_parity(tmp_path: Path) -> None:
+    case = _corpus(_fixture_roots(tmp_path)).cases[0]
+    trusted = TrustedCorpusPipeline()
+
+    def pipeline(request: BTSPipelineRequest) -> BTSPipelineResult:
+        result = trusted(request)
+        assert result.bts.bts is not None
+        assert isinstance(result.rerun, rerun_module.RerunReport)
+        outcomes = tuple(
+            replace(
+                item,
+                detail_category="independent_rerun_evidence_v1",
+                detail_digest=_digest((item.canonical_test_id + item.outcome.value + "rerun").encode()),
+            )
+            for item in result.rerun.outcomes
+        )
+        rerun = rerun_module._report(
+            status=ValidationStatus.COMPLETE,
+            reason=None,
+            details=(),
+            artifact=result.bts.bts,
+            relocation=result.relocation,
+            baseline=request.baseline,
+            policy=request.rerun_execution_policy,
+            outcomes=outcomes,
+            runtime_digest=result.rerun.runtime_observation_digest,
+        )
+        return replace(result, rerun=rerun)
+
+    report = _run_case(case, pipeline)
+
+    assert report.exact_rerun_parity
+    assert report.status is ValidationStatus.COMPLETE
 
 
 def test_additive_expansion_changes_digest_and_old_ratification_rejects_swap(tmp_path: Path) -> None:

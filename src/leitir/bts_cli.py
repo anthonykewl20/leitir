@@ -139,6 +139,7 @@ class _PolicySpec:
 
     stdlib_modules: tuple[str, ...]
     adapters: tuple[tuple[str, str], ...]
+    sibling_source_modules: tuple[str, ...] = ()
 
 
 def load_donor_snapshot(root: Path, owner: str, repo: str, commit_sha: str, *, host: str = "github.com") -> DonorSnapshot:
@@ -419,7 +420,10 @@ def _load_policy_spec(path: Path) -> _PolicySpec:
     try:
         raw = _read_regular(path, maximum=_LOCK_MAX_BYTES)
         value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_object)
-        if not isinstance(value, dict) or set(value) != {"schema_version", "stdlib_modules", "adapters"}:
+        if not isinstance(value, dict) or set(value) not in (
+            {"schema_version", "stdlib_modules", "adapters"},
+            {"schema_version", "stdlib_modules", "adapters", "sibling_source_modules"},
+        ):
             raise ValueError("policy has missing or unknown fields")
         if value["schema_version"] != POLICY_SCHEMA_VERSION:
             raise ValueError("policy schema_version is not pinned")
@@ -446,7 +450,15 @@ def _load_policy_spec(path: Path) -> _PolicySpec:
             raise ValueError("adapters must be sorted and have unique modules")
         if set(stdlib_modules) & {module for module, _ in adapters}:
             raise ValueError("a module cannot have both stdlib and adapter policy")
-        return _PolicySpec(stdlib_modules, ordered_adapters)
+        siblings_raw = value.get("sibling_source_modules", [])
+        if not isinstance(siblings_raw, list):
+            raise ValueError("sibling_source_modules must be a list")
+        siblings = tuple(_required_policy_text(item, "sibling_source_modules item") for item in siblings_raw)
+        if siblings != tuple(sorted(set(siblings))):
+            raise ValueError("sibling_source_modules must be sorted and unique")
+        if set(siblings) & set(stdlib_modules):
+            raise ValueError("a sibling source cannot be stdlib")
+        return _PolicySpec(stdlib_modules, ordered_adapters, siblings)
     except BTSError:
         raise
     except (OSError, TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
@@ -531,6 +543,7 @@ def load_resolution_policy(path: Path, graph: Graph) -> ResolutionPolicy:
             {
                 "adapters": [{"disposition": disposition, "module": module} for module, disposition in spec.adapters],
                 "schema_version": POLICY_SCHEMA_VERSION,
+                "sibling_source_modules": list(spec.sibling_source_modules),
                 "stdlib_modules": list(spec.stdlib_modules),
             }
         ),
@@ -547,6 +560,18 @@ def load_resolution_policy(path: Path, graph: Graph) -> ResolutionPolicy:
         catalog,
         tuple(rules),
     )
+
+
+def load_sibling_source_modules(path: Path) -> tuple[str, ...]:
+    """Return the closed-policy donor modules authorized for sibling relocation."""
+
+    return _load_policy_spec(path).sibling_source_modules
+
+
+def load_relocation_authorized_modules(path: Path) -> tuple[str, ...]:
+    """Return exact policy modules permitted in an E1 preamble closure."""
+    spec = _load_policy_spec(path)
+    return tuple(sorted((*spec.stdlib_modules, *(module for module, _ in spec.adapters))))
 
 
 _SEED_KINDS = frozenset({

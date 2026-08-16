@@ -234,6 +234,19 @@ def test_startup_attestation_accepts_faked_applied_procfs_receipt() -> None:
     sandbox.validate_startup_attestation(receipt)
 
 
+def test_launch_config_debug_opt_in_does_not_change_the_static_policy(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    plan = sandbox.ExecutionPlan("leitir-execution-plan-v1", policy, str(fake_nsjail[0]), policy.nsjail_sha256, platform.machine(), (), "", (), 2, 4096, "sha256:" + "0" * 64, "sha256:" + "0" * 64, True)
+    monkeypatch.setattr(sandbox, "_startup_attestation_environment", lambda: ())
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+
+    assert "log_level: FATAL" in plan.config_text or plan.config_text == ""
+    assert "log_level: DEBUG" in sandbox._launch_config(plan)
+    assert policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
+
+
 @pytest.mark.parametrize(
     ("status", "child", "pid"),
     [
@@ -410,6 +423,25 @@ def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_source
     assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
 
 
+def test_generated_nsjail_config_mounts_exact_files_below_work_after_its_writable_bind(
+    fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    source = Path(policy.scratch_dir).parent / "input.json"
+    source.write_bytes(b"{}")
+    file_mount = ReadOnlyMount("/work/staging-v1/manifests/input.json", str(source), _digest(b"{}"))
+    config_text = sandbox._render_config(
+        replace(policy, readonly_mounts=tuple(sorted((*policy.readonly_mounts, file_mount))))
+    )
+
+    writable = f'mount {{ src: {json.dumps(policy.scratch_dir)} dst: "/work" '
+    root = f'mount {{ src: {json.dumps(policy.readonly_mounts[0].source)} dst: "/" '
+    exact_file = f'mount {{ src: {json.dumps(str(source))} dst: "/work/staging-v1/manifests/input.json" '
+    assert root in config_text and writable in config_text and exact_file in config_text
+    assert config_text.index(root) < config_text.index(writable) < config_text.index(exact_file)
+    assert 'is_dir: false mandatory: true nosuid: true nodev: true }' in config_text[config_text.index(exact_file):]
+
+
 def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_invoker(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:
@@ -541,15 +573,32 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     assert policy.seccomp_string == sandbox.CANONICAL_SECCOMP_STRING
     assert policy.seccomp_string == (
         "DEFAULT KILL\n"
-        "ALLOW { access, arch_prctl, brk, clock_gettime, close, execve, exit, exit_group, fcntl, futex, getcwd, "
-        "getdents64, getpid, getrandom, gettid, lseek, mmap, mprotect, munmap, newfstat, newfstatat, open, "
-        "openat, pread64, prlimit64, read, readlink, readlinkat, rseq, rt_sigaction, rt_sigprocmask, "
+        "ALLOW { access, arch_prctl, brk, clock_gettime, close, epoll_create1 { flags == 524288 }, execve, exit, exit_group, fcntl, futex, getcwd, "
+        "getdents64, getpid, getrandom, gettid, ioctl { cmd == 21505 }, ioctl { cmd == 21585 }, lseek, mkdir, mmap, mprotect, mremap, munmap, "
+        "newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rename, rseq, rt_sigaction, rt_sigprocmask, "
         "sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
     )
     allowed = {item.value for item in sandbox.CANONICAL_SECCOMP_POLICY.allowed_syscalls}
     assert "stat" not in allowed
     assert {"newfstat", "newfstatat"} <= allowed
+    assert "ioctl { cmd == 21505 }" in allowed
+    assert "ioctl { cmd == 21585 }" in allowed
+    assert "ALLOW { ioctl," not in policy.seccomp_string
+    assert "mremap" in allowed
+    assert "epoll_create1 { flags == 524288 }" in allowed
+    assert "ALLOW { epoll_create1," not in policy.seccomp_string
     assert allowed.isdisjoint(sandbox._FORBIDDEN_SYSCALLS)
+
+
+def test_debug_config_enables_kernel_seccomp_audit_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    assert "seccomp_log: true" not in sandbox._render_config(policy)
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+    config = sandbox._render_config(policy)
+    assert "seccomp_log: true" in config
+    assert f"seccomp_string: {json.dumps(sandbox.CANONICAL_SECCOMP_STRING)}" in config
 
 
 @pytest.mark.parametrize(
@@ -581,6 +630,31 @@ def test_mount_source_digest_tamper_rejects_before_launch(
     with pytest.raises(TransplantError) as caught:
         prepare_execution(policy)
     assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="nsjail containment is Linux-only (ADR-0009 §3)")
+def test_mount_source_digest_debug_reports_per_entry_diff(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fake_nsjail: tuple[Path, str, str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    monkeypatch.setenv("LEITIR_NSJAIL_DEBUG", "1")
+    policy = _policy(fake_nsjail)
+    sandbox.record_debug_mount_source_manifests(policy)
+    root_file = Path(policy.readonly_mounts[0].source, "python")
+    root_file.chmod(0o755)
+    root_file.write_bytes(b"tampered")
+    with pytest.raises(TransplantError):
+        prepare_execution(policy)
+    diagnostic = capsys.readouterr().err.removeprefix("leitir mount-source digest mismatch ")
+    payload = json.loads(diagnostic)
+    assert payload["actual_digest"] != payload["expected_digest"]
+    assert payload["entry_diff"] == [
+        {
+            "actual": {"mode": 0o755, "path": "python", "sha256": _digest(b"tampered"), "size": 8, "type": "file"},
+            "expected": {"mode": 0o555, "path": "python", "sha256": _digest(b"rootfs"), "size": 6, "type": "file"},
+            "path": "python",
+        }
+    ]
 
 
 @pytest.mark.skipif(
@@ -629,6 +703,23 @@ def test_offline_execution_reaches_backend_after_static_containment_validation(
     # real rootfs runner's mandatory startup frame is verified by rerun.py.
     assert result.completed
     assert marker.read_text(encoding="utf-8") == "ok"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or not Path("/usr/bin/strace").is_file(),
+    reason="debug strace wrapper requires Linux strace",
+)
+def test_debug_containment_trace_is_controller_only_and_removed(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    monkeypatch.setenv("LEITIR_NSJAIL_DEBUG", "1")
+    plan = prepare_execution(_policy(fake_nsjail))
+    result = run_contained(plan, (sys.executable, "-c", "pass"))
+    captured = capsys.readouterr()
+    assert result.completed
+    assert "leitir debug seccomp ioctl trace" in captured.err
+    assert not list(Path("/tmp").glob(".leitir-seccomp-*.strace"))
 
 
 @pytest.mark.skipif(

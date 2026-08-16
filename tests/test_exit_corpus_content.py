@@ -14,8 +14,8 @@ _REPO_ROOT = Path(__file__).parents[1]
 _CORPUS_ROOT = _REPO_ROOT / "benchmarks" / "exit-corpus"
 _MANIFEST_PATH = _CORPUS_ROOT / "corpus-v1.1.json"
 _REVIEW_RECORD_PATH = _CORPUS_ROOT / "review-record-v1.md"
-_EXPECTED_CONTENT_DIGEST = "349f8e0f7ad7f8fa891a1182d1bc8d37483dcb060e9d8fa15efe1f602cff22fe"
-_PHASE_A_RUNTIME_DIGEST = "sha256:7f12baa1b24dec4a5b4d90d55b36ee55138e9edc3dc3f1fa53bae11dd4fbacb7"
+_EXPECTED_CONTENT_DIGEST = "c1c0e4ece9eb6524e2435f05d6ba2a9f4f4794d4239a2704a4c55b4b0c908f0f"
+_PHASE_A_RUNTIME_DIGEST = "sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43"
 _EXPECTED_OUTCOMES: dict[str, tuple[int, int, int, int]] = {
     "backoff-full-jitter": (2, 2, 0, 0),
     "haversine-avg-earth-radius": (2, 2, 0, 0),

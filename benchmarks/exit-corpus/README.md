@@ -53,7 +53,9 @@ Recorded on 2026-08-15 against freshly fetched pins:
 
 ## Ratification and execution boundary
 
-`ratified_manifest_digest` is deliberately `null`. The protocol is:
+`ratified_manifest_digest` remains `null`; it is a content-binding convention,
+not the out-of-band authority. The ratified runtime authority is recorded in
+`ratified_runtime_digest`. The protocol is:
 
 1. **Phase A:** run `exit-gate-run` unratified. Its report publishes the stable
    runtime `corpus_manifest_digest`; the gate honestly rejects.
@@ -67,9 +69,33 @@ Recorded on 2026-08-15 against freshly fetched pins:
    Missing, tampered, self-made, or untrusted signatures reject; equality alone
    cannot create authority.
 
-The runnable substrate pins become authoritative once CI has measured them.
-This bootstrap corpus leaves them null until the first successful measurement;
-CI still requires explicit measured values and rejects drift after pinning.
+### 2026-08-16 Phase-B/C ceremony and pinned rerun
+
+The owner explicitly delegated closure decisions to this session on 2026-08-16.
+An Ed25519 ratifier key was generated out of band from the corpus for this
+delegated session ceremony; its private-key location is disclosed only in the
+PR description and the private key is never committed. The public key is in
+`trusted-keys-v1.json`; its key ID is
+`8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
+The detached `ratification-v1.json` signs the canonical projection for
+`bts-exit-v0-1-2-real-five`, where both runtime-digest fields are
+`sha256:6d343db6f8e94186cc18052533ddf5f10c75ac569d2dc43a5b2e69c2881f2227`.
+That is the Phase-A runtime digest measured on
+[run 31954515706](https://github.com/anthonykewl20/leitir/actions/runs/31954515706).
+
+The same run measured and this manifest now pins:
+
+* `nsjail_sha256`: `sha256:2a740ac196d27176216788f6213d585cd5b5933f83f2c9bff31ce95cd64939d4`
+* `nsjail_version`: `nsjail@f78475530b46d0186111a9096b30725f816b55fe`
+* `nsjail_build_identity`: `sha256:9fc7783e8fee63cf059bb5e48053f3ac77e80fda34128917bae956bda90c0c4b`
+* `config_schema_digest`: `sha256:39803af3291a1f08860ec1ec4b028aba5d000df53d2f0f73781718f75ff16c80`
+* `rootfs_digest`: `sha256:e82de50658175072ae7cd26e5741aafd2b28d3c8e3e1abd28ca4f0768489e0a2`
+
+The workflow passes the trusted-key file by its absolute workspace path because
+the trust-anchor loader rejects relative paths; it is outside the donor shelf
+(`$RUNNER_TEMP/leitir-corpus-root`). The owner should rotate this delegated
+session key to an owner-controlled long-term key before any future
+re-ratification.
 
 A digest computed by this repository only binds content and cannot ratify it.
 

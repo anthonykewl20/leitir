@@ -486,6 +486,13 @@ digests, review receipt digests, and one ratified manifest digest. A manifest's
 self-hash is integrity evidence, not authority or cherry-pick resistance. CI
 accepts only the digest named by the release policy/ADR-approved authority.
 
+For the runnable v1.1 exit corpus, this authority is an out-of-band Ed25519
+signature over the exact `{corpus_id, corpus_manifest_digest,
+ratified_runtime_digest}` projection. The trusted public-key configuration is
+outside the materialized donor shelf, and the ratified runtime digest must equal
+the independently measured gate digest; corpus content and its self-hash cannot
+ratify either value.
+
 For v0.1.2, membership is monotonic and `N >= 5` materially different donor
 repositories are retained. Ordinary changes are additive expansion only.
 Removal, replacement, or exclusion is prohibited during v0.1.2 except a

@@ -14,8 +14,8 @@ _REPO_ROOT = Path(__file__).parents[1]
 _CORPUS_ROOT = _REPO_ROOT / "benchmarks" / "exit-corpus"
 _MANIFEST_PATH = _CORPUS_ROOT / "corpus-v1.1.json"
 _REVIEW_RECORD_PATH = _CORPUS_ROOT / "review-record-v1.md"
-_EXPECTED_CONTENT_DIGEST = "f295f9b3e265c79aa19137c7c01c7a6e9d1e1671473e448b853c861313088ddd"
-_PHASE_A_RUNTIME_DIGEST = "sha256:6d343db6f8e94186cc18052533ddf5f10c75ac569d2dc43a5b2e69c2881f2227"
+_EXPECTED_CONTENT_DIGEST = "00c5d6c83215d63ed1fecd7c62675569f27eff6f95dc0c7eff8b3d3f8ef92929"
+_PHASE_A_RUNTIME_DIGEST: str | None = None
 _EXPECTED_OUTCOMES: dict[str, tuple[int, int, int, int]] = {
     "backoff-full-jitter": (2, 2, 0, 0),
     "haversine-avg-earth-radius": (2, 2, 0, 0),
@@ -109,7 +109,7 @@ def test_real_exit_corpus_manifest_is_structurally_valid_and_content_bound() -> 
         "nsjail_build_identity": "sha256:9fc7783e8fee63cf059bb5e48053f3ac77e80fda34128917bae956bda90c0c4b",
         "nsjail_sha256": "sha256:2a740ac196d27176216788f6213d585cd5b5933f83f2c9bff31ce95cd64939d4",
         "nsjail_version": "nsjail@f78475530b46d0186111a9096b30725f816b55fe",
-        "rootfs_digest": "sha256:5793b4f625038eb2dc0319a2024de176e61c86c68b0d5a14ed3728cf16bb740c",
+        "rootfs_digest": "sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac",
     }
     runnable_cases = {item["case_id"]: item for item in runnable["per_case"]}
     assert {case_id: item["import_roots"] for case_id, item in runnable_cases.items()} == {

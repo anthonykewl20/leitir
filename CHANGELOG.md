@@ -165,6 +165,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - publish pinned contained rootfs
 - ratify release rootfs runtime digest
+- re-ratify diagnostic harness runtime
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)

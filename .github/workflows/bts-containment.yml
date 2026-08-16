@@ -8,6 +8,16 @@ on:
         required: false
         default: true
         type: boolean
+      publish_rootfs:
+        description: Build and publish the deterministic contained rootfs release asset
+        required: false
+        default: false
+        type: boolean
+      rebuild_rootfs:
+        description: Rebuild the contained rootfs instead of consuming the release asset
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -256,6 +266,10 @@ jobs:
   corpus:
     name: Run pinned exit corpus under containment
     runs-on: ubuntu-latest
+    permissions:
+      # The workflow default is empty. This is the only job that can publish the
+      # rootfs release asset; checkout itself never persists its credentials.
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -269,12 +283,14 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Install test requirements
         run: uv pip install --system --requirement requirements.txt
-      - name: Build immutable donor-free contained rootfs
+      - name: Prepare immutable donor-free contained rootfs
         env:
+          GH_TOKEN: ${{ github.token }}
           PYTHONPATH: src
         run: |
           set -eu
           rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
+          if [[ '${{ inputs.publish_rootfs }}' == 'true' || '${{ inputs.rebuild_rootfs }}' == 'true' ]]; then
           rm -rf "$rootfs"
           # Populate before making the image immutable.  In particular, neither
           # cp, uv, nor NsJail may be asked to create entries below a read-only
@@ -474,6 +490,63 @@ jobs:
           )"
           LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/work/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import importlib.util; spec=importlib.util.spec_from_file_location("leitir_scratch_runner", "'"$rootfs"'/harness/runner.py"); runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); runner.verify_required_stdlib()'
           chmod -R a-w "$rootfs"
+          else
+            expected_rootfs_digest="$(PYTHONPATH=src python - <<'PY'
+          from pathlib import Path
+
+          from leitir.exit_corpus import load_corpus_manifest
+
+          manifest = load_corpus_manifest(Path("benchmarks/exit-corpus/corpus-v1.1.json"))
+          runnable = manifest["runnable"]
+          assert isinstance(runnable, dict)
+          substrate = runnable["substrate"]
+          assert isinstance(substrate, dict)
+          rootfs_digest = substrate["rootfs_digest"]
+          if not isinstance(rootfs_digest, str):
+              raise SystemExit("rootfs manifest pin is missing")
+          print(rootfs_digest)
+          PY
+          )"
+            archive="$RUNNER_TEMP/leitir-contained-rootfs.tar"
+            rm -rf "$rootfs" "$archive"
+            mkdir -p "$rootfs"
+            gh release download containment-rootfs-v1 --repo "$GITHUB_REPOSITORY" --pattern leitir-contained-rootfs.tar --dir "$RUNNER_TEMP"
+            tar --extract --file "$archive" --directory "$rootfs" --no-same-owner --same-permissions
+            measured_rootfs_digest="$(ROOTFS_SOURCE="$rootfs" PYTHONPATH=src python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')"
+            if [[ "$measured_rootfs_digest" != "$expected_rootfs_digest" ]]; then
+              printf 'published rootfs digest mismatch: expected %s, measured %s\n' "$expected_rootfs_digest" "$measured_rootfs_digest" >&2
+              exit 1
+            fi
+            "$rootfs/usr/bin/python3" --version | tee "$RUNNER_TEMP/leitir-python-version.txt"
+          fi
+      - name: Publish deterministic contained rootfs release asset
+        if: ${{ inputs.publish_rootfs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: src
+        run: |
+          set -eu
+          rootfs="$RUNNER_TEMP/leitir-contained-rootfs"
+          archive="$RUNNER_TEMP/leitir-contained-rootfs.tar"
+          rootfs_digest="$(ROOTFS_SOURCE="$rootfs" python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')"
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$rootfs" -cf "$archive" .
+          archive_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+          cat >"$RUNNER_TEMP/containment-rootfs-release-notes.md" <<EOF
+          # Containment rootfs v1
+
+          This asset is the immutable donor-free rootfs for the BTS containment
+          workflow. Consumers must recompute the canonical directory-tree digest
+          after extraction and reject unless it matches their manifest pin.
+
+          * Rootfs tree digest: \`$rootfs_digest\`
+          * Tarball SHA-256: \`$archive_digest\`
+          EOF
+          if gh release view containment-rootfs-v1 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload containment-rootfs-v1 "$archive" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit containment-rootfs-v1 --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/containment-rootfs-release-notes.md"
+          else
+            gh release create containment-rootfs-v1 "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "containment-rootfs-v1" --notes-file "$RUNNER_TEMP/containment-rootfs-release-notes.md"
+          fi
       - name: Build pinned nsjail
         run: sudo tools/build-nsjail.sh
       - name: Materialize every pinned exit-corpus donor

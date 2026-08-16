@@ -106,6 +106,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - accept sampled structural candidate pins (`bench`)
 - address review findings (qwen) (`corpus`)
 - align containment smoke root and evidence
+- align exit rerun parity with ADR-0009
 - align live identity digest check
 - allow contained CPython startup syscalls
 - allow CPython close-on-exec ioctl under containment

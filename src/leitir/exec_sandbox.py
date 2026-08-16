@@ -600,6 +600,11 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f'uidmap {{ inside_id: "65534" outside_id: "{host_uid}" count: 1 use_newidmap: false }}',
         f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
+    # This changes only the kernel audit disposition for denied calls.  It is
+    # controller-only diagnostics, enabled exclusively for contained CI probes;
+    # the policy remains DEFAULT KILL and grants no additional syscall surface.
+    if os.environ.get(NSJAIL_DEBUG_ENV) == "1":
+        lines.append("seccomp_log: true")
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
     def render_readonly_mount(mount: ReadOnlyMount) -> str:
         # NsJail applies the user mapping before it builds this mount tree.  Do

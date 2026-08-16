@@ -588,6 +588,17 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     assert allowed.isdisjoint(sandbox._FORBIDDEN_SYSCALLS)
 
 
+def test_debug_config_enables_kernel_seccomp_audit_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    assert "seccomp_log: true" not in sandbox._render_config(policy)
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+    config = sandbox._render_config(policy)
+    assert "seccomp_log: true" in config
+    assert f"seccomp_string: {json.dumps(sandbox.CANONICAL_SECCOMP_STRING)}" in config
+
+
 @pytest.mark.parametrize(
     "custom",
     [

@@ -534,6 +534,9 @@ jobs:
           --nsjail-build-identity ${{ steps.substrate.outputs.nsjail_build_identity }}
           --config-schema-digest ${{ steps.substrate.outputs.config_schema_digest }}
           --rootfs-source ${{ runner.temp }}/leitir-contained-rootfs --json
+      - name: Report debug seccomp denials
+        if: ${{ always() }}
+        run: sudo dmesg --color=never | tail -n 200 || true
       - name: Restore exit-gate artifact ownership
         if: ${{ always() }}
         run: |

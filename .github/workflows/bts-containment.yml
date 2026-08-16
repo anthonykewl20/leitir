@@ -400,7 +400,7 @@ jobs:
 
           def _rootfs_paths():
               rootfs = pathlib.Path(os.environ.get("LEITIR_ROOTFS", "/"))
-              return rootfs, tuple(rootfs / path for path in ("staging-v1/src", "opt/leitir/site-packages", "usr/lib/python3.12/lib-dynload", "usr/lib/python3.12"))
+              return rootfs, tuple(rootfs / path for path in ("work/staging-v1/src", "opt/leitir/site-packages", "usr/lib/python3.12/lib-dynload", "usr/lib/python3.12"))
 
           def verify_required_stdlib():
               rootfs, paths = _rootfs_paths()
@@ -435,7 +435,7 @@ jobs:
                   return original_import(name, globals, locals, fromlist, level)
               builtins.__import__ = recording_import
               outcomes = []
-              for path in sorted((rootfs / "staging-v1/tests/rewritten").rglob("*.py")):
+              for path in sorted((rootfs / "work/staging-v1/tests/rewritten").rglob("*.py")):
                   spec = importlib.util.spec_from_file_location("leitir_contract_" + hashlib.sha256(str(path).encode()).hexdigest(), path)
                   module = importlib.util.module_from_spec(spec)
                   try:
@@ -472,7 +472,7 @@ jobs:
           print(" ".join((*modules, "hashlib")))
           PY
           )"
-          LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import importlib.util; spec=importlib.util.spec_from_file_location("leitir_scratch_runner", "'"$rootfs"'/harness/runner.py"); runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); runner.verify_required_stdlib()'
+          LEITIR_ROOTFS="$rootfs" LEITIR_REQUIRED_STDLIB="$policy_stdlib" PYTHONHOME="$rootfs/usr" PYTHONPATH="$rootfs/work/staging-v1/src:$rootfs/opt/leitir/site-packages" LD_LIBRARY_PATH="$rootfs/usr/lib/leitir-native" "$rootfs/usr/bin/python3" -S -c 'import importlib.util; spec=importlib.util.spec_from_file_location("leitir_scratch_runner", "'"$rootfs"'/harness/runner.py"); runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner); runner.verify_required_stdlib()'
           chmod -R a-w "$rootfs"
       - name: Build pinned nsjail
         run: sudo tools/build-nsjail.sh

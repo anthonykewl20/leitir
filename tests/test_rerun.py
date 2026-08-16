@@ -24,6 +24,7 @@ from leitir.exec_sandbox import (
 from leitir.graph.model import NodeId, NodeKind, NodeOrigin, SourceRef
 from leitir.relocate import ContractTest, ModuleMap, Relocation, SourceFile, relocate_tests
 from leitir.rerun import (
+    RERUN_MOUNT_ROOT,
     RERUN_POLICY_SCHEMA_VERSION,
     RUNNER_FRAME_SCHEMA_VERSION,
     ContractBaselineEvidence,
@@ -85,7 +86,7 @@ def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> Cont
     files = {item.path: item for item in relocation.files}
     for authorization in relocation.rerun_mounts:
         logical = authorization.logical_path
-        mounts.append(ReadOnlyMount(f"/{logical}", f"/relocated/{logical}", files[logical].sha256))
+        mounts.append(ReadOnlyMount(f"{RERUN_MOUNT_ROOT}/{logical}", f"/relocated/{logical}", files[logical].sha256))
     if donor_mounted:
         mounts.append(ReadOnlyMount("/donor", "/snapshots/donor", _digest(b"donor")))
     ordered = tuple(sorted(mounts))

@@ -423,6 +423,24 @@ def test_generated_nsjail_config_maps_sudo_invoker_for_runner_owned_mount_source
     assert 'gidmap { inside_id: "65534" outside_id: "1002" count: 1 use_newidmap: false }' in config_text
 
 
+def test_generated_nsjail_config_mounts_exact_files_below_work_after_its_writable_bind(
+    fake_nsjail: tuple[Path, str, str]
+) -> None:
+    policy = _policy(fake_nsjail)
+    source = Path(policy.scratch_dir).parent / "input.json"
+    source.write_bytes(b"{}")
+    file_mount = ReadOnlyMount("/work/staging-v1/manifests/input.json", str(source), _digest(b"{}"))
+    config_text = sandbox._render_config(
+        replace(policy, readonly_mounts=tuple(sorted((*policy.readonly_mounts, file_mount))))
+    )
+
+    writable = f'mount {{ src: {json.dumps(policy.scratch_dir)} dst: "/work" '
+    exact_file = f'mount {{ src: {json.dumps(str(source))} dst: "/work/staging-v1/manifests/input.json" '
+    assert writable in config_text and exact_file in config_text
+    assert config_text.index(writable) < config_text.index(exact_file)
+    assert 'is_dir: false mandatory: true nosuid: true nodev: true }' in config_text[config_text.index(exact_file):]
+
+
 def test_generated_nsjail_config_uses_effective_identity_without_a_valid_sudo_invoker(
     monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
 ) -> None:

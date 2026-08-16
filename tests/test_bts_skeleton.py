@@ -117,7 +117,7 @@ def _containment(relocation: Relocation | None = None) -> ContainmentPolicy:
         files = {item.path: item for item in relocation.files}
         logical_digests = ((item.logical_path, files[item.logical_path].sha256) for item in relocation.rerun_mounts)
     for logical, digest in logical_digests:
-        mounts.append(ReadOnlyMount(f"/{logical}", f"/relocated/{logical}", digest))
+        mounts.append(ReadOnlyMount(f"{rerun_module.RERUN_MOUNT_ROOT}/{logical}", f"/relocated/{logical}", digest))
     ordered = tuple(sorted(mounts))
     mount_payload = {
         "readonly_mounts": [

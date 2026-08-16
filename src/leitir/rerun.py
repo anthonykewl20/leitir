@@ -33,6 +33,11 @@ RERUN_SCHEMA_VERSION = "leitir-bts-rerun-v1"
 BASELINE_SCHEMA_VERSION = "leitir-contract-baseline-v1"
 RERUN_POLICY_SCHEMA_VERSION = "leitir-rerun-execution-policy-v1"
 RUNNER_FRAME_SCHEMA_VERSION = "leitir-rerun-runner-frame-v1"
+# Exact E1 files are mounted under the non-authorizing writable bind.  NsJail
+# creates bind targets while assembling its mount tree; using this target root
+# prevents those setup writes from changing the immutable rootfs after its
+# policy digest is measured.
+RERUN_MOUNT_ROOT = "/work"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_TESTS = 1_000_000
 _MAX_TEXT_BYTES = 512
@@ -464,7 +469,7 @@ def _mount_plan_covers_relocation(relocation: Relocation, policy: RerunExecution
     if len(mounts) != len(policy.containment.readonly_mounts):
         return False
     files = {item.path: item for item in relocation.files}
-    expected_destinations = {"/", *(f"/{item.logical_path}" for item in relocation.rerun_mounts)}
+    expected_destinations = {"/", *(f"{RERUN_MOUNT_ROOT}/{item.logical_path}" for item in relocation.rerun_mounts)}
     if set(mounts) != expected_destinations:
         return False
     rootfs = mounts.get("/")
@@ -472,7 +477,7 @@ def _mount_plan_covers_relocation(relocation: Relocation, policy: RerunExecution
         return False
     for authorization in relocation.rerun_mounts:
         relocated = files.get(authorization.logical_path)
-        mount = mounts.get(f"/{authorization.logical_path}")
+        mount = mounts.get(f"{RERUN_MOUNT_ROOT}/{authorization.logical_path}")
         if relocated is None or mount is None or mount.source_digest != relocated.sha256:
             return False
     return True
@@ -763,6 +768,7 @@ def rerun_transplant(
 
 __all__ = [
     "BASELINE_SCHEMA_VERSION",
+    "RERUN_MOUNT_ROOT",
     "RERUN_POLICY_SCHEMA_VERSION",
     "RERUN_SCHEMA_VERSION",
     "RUNNER_FRAME_SCHEMA_VERSION",

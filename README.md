@@ -142,6 +142,8 @@ filesystem mount plan, not by Python import hooks. The rerun report requires the
 exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;
 the runtime import recorder remains diagnostic-only. The contained interpreter
 uses a sanitized environment with `PYTHONHASHSEED=0` and never uses `-I`.
+File-granular rerun binds are read-only and target `/work/staging-v1`, preserving
+the separately verified immutable rootfs while nsjail creates mount targets.
 Donor-present baseline recording uses the same containment authority, with the
 verified donor mounted read-only; there is no host-subprocess baseline fallback.
 

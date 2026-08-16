@@ -258,8 +258,11 @@ There are two explicit sorted mount manifests:
   read-only, and one policy-pinned writable staging scratch bind at `/work`.
 - **Rerun:** does not mount the donor or any donor parent; mounts relocated
   source, rewritten tests, probes, trusted interpreter/rootfs/runner/bootstrap,
-  and manifests read-only, plus a separate policy-pinned writable staging
-  scratch bind at `/work`.
+  and manifests read-only below the separate policy-pinned writable staging
+  scratch bind at `/work`. NsJail creates each bind target while building the
+  mount tree, so file-granular rerun targets are below `/work/staging-v1`, not
+  the digest-bound rootfs; exact source digests and read-only mount flags are
+  unchanged.
 
 At rerun entry the controller re-derives the relocation digest from the complete
 canonical file and authorization records and requires exact mount-destination

@@ -101,6 +101,7 @@ from leitir.probes import ProbeExecutionRequest, ProbeExecutionResult, ProbeSet
 from leitir.project_profile import RecipientInputManifest, RecipientManifestEntry, profile_project
 from leitir.relocate import ContractTest, ModuleMap, Relocation, SourceFile, relocate_tests
 from leitir.rerun import (
+    RERUN_MOUNT_ROOT,
     RERUN_POLICY_SCHEMA_VERSION,
     ContractBaselineEvidence,
     OutcomeCounts,
@@ -660,7 +661,7 @@ def _rerun_policy_for_relocation(
     files = {item.path: item for item in relocation.files}
     mounts = tuple(
         ReadOnlyMount(
-            "/" + authorization.logical_path,
+            RERUN_MOUNT_ROOT + "/" + authorization.logical_path,
             str(staged_root.joinpath(*authorization.logical_path.split("/"))),
             files[authorization.logical_path].sha256,
         )

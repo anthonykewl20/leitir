@@ -522,10 +522,9 @@ def _host_mapping_id(sudo_name: str, fallback: int) -> int:
 
 # Immutable rootfs builders must create these targets before ``chmod -R a-w``.
 # NsJail's createMountTarget runs after the read-only root bind and therefore
-# cannot create a missing destination itself.  This deterministic union covers
-# every fixed destination rendered below: mount_proc's /proc, the writable
-# workdir bind, and the baseline/rerun staging mounts.  File-granular rerun mounts
-# land below the pre-created staging directories.
+# cannot create a missing destination itself.  The file-granular rerun mounts
+# use the separately writable ``/work`` bind, so they cannot mutate this
+# digest-bound rootfs while NsJail constructs their mount targets.
 ROOTFS_MOUNT_TARGETS = (
     "/",
     "/contract",
@@ -597,20 +596,25 @@ def _render_config(policy: ContainmentPolicy, *, startup_environment: tuple[str,
         f'gidmap {{ inside_id: "65534" outside_id: "{host_gid}" count: 1 use_newidmap: false }}',
     ]
     lines.extend(f"envar: {_protobuf_string(value)}" for value in (*policy.environment, *startup_environment))
-    for mount in policy.readonly_mounts:
-        # NsJail applies the user mapping before it builds this mount tree.  Do
-        # not let its source-path heuristic misclassify a rootfs below a
-        # non-traversable CI temporary directory as a file mount.
-        lines.append(
-            "mount { src: "
-            f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
-            'fstype: "bind" is_bind: true rw: false is_dir: true mandatory: true nosuid: true nodev: true }'
-        )
+    # NsJail creates a target for each bind after mounting its root.  Establish
+    # the non-authorizing writable bind first so direct rerun-file targets below
+    # /work never become post-digest writes to the immutable rootfs.
     lines.append(
         "mount { src: "
         f"{_protobuf_string(policy.scratch_dir)} dst: {_protobuf_string(policy.writable_tmpfs)} "
         'fstype: "bind" is_bind: true rw: true is_dir: true mandatory: true nosuid: true nodev: true noexec: true }'
     )
+    for mount in policy.readonly_mounts:
+        # NsJail applies the user mapping before it builds this mount tree.  Do
+        # not let its source-path heuristic misclassify a rootfs below a
+        # non-traversable CI temporary directory as a file mount.
+        source_mode = Path(mount.source).stat(follow_symlinks=False).st_mode
+        is_dir = mount.destination == "/" or stat.S_ISDIR(source_mode)
+        lines.append(
+            "mount { src: "
+            f"{_protobuf_string(mount.source)} dst: {_protobuf_string(mount.destination)} "
+            f'fstype: "bind" is_bind: true rw: false is_dir: {str(is_dir).lower()} mandatory: true nosuid: true nodev: true }}'
+        )
     return "\n".join(lines) + "\n"
 
 

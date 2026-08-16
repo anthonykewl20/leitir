@@ -87,6 +87,11 @@ class PermittedSyscall(StrEnum):
     BRK = "brk"
     CLOCK_GETTIME = "clock_gettime"
     CLOSE = "close"
+    # Importing backoff's public package imports asyncio's selector support,
+    # which creates one close-on-exec epoll descriptor during CPython startup.
+    # The measured contained trace ends at epoll_create1(EPOLL_CLOEXEC); permit
+    # only that non-I/O descriptor flag, not arbitrary epoll creation flags.
+    EPOLL_CREATE1_CLOEXEC = "epoll_create1 { flags == 524288 }"
     EXECVE = "execve"
     EXIT = "exit"
     EXIT_GROUP = "exit_group"

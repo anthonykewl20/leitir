@@ -178,6 +178,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - harden containment verification, seccomp validation, and digest binding (security review) (`bts`)
 - harden global search match integrity and adapter line model (`security`)
 - pin HOME/USERPROFILE and preserve SYSTEMROOT in sanitized collector env (`score`)
+- preserve staged mount integrity
 - redact URL fragments, exception text, and PRIVATE-TOKEN (#27) (`logging`)
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)

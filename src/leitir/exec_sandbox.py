@@ -408,7 +408,7 @@ def _policy_payload(policy: ContainmentPolicy) -> dict[str, object]:
         "opt_in_satisfied": policy.opt_in_satisfied,
         "output_limit_bytes": policy.output_limit_bytes,
         "readonly_mounts": [
-            {"destination": mount.destination, "source": mount.source, "source_digest": mount.source_digest}
+            {"destination": mount.destination, "source_digest": mount.source_digest}
             for mount in policy.readonly_mounts
         ],
         "rlimit_as_mb": policy.rlimit_as_mb,
@@ -421,8 +421,26 @@ def _policy_payload(policy: ContainmentPolicy) -> dict[str, object]:
         "rootfs_digest": policy.rootfs_digest,
         "schema_version": policy.schema_version,
         "seccomp_string": policy.seccomp_string,
-        "scratch_dir": policy.scratch_dir,
+        # Mount source paths are runner-local operational locations. Their
+        # content identities, destinations, and the writable role are bound;
+        # embedding a workspace or temporary-directory spelling would make the
+        # same immutable inputs produce a different authority digest per run.
         "wall_time_seconds": policy.wall_time_seconds,
+        "writable_tmpfs": policy.writable_tmpfs,
+        "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
+        "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
+    }
+
+
+def _mount_plan_payload(policy: ContainmentPolicy) -> dict[str, object]:
+    """Return the content-addressed mount authority, excluding host paths."""
+
+    return {
+        "readonly_mounts": [
+            {"destination": mount.destination, "source_digest": mount.source_digest}
+            for mount in policy.readonly_mounts
+        ],
+        "rootfs_digest": policy.rootfs_digest,
         "writable_tmpfs": policy.writable_tmpfs,
         "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
         "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
@@ -500,18 +518,7 @@ def _validate_policy(policy: ContainmentPolicy) -> None:
         has_root = has_root or mount.destination == "/"
     if not has_root:
         raise _reject("mount plan must supply a read-only rootfs", "missing_rootfs_mount")
-    mount_payload = {
-        "readonly_mounts": [
-            {"destination": mount.destination, "source": mount.source, "source_digest": mount.source_digest}
-            for mount in policy.readonly_mounts
-        ],
-        "rootfs_digest": policy.rootfs_digest,
-        "scratch_dir": policy.scratch_dir,
-        "writable_tmpfs": policy.writable_tmpfs,
-        "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
-        "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
-    }
-    if policy.mount_plan_digest != _digest_payload(mount_payload):
+    if policy.mount_plan_digest != _digest_payload(_mount_plan_payload(policy)):
         raise _reject("mount plan digest does not match its inputs", "mount_plan_digest_mismatch")
     if tuple(sorted(policy.environment)) != policy.environment or len(set(policy.environment)) != len(policy.environment):
         raise _reject("environment allowlist must be sorted and unique", "noncanonical_environment")

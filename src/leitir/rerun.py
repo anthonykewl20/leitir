@@ -269,7 +269,18 @@ class RerunExecutionPolicy:
 
     @property
     def policy_digest(self) -> str:
-        return _canonical_digest(self)
+        # Host mount-source paths are operational handles, not authority bytes:
+        # ContainmentPolicy binds their destination and verified content digest.
+        normalized = replace(
+            self.containment,
+            nsjail_path="/host-binary/nsjail",
+            readonly_mounts=tuple(
+                replace(mount, source=f"/host-mount-source/{index}")
+                for index, mount in enumerate(self.containment.readonly_mounts)
+            ),
+            scratch_dir="/host-scratch",
+        )
+        return _canonical_digest(replace(self, containment=normalized))
 
 
 def _environment(entries: tuple[str, ...]) -> dict[str, str]:

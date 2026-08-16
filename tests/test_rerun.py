@@ -92,11 +92,10 @@ def _containment(relocation: Relocation, *, donor_mounted: bool = False) -> Cont
     ordered = tuple(sorted(mounts))
     mount_payload = {
         "readonly_mounts": [
-            {"destination": item.destination, "source": item.source, "source_digest": item.source_digest}
+            {"destination": item.destination, "source_digest": item.source_digest}
             for item in ordered
         ],
         "rootfs_digest": root_digest,
-        "scratch_dir": "/scratch",
         "writable_tmpfs": "/work",
         "writable_tmpfs_bytes": 1_048_576,
         "writable_tmpfs_inodes": 128,
@@ -152,6 +151,29 @@ def _policy(relocation: Relocation, *, donor_mounted: bool = False) -> RerunExec
         _digest(b"baseline-policy"),
         ("/donor", "/snapshots/donor"),
     )
+
+
+def test_rerun_policy_digest_ignores_runner_local_mount_paths() -> None:
+    _bts, relocation = _fixture()
+    policy = _policy(relocation)
+    relocated_containment = replace(
+        policy.containment,
+        readonly_mounts=tuple(
+            replace(mount, source=f"/runner-temp/relocated{index}")
+            for index, mount in enumerate(policy.containment.readonly_mounts)
+        ),
+        scratch_dir="/runner-temp/scratch",
+    )
+
+    assert replace(policy, containment=relocated_containment).policy_digest == policy.policy_digest
+    tampered = replace(
+        relocated_containment,
+        readonly_mounts=(
+            replace(relocated_containment.readonly_mounts[0], source_digest=_digest(b"tampered")),
+            *relocated_containment.readonly_mounts[1:],
+        ),
+    )
+    assert replace(policy, containment=tampered).policy_digest != policy.policy_digest
 
 
 def _baseline(outcomes: tuple[OutcomeEvidence, ...]) -> ContractBaselineEvidence:

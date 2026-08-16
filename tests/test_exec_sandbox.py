@@ -69,14 +69,7 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
     scratch = path.parent / "scratch"
     scratch.mkdir()
     scratch.chmod(0o777)
-    mount_payload = {
-        "readonly_mounts": [{"destination": "/", "source": str(rootfs), "source_digest": root_digest}],
-        "rootfs_digest": root_digest,
-        "scratch_dir": str(scratch),
-        "writable_tmpfs": "/work",
-        "writable_tmpfs_bytes": 1_048_576,
-        "writable_tmpfs_inodes": 128,
-    }
+    mount_payload = {"readonly_mounts": [{"destination": "/", "source_digest": root_digest}], "rootfs_digest": root_digest, "writable_tmpfs": "/work", "writable_tmpfs_bytes": 1_048_576, "writable_tmpfs_inodes": 128}
     return ContainmentPolicy(
         schema_version=POLICY_SCHEMA,
         nsjail_path=str(path),
@@ -122,21 +115,7 @@ def _policy(fake_nsjail: tuple[Path, str, str], *, output_limit: int = 4096, wal
 def _with_scratch_quotas(
     policy: ContainmentPolicy, *, byte_limit: int, inode_limit: int
 ) -> ContainmentPolicy:
-    payload = {
-        "readonly_mounts": [
-            {
-                "destination": mount.destination,
-                "source": mount.source,
-                "source_digest": mount.source_digest,
-            }
-            for mount in policy.readonly_mounts
-        ],
-        "rootfs_digest": policy.rootfs_digest,
-        "scratch_dir": policy.scratch_dir,
-        "writable_tmpfs": policy.writable_tmpfs,
-        "writable_tmpfs_bytes": byte_limit,
-        "writable_tmpfs_inodes": inode_limit,
-    }
+    payload = {"readonly_mounts": [{"destination": mount.destination, "source_digest": mount.source_digest} for mount in policy.readonly_mounts], "rootfs_digest": policy.rootfs_digest, "writable_tmpfs": policy.writable_tmpfs, "writable_tmpfs_bytes": byte_limit, "writable_tmpfs_inodes": inode_limit}
     return replace(
         policy,
         writable_tmpfs_bytes=byte_limit,
@@ -156,6 +135,18 @@ def test_nsjail_ci_identity_derivation_is_accepted_without_running_nsjail(fake_n
     assert identity == f"sha256:{hashlib.sha256((_NSJAIL_COMMIT + binary_sha_hex).encode()).hexdigest()}"
     assert sandbox._nsjail_build_identity(_NSJAIL_COMMIT, binary_digest) == identity
     sandbox._verify_nsjail_identity(policy, binary_digest)
+
+
+def test_mount_authority_is_independent_of_runner_local_source_paths(fake_nsjail: tuple[Path, str, str]) -> None:
+    policy = _policy(fake_nsjail)
+    relocated = replace(
+        policy,
+        readonly_mounts=(replace(policy.readonly_mounts[0], source="/runner-temp/other-rootfs"),),
+        scratch_dir="/runner-temp/other-scratch",
+    )
+
+    assert sandbox._mount_plan_payload(policy) == sandbox._mount_plan_payload(relocated)
+    assert sandbox._policy_payload(policy) == sandbox._policy_payload(relocated)
 
 
 def test_nsjail_timestamped_version_output_identity_is_rejected(fake_nsjail: tuple[Path, str, str]) -> None:
@@ -720,13 +711,11 @@ def test_rootfs_mount_digest_must_equal_policy_rootfs_digest(
         "readonly_mounts": [
             {
                 "destination": item.destination,
-                "source": item.source,
                 "source_digest": item.source_digest,
             }
             for item in policy.readonly_mounts
         ],
         "rootfs_digest": wrong,
-        "scratch_dir": policy.scratch_dir,
         "writable_tmpfs": policy.writable_tmpfs,
         "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
         "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,

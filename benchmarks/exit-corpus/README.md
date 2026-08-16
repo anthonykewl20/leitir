@@ -59,6 +59,8 @@ not the out-of-band authority. The ratified runtime authority is recorded in
 
 1. **Phase A:** run `exit-gate-run` unratified. Its report publishes the stable
    runtime `corpus_manifest_digest`; the gate honestly rejects.
+   Authority digests bind verified source content and in-sandbox destinations,
+   not runner-local workspace or temporary-directory path spellings.
 2. **Phase B:** an independent out-of-band ratifier signs the canonical
    projection `{corpus_id, corpus_manifest_digest, ratified_runtime_digest}`
    with its Ed25519 key and publishes `ratification-v1.json` outside the donor

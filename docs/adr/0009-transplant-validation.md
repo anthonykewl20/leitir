@@ -288,6 +288,11 @@ after execution; any change or inability to re-read rejects. No host home,
 repository, corpus, credential/socket, arbitrary `/tmp`, device, or package site
 is visible.
 
+Because nsjail opens bind sources as the mapped invoking identity, immutable
+staging ancestors are searchable and mounted source directories are
+readable/searchable but never writable; this is required for mount construction
+and does not alter the content-pinned file modes.
+
 Execution additionally requires exact opt-in
 `LEITIR_ENABLE_DONOR_EXECUTION=1`; only `opt_in_satisfied` is retained. Live
 acquisition separately requires `LEITIR_ENABLE_LIVE_E2E=1`. The parent enforces

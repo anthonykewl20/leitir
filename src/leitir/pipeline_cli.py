@@ -472,6 +472,12 @@ def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
 
     staged = directory / "recipient"
     relocation.publish(staged)
+    # NsJail maps the invoking runner identity before opening mount sources.
+    # Relocation intentionally emits owner-only directories, so make directories
+    # readable/searchable without granting write permission. File modes remain
+    # content-pinned and immutable.
+    for current, _directories, _files in os.walk(staged):
+        os.chmod(current, 0o555)
     return staged
 
 
@@ -504,11 +510,14 @@ def _deterministic_stage_directory(corpus_root: Path, identity: object) -> Path:
     if base.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging base must not be a symlink", detail_code="pipeline_cli_staging_path_v1")
     base.mkdir(mode=0o700, exist_ok=True)
+    # This is only a source-path ancestor: permit search, not listing or writes.
+    os.chmod(base, 0o711)
     digest = hashlib.sha256(_canonical({"schema_version": "leitir-deterministic-staging-v1", "identity": identity})).hexdigest()
     stage = base / digest
     if stage.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging path must not be a symlink", detail_code="pipeline_cli_staging_path_v1")
     stage.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(stage, 0o711)
     if not stage.is_dir() or stage.is_symlink():
         raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "BTS staging path is not a directory", detail_code="pipeline_cli_staging_path_v1")
     return stage

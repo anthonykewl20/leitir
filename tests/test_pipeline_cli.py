@@ -438,6 +438,13 @@ def test_baseline_policy_adds_rootfs_site_packages_before_donor(monkeypatch: pyt
     assert "PYTHONPATH=/opt/leitir/site-packages:/donor" in policy.environment
 
 
+def test_deterministic_stage_ancestors_are_searchable_without_being_writable(tmp_path: Path) -> None:
+    stage = pipeline_cli._deterministic_stage_directory(tmp_path, {"case": "fixture"})
+
+    assert os.stat(stage.parent).st_mode & 0o777 == 0o711
+    assert os.stat(stage).st_mode & 0o777 == 0o711
+
+
 def test_baseline_recording_preserves_bounded_child_abort_evidence() -> None:
     baseline = ContractBaselineEvidence.create(
         (TestOutcomeEvidence("contract.py::test_one::-", TestOutcome.FAIL, "recorded", _DIGEST),),

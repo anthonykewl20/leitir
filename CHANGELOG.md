@@ -120,6 +120,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - certify clean CI environments and handle closed-pipe/hash-seed determinism (#43) (`doctor`)
 - consistent Go module case escaping across proxy and sumdb wire paths (`resolver`)
 - containment last mile — privileged CI exec, rseq allowlist, baseline parity, span plumbing, static contract imports
+- correct containment verifier wheel hash
 - correct typing for mypy strict mode (`cost`)
 - defer donor imports until baseline startup
 - diagnose mount-source digest mismatches

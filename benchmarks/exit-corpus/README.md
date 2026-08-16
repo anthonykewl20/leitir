@@ -89,7 +89,13 @@ The same run measured and this manifest now pins:
 * `nsjail_version`: `nsjail@f78475530b46d0186111a9096b30725f816b55fe`
 * `nsjail_build_identity`: `sha256:9fc7783e8fee63cf059bb5e48053f3ac77e80fda34128917bae956bda90c0c4b`
 * `config_schema_digest`: `sha256:39803af3291a1f08860ec1ec4b028aba5d000df53d2f0f73781718f75ff16c80`
-* `rootfs_digest`: `sha256:e82de50658175072ae7cd26e5741aafd2b28d3c8e3e1abd28ca4f0768489e0a2`
+* `rootfs_digest`: `sha256:5793b4f625038eb2dc0319a2024de176e61c86c68b0d5a14ed3728cf16bb740c`
+
+The Phase-C rerun measured the rootfs digest above. The historical Phase-A run
+reported `sha256:e82de50658175072ae7cd26e5741aafd2b28d3c8e3e1abd28ca4f0768489e0a2`;
+the CI image's reconstructed rootfs drifted while the pinned nsjail, policy,
+and gate corpus digest remained exact. The manifest therefore pins the actual
+Phase-C measurement, which the gate requires for a complete rerun.
 
 The workflow passes the trusted-key file by its absolute workspace path because
 the trust-anchor loader rejects relative paths; it is outside the donor shelf

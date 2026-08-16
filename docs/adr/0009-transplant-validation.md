@@ -289,7 +289,12 @@ is a policy-pinned bind source over the immutable rootfs's pre-created `/work`
 target; it is the only writable mount and supplies CWD, temporary files, result
 frames, and bytecode cache if enabled. The controller clears it before every
 launch so baseline and rerun cannot communicate through stale writable state.
-The bind is `rw,noexec,nosuid,nodev`; its target and source path are pinned.
+The bind is `rw,noexec,nosuid,nodev`; its target and read-only mount source
+content/destination roles are pinned. Host source-path spellings (workspace and
+temporary-directory locations) are operational handles and are deliberately
+excluded from authority digests: their inclusion would make identical verified
+inputs differ between runners. Source existence, absolute-path validity, mount
+isolation, and the pinned source digest remain fail-closed checks at execution.
 `rlimit_fsize` bounds each file written by the child. Unlike the replaced tmpfs,
 the bind has no policy-enforced aggregate byte or inode cap: output/frame
 retention remains bounded, but staging storage capacity is an explicit

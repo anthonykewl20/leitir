@@ -150,6 +150,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make validate_report fail-closed on span bounds without line_counts (`search`)
 - map invoking user for nsjail mounts
 - mount writable rerun bind after rootfs
+- normalize operational paths in execution digests
 - normalize task baseline test ids
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
 - permit close-on-exec epoll setup
@@ -165,6 +166,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - publish pinned contained rootfs
 - ratify release rootfs runtime digest
+- re-ratify diagnostic harness runtime
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)

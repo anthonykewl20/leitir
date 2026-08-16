@@ -59,6 +59,8 @@ not the out-of-band authority. The ratified runtime authority is recorded in
 
 1. **Phase A:** run `exit-gate-run` unratified. Its report publishes the stable
    runtime `corpus_manifest_digest`; the gate honestly rejects.
+   Authority digests bind verified source content and in-sandbox destinations,
+   not runner-local workspace or temporary-directory path spellings.
 2. **Phase B:** an independent out-of-band ratifier signs the canonical
    projection `{corpus_id, corpus_manifest_digest, ratified_runtime_digest}`
    with its Ed25519 key and publishes `ratification-v1.json` outside the donor
@@ -79,7 +81,7 @@ PR description and the private key is never committed. The public key is in
 `8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
 The detached `ratification-v1.json` signs the canonical projection for
 `bts-exit-v0-1-2-real-five`, where both runtime-digest fields are
-`sha256:04006ff7f157049c57893bb9aa3aafb8d7d6350ff9015f02994f7faf649a7d31`.
+`sha256:7f12baa1b24dec4a5b4d90d55b36ee55138e9edc3dc3f1fa53bae11dd4fbacb7`.
 That is the release-rootfs Phase-A runtime digest measured on
 [run 31957735164](https://github.com/anthonykewl20/leitir/actions/runs/31957735164).
 

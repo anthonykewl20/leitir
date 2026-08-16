@@ -133,6 +133,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - include Starred assignment targets in Python AST definitions (`search`)
 - kafel identifier set and ci artifact ownership
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
+- keep rerun mount setup off immutable rootfs
 - keep sandbox tests portable (`bts`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)

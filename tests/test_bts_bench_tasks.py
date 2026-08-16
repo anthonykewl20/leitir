@@ -302,7 +302,7 @@ def test_repeated_live_task_assembly_has_a_deterministic_mount_plan_digest(tmp_p
     baseline = _task_baseline_from_sidecar(sidecars.baseline_sidecar, task)
     monkeypatch.setattr("leitir.pipeline_cli._require_substrate", lambda: None)
     monkeypatch.setattr("leitir.pipeline_cli.donor_execution_enabled", lambda: True)
-    monkeypatch.setattr("leitir.pipeline_cli.record_baseline", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr("leitir.pipeline_cli._record_baseline_with_evidence", lambda *args, **kwargs: (baseline, ()))
     monkeypatch.setattr("leitir.pipeline_cli._relocate_prepared", lambda *args, **kwargs: _relocate(b"def f():\n    return 3\n"))
 
     first = assemble_bts_task_request(task, tmp_path, contract_tests=sidecars.contract_tests, baseline_sidecar=sidecars.baseline_sidecar, resolution_policy_path=sidecars.policy_sidecar, substrate=substrate)
@@ -338,7 +338,7 @@ def test_concurrent_live_task_assemblies_reuse_complete_stage(tmp_path: Path, mo
     baseline = _task_baseline_from_sidecar(sidecars.baseline_sidecar, task)
     monkeypatch.setattr("leitir.pipeline_cli._require_substrate", lambda: None)
     monkeypatch.setattr("leitir.pipeline_cli.donor_execution_enabled", lambda: True)
-    monkeypatch.setattr("leitir.pipeline_cli.record_baseline", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr("leitir.pipeline_cli._record_baseline_with_evidence", lambda *args, **kwargs: (baseline, ()))
     monkeypatch.setattr("leitir.pipeline_cli._relocate_prepared", lambda *args, **kwargs: _relocate(b"def f():\n    return 3\n"))
 
     def assemble() -> BTSTaskRequestAssembly:

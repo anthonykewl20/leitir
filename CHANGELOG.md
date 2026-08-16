@@ -164,6 +164,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - render mandatory root mount for nsjail mount tree
 - replace ref-name regex with linear validation (`lineage`)
 - restore containment smoke mount chain
+- run contained BTS task baselines
 - seed origin filter, comprehension scope fix, drift-shelf search exclusions, nsjail identity, dogfood feedback (#42 #73)
 - skip directory fsync on Windows in publish_packet (#128) (`transplant`)
 - stop rewriting Tier-2 class __module__ to restore get_type_hints/getsource (`adapters`)

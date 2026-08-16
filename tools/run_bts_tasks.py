@@ -33,6 +33,7 @@ from leitir.bts_cli import load_donor_materialization, load_donor_snapshot
 from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult, run_bts_pipeline
 from leitir.materialize import materialize_github_repo
+from leitir.pipeline_cli import map_sudo_runner_ownership
 from leitir.relocate import ContractTest
 from leitir.safeio import confined_path, read_regular_file
 
@@ -281,7 +282,7 @@ def _pipeline_cli() -> Any:
 class _PipelineTaskRunner:
     """BTSRunner adapter; no donor code executes outside ``run_bts_pipeline``."""
 
-    def __init__(self, root: Path, sidecars: dict[str, TaskSidecars] | None = None, substrate: object | None = None, task_digests: dict[str, str] | None = None) -> None:
+    def __init__(self, root: Path, sidecars: dict[str, TaskSidecars] | None = None, substrate: object | None = None, task_digests: dict[str, str] | None = None, baseline_evidence_root: Path | None = None) -> None:
         self.root = root
         self.sidecars = {} if sidecars is None else sidecars
         self.substrate = substrate
@@ -289,6 +290,12 @@ class _PipelineTaskRunner:
         # lets grading bind the complete manifest while the observation chain
         # consumes only ``task.observation``.
         self.task_digests = {} if task_digests is None else task_digests
+        self.baseline_evidence_root = baseline_evidence_root
+
+    def _baseline_recording_path(self, task: BTSEvalTask) -> Path | None:
+        if self.baseline_evidence_root is None:
+            return None
+        return self.baseline_evidence_root / task.task_id / "baseline-recording.json"
 
     def run(self, task: BTSEvalTask) -> BTSTaskObservation:
         module = _pipeline_cli()
@@ -322,6 +329,7 @@ class _PipelineTaskRunner:
             resolution_policy_path=sidecars.policy_sidecar,
             seed_span_sidecar=sidecars.seed_span_sidecar,
             substrate=self.substrate,
+            baseline_recording_path=self._baseline_recording_path(task),
         )
         request = getattr(assembly, "request", None)
         ranking = getattr(assembly, "candidate_ranking", None)
@@ -365,6 +373,7 @@ class _PipelineTaskRunner:
                 seed_span_sidecar=sidecars.seed_span_sidecar,
                 substrate=self.substrate,
                 execution_identity=identity,
+                baseline_recording_path=self._baseline_recording_path(task),
             )
             if not isinstance(getattr(extra, "request", None), BTSPipelineRequest):
                 raise PipelineAssemblyError("pipeline_cli assembly.request must be BTSPipelineRequest")
@@ -502,13 +511,21 @@ def _atomic_write(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def write_run(out: Path, data: bytes) -> Path:
+def _prepare_output_directory(out: Path) -> None:
     if out.exists() and (out.is_symlink() or not out.is_dir() or any(out.iterdir())):
         raise OutputConflictError("output directory must be new or empty")
     out.mkdir(parents=True, exist_ok=True)
+
+
+def _write_prepared_run(out: Path, data: bytes) -> Path:
     destination = out / "bts-eval-run-v1.json"
     _atomic_write(destination, data)
     return destination
+
+
+def write_run(out: Path, data: bytes) -> Path:
+    _prepare_output_directory(out)
+    return _write_prepared_run(out, data)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -569,11 +586,16 @@ def main(argv: list[str] | None = None) -> int:
         args.rootfs_source,
         args.substrate_rootfs_digest,
     )
+    _prepare_output_directory(args.out)
     materialize_donor_pins(args.root, plan)
+    # Codeload member modes are digest-bound and may be owner-only.  NsJail
+    # maps sudo-root launches back to the invoking runner before opening these
+    # shelves, so make that runner their owner without changing any mode.
+    map_sudo_runner_ownership(args.root)
     task_digests = {task.task_id: task.digest() for task in tasks}
-    runner = _PipelineTaskRunner(args.root, sidecars, substrate, task_digests)
+    runner = _PipelineTaskRunner(args.root, sidecars, substrate, task_digests, args.out)
     run = BTSEvalBenchmark().execute(combined_manifest(tasks), _ContinuingTaskRunner(runner))
-    write_run(args.out, run.to_json().encode("utf-8"))
+    _write_prepared_run(args.out, run.to_json().encode("utf-8"))
     return 0
 
 

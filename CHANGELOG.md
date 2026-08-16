@@ -125,6 +125,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - defer donor imports until baseline startup
 - diagnose mount-source digest mismatches
 - expose nsjail mount sources in CI
+- expose ratification rejection evidence
 - fail closed on enabled collection and mixed-phase skips (`canary`)
 - force LF checkout for committed evidence and scorecard artifacts (`score`)
 - forward-compatible global reports and offline-gate fix; regenerate canonical assessment (#41) (`scorecard`)
@@ -163,6 +164,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - preserve dangling donor links during ownership handoff
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - publish pinned contained rootfs
+- ratify release rootfs runtime digest
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)
 - redirect stdout fd before shutdown to avoid Windows exit 120 (`doctor`)
 - reject archive members with concealed backslashes and drive prefixes (`parity`)

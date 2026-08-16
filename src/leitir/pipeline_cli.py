@@ -1451,7 +1451,7 @@ def _require_runtime_ratification(
     except ManifestAuthError as exc:
         raise BTSError(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
-            "runtime ratification signature is absent, malformed, or untrusted",
+            f"runtime ratification rejected for corpus manifest {corpus_manifest_digest}: {type(exc).__name__}",
             detail_code="pipeline_cli_ratification_invalid_v1",
             cause=exc,
         ) from exc

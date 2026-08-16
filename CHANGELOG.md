@@ -139,6 +139,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make validate_report fail-closed on span bounds without line_counts (`search`)
 - map invoking user for nsjail mounts
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
+- permit mapped user to mount staged inputs
 - phase-a4 root causes — recipient ids, nsjail probe, licence variants, spans, haversine donor (#73 #75)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)
 - pre-donor startup attestation, dynamic donors, electrumx policy, stable seed identity (#73 #75)

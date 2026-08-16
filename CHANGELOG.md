@@ -90,6 +90,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - polyglot tree-sitter graph per ADR-0012 (#81) (`graph`)
 - publish reproducible offline decision=pass (#41) (`scorecard`)
 - real-donor exit corpus and runnable validation (#73) (`gate`)
+- relocate authorized donor sibling sources
 - six real agent tasks with gold and run driver (#75) (`bench`)
 - stream and verify large blobs with incremental Git SHA-1 over line-aligned windows (`search`)
 - structural architecture compatibility (#77) (`architecture`)

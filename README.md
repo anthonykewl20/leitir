@@ -120,7 +120,11 @@ with no portable or unsandboxed fallback. The immutable contained runner emits
 a startup receipt before test discovery: it attests seccomp/no-new-privileges,
 PID-namespace init, and namespace identities distinct from the launcher.
 Missing or malformed receipts reject; opt-in alone is never verification.
-NsJail is not a Python dependency.
+The writable `/work` bind is measured after each run and rejects when its
+policy-pinned byte or inode quota is exceeded. NsJail is not a Python
+dependency. Its build script checks a committed executable SHA-256; a toolchain
+drift failure must be re-measured and re-pinned by an owner in a reviewable
+change, never accepted implicitly.
 See [SECURITY.md](SECURITY.md) and [ADR-0009](docs/adr/0009-transplant-validation.md).
 
 Materialized shelves can additionally require detached publisher authentication:

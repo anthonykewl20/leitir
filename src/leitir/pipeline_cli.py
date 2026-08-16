@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -87,6 +88,7 @@ from leitir.exec_sandbox import (
 from leitir.exit_corpus import content_digest, load_corpus_manifest
 from leitir.graph.model import Graph, Node, NodeId, SourceRef
 from leitir.lockfiles import DependencyManifestPolicy
+from leitir.logging import install_redaction
 from leitir.occupied import (
     OccupiedAttachmentPolicy,
     OccupiedRerunEvidence,
@@ -120,6 +122,8 @@ CONTRACT_TESTS_SCHEMA_VERSION = "leitir-pipeline-contract-tests-v1"
 BASELINE_RECORDING_SCHEMA_VERSION = "leitir-baseline-recording-v1"
 _MAX_SPEC_BYTES = 1 << 20
 _MAX_CHILD_STDERR_TAIL_BYTES = 2 * 1024
+logger = logging.getLogger(__name__)
+install_redaction(logger)
 _SHA256_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -1706,6 +1710,10 @@ def exit_gate_run(
        except BTSError as exc:
         preparation_reports.append(rejected_preparation_report(case_id, exc.reason, exc.evidence.detail_code, recorded_baseline=recorded_baseline, expected_baseline=expected_baseline))
        except Exception as exc:
+        # Raw exception detail remains diagnostic-only and is emitted through
+        # the shared redacting logger. The uploaded donor report receives the
+        # redacted projection from rejected_preparation_report.
+        logger.exception("exit case preparation failed case_id=%s", case_id)
         wrapped = BTSError(
             BTSRejectReason.REJECT_HARD_GATE_FAILED,
             "exit case preparation failed",

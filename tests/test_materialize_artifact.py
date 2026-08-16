@@ -7,6 +7,7 @@ import json
 import os
 import tarfile
 import zipfile
+from pathlib import Path
 
 import pytest
 from _http_server import scripted_server
@@ -25,6 +26,12 @@ from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRe
 from leitir.search import RepoScope
 
 SHA = "e" * 40
+_GO_MODULE_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "go_module"
+    / "github.com-mmcloughlin-avo-v0.6.0.zip"
+)
 
 
 def _tar(root: str, files: dict[str, bytes]) -> bytes:
@@ -189,6 +196,16 @@ def test_go_module_zip_shelves_authenticated_proxy_artifact(tmp_path, monkeypatc
         "license_method": "license-file",
         "license_confidence": "high",
     }
+
+
+def test_go_zip_h1_matches_sumdb_golden_module_fixture() -> None:
+    """Pin Go's canonical zip hashing against offline proxy bytes."""
+
+    data = _GO_MODULE_FIXTURE.read_bytes()
+    assert hashlib.sha256(data).hexdigest() == (
+        "dd9c1abdff8a58ae41dc6ed32283adc6cca4983266e42d109c82d0d5105292bf"
+    )
+    assert _go_zip_h1(data) == "h1:QH6FU8SKoTLaVs80GA8TJuLNkUYl4VokHKlPhVDg4YY="
 
 
 def test_go_module_zip_uses_escaped_wire_path_and_root(tmp_path, monkeypatch):

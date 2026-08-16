@@ -129,6 +129,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - guard AST visitor and render against untrusted-input recursion (`search`)
 - guard directory fsync on POSIX (`relocate`)
 - guard stdout write and force os._exit on Windows doctor paths (`doctor`)
+- harden contained execution substrate
 - harden tree walker validation, lowercase SHAs, and early truncation raise (`search`)
 - honest 7-factor scoring (#22 #23 #24 #25 #35) (`trust`)
 - honest budget exhaustion, canonical --language identity, over-limit budget rejection (`search`)

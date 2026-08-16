@@ -5,6 +5,10 @@ set -euo pipefail
 # The full commit ID is intentional: the build never follows a mutable branch or tag.
 readonly NSJAIL_REPOSITORY="https://github.com/google/nsjail.git"
 readonly NSJAIL_COMMIT="f78475530b46d0186111a9096b30725f816b55fe"
+# This golden executable hash is measured from the committed source/toolchain.
+# Toolchain drift must fail loudly: an owner re-measures it on the supported
+# runner, then updates this pin in a separately reviewable change.
+readonly NSJAIL_EXECUTABLE_SHA256="2a740ac196d27176216788f6213d585cd5b5933f83f2c9bff31ce95cd64939d4"
 readonly INSTALL_PATH="${NSJAIL_INSTALL_PATH:-/usr/bin/nsjail}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -58,6 +62,13 @@ git -C "$build_root" submodule update --init --depth=1
 make -C "$build_root" -j"$(nproc)"
 
 install -D -m 0755 "$build_root/nsjail" "$INSTALL_PATH"
+
+actual_executable_sha256="$(sha256sum "$INSTALL_PATH" | cut -d' ' -f1)"
+if [[ "$actual_executable_sha256" != "$NSJAIL_EXECUTABLE_SHA256" ]]; then
+  printf 'built nsjail executable SHA-256 %s, expected %s\n' \
+    "$actual_executable_sha256" "$NSJAIL_EXECUTABLE_SHA256" >&2
+  exit 1
+fi
 
 printf 'nsjail upstream commit: %s\n' "$NSJAIL_COMMIT"
 printf 'nsjail installed path: %s\n' "$INSTALL_PATH"

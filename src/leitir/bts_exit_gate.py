@@ -19,6 +19,7 @@ from leitir.bts import BTSStatus
 from leitir.bts_errors import BTSRejectReason
 from leitir.bts_pipeline import BTSPipelineRequest, BTSPipelineResult
 from leitir.graph.runtime import DonorAbsenceAuthority
+from leitir.logging import redact
 from leitir.probes import ProbeStatus
 from leitir.rerun import ContractBaselineEvidence, RerunReport, ValidationStatus
 
@@ -380,7 +381,12 @@ def rejected_preparation_report(
     detail = detail_code or "unspecified"
     details = [f"exit_preparation_error_v1:{reason.value}:{detail}"]
     if cause is not None:
-        details.append(f"exit_preparation_cause_v1:{type(cause).__name__}:{cause}")
+        # This detail is uploaded as exit-gate evidence. Keep its text aligned
+        # with the logging redaction policy rather than serializing a raw
+        # exception message into a durable artifact.
+        details.append(
+            f"exit_preparation_cause_v1:{type(cause).__name__}:{redact(str(cause))}"
+        )
     recorded_vector, recorded_counts = _baseline_observation(recorded_baseline)
     expected_vector, expected_counts = _baseline_observation(expected_baseline)
     return ExitDonorReport(

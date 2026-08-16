@@ -381,7 +381,7 @@ jobs:
           PY
           # CPython -S does not add site-packages.  The harness adds this one
           # pinned directory explicitly, so idna cannot leak from the host.
-          uv pip install --target "$rootfs/opt/leitir/site-packages" idna==3.18
+          uv pip install --require-hashes --only-binary :all: --target "$rootfs/opt/leitir/site-packages" -r requirements-contained-rootfs.lock
           install -m 0644 /dev/stdin "$rootfs/harness/runner.py" <<'PY'
           import builtins, importlib.util, json, os, pathlib, sys, unittest
 

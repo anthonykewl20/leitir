@@ -384,6 +384,7 @@ def _record_baseline_with_evidence(
     import_roots: tuple[str, ...],
     contract_root: Path,
     test_import_aliases: tuple[tuple[str, str], ...] = (),
+    canonical_test_paths: Mapping[str, str] | None = None,
 ) -> tuple[ContractBaselineEvidence, tuple[BaselineTestExecutionEvidence, ...]]:
     """Record the canonical baseline plus nonauthorizing per-test launch facts."""
 
@@ -398,7 +399,7 @@ def _record_baseline_with_evidence(
     for test in sorted(contract_tests):
         source = read_regular_file(test_root / test.path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)
         for name in _test_functions(source):
-            identifier = canonical_test_id(test.path, name)
+            identifier = canonical_test_id(test.path if canonical_test_paths is None else canonical_test_paths[test.path], name)
             outcome, category, observation = _run_donor_present_test(policy, "/contract/" + test.path, name, identifier)
             outcomes.append(TestOutcomeEvidence(identifier, outcome, category, _digest(_canonical({"id": identifier, "outcome": outcome.value}))))
             observations.append(observation)
@@ -476,25 +477,33 @@ def build_containment_policy(*, nsjail_sha256: str, nsjail_version: str, nsjail_
     return policy
 
 
+def map_sudo_runner_ownership(path: Path) -> None:
+    """Hand an immutable mount source to the runner mapped by NsJail.
+
+    Materialization and staging preserve source member modes because those modes
+    are part of their pinned tree digests.  A sudo-root parent must therefore
+    change ownership, rather than permissions, before NsJail drops to the
+    invoking runner identity and opens the source paths.
+    """
+
+    # NsJail maps the invoking runner identity before opening mount sources.
+    if getattr(os, "geteuid", lambda: -1)() == 0:
+        sudo_uid = os.environ.get("SUDO_UID")
+        sudo_gid = os.environ.get("SUDO_GID")
+        if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():
+            for current, directories, files in os.walk(path):
+                directories.sort()
+                os.chown(current, int(sudo_uid), int(sudo_gid))
+                for name in sorted(files):
+                    os.chown(Path(current, name), int(sudo_uid), int(sudo_gid))
+
+
 def _stage_relocation(relocation: Relocation, directory: Path) -> Path:
     """Write E1 bytes once, then return the immutable source for exact S2 binds."""
 
     staged = directory / "recipient"
     relocation.publish(staged)
-    # NsJail maps the invoking runner identity before opening mount sources.
-    # Relocation deliberately preserves owner-only modes, and changing them
-    # changes the directory-tree digest pinned by the rerun policy.  When this
-    # process is sudo-root, hand ownership to that mapped runner identity while
-    # retaining every mode and byte exactly as E1 emitted them.
-    if getattr(os, "geteuid", lambda: -1)() == 0:
-        sudo_uid = os.environ.get("SUDO_UID")
-        sudo_gid = os.environ.get("SUDO_GID")
-        if sudo_uid is not None and sudo_gid is not None and sudo_uid.isdecimal() and sudo_gid.isdecimal():
-            for current, directories, files in os.walk(staged):
-                directories.sort()
-                os.chown(current, int(sudo_uid), int(sudo_gid))
-                for name in sorted(files):
-                    os.chown(Path(current, name), int(sudo_uid), int(sudo_gid))
+    map_sudo_runner_ownership(staged)
     return staged
 
 
@@ -1060,7 +1069,7 @@ def _seed_source_identity_matches(member: object, identity: CandidateIdentity) -
     ) == (identity.slug, identity.commit_sha, identity.path, identity.blob_sha)
 
 
-def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: tuple[ContractTest, ...] | None = None, baseline_sidecar: Path | None = None, resolution_policy_path: Path | None = None, seed_span_sidecar: Path | None = None, substrate: BTSSubstratePins | None = None, execution_identity: CandidateIdentity | None = None) -> BTSTaskRequestAssembly:
+def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: tuple[ContractTest, ...] | None = None, baseline_sidecar: Path | None = None, resolution_policy_path: Path | None = None, seed_span_sidecar: Path | None = None, substrate: BTSSubstratePins | None = None, execution_identity: CandidateIdentity | None = None, baseline_recording_path: Path | None = None) -> BTSTaskRequestAssembly:
     """Assemble one pinned bench task without executing donor or test bytes.
 
     Contract-test bytes and the recorded baseline are deliberately invoker-owned
@@ -1076,7 +1085,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task assembly requires measured containment substrate pins", detail_code="pipeline_cli_task_substrate_pins_v1")
     if contract_tests is None or baseline_sidecar is None:
         raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "BTS task assembly requires contract-test and baseline sidecars", detail_code="pipeline_cli_task_sidecars_v1")
-    if not isinstance(baseline_sidecar, Path) or (seed_span_sidecar is not None and not isinstance(seed_span_sidecar, Path)) or not isinstance(contract_tests, tuple) or not all(isinstance(item, ContractTest) for item in contract_tests):
+    if not isinstance(baseline_sidecar, Path) or (seed_span_sidecar is not None and not isinstance(seed_span_sidecar, Path)) or (baseline_recording_path is not None and not isinstance(baseline_recording_path, Path)) or not isinstance(contract_tests, tuple) or not all(isinstance(item, ContractTest) for item in contract_tests):
         raise TypeError("task sidecars have invalid types")
     _require_substrate()
     observation = task.observation
@@ -1149,7 +1158,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     )
     try:
         specs = [ContractTestSpec(item.path, item.module, item.content) for item in contract_tests]
-        baseline = record_baseline(
+        baseline, baseline_observations = _record_baseline_with_evidence(
             snapshot.source_root,
             specs,
             substrate=substrate,
@@ -1161,6 +1170,9 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
         )
         sidecar = _task_baseline_from_sidecar(baseline_sidecar, task, contract_test_paths=expected_paths)
         if (baseline.counts, baseline.selected_test_ids) != (sidecar.counts, sidecar.selected_test_ids):
+            if baseline_recording_path is not None:
+                baseline_recording_path.parent.mkdir(parents=True, exist_ok=True)
+                _write_atomic(baseline_recording_path, _baseline_recording_bytes(baseline, baseline_observations))
             raise BTSError(
                 BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
                 "contained task baseline does not match its publication sidecar cross-check",

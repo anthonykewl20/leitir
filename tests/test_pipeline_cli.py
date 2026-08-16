@@ -12,7 +12,6 @@ import textwrap
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
 
 import pytest
 
@@ -448,22 +447,20 @@ def test_deterministic_stage_ancestors_are_searchable_without_being_writable(tmp
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode semantics are required by nsjail")
-def test_stage_relocation_preserves_modes_while_mapping_sudo_runner_ownership(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Relocation:
-        def publish(self, target: Path) -> None:
-            target.mkdir()
-            (target / "private").mkdir()
-            (target / "private" / "input.py").write_text("x = 1\n", encoding="utf-8")
-            (target / "private").chmod(0o500)
-            (target / "private" / "input.py").chmod(0o400)
-
+def test_map_sudo_runner_ownership_preserves_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    staged = tmp_path / "recipient"
+    staged.mkdir()
+    (staged / "private").mkdir()
+    (staged / "private" / "input.py").write_text("x = 1\n", encoding="utf-8")
+    (staged / "private").chmod(0o500)
+    (staged / "private" / "input.py").chmod(0o400)
     ownership: list[tuple[Path, int, int]] = []
     monkeypatch.setattr(pipeline_cli.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setenv("SUDO_UID", "1001")
     monkeypatch.setenv("SUDO_GID", "1002")
     monkeypatch.setattr(pipeline_cli.os, "chown", lambda path, uid, gid: ownership.append((Path(path), uid, gid)), raising=False)
 
-    staged = pipeline_cli._stage_relocation(cast(Any, _Relocation()), tmp_path)
+    pipeline_cli.map_sudo_runner_ownership(staged)
 
     assert (staged / "private").stat().st_mode & 0o777 == 0o500
     assert (staged / "private" / "input.py").stat().st_mode & 0o777 == 0o400
@@ -472,6 +469,41 @@ def test_stage_relocation_preserves_modes_while_mapping_sudo_runner_ownership(tm
         (staged / "private", 1001, 1002),
         (staged / "private" / "input.py", 1001, 1002),
     ]
+
+
+def test_task_baseline_mismatch_exports_contained_recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task-sidecar mismatch retains the per-test S2 observation for diagnosis."""
+
+    _bench_shelf(tmp_path)
+    task, tests, sidecar = _bench_task_sidecars(tmp_path)
+    stage = tmp_path / "stage"
+    staged = stage / "staging-v1" / "tests" / "original"
+    staged.mkdir(parents=True)
+    baseline = ContractBaselineEvidence.create(
+        (TestOutcomeEvidence("test_contract.py::test_one::-", TestOutcome.FAIL, "recorded", _DIGEST),),
+        baseline_mount_plan_digest=_DIGEST,
+        baseline_execution_policy_digest=_DIGEST,
+    )
+    observation = BaselineTestExecutionEvidence("test_contract.py::test_one::-", False, 137, "child aborted")
+    recording = tmp_path / "evidence" / "baseline-recording.json"
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    monkeypatch.setattr(pipeline_cli, "donor_execution_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_cli, "_relocate_prepared", lambda *args, **kwargs: SimpleNamespace(relocation_digest=_DIGEST))
+    monkeypatch.setattr(pipeline_cli, "_prepare_shared_stage", lambda *args, **kwargs: (stage, staged))
+    monkeypatch.setattr(pipeline_cli, "_record_baseline_with_evidence", lambda *args, **kwargs: (baseline, (observation,)))
+
+    with pytest.raises(BTSError) as caught:
+        assemble_bts_task_request(
+            task,
+            tmp_path,
+            contract_tests=tests,
+            baseline_sidecar=sidecar,
+            substrate=BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, tmp_path, _DIGEST),
+            baseline_recording_path=recording,
+        )
+
+    assert caught.value.evidence.detail_code == "pipeline_cli_task_baseline_mismatch_v1"
+    assert recording.read_bytes() == _baseline_recording_bytes(baseline, (observation,))
 
 
 def test_baseline_recording_preserves_bounded_child_abort_evidence() -> None:

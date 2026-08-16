@@ -705,6 +705,23 @@ def test_offline_execution_reaches_backend_after_static_containment_validation(
 
 
 @pytest.mark.skipif(
+    sys.platform != "linux" or not Path("/usr/bin/strace").is_file(),
+    reason="debug strace wrapper requires Linux strace",
+)
+def test_debug_containment_trace_is_controller_only_and_removed(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    monkeypatch.setenv("LEITIR_NSJAIL_DEBUG", "1")
+    plan = prepare_execution(_policy(fake_nsjail))
+    result = run_contained(plan, (sys.executable, "-c", "pass"))
+    captured = capsys.readouterr()
+    assert result.completed
+    assert "leitir debug seccomp ioctl trace" in captured.err
+    assert not list(Path("/tmp").glob(".leitir-seccomp-*.strace"))
+
+
+@pytest.mark.skipif(
     sys.platform != "linux",
     reason="nsjail containment is Linux-only (ADR-0009 §3)",
 )

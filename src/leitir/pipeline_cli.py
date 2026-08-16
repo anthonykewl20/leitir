@@ -113,6 +113,7 @@ from leitir.rerun import (
 from leitir.safeio import confined_path, read_regular_file
 from leitir.suitability import build_survivor_set
 from leitir.transplant import PacketInputs, build_reference_packet, publish_packet
+from leitir.treehash import TreeHashError, verify_materialized_tree_hash
 
 PIPELINE_CLI_SCHEMA_VERSION = "leitir-pipeline-cli-v1"
 CONTRACT_TESTS_SCHEMA_VERSION = "leitir-pipeline-contract-tests-v1"
@@ -844,39 +845,59 @@ def _relocate_prepared(
     recipient_package: str,
     contract_tests: tuple[ContractTest, ...],
     test_import_aliases: tuple[tuple[str, str], ...] = (),
+    sibling_source_modules: tuple[str, ...] = (),
 ) -> Relocation:
     """Compute E1 before S2 policy assembly, without executing donor bytes."""
 
     bts = _complete_bts(preliminary)
+    try:
+        verify_materialized_tree_hash(
+            snapshot.source_root,
+            snapshot.materialized_tree_hash,
+            algorithm=snapshot.materialized_tree_hash_algorithm,
+            scope=snapshot.materialized_tree_hash_scope,
+        )
+    except TreeHashError as exc:
+        raise BTSError(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor snapshot changed before sibling relocation", detail_code="pipeline_cli_sibling_source_digest_v1", cause=exc) from exc
     modules = tuple(sorted({member.node.module for member in bts.members}))
-    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
+    if sibling_source_modules != tuple(sorted(set(sibling_source_modules))) or set(sibling_source_modules) & set(modules):
+        raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "sibling source authorization is malformed", detail_code="pipeline_cli_sibling_source_policy_v1")
+    all_modules = tuple(sorted((*modules, *sibling_source_modules)))
+    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in all_modules))
     source_files = tuple(
         SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for path in sorted({item.path for item in bts.required_files})
     )
     external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    sibling_sources = tuple(
+        (module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)))
+        for module in sibling_source_modules
+    )
     return relocate_tests(
         preliminary,
         module_map=module_map,
         source_files=source_files,
         tests=contract_tests,
+        sibling_sources=sibling_sources,
         declared_external_modules=external_modules,
         test_import_aliases=test_import_aliases,
     )
 
 
-def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = ()) -> BTSPipelineRequest:
+def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), sibling_source_modules: tuple[str, ...] = ()) -> BTSPipelineRequest:
     """Build the shared non-executing request portion for CLI and bench callers."""
 
     bts = _complete_bts(preliminary)
     modules = tuple(sorted({member.node.module for member in bts.members}))
-    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in modules))
+    all_modules = tuple(sorted((*modules, *sibling_source_modules)))
+    module_map = ModuleMap.from_pairs(*((module, f"{recipient_package}.{module}") for module in all_modules))
     source_files = tuple(
         SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for path in sorted({item.path for item in bts.required_files})
     )
     probe_set = ProbeSet.pin(bts_digest=bts.bts_digest, seed=selected, bts_members=tuple(member.node for member in bts.members), catalog_edges=(), probes=())
     external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    sibling_sources = tuple((module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))) for module in sibling_source_modules)
     provider = cast(Callable[[Path], Graph], bts_cli.python_graph_provider(snapshot))
     if authorized_seed_span is not None:
         base_provider = provider
@@ -886,7 +907,7 @@ def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolu
 
         provider = span_provider
 
-    return BTSPipelineRequest(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, test_import_aliases=test_import_aliases, precomputed_relocation=precomputed_relocation)
+    return BTSPipelineRequest(snapshot, selected, provider, BTSBudget(1_000_000, 1_000_000, 100_000, 20, 10_000, 10_000, 10_000, 100, 2_000_000, 10_000, 10_000, 100, 100), resolution, module_map, source_files, contract_tests, baseline, rerun_policy, probe_set, _EmptyProbePolicy(_digest(b"pipeline-cli-empty-probes-v1")), external_modules, sibling_sources, test_import_aliases=test_import_aliases, precomputed_relocation=precomputed_relocation)
 
 
 def _license_from_materialized_donor(root: Path) -> str | None:
@@ -1109,11 +1130,12 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=None, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases,
+            test_import_aliases=test_import_aliases, sibling_source_modules=bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else (),
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, ranking_unranked=ranking_unranked)
-    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases)
+    sibling_sources = bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else ()
+    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources)
     staging, staged = _prepare_shared_stage(
         root,
         {"kind": "task", "task_id": task.task_id, "identity": identity.to_dict(), "relocation_digest": relocation.relocation_digest},
@@ -1142,7 +1164,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=relocation, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases,
+            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, staging=staging, ranking_unranked=ranking_unranked)

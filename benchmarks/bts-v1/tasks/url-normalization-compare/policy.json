@@ -1,1 +1,1 @@
-{"adapters":[{"disposition":"pinned-exact","module":"url_normalize.tools"}],"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[]}
+{"adapters":[{"disposition":"pinned-exact","module":"url_normalize.tools"}],"schema_version":"leitir-bts-cli-policy-v1","sibling_source_modules":["url_normalize.normalize_userinfo","url_normalize.tools"],"stdlib_modules":[]}

@@ -635,6 +635,7 @@ def relocate_tests(
     module_map: ModuleMap,
     source_files: tuple[SourceFile, ...],
     tests: tuple[ContractTest, ...],
+    sibling_sources: tuple[tuple[str, SourceFile], ...] = (),
     declared_external_modules: tuple[str, ...] = (),
     recipient_bindings: RecipientBindingManifest = EMPTY_RECIPIENT_BINDINGS,
     test_import_aliases: tuple[tuple[str, str], ...] = (),
@@ -647,6 +648,10 @@ def relocate_tests(
         raise TypeError("source_files must be a tuple of SourceFile values")
     if not isinstance(tests, tuple) or not all(isinstance(item, ContractTest) for item in tests):
         raise TypeError("tests must be a tuple of ContractTest values")
+    if not isinstance(sibling_sources, tuple) or not all(
+        isinstance(module, str) and isinstance(source, SourceFile) for module, source in sibling_sources
+    ):
+        raise TypeError("sibling_sources must be module/SourceFile pairs")
     external = frozenset(_module(item, "declared external module") for item in declared_external_modules)
     if len(external) != len(declared_external_modules):
         raise ValueError("duplicate declared external module")
@@ -659,6 +664,13 @@ def relocate_tests(
     missing = [module for module in donor_modules if module_map.exact(module) is None]
     if missing:
         raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "ModuleMap is not total for BTS members", "relocate_module_map_not_total_v1")
+    sibling_modules = tuple(module for module, _ in sibling_sources)
+    if sibling_modules != tuple(sorted(set(sibling_modules))) or set(sibling_modules) & set(donor_modules):
+        raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "sibling source authorization is not a disjoint sorted closure", "relocate_sibling_source_policy_v1")
+    for module, source in sibling_sources:
+        _module(module, "sibling source module")
+        if module_map.exact(module) is None or source.path != module.replace(".", "/") + ".py":
+            raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "sibling source has no exact safe module mapping", "relocate_sibling_source_policy_v1")
 
     by_path: dict[str, bytes] = {}
     folded: dict[str, str] = {}
@@ -707,6 +719,11 @@ def relocate_tests(
                 definitions[target_module].add(name)
         key = (member.source.path, member.source.start_line, member.source.start_col, member.source.end_line, member.source.end_col, member.node.qualified_name)
         chunks.setdefault(target_module, []).append((key, rewritten))
+    for module, source in sibling_sources:
+        target_module = module_map.exact(module)
+        assert target_module is not None
+        rewritten = _rewrite_python(source.content, module, module_map, external, "source")
+        chunks.setdefault(target_module, []).append(((source.path, 0, 0, 0, 0, module), rewritten))
 
     occupied = {(item.module, item.name) for item in recipient_bindings.bindings}
     for module in donor_modules:
@@ -752,6 +769,7 @@ def relocate_tests(
         {
             "bts_digest": artifact.bts_digest,
             "declared_external_modules": sorted(external),
+            "sibling_sources": [{"module": module, "path": source.path, "sha256": _sha(source.content)} for module, source in sibling_sources],
             "layout": RELOCATION_LAYOUT,
             "member_equivalence_digest": artifact.member_equivalence_digest,
             "module_map_digest": module_map.digest,

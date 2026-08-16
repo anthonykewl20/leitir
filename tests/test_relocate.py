@@ -117,6 +117,37 @@ def test_complete_bts_relocates_members_and_rewrites_only_donor_imports() -> Non
     }
 
 
+def test_authorized_sibling_source_is_copied_and_rewritten_deterministically() -> None:
+    source = b"from donor.sibling import g\n\ndef f():\n    return g()\n"
+    sibling = SourceFile("donor/sibling.py", b"def g():\n    return 3\n")
+    kwargs = {
+        "module_map": ModuleMap.from_pairs(("donor.mod", "transplant.core"), ("donor.sibling", "transplant.sibling")),
+        "source_files": (SourceFile("donor/mod.py", source),),
+        "tests": (ContractTest("test_contract.py", b"from donor.mod import f\n", "donor.tests.test_contract"),),
+        "sibling_sources": (("donor.sibling", sibling),),
+    }
+    first = relocate_tests(_bts(source), **kwargs)
+    second = relocate_tests(_bts(source), **kwargs)
+    files = {item.path: item.content for item in first.files}
+    assert files["staging-v1/src/transplant/core.py"] == b"from transplant.sibling import g\n\ndef f():\n    return g()\n"
+    assert files["staging-v1/src/transplant/sibling.py"] == b"def g():\n    return 3\n"
+    assert first.to_bytes() == second.to_bytes()
+    assert all(b"donor." not in item.content for item in first.files if item.role is FileRole.SOURCE)
+
+
+def test_sibling_source_import_outside_authorized_closure_rejects() -> None:
+    source = b"def f():\n    return 3\n"
+    with pytest.raises(BTSError) as caught:
+        relocate_tests(
+            _bts(source),
+            module_map=ModuleMap.from_pairs(("donor.mod", "transplant.core"), ("donor.sibling", "transplant.sibling")),
+            source_files=(SourceFile("donor/mod.py", source),),
+            tests=(),
+            sibling_sources=(("donor.sibling", SourceFile("donor/sibling.py", b"from donor.unapproved import value\n")),),
+        )
+    assert caught.value.evidence.detail_code == "relocate_unresolved_import_v1"
+
+
 def test_unaliased_import_and_references_are_rewritten() -> None:
     source = b"def f():\n    return 3\n"
     relocation = relocate_tests(

@@ -183,6 +183,16 @@ docstring, or other span, it returns `REJECT_UNDER_COLLECTION` with
 `RequiredSpanExpansionEvidence`. A caller must recompute ADR-0008 and obtain a
 new `bts_digest`; relocation never silently expands authorizing bytes.
 
+A task policy may additionally content-bind a sorted, duplicate-free
+`sibling_source_modules` closure.  Each named donor module must have an exact
+safe recipient mapping, must be disjoint from BTS member modules, and is copied
+as whole source bytes into E1 before its imports are rewritten.  The closure is
+not donor mounting: its source-byte digest is included in the relocation input
+manifest and no donor shelf path is available to E2.  Imports outside that
+closure and the already-authorized stdlib/adapter/external mappings remain
+unresolved and reject; path, package, and binding collisions reject rather than
+selecting an import-precedence winner.
+
 The interim canonical staging layout is fixed now, while ADR-011 owns eventual
 public packet paths:
 

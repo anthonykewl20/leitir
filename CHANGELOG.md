@@ -150,6 +150,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make validate_report fail-closed on span bounds without line_counts (`search`)
 - map invoking user for nsjail mounts
 - mount writable rerun bind after rootfs
+- normalize operational paths in execution digests
 - normalize task baseline test ids
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
 - permit close-on-exec epoll setup

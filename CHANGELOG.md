@@ -137,6 +137,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - honest budget exhaustion, canonical --language identity, over-limit budget rejection (`search`)
 - import-safe harness bootstrap and mount-stubbed rendered-config smoke (`ci`)
 - include Starred assignment targets in Python AST definitions (`search`)
+- install containment ratification verifier
 - kafel identifier set and ci artifact ownership
 - keep doctor exit code 0 when its stdout pipe closes (`cli`)
 - keep rerun mount setup off immutable rootfs

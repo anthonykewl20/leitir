@@ -282,7 +282,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: requirements.txt
       - name: Install test requirements
-        run: uv pip install --system --requirement requirements.txt
+        # A ratified exit corpus requires the separately locked Ed25519 verifier;
+        # missing the provider is intentionally a fail-closed gate failure.
+        run: |
+          uv pip install --system --requirement requirements.txt
+          uv pip install --system --requirement requirements-auth.lock --require-hashes --only-binary :all:
       - name: Prepare immutable donor-free contained rootfs
         env:
           GH_TOKEN: ${{ github.token }}

@@ -226,6 +226,7 @@ def test_containment_workflow_release_rootfs_round_trip_is_digest_pinned() -> No
     assert "tar --extract --file \"$archive\" --directory \"$rootfs\" --no-same-owner --same-permissions" in workflow
     assert "published rootfs digest mismatch" in workflow
     assert "tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner" in workflow
+    assert "requirements-auth.lock --require-hashes --only-binary :all:" in workflow
 
 
 def test_contained_rootfs_runner_import_does_not_require_parent_namespace_environment(tmp_path: Path) -> None:

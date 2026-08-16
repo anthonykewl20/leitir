@@ -143,6 +143,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - mount writable rerun bind after rootfs
 - per-task typed failure continuation and honest partial runs (#75) (`bench`)
 - permit close-on-exec epoll setup
+- permit CPython allocator remaps
 - permit mapped user to mount staged inputs
 - phase-a4 root causes — recipient ids, nsjail probe, licence variants, spans, haversine donor (#73 #75)
 - pin global hits to the indexed commit SHA, eliminate moving-HEAD resolution (#51) (`search`)

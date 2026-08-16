@@ -110,6 +110,10 @@ class PermittedSyscall(StrEnum):
     # TCGETS (0x5401), which only reports terminal attributes. Kafel compares
     # this 32-bit argument as a signed value, so its typed rendering is decimal.
     IOCTL_TCGETS = "ioctl { cmd == 21505 }"
+    # Debug containment trace 31944059681 records CPython closing an inherited
+    # non-terminal fd with FIOCLEX (0x5451).  This only sets close-on-exec on
+    # that existing descriptor; constrain the ioctl request exactly.
+    IOCTL_FIOCLEX = "ioctl { cmd == 21585 }"
     LSEEK = "lseek"
     # Importlib may attempt bytecode-cache creation beside a read-only module.
     # Immutable mounts reject the write; these calls let CPython receive that

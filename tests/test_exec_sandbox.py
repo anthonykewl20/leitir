@@ -574,7 +574,7 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     assert policy.seccomp_string == (
         "DEFAULT KILL\n"
         "ALLOW { access, arch_prctl, brk, clock_gettime, close, epoll_create1 { flags == 524288 }, execve, exit, exit_group, fcntl, futex, getcwd, "
-        "getdents64, getpid, getrandom, gettid, ioctl { cmd == 21505 }, lseek, mkdir, mmap, mprotect, mremap, munmap, "
+        "getdents64, getpid, getrandom, gettid, ioctl { cmd == 21505 }, ioctl { cmd == 21585 }, lseek, mkdir, mmap, mprotect, mremap, munmap, "
         "newfstat, newfstatat, open, openat, pread64, prlimit64, read, readlink, readlinkat, rename, rseq, rt_sigaction, rt_sigprocmask, "
         "sched_getaffinity, set_robust_list, set_tid_address, statx, write }\n"
     )
@@ -582,6 +582,7 @@ def test_seccomp_is_exact_canonical_generated_kafel(
     assert "stat" not in allowed
     assert {"newfstat", "newfstatat"} <= allowed
     assert "ioctl { cmd == 21505 }" in allowed
+    assert "ioctl { cmd == 21585 }" in allowed
     assert "ALLOW { ioctl," not in policy.seccomp_string
     assert "mremap" in allowed
     assert "epoll_create1 { flags == 524288 }" in allowed

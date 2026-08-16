@@ -166,6 +166,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - preserve dangling donor links during ownership handoff
 - prune orphan empty parent dirs on failed materialization (`corpus`)
 - publish pinned contained rootfs
+- ratify normalized execution runtime
 - ratify release rootfs runtime digest
 - re-ratify diagnostic harness runtime
 - recover truncated GitHub tree listings with a bounded subtree walk (`search`)

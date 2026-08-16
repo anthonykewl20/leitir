@@ -8,6 +8,7 @@ atomic filesystem projection of the already-authorized bytes.
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import json
 import os
@@ -64,6 +65,7 @@ _STDLIB_ROOTS = frozenset(
 )
 _RESERVED_PREFIXES = ("_pytest", "importlib", "leitir", "pytest", "test", "tests", "harness", "probes")
 _PRELOADED = frozenset({"builtins", "sys", "_frozen_importlib", "_frozen_importlib_external", "importlib._bootstrap", "importlib._bootstrap_external"})
+_BUILTIN_NAMES = frozenset(vars(builtins))
 
 
 def _reject(reason: BTSRejectReason, message: str, detail: str) -> BTSError:
@@ -466,6 +468,244 @@ def _allowed_unchanged_import(module: str, module_map: ModuleMap, external: froz
     )
 
 
+def _bound_names(node: ast.AST) -> tuple[str, ...]:
+    """Return the names a top-level statement publishes, in source order."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return (node.name,)
+    if isinstance(node, ast.Import):
+        return tuple(_import_binding(alias, from_import=False, rewritten_name=alias.name) for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        return tuple(_import_binding(alias, from_import=True, rewritten_name=alias.name) for alias in node.names if alias.name != "*")
+
+    names: list[str] = []
+
+    def collect(target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            names.append(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                collect(item)
+
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            collect(target)
+    elif isinstance(node, ast.AnnAssign):
+        collect(node.target)
+    elif isinstance(node, ast.AugAssign):
+        collect(node.target)
+    return tuple(names)
+
+
+def _scope_locals(node: ast.AST) -> frozenset[str]:
+    """Collect lexical locals without descending into child lexical scopes."""
+    names: set[str] = set()
+    globals_: set[str] = set()
+
+    class Collector(ast.NodeVisitor):
+        def visit_Global(self, value: ast.Global) -> None:
+            globals_.update(value.names)
+
+        def visit_FunctionDef(self, value: ast.FunctionDef) -> None:
+            if value is not node:
+                names.add(value.name)
+                return
+            self.generic_visit(value)
+
+        def visit_AsyncFunctionDef(self, value: ast.AsyncFunctionDef) -> None:
+            if value is not node:
+                names.add(value.name)
+                return
+            self.generic_visit(value)
+
+        def visit_ClassDef(self, value: ast.ClassDef) -> None:
+            if value is not node:
+                names.add(value.name)
+                return
+            self.generic_visit(value)
+
+        def visit_Lambda(self, value: ast.Lambda) -> None:
+            if value is not node:
+                return
+            self.generic_visit(value)
+
+        def visit_Name(self, value: ast.Name) -> None:
+            if isinstance(value.ctx, (ast.Store, ast.Del)):
+                names.add(value.id)
+
+        def visit_arg(self, value: ast.arg) -> None:
+            names.add(value.arg)
+
+        def visit_Import(self, value: ast.Import) -> None:
+            names.update(_import_binding(alias, from_import=False, rewritten_name=alias.name) for alias in value.names)
+
+        def visit_ImportFrom(self, value: ast.ImportFrom) -> None:
+            names.update(_import_binding(alias, from_import=True, rewritten_name=alias.name) for alias in value.names if alias.name != "*")
+
+    Collector().visit(node)
+    return frozenset(names - globals_)
+
+
+def _free_names(tree: ast.AST) -> frozenset[str]:
+    """Find names that will be resolved from a relocated module's globals."""
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    scopes = {
+        node: _scope_locals(node)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
+    }
+    globals_by_scope = {
+        node: frozenset(name for statement in ast.walk(node) if isinstance(statement, ast.Global) for name in statement.names)
+        for node in scopes
+    }
+    free: set[str] = set()
+    for name in ast.walk(tree):
+        if not isinstance(name, ast.Name) or not isinstance(name.ctx, ast.Load):
+            continue
+        current = parents.get(name)
+        resolved = False
+        inside_function = False
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                inside_function = True
+                if name.id in globals_by_scope[current]:
+                    break
+                if name.id in scopes[current]:
+                    resolved = True
+                    break
+            elif isinstance(current, ast.ClassDef):
+                # Class suites resolve their own assignments; methods do not.
+                if not inside_function and name.id in scopes[current]:
+                    resolved = True
+                    break
+            current = parents.get(current)
+        if not resolved:
+            free.add(name.id)
+    return frozenset(free)
+
+
+def _test_facing_names(tests: tuple[ContractTest, ...], module: str, aliases: Mapping[str, str]) -> frozenset[str]:
+    """Return explicit attributes/imports that contract tests require from a module."""
+    requested: set[str] = set()
+    imported: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for test in tests:
+        try:
+            tree = ast.parse(test.content.decode("utf-8", "strict"), feature_version=(3, 11))
+        except (UnicodeError, SyntaxError, ValueError) as exc:
+            raise _reject(BTSRejectReason.REJECT_UNDER_COLLECTION, "contract test cannot be analyzed for relocation closure", "relocate_test_closure_parse_v1") from exc
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported_module = aliases.get(node.module, node.module)
+                if imported_module == module:
+                    requested.update(alias.name for alias in node.names if alias.name != "*")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_module = aliases.get(alias.name, alias.name)
+                    bound = alias.asname or alias.name.split(".", 1)[0]
+                    suffix = () if alias.asname else tuple(alias.name.split(".")[1:])
+                    imported[bound] = (imported_module, suffix)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            attributes: list[str] = []
+            current: ast.AST = node
+            while isinstance(current, ast.Attribute):
+                attributes.append(current.attr)
+                current = current.value
+            if not isinstance(current, ast.Name) or current.id not in imported:
+                continue
+            imported_module, suffix = imported[current.id]
+            parts = tuple(reversed(attributes))
+            if imported_module == module and parts[: len(suffix)] == suffix and len(parts) > len(suffix):
+                requested.add(parts[len(suffix)])
+    return frozenset(requested)
+
+
+def _authorize_preamble_imports(data: bytes, module_context: str, module_map: ModuleMap, external: frozenset[str]) -> None:
+    """Preamble imports need explicit policy authority; stdlib is not implicit."""
+    try:
+        tree = ast.parse(data.decode("utf-8", "strict"), feature_version=(3, 11))
+    except (UnicodeError, SyntaxError, ValueError) as exc:
+        raise _reject(BTSRejectReason.REJECT_UNDER_COLLECTION, "preamble source cannot be parsed", "relocate_preamble_parse_v1") from exc
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        modules = (
+            tuple(alias.name for alias in node.names)
+            if isinstance(node, ast.Import)
+            else (_absolute_relative(module_context, node.level, node.module) if node.level else (node.module or ""),)
+        )
+        for imported in modules:
+            rewritten = module_map.rewrite(imported)
+            donor_rooted = imported.split(".", 1)[0] in module_map.donor_roots
+            authorized = any(imported == item or imported.startswith(item + ".") for item in external)
+            if rewritten is None and (donor_rooted or not authorized):
+                raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "preamble import is not policy-authorized", "relocate_preamble_unauthorized_import_v1")
+
+
+def build_preamble_closure(
+    source_data: bytes,
+    module: str,
+    members: tuple[MemberEvidence, ...],
+    tests: tuple[ContractTest, ...],
+    module_map: ModuleMap,
+    external: frozenset[str],
+    test_import_aliases: Mapping[str, str],
+) -> tuple[bytes, ...]:
+    """Build a deterministic, fail-closed top-level dependency preamble.
+
+    Only AST top-level bindings from the member's own authorized donor file can
+    be added.  Imports are retained only when their relocation mapping or the
+    exact policy's external set authorizes them.
+    """
+    try:
+        tree = ast.parse(source_data.decode("utf-8", "strict"), feature_version=(3, 11))
+    except (UnicodeError, SyntaxError, ValueError) as exc:
+        raise _reject(BTSRejectReason.REJECT_UNDER_COLLECTION, "source cannot be analyzed for relocation closure", "relocate_preamble_parse_v1") from exc
+    starts = _offsets(source_data)
+    ranges = tuple(_member_range(source_data, member) for member in members)
+    nodes = tuple(tree.body)
+    node_ranges = tuple(_node_range(node, starts) for node in nodes)
+    selected = {
+        index
+        for index, (start, end) in enumerate(node_ranges)
+        if any(left <= start and end <= right for left, right in ranges)
+    }
+    emitted = b"\n\n".join(_span(source_data, member) for member in members)
+    try:
+        emitted_tree = ast.parse(emitted.decode("utf-8", "strict"), feature_version=(3, 11))
+    except (UnicodeError, SyntaxError, ValueError) as exc:
+        raise _reject(BTSRejectReason.REJECT_UNDER_COLLECTION, "member requires an enclosing source span", "relocate_required_span_expansion_v1") from exc
+    bindings: dict[str, int] = {}
+    for index, node in enumerate(nodes):
+        for name in _bound_names(node):
+            bindings[name] = index
+    needed = set(_free_names(emitted_tree)) | set(_test_facing_names(tests, module, test_import_aliases))
+    while True:
+        emitted_names = {name for index in selected for name in _bound_names(nodes[index])}
+        unresolved = sorted(name for name in needed - emitted_names if name not in _BUILTIN_NAMES)
+        additions: list[int] = []
+        for name in unresolved:
+            closure_index = bindings.get(name)
+            if closure_index is None:
+                raise _reject(BTSRejectReason.REJECT_UNRESOLVED_EDGE, "preamble has an unresolvable free name", "relocate_preamble_unresolved_name_v1")
+            additions.append(closure_index)
+        additions = sorted(set(additions) - selected)
+        if not additions:
+            break
+        selected.update(additions)
+        closure_tree = ast.Module(body=[nodes[index] for index in sorted(selected)], type_ignores=[])
+        needed.update(_free_names(closure_tree))
+    preamble: list[bytes] = []
+    for index in sorted(selected):
+        if any(left <= node_ranges[index][0] and node_ranges[index][1] <= right for left, right in ranges):
+            continue
+        start, end = node_ranges[index]
+        data = source_data[start:end]
+        _authorize_preamble_imports(data, module, module_map, external)
+        preamble.append(_rewrite_python(data, module, module_map, external, "preamble"))
+    return tuple(preamble)
+
+
 def _rewrite_python(data: bytes, module_context: str, module_map: ModuleMap, external: frozenset[str], role: str, import_aliases: Mapping[str, str] | None = None) -> bytes:
     try:
         text = data.decode("utf-8", errors="strict")
@@ -692,6 +932,7 @@ def relocate_tests(
 
     chunks: dict[str, list[tuple[tuple[object, ...], bytes]]] = {}
     definitions: dict[str, set[str]] = {}
+    members_by_module: dict[str, list[MemberEvidence]] = {}
     for member in artifact.members:
         source_data = by_path.get(member.source.path)
         if source_data is None:
@@ -719,6 +960,30 @@ def relocate_tests(
                 definitions[target_module].add(name)
         key = (member.source.path, member.source.start_line, member.source.start_col, member.source.end_line, member.source.end_col, member.node.qualified_name)
         chunks.setdefault(target_module, []).append((key, rewritten))
+        members_by_module.setdefault(member.node.module, []).append(member)
+    for module in sorted(members_by_module):
+        module_members = tuple(sorted(members_by_module[module], key=lambda item: (
+            item.source.path,
+            item.source.start_line,
+            item.source.start_col,
+            item.source.end_line,
+            item.source.end_col,
+            item.node.qualified_name,
+        )))
+        source_data = by_path[module_members[0].source.path]
+        preamble = build_preamble_closure(
+            source_data,
+            module,
+            module_members,
+            tests,
+            module_map,
+            external,
+            import_aliases,
+        )
+        if preamble:
+            target_module = module_map.exact(module)
+            assert target_module is not None
+            chunks.setdefault(target_module, []).append(((module_members[0].source.path, -1, 0, 0, 0, "preamble"), b"\n\n".join(preamble)))
     for module, source in sibling_sources:
         target_module = module_map.exact(module)
         assert target_module is not None

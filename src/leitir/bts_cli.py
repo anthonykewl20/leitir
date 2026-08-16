@@ -568,6 +568,12 @@ def load_sibling_source_modules(path: Path) -> tuple[str, ...]:
     return _load_policy_spec(path).sibling_source_modules
 
 
+def load_relocation_authorized_modules(path: Path) -> tuple[str, ...]:
+    """Return exact policy modules permitted in an E1 preamble closure."""
+    spec = _load_policy_spec(path)
+    return tuple(sorted((*spec.stdlib_modules, *(module for module, _ in spec.adapters))))
+
+
 _SEED_KINDS = frozenset({
     NodeKind.FUNCTION,
     NodeKind.ASYNC_FUNCTION,

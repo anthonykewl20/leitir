@@ -846,6 +846,7 @@ def _relocate_prepared(
     contract_tests: tuple[ContractTest, ...],
     test_import_aliases: tuple[tuple[str, str], ...] = (),
     sibling_source_modules: tuple[str, ...] = (),
+    authorized_modules: tuple[str, ...] = (),
 ) -> Relocation:
     """Compute E1 before S2 policy assembly, without executing donor bytes."""
 
@@ -868,7 +869,7 @@ def _relocate_prepared(
         SourceFile(path, read_regular_file(snapshot.source_root / path, maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))
         for path in sorted({item.path for item in bts.required_files})
     )
-    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"} | set(authorized_modules)))
     sibling_sources = tuple(
         (module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False)))
         for module in sibling_source_modules
@@ -884,7 +885,7 @@ def _relocate_prepared(
     )
 
 
-def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), sibling_source_modules: tuple[str, ...] = ()) -> BTSPipelineRequest:
+def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolution: ResolutionPolicy, preliminary: BTSResult, *, recipient_package: str, contract_tests: tuple[ContractTest, ...], baseline: ContractBaselineEvidence, rerun_policy: RerunExecutionPolicy, precomputed_relocation: Relocation | None, authorized_seed_span: tuple[int, int] | None = None, test_import_aliases: tuple[tuple[str, str], ...] = (), sibling_source_modules: tuple[str, ...] = (), authorized_modules: tuple[str, ...] = ()) -> BTSPipelineRequest:
     """Build the shared non-executing request portion for CLI and bench callers."""
 
     bts = _complete_bts(preliminary)
@@ -896,7 +897,7 @@ def _assemble_pipeline_request(snapshot: DonorSnapshot, selected: NodeId, resolu
         for path in sorted({item.path for item in bts.required_files})
     )
     probe_set = ProbeSet.pin(bts_digest=bts.bts_digest, seed=selected, bts_members=tuple(member.node for member in bts.members), catalog_edges=(), probes=())
-    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"}))
+    external_modules = tuple(sorted({item.target.module for item in bts.dispositions if item.disposition.value == "external"} | set(authorized_modules)))
     sibling_sources = tuple((module, SourceFile(module.replace(".", "/") + ".py", read_regular_file(snapshot.source_root / (module.replace(".", "/") + ".py"), maximum_bytes=_MAX_SPEC_BYTES, no_follow=False))) for module in sibling_source_modules)
     provider = cast(Callable[[Path], Graph], bts_cli.python_graph_provider(snapshot))
     if authorized_seed_span is not None:
@@ -1108,6 +1109,8 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     test_import_aliases = _task_module_aliases(task, preliminary)
     package_suffix = identity.slug.replace("/", "_").replace("-", "_")
     package = f"transplant.{task.task_id.replace('-', '_')}.{package_suffix}"
+    sibling_sources = bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else ()
+    authorized_modules = bts_cli.load_relocation_authorized_modules(resolution_policy_path) if resolution_policy_path is not None else ()
     if not donor_execution_enabled():
         # The ordinary path above rejects before donor input when S2 is absent.
         # This narrow reviewed-fixture seam remains non-executable: it exists
@@ -1130,12 +1133,11 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=None, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases, sibling_source_modules=bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else (),
+            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, ranking_unranked=ranking_unranked)
-    sibling_sources = bts_cli.load_sibling_source_modules(resolution_policy_path) if resolution_policy_path is not None else ()
-    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources)
+    relocation = _relocate_prepared(snapshot, preliminary, recipient_package=package, contract_tests=contract_tests, test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules)
     staging, staged = _prepare_shared_stage(
         root,
         {"kind": "task", "task_id": task.task_id, "identity": identity.to_dict(), "relocation_digest": relocation.relocation_digest},
@@ -1164,7 +1166,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
             snapshot, selected, resolution, preliminary, recipient_package=package,
             contract_tests=contract_tests, baseline=baseline, rerun_policy=rerun_policy,
             precomputed_relocation=relocation, authorized_seed_span=authorized_seed_span,
-            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources,
+            test_import_aliases=test_import_aliases, sibling_source_modules=sibling_sources, authorized_modules=authorized_modules,
         )
         ranking, classified_license, ranking_unranked = _rank_materialized_candidates(task, root)
         return BTSTaskRequestAssembly(request, ranking, classified_license, staging=staging, ranking_unranked=ranking_unranked)
@@ -1657,12 +1659,16 @@ def exit_gate_run(
             raise BTSError(BTSRejectReason.REJECT_HARD_GATE_FAILED, "exit pipeline requires a complete static BTS", detail_code="pipeline_cli_non_complete_bts_v1")
         package = f"transplant.{case_id.replace('-', '_')}"
         test_import_aliases = _exit_module_aliases(preliminary, import_roots)
+        sibling_sources = bts_cli.load_sibling_source_modules(root / policy_path) if policy_path is not None else ()
+        authorized_modules = bts_cli.load_relocation_authorized_modules(root / policy_path) if policy_path is not None else ()
         relocation = _relocate_prepared(
             snapshot,
             preliminary,
             recipient_package=package,
             contract_tests=tests,
             test_import_aliases=test_import_aliases,
+            sibling_source_modules=sibling_sources,
+            authorized_modules=authorized_modules,
         )
         _stage, staged = _prepare_shared_stage(
             root,
@@ -1692,6 +1698,8 @@ def exit_gate_run(
             precomputed_relocation=relocation,
             authorized_seed_span=authorized_seed_span,
             test_import_aliases=test_import_aliases,
+            sibling_source_modules=sibling_sources,
+            authorized_modules=authorized_modules,
         )
         exit_cases.append(ExitCorpusCase.pin(cast(str, raw_case["case_id"]), cast(str, raw_case["source_provenance"]), "sha256:" + cast(str, raw_case["review_receipt_digest"]), request))
        except BTSError as exc:

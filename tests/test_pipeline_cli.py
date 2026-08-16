@@ -447,6 +447,7 @@ def test_deterministic_stage_ancestors_are_searchable_without_being_writable(tmp
     assert os.stat(stage).st_mode & 0o777 == 0o711
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode semantics are required by nsjail")
 def test_stage_relocation_preserves_modes_while_mapping_sudo_runner_ownership(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class _Relocation:
         def publish(self, target: Path) -> None:

@@ -1,4 +1,4 @@
-# Leitir — Status (2026-08-16)
+# Leitir — Status (2026-08-17)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
@@ -34,10 +34,13 @@ The Behavioral Transplant Set code landed on `main` via PR #127. ADR-0008
 through ADR-0011 are Accepted and Implemented, and issues #55, #60, #61, #62,
 #63, #64, and #72 are closed. The v0.1.2 milestone remains open only for epic
 #52 and exit gate #73: all five Phase-A donors have repeatedly completed under
-containment with 2/0/0 baseline and rerun outcomes. The final honest run
+containment with 2/0/0 baseline and rerun outcomes. The pre-ratification run
 [31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924)
-is an overall reject solely because `ratified_runtime_digest` remains null
-until a stable runtime digest can be ratified. The six-task #75 benchmark is
+was an honest overall reject solely because `ratified_runtime_digest` was
+null; on 2026-08-17 the ADR-0021-stabilized runtime digest
+`sha256:72949674…` was ratified out of band with the owner key, so the gate
+is now expected to reach `complete` — the Phase-C COMPLETE run and #73/#52
+closure follow on that run's evidence. The six-task #75 benchmark is
 published; its one `worker-shutdown-predicate` result remains an honest partial.
 
 ### v0.1.3 — composition and multi-language
@@ -71,11 +74,18 @@ PR #166 remediated the security P2 findings (evidence redaction, scratch quota,
 uid-map fail-closed handling, nsjail golden hash, idna pin, and Go-zip golden
 vector) after two independent reviews recorded no P0/P1 findings.
 
-Ratification is held rather than claimed: the Ed25519 ceremony sidecar and
-trusted-key record exist, but `ratified_runtime_digest` is null pending an
-owner signature. ADR-0021's manifest-free donor mount projection removed the
-run-to-run drift of staged mount-source tree digests, so the runtime digest is
-now a pure function of pinned inputs; re-measure it, then re-sign. See
+Ratification is recorded, not self-claimed: ADR-0021's manifest-free donor
+mount projection removed the run-to-run drift of staged mount-source tree
+digests, runs
+[32008683557](https://github.com/anthonykewl20/leitir/actions/runs/32008683557)
+and [32009633642](https://github.com/anthonykewl20/leitir/actions/runs/32009633642)
+re-measured the now-deterministic digest byte-identically, and the 2026-08-17
+owner ceremony rotated the trust root to a long-term owner key
+(`7baec2e9…`) and signed
+`sha256:72949674c997fe803e58c4060a787c5484785cc96b9bb450c7659aab72658c79`
+into `ratified_runtime_digest` with the detached `ratification-v1.json`
+sidecar. The Phase-C `complete` exit-gate run on `main` is the remaining
+closing evidence. See
 [`benchmarks/exit-corpus/README.md`](../benchmarks/exit-corpus/README.md).
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
@@ -148,12 +158,13 @@ originating #17 is also closed. Broader audit work is tracked by the
 | Dogfood | **MET** | Independent evidence is recorded in [`dogfood-2026-08-15.md`](evidence/dogfood-2026-08-15.md). The tracked friction backlog is L1, L3, L4, L7, L8, L9, M3 items 1/2, and M4. |
 | Live canary | **GREEN** | `GH_TOKEN`-gated probes are enabled daily; main runs 31934680140 and 31934798266 are green. Three v2 surfaces skip by design because their test files are not landed. |
 | Security sign-off | **DONE** | Two independent reviews on post-#163 state recorded no P0/P1; PR #166 remediated all reported P2 findings. |
-| Phase-A containment | **5/5 COMPLETE** | Each donor repeatedly completed contained baseline/rerun at 2/0/0. Run 31967278924 is intentionally overall-reject only for pending runtime ratification. |
-| Runtime ratification | **PENDING** | Ceremony key/sidecar are committed; ADR-0021 removed the mount-source digest drift. Re-measure the stabilized runtime digest, then re-sign. |
+| Phase-A containment | **5/5 COMPLETE** | Each donor repeatedly completed contained baseline/rerun at 2/0/0. Run 31967278924 was intentionally overall-reject only for pending runtime ratification. |
+| Runtime ratification | **RATIFIED (2026-08-17)** | Owner key `7baec2e9…` signs digest `sha256:72949674…` (runs 32008683557 + 32009633642 byte-identical) via `ratification-v1.json`; Phase-C COMPLETE run on `main` to follow. |
 | BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
 Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;
-v0.1.2 remains open for #73 ratification and #52; v0.1.3 and v0.1.4 are
+v0.1.2 remains open for #73 (runtime digest ratified 2026-08-17; closure
+follows the Phase-C COMPLETE run) and #52; v0.1.3 and v0.1.4 are
 complete, with the v0.1.4 release owner-gated. #75 and #148 are also closed.
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
@@ -167,10 +178,12 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2647 passed, 122 skipped**. The skips are opt-in live tests
-behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1` and polyglot
-tests that require the optional tree-sitter extra; with that extra installed,
-the four polyglot test files run **105 additional tests**.
+Offline suite: **2661 passed, 123 skipped**. The skips are opt-in live tests
+behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`, polyglot
+tests that require the optional tree-sitter extra, and the six L5 ratification
+tests that require the optional auth extra (`cryptography`); with those extras
+installed, the four polyglot test files run **105 additional tests** and the
+ratification trust-anchor tests run.
 
 ## What the scorer says about Leitir
 

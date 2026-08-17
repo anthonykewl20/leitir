@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from dataclasses import replace
@@ -565,8 +566,24 @@ def test_donor_projection_plan_requires_a_regular_root_manifest(tmp_path: Path) 
 def test_donor_projection_plan_rejects_symlinks_and_special_files_with_distinct_codes(tmp_path: Path) -> None:
     if not hasattr(os, "mkfifo"):
         pytest.skip("platform has no FIFO support for the special-file probe")
-    shelf = tmp_path / "shelf"
-    shelf.mkdir()
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("platform has no AF_UNIX sockets")
+    if sys.platform == "darwin":
+        # GitHub's macOS runners put pytest temp roots beyond AF_UNIX's
+        # 104-byte sun_path limit; root the shelf under a short /tmp
+        # directory there so the socket probe still binds INSIDE the shelf
+        # the walk rejects on.  Every platform keeps socket coverage.
+        short_root = Path(tempfile.mkdtemp(prefix="ltr-", dir="/tmp"))
+        try:
+            _exercise_special_file_rejections(short_root / "shelf")
+        finally:
+            shutil.rmtree(short_root, ignore_errors=True)
+    else:
+        _exercise_special_file_rejections(tmp_path / "shelf")
+
+
+def _exercise_special_file_rejections(shelf: Path) -> None:
+    shelf.mkdir(parents=True)
     (shelf / MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
     (shelf / "module.py").write_text("x = 1\n", encoding="utf-8")
 
@@ -580,8 +597,6 @@ def test_donor_projection_plan_rejects_symlinks_and_special_files_with_distinct_
     _projection_rejects(shelf, "pipeline_cli_donor_projection_special_file_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
     (fifo / "pipe").unlink()
 
-    if not hasattr(socket, "AF_UNIX"):
-        pytest.skip("platform has no AF_UNIX sockets")
     server = socket.socket(socket.AF_UNIX)
     server.bind(str(fifo / "sock"))
     try:

@@ -756,9 +756,14 @@ def test_debug_mount_source_manifests_emit_one_canonical_line_per_mount(
     assert donor_payload["entry_count"] == len(expected_manifest)
     assert donor_payload["entries"] == [dict(item) for item in expected_manifest]
     assert donor_payload["entries_digest"] == sandbox._digest_payload(list(expected_manifest))
+    # Windows chmod honors only the read-only flag; os.stat then synthesizes
+    # full access masks for writable entries (0o666 for files, 0o777 for
+    # directories, which additionally get the execute bit).
+    expected_file_mode = 0o666 if os.name == "nt" else 0o644
+    expected_directory_mode = 0o777 if os.name == "nt" else 0o755
     file_entry = next(item for item in donor_payload["entries"] if item["type"] == "file")
     assert file_entry == {
-        "mode": 0o644,
+        "mode": expected_file_mode,
         "path": "mod.py",
         "sha256": _digest(_DONOR_MODULE_BYTES),
         "size": len(_DONOR_MODULE_BYTES),
@@ -769,7 +774,7 @@ def test_debug_mount_source_manifests_emit_one_canonical_line_per_mount(
     # manifest: two green runs on different runners must emit byte-identical
     # lines for cross-run drift diagnosis.  File size is content-implied and
     # stays in.
-    assert directory_entry == {"mode": 0o755, "path": ".", "type": "directory"}
+    assert directory_entry == {"mode": expected_directory_mode, "path": ".", "type": "directory"}
     assert "size" not in directory_entry
     assert "size" in file_entry
     # Emission is canonical JSON: byte-identical to a sorted re-serialization.

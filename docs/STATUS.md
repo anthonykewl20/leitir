@@ -171,9 +171,10 @@ Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;
 v0.1.2 is **complete and closed** (#73 closed on the ratified Phase-C
 `complete` evidence — canonical main run
 [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262)
-— and epic #52 closed with it; milestone 25/0 closed); v0.1.3 and v0.1.4 are
-complete, with the v0.1.4 release cut owner-gated (version bump 0.1.1→0.1.4,
-tag, release build). #75 and #148 are also closed.
+— and epic #52 closed with it; milestone 25/0 closed); v0.1.3 is complete;
+v0.1.4 is complete and **released** as
+[v0.1.4](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4) (first
+`v*` tag, 2026-08-17; wheel+sdist twine-checked). #75 and #148 are also closed.
 
 Post-ADR-005 hardening + sprint: GitLab nested-subgroup paths; trust
 "tests" fairness (`has_tests` from the git tree, neutral for artifact

@@ -12,6 +12,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+## [0.1.4]
+
 ### ⚠ BREAKING CHANGES
 - retire the v1 Hy3 synthesis pipeline (`kernel`)
 
@@ -212,4 +214,5 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
-[Unreleased]: https://github.com/anthonykewl20/leitir/commits/HEAD
+[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4

@@ -405,7 +405,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2647 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2657 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
 
 ## Current state
 
@@ -416,11 +416,13 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
   (each 2/0/0). Its most recent honest run,
   [31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924),
   rejects solely because runtime ratification is deliberately pending: the
-  staged mount-source tree digest still drifts between runs. The published
-  `containment-rootfs-v1` asset is pinned to
+  run-to-run drift of the donor mount-source tree digest is removed by the
+  manifest-free donor mount projection of ADR-0021, so the runtime digest is
+  now a pure function of pinned inputs and awaits a fresh owner measurement
+  and signature. The published `containment-rootfs-v1` asset is pinned to
   `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  The next owner step is entry-level staged-tree instrumentation, followed by a
-  fresh signature only after the digest stabilizes.
+  The next owner step is re-measuring the stabilized runtime digest, followed
+  by a fresh signature.
 - BTS benchmark evidence is published at
   `benchmarks/bts-v1/runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/`:
   five of six tasks have exact baselines and metrics; the

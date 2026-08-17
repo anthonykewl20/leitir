@@ -72,9 +72,10 @@ uid-map fail-closed handling, nsjail golden hash, idna pin, and Go-zip golden
 vector) after two independent reviews recorded no P0/P1 findings.
 
 Ratification is held rather than claimed: the Ed25519 ceremony sidecar and
-trusted-key record exist, but `ratified_runtime_digest` is null while staged
-mount-source tree digests drift run to run. Entry-level instrumentation is the
-next step; re-sign only after it establishes a stable digest. See
+trusted-key record exist, but `ratified_runtime_digest` is null pending an
+owner signature. ADR-0021's manifest-free donor mount projection removed the
+run-to-run drift of staged mount-source tree digests, so the runtime digest is
+now a pure function of pinned inputs; re-measure it, then re-sign. See
 [`benchmarks/exit-corpus/README.md`](../benchmarks/exit-corpus/README.md).
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
@@ -148,7 +149,7 @@ originating #17 is also closed. Broader audit work is tracked by the
 | Live canary | **GREEN** | `GH_TOKEN`-gated probes are enabled daily; main runs 31934680140 and 31934798266 are green. Three v2 surfaces skip by design because their test files are not landed. |
 | Security sign-off | **DONE** | Two independent reviews on post-#163 state recorded no P0/P1; PR #166 remediated all reported P2 findings. |
 | Phase-A containment | **5/5 COMPLETE** | Each donor repeatedly completed contained baseline/rerun at 2/0/0. Run 31967278924 is intentionally overall-reject only for pending runtime ratification. |
-| Runtime ratification | **PENDING** | Ceremony key/sidecar are committed, but staged mount-source tree digests drift. Add entry-level instrumentation, establish stability, then re-sign. |
+| Runtime ratification | **PENDING** | Ceremony key/sidecar are committed; ADR-0021 removed the mount-source digest drift. Re-measure the stabilized runtime digest, then re-sign. |
 | BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
 Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;

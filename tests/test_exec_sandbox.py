@@ -685,8 +685,14 @@ def test_mount_source_digest_debug_reports_per_entry_diff(
     root_file.write_bytes(b"tampered")
     with pytest.raises(TransplantError):
         prepare_execution(policy)
-    diagnostic = capsys.readouterr().err.removeprefix("leitir mount-source digest mismatch ")
-    payload = json.loads(diagnostic)
+    # The debug channel now also carries the per-mount manifest inventory; the
+    # mismatch diagnostic remains its own canonical line.
+    mismatch = next(
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("leitir mount-source digest mismatch ")
+    )
+    payload = json.loads(mismatch.removeprefix("leitir mount-source digest mismatch "))
     assert payload["actual_digest"] != payload["expected_digest"]
     assert payload["entry_diff"] == [
         {
@@ -695,6 +701,120 @@ def test_mount_source_digest_debug_reports_per_entry_diff(
             "path": "python",
         }
     ]
+
+
+_DONOR_MODULE_BYTES = b"def f():\n    return 1\n"
+
+
+def _policy_with_donor_mount(
+    fake_nsjail: tuple[Path, str, str], tmp_path: Path
+) -> tuple[ContainmentPolicy, Path, str]:
+    policy = _policy(fake_nsjail)
+    donor = tmp_path / "donor"
+    donor.mkdir()
+    donor.chmod(0o755)
+    (donor / "mod.py").write_bytes(_DONOR_MODULE_BYTES)
+    (donor / "mod.py").chmod(0o644)
+    donor_digest = sandbox._verified_directory_tree_digest(donor)
+    mounts = tuple(sorted((*policy.readonly_mounts, ReadOnlyMount("/donor", str(donor), donor_digest))))
+    payload = {
+        "readonly_mounts": [{"destination": mount.destination, "source_digest": mount.source_digest} for mount in mounts],
+        "rootfs_digest": policy.rootfs_digest,
+        "writable_tmpfs": policy.writable_tmpfs,
+        "writable_tmpfs_bytes": policy.writable_tmpfs_bytes,
+        "writable_tmpfs_inodes": policy.writable_tmpfs_inodes,
+    }
+    return replace(policy, readonly_mounts=mounts, mount_plan_digest=_canonical_digest(payload)), donor, donor_digest
+
+
+def test_debug_mount_source_manifests_emit_one_canonical_line_per_mount(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_nsjail: tuple[Path, str, str],
+    tmp_path: Path,
+) -> None:
+    policy, donor, donor_digest = _policy_with_donor_mount(fake_nsjail, tmp_path)
+    expected_manifest = sandbox._mount_source_entry_manifest(donor)
+
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+    sandbox.record_debug_mount_source_manifests(policy)
+
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 2  # one line per mount, rootfs first in sorted order
+    rootfs_line, donor_line = lines
+    rootfs_payload = json.loads(rootfs_line.removeprefix("leitir mount-source manifest "))
+    donor_payload = json.loads(donor_line.removeprefix("leitir mount-source manifest "))
+    # The rootfs keeps aggregate fields only: its entry list is the log volume
+    # of a full interpreter image.
+    assert set(rootfs_payload) == {"destination", "digest", "entry_count", "entries_digest", "source"}
+    assert rootfs_payload["destination"] == "/"
+    assert rootfs_payload["digest"] == policy.readonly_mounts[0].source_digest
+    assert rootfs_payload["entry_count"] == 2  # "." directory plus "python"
+    assert set(donor_payload) == {"destination", "digest", "entry_count", "entries_digest", "entries", "source"}
+    assert donor_payload["destination"] == "/donor"
+    assert donor_payload["digest"] == donor_digest
+    assert donor_payload["entry_count"] == len(expected_manifest)
+    assert donor_payload["entries"] == [dict(item) for item in expected_manifest]
+    assert donor_payload["entries_digest"] == sandbox._digest_payload(list(expected_manifest))
+    file_entry = next(item for item in donor_payload["entries"] if item["type"] == "file")
+    assert file_entry == {
+        "mode": 0o644,
+        "path": "mod.py",
+        "sha256": _digest(_DONOR_MODULE_BYTES),
+        "size": len(_DONOR_MODULE_BYTES),
+        "type": "file",
+    }
+    directory_entry = next(item for item in donor_payload["entries"] if item["type"] == "directory")
+    # Directory st_size is filesystem-dependent, so it must stay OUT of the
+    # manifest: two green runs on different runners must emit byte-identical
+    # lines for cross-run drift diagnosis.  File size is content-implied and
+    # stays in.
+    assert directory_entry == {"mode": 0o755, "path": ".", "type": "directory"}
+    assert "size" not in directory_entry
+    assert "size" in file_entry
+    # Emission is canonical JSON: byte-identical to a sorted re-serialization.
+    assert donor_line == "leitir mount-source manifest " + json.dumps(
+        donor_payload, sort_keys=True, separators=(",", ":")
+    )
+    # The captured inventory still feeds the digest-mismatch diff unchanged.
+    assert sandbox._DEBUG_MOUNT_ENTRY_MANIFESTS[(str(donor), donor_digest)] == expected_manifest
+
+
+def test_debug_mount_source_manifests_are_silent_without_the_debug_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_nsjail: tuple[Path, str, str],
+    tmp_path: Path,
+) -> None:
+    policy, donor, _digest_value = _policy_with_donor_mount(fake_nsjail, tmp_path)
+    monkeypatch.delenv(sandbox.NSJAIL_DEBUG_ENV, raising=False)
+
+    sandbox.record_debug_mount_source_manifests(policy)
+
+    assert capsys.readouterr().err == ""
+    assert str(donor) not in {source for source, _mount_digest in sandbox._DEBUG_MOUNT_ENTRY_MANIFESTS}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="backend verification requires the Linux containment seam")
+def test_debug_mount_source_manifests_do_not_change_integrity_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_nsjail: tuple[Path, str, str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEITIR_ENABLE_DONOR_EXECUTION", "1")
+    policy, donor, _donor_digest = _policy_with_donor_mount(fake_nsjail, tmp_path)
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+
+    sandbox.record_debug_mount_source_manifests(policy)
+
+    assert capsys.readouterr().err != ""  # emission happened...
+    sandbox._validate_policy(policy)  # ...and left the policy exactly as valid as before
+    (donor / "mod.py").write_bytes(b"tampered")
+    with pytest.raises(TransplantError) as caught:
+        prepare_execution(policy)
+
+    assert caught.value.evidence.detail_code == "mount_source_digest_mismatch"
 
 
 @pytest.mark.skipif(

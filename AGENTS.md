@@ -3,10 +3,10 @@
 ## Where to find tracked work
 
 - **Milestone status:** [v0.1.4](https://github.com/anthonykewl20/leitir/milestone/4) is complete and pending its owner-held release; there are no `v*` release tags and `pyproject.toml` remains 0.1.1. v0.1.3 is complete. v0.1.2 remains open only for epic #52 and exit-gate #73 runtime ratification; its five-donor Phase-A corpus is repeatedly contained-green and its six-task BTS benchmark is published.
-- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty; promotion is owner-gated.** PRs #163–#179 are landed: they cover contained execution, security P2 remediation, contained benchmark baselines, the published rootfs, and the held ratification ceremony. #42, #75, and #148 are closed with their evidence; #73 and #52 remain open because `ratified_runtime_digest` is deliberately null while staged mount-source tree digests drift. The next owner step is entry-level instrumentation, then re-sign after a stable digest.
+- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty; promotion is owner-gated.** PRs #163–#179 are landed: they cover contained execution, security P2 remediation, contained benchmark baselines, the published rootfs, and the held ratification ceremony. #42, #75, and #148 are closed with their evidence; #73 and #52 remain open because `ratified_runtime_digest` is deliberately null. ADR-0021's manifest-free donor mount projection removed the run-to-run staged mount-source tree digest drift; the next owner step is re-measuring the stabilized runtime digest, then re-signing.
 - The occupied gate's trust binding follows ADR-0017: policy-pinned authority, occupied rerun receipts, and complete dependency evidence are required for composition acceptance.
 - ADR-0008 through ADR-0011 are Accepted and Implemented. ADR-0012 is Accepted and fully implemented; ADR-0013 through ADR-0019, including ADR-0018, are Accepted. Issues #76/#77/#78/#79/#80 are closed via PRs #132/#137/#136/#135/#134, with shared contract unification in PR #138; #128 is closed by PR #131's three-layer Windows fix. Main now includes `composition.py`, `architecture.py`, `duplicates.py`, `lineage.py` (plus bundle v2), `cost.py`, `occupied.py`, and the polyglot graph modules `graph/{ts_kernel,javascript,typescript,rust,go}.py`, with graph policy/registry scaffolding and `requirements-tree-sitter.lock`.
-- The contained workflow uses the published `containment-rootfs-v1` release asset, whose canonical tree digest is `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`; consumers verify it before policy construction. The Ed25519 key sidecar and trusted-key configuration are committed, but they do not authorize acceptance until the runtime digest stabilizes and is re-signed.
+- The contained workflow uses the published `containment-rootfs-v1` release asset, whose canonical tree digest is `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`; consumers verify it before policy construction. The Ed25519 key sidecar and trusted-key configuration are committed, but they do not authorize acceptance until the stabilized runtime digest is re-measured and re-signed.
 - The daily `GH_TOKEN`-gated live canary is enabled and green on main. Production-readiness evidence includes the 116-package load test, dogfood evidence (with a tracked low/medium friction backlog), and post-#163 independent security sign-offs with P2 remediation. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
 
 ## Conventions (non-negotiable)
@@ -21,7 +21,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 2647 passed / 122 skipped (current), 0 failed; installing the tree-sitter extra runs 105 additional polyglot tests.
+- Target: 2657 passed / 122 skipped (current), 0 failed; installing the tree-sitter extra runs 105 additional polyglot tests.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

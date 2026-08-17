@@ -24,6 +24,8 @@ please use [`template.md`](template.md) as the basis.
 | [0017](0017-occupied-recipient-validation-gate.md) | Occupied-recipient validation gate | Accepted | 2026-08-13 |
 | [0018](0018-manifest-authenticity.md) | Manifest authenticity | Accepted | 2026-08-13 |
 | [0019](0019-integration-cost-evidence.md) | Integration-cost evidence | Accepted | 2026-08-13 |
+| [0020](0020-go-module-authenticity-via-sumdb.md) | Go module authenticity via SumDB | Accepted | 2026-08-14 |
+| [0021](0021-deterministic-donor-mount-projection.md) | Deterministic donor mount projection for runtime-digest stability | Accepted | 2026-08-17 |
 
 ## Status vocabulary
 

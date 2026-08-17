@@ -52,9 +52,10 @@ The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-00
   release-pinned rootfs, and ratification ceremony. The published
   `containment-rootfs-v1` asset is pinned to
   `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  Ratification remains held while staged mount-source tree digests drift;
-  entry-level instrumentation and re-signing after stability are the remaining
-  owner steps.
+  Ratification remains held pending an owner signature: ADR-0021's
+  manifest-free donor mount projection removed the run-to-run drift of the
+  staged mount-source tree digests, so re-measuring the stabilized runtime
+  digest and re-signing are the remaining owner steps.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
@@ -114,4 +115,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: the ready-for-agent pool is currently empty. The remaining v0.1.2 owner work is runtime-digest instrumentation and re-ratification for #73; check the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) for current status.
+Humans: the ready-for-agent pool is currently empty. The remaining v0.1.2 owner work is re-measuring the now-stable runtime digest (ADR-0021) and re-ratifying for #73; check the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) for current status.

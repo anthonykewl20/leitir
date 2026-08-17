@@ -181,6 +181,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - run contained BTS task baselines
 - seed origin filter, comprehension scope fix, drift-shelf search exclusions, nsjail identity, dogfood feedback (#42 #73)
 - skip directory fsync on Windows in publish_packet (#128) (`transplant`)
+- stabilize donor mount digests via manifest-free donor projection (ADR-0021)
 - stage published rootfs phase A
 - stop rewriting Tier-2 class __module__ to restore get_type_hints/getsource (`adapters`)
 - tolerate .gitattributes EOL normalization in tree verification (`corpus`)

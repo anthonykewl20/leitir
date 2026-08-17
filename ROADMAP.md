@@ -25,7 +25,7 @@
 
 ## Current status
 
-The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). v0.1.1 production-readiness evidence is complete: #42 has recorded dogfood, load-test, canary, and post-#163 security-sign-off evidence, with the remaining dogfood friction retained as a tracked backlog. The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127; its five-donor exit corpus is repeatedly contained-green and its six-task benchmark is published. Only runtime ratification (#73) and epic #52 remain.
+The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). v0.1.1 production-readiness evidence is complete: #42 has recorded dogfood, load-test, canary, and post-#163 security-sign-off evidence, with the remaining dogfood friction retained as a tracked backlog. The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127; its five-donor exit corpus is repeatedly contained-green and its six-task benchmark is published. The runtime digest was ratified on 2026-08-17 (owner key `7baec2e9…`, digest `sha256:72949674…`); #73 closes on the Phase-C COMPLETE run's evidence, and epic #52 remains.
 
 ## Initially implemented (v0.1.0 scope)
 
@@ -52,10 +52,13 @@ The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-00
   release-pinned rootfs, and ratification ceremony. The published
   `containment-rootfs-v1` asset is pinned to
   `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  Ratification remains held pending an owner signature: ADR-0021's
-  manifest-free donor mount projection removed the run-to-run drift of the
-  staged mount-source tree digests, so re-measuring the stabilized runtime
-  digest and re-signing are the remaining owner steps.
+  Ratification is recorded (2026-08-17): ADR-0021's manifest-free donor mount
+  projection removed the run-to-run drift of the staged mount-source tree
+  digests, runs 32008683557 and 32009633642 re-measured the stabilized digest
+  byte-identically, and the owner ceremony rotated the trust root to a
+  long-term owner key and signed `sha256:72949674…` into
+  `ratified_runtime_digest`. The Phase-C COMPLETE exit-gate run on `main` is
+  the remaining #73 closing evidence.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
@@ -91,7 +94,7 @@ Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are *
 
 ## Next milestones (incremental, shipped as patch releases)
 
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (2 open): ADR-0008 through ADR-0011 are implemented. All five donors repeatedly complete under the contained Phase-A workflow, the rootfs is published and pinned, and #75's benchmark is published. #73 remains pending only for a stable, independently ratified runtime digest; epic #52 remains open until that exit criterion is met.
+- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (2 open): ADR-0008 through ADR-0011 are implemented. All five donors repeatedly complete under the contained Phase-A workflow, the rootfs is published and pinned, and #75's benchmark is published. #73's runtime digest is ratified (2026-08-17, `sha256:72949674…`); its closure follows the Phase-C COMPLETE run's evidence, and epic #52 remains open until that exit criterion is met.
 - **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (complete): #76, #77, #78, #79, #80, and #82 closed via PRs #132, #137, #136, #135, #134, and #139. #81's tree-sitter stages and ADR-0018 optional detached manifest authentication are landed; #148's CLI/evidence work is complete and its tracker is closed.
 - **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open): implementation complete on `main` (all slices merged and independently cross-reviewed/hardened), but no release has been cut. This is a pre-first-release repository with zero `v*` tags, and `pyproject.toml` remains at 0.1.1; cutting the release requires the owner-held version bump, tag, and push. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
 
@@ -115,4 +118,4 @@ These are retained for context but are never scorer evidence.
 ## How to contribute
 
 AI agents: see AGENTS.md for workflow conventions.
-Humans: the ready-for-agent pool is currently empty. The remaining v0.1.2 owner work is re-measuring the now-stable runtime digest (ADR-0021) and re-ratifying for #73; check the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) for current status.
+Humans: the ready-for-agent pool is currently empty. The runtime digest for #73 was ratified on 2026-08-17; the remaining v0.1.2 owner work is the Phase-C COMPLETE exit-gate run on `main` and closing #73/#52 on its evidence; check the [v0.1.2 milestone](https://github.com/anthonykewl20/leitir/milestone/2) for current status.

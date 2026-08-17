@@ -1166,6 +1166,31 @@ def test_l5_ratification_tampered_signature_or_projection_rejects_typed(tmp_path
 
 
 @pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
+def test_l5_ratification_default_manifest_sidecar_rejects_tampered_runtime_digest(tmp_path: Path) -> None:
+    """exit-gate-run's default sidecar resolution fails closed on a tampered digest.
+
+    ``exit_gate_run`` resolves the sidecar to ``ratification-v1.json`` beside the
+    corpus manifest when ``--ratification-sidecar`` is absent (the CI workflow's
+    call shape); a one-character tamper of the ratified runtime digest inside a
+    canonically re-encoded record must reject without ever reaching the gate.
+    """
+    manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
+    record = json.loads(sidecar.read_text(encoding="utf-8"))
+    digest = str(record["projection"]["ratified_runtime_digest"])
+    record["projection"]["ratified_runtime_digest"] = digest[:-1] + ("0" if digest[-1] != "0" else "1")
+    sidecar.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+
+    with pytest.raises(BTSError) as caught:
+        _require_runtime_ratification(
+            manifest, corpus_manifest_digest="sha256:" + "a" * 64, donors_dir=donors,
+            trusted_keys_path=keys, ratification_sidecar=None, default_sidecar=sidecar,
+        )
+
+    assert caught.value.evidence.detail_code == "pipeline_cli_ratification_invalid_v1"
+    assert caught.value.evidence.message.endswith(": ManifestAuthProjectionMismatchError")
+
+
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="ratification trust-anchor reads require cryptography and O_NOFOLLOW")
 def test_l5_ratification_self_signed_untrusted_key_rejects_typed(tmp_path: Path) -> None:
     manifest, sidecar, keys, donors = _l5_ratification(tmp_path)
     record = json.loads(sidecar.read_text(encoding="utf-8"))

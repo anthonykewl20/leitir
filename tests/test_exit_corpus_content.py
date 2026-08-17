@@ -14,7 +14,8 @@ _REPO_ROOT = Path(__file__).parents[1]
 _CORPUS_ROOT = _REPO_ROOT / "benchmarks" / "exit-corpus"
 _MANIFEST_PATH = _CORPUS_ROOT / "corpus-v1.1.json"
 _REVIEW_RECORD_PATH = _CORPUS_ROOT / "review-record-v1.md"
-_EXPECTED_CONTENT_DIGEST = "00c5d6c83215d63ed1fecd7c62675569f27eff6f95dc0c7eff8b3d3f8ef92929"
+_EXPECTED_CONTENT_DIGEST = "a4c2dd5118eb5f17cdb8d1771208ffefc3b00e902eb244803ef1752ba260a4aa"
+_EXPECTED_RATIFIED_RUNTIME_DIGEST = "sha256:72949674c997fe803e58c4060a787c5484785cc96b9bb450c7659aab72658c79"
 _EXPECTED_OUTCOMES: dict[str, tuple[int, int, int, int]] = {
     "backoff-full-jitter": (2, 2, 0, 0),
     "haversine-avg-earth-radius": (2, 2, 0, 0),
@@ -98,8 +99,8 @@ def test_real_exit_corpus_manifest_is_structurally_valid_and_content_bound() -> 
     assert len({case["donor"]["commit_sha"] for case in cases.values()}) == 5
     assert summary["content_digest"] == _EXPECTED_CONTENT_DIGEST
     assert content_digest(load_corpus_manifest(_MANIFEST_PATH)) == _EXPECTED_CONTENT_DIGEST
-    assert manifest["ratified_runtime_digest"] is None
-    assert load_corpus_manifest(_MANIFEST_PATH)["ratified_runtime_digest"] is None
+    assert manifest["ratified_runtime_digest"] == _EXPECTED_RATIFIED_RUNTIME_DIGEST
+    assert load_corpus_manifest(_MANIFEST_PATH)["ratified_runtime_digest"] == _EXPECTED_RATIFIED_RUNTIME_DIGEST
     runnable = manifest["runnable"]
     assert isinstance(runnable, dict)
     assert runnable["substrate"] == {

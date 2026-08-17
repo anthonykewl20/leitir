@@ -71,26 +71,68 @@ not the out-of-band authority. The ratified runtime authority is recorded in
    Missing, tampered, self-made, or untrusted signatures reject; equality alone
    cannot create authority.
 
-### 2026-08-16 ceremony held pending stable runtime digest
+### 2026-08-17 runtime digest ratified (ceremony complete)
 
-The out-of-band ceremony was performed and retained as audit evidence. The
-public key is in `trusted-keys-v1.json`; its key ID is
-`8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`.
-The detached `ratification-v1.json` is retained as a ceremony artifact. The
-private key is held out of band by the owner ceremony and is never committed.
+The ADR-0021-stabilized runtime digest is ratified:
+`sha256:72949674c997fe803e58c4060a787c5484785cc96b9bb450c7659aab72658c79`.
+`corpus-v1.1.json` records it in `ratified_runtime_digest`, and the detached
+`ratification-v1.json` binds the canonical projection
+`{corpus_id, corpus_manifest_digest, ratified_runtime_digest}` — both digest
+fields carry that same measured value — under the owner-controlled long-term
+ratifier key rotated in for this ceremony:
 
-Ratification is **HELD**: `ratified_runtime_digest` is `null`. The original
-blocker — the runtime corpus digest drifting run-to-run through staged
-mount-source tree digests that embedded the shelf manifest's wall-clock
-`fetched_at`/`verified_at` fields — is removed by ADR-0021's manifest-free,
-mode-canonicalized donor mount projection. Phase-A [run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451)
+* owner ratifier key ID:
+  `7baec2e9c408e77ad74312c2d9c575a73fae02275a015a4becd8c829814b5505`
+  (the single key in `trusted-keys-v1.json`; its private half is held out of
+  band by the owner under `~/.leitir/` and is never committed).
+
+`ratified_manifest_digest` remains `null` by convention: it is the record-level
+`sha256("ratify:" + content_digest)` content-binding convention, not the
+out-of-band authority. The authority is the signed sidecar plus
+`ratified_runtime_digest`, exactly as the protocol above defines.
+
+Phase C follows this record: the ratifying change reruns `exit-gate-run` with
+`--trusted-keys`, and its summary must flip from `reject` to `complete` with
+`corpus_manifest_digest sha256:72949674…`. The canonical COMPLETE run on
+`main` is the closing evidence for #73; this section records the ceremony, not
+a pre-claimed gate result.
+
+### Ceremony history
+
+**2026-08-16 — ceremony held pending a stable runtime digest.** The
+out-of-band ceremony was performed and retained as audit evidence under the
+session-delegated key
+`8528aa694a3d94213741a20158a9f7c3fb4a3a13f5f231b009f651053beaf38b`. Its
+sidecar is archived as `ratification-v1-held-2026-08-16.json`; it no longer
+verifies under the rotated trust root, and its private key was destroyed after
+the ceremony, as the archived trust entry's rotation note required.
+
+Ratification was **HELD**: `ratified_runtime_digest` stayed `null` because the
+runtime corpus digest drifted run-to-run through staged mount-source tree
+digests that embedded the shelf manifest's wall-clock `fetched_at`/`verified_at`
+fields. Phase-A [run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451)
 measured `sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43`,
 while same-main diagnostic [run 31966286416](https://github.com/anthonykewl20/leitir/actions/runs/31966286416)
 measured `sha256:a76e3c68…`. The baseline mount-plan digest changed
 `a8116078…` → `ad54fb29…`, the execution-policy digest changed
 `9c3faf85…` → `54bb6aae…`, and the baseline digest changed
 `2f889172…` → `b20f5b5e…`. Those pre-fix measurements remain historical
-evidence; a fresh owner run must re-measure the now-deterministic digest.
+evidence.
+
+**2026-08-17 — ADR-0021 stabilized the runtime digest.** The manifest-free,
+mode-canonicalized donor mount projection made the runtime digest a pure
+function of pinned inputs. Stability evidence: post-fix runs
+[32008683557](https://github.com/anthonykewl20/leitir/actions/runs/32008683557)
+and [32009633642](https://github.com/anthonykewl20/leitir/actions/runs/32009633642)
+both measured `corpus_manifest_digest
+sha256:72949674c997fe803e58c4060a787c5484785cc96b9bb450c7659aab72658c79`
+with byte-identical evidence: their `bts-exit-gate-evidence` artifacts match
+byte-for-byte (exit-gate report and summary), every donor baseline digest is
+equal across the runs, and each run emitted the same 84 canonical
+`mount-source manifest` lines (75 unique entries) under
+`LEITIR_NSJAIL_DEBUG=1`, so any residual drift remains diagnosable from
+controller logs. The 2026-08-17 owner ceremony then rotated the trust root to
+the long-term owner key above and signed the measured digest.
 
 The substrate pins are stable and remain pinned:
 
@@ -109,14 +151,13 @@ preservation and recompute this canonical tree digest before any policy is
 built. Its recorded tarball SHA-256 is
 `sha256:50cd430be18d424453569ed02a0f95b937ca44505762af446a001cdc7f72ddd2`.
 
-Next, re-measure the runtime digest with the projection in place —
-`LEITIR_NSJAIL_DEBUG=1` now emits one canonical entry-level manifest line per
-mount source, so any residual drift is diagnosable from controller logs —
-then re-sign only the re-measured stable digest. The workflow passes the trusted-key file by its absolute
-workspace path because the trust-anchor loader rejects relative paths; it is
-outside the donor shelf (`$RUNNER_TEMP/leitir-corpus-root`). The owner should
-rotate this delegated session key to an owner-controlled long-term key before
-any future re-ratification.
+The workflow passes the trusted-key file by its absolute workspace path
+because the trust-anchor loader rejects relative paths; it is outside the
+donor shelf (`$RUNNER_TEMP/leitir-corpus-root`). The delegated session key
+was rotated to the owner-controlled long-term key above on 2026-08-17; any
+future re-ratification re-signs with that owner key (or a successor recorded
+the same way: rotate `trusted-keys-v1.json`, re-sign, and append the ceremony
+history here).
 
 A digest computed by this repository only binds content and cannot ratify it.
 

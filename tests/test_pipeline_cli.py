@@ -6,9 +6,12 @@ import importlib.util
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import textwrap
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,13 +19,13 @@ from types import SimpleNamespace
 import pytest
 
 import leitir.pipeline_cli as pipeline_cli
-from leitir.bts import BTSStatus
+from leitir.bts import BTSStatus, DonorSnapshot
 from leitir.bts_bench import CandidateIdentity, SeedSpan, load_manifest
 from leitir.bts_cli import SeedSelector, load_donor_snapshot
 from leitir.bts_errors import BTSError, BTSRejectReason, TransplantError
 from leitir.bts_exit_gate import rejected_preparation_report
 from leitir.exit_corpus import add_runnable_section
-from leitir.materialize import manifest_digest_fields, target_path
+from leitir.materialize import MANIFEST_NAME, manifest_digest_fields, target_path
 from leitir.pipeline_cli import (
     BaselineTestExecutionEvidence,
     BTSSubstratePins,
@@ -46,7 +49,7 @@ from leitir.pipeline_cli import (
 )
 from leitir.relocate import ContractTest, ModuleMap
 from leitir.rerun import ContractBaselineEvidence, TestOutcome, TestOutcomeEvidence
-from leitir.treehash import compute_materialized_tree_hash
+from leitir.treehash import TREE_HASH_ALGORITHM, compute_materialized_tree_hash
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "pipeline_cli"
 _DIGEST = "sha256:" + "1" * 64
@@ -487,6 +490,332 @@ def test_map_sudo_runner_ownership_preserves_modes(tmp_path: Path, monkeypatch: 
     ]
 
 
+# --- Deterministic donor mount projection (ADR-0021) ---
+
+
+def _tree_digest(tree: Path) -> str:
+    """Derive the digest execution-time mount verification recomputes."""
+
+    from leitir.exec_sandbox import _verified_directory_tree_digest
+
+    return _verified_directory_tree_digest(tree)
+
+
+def _projection_shelf(root: Path, *, fetched_at: str, file_mode: int) -> DonorSnapshot:
+    """Build a verified shelf whose manifest wall clock and raw modes may drift."""
+
+    target = target_path(root, "owner", "donor", _SHA)
+    shutil.copytree(Path(__file__).parent / "fixtures" / "bts_cli" / "donor", target)
+    shutil.rmtree(target / "package" / "__pycache__", ignore_errors=True)
+    (target / "LICENSE").write_text("MIT License\nPermission is hereby granted, free of charge\n", encoding="utf-8")
+    (target / "LICENSE").chmod(file_mode)
+    (target / "nested").mkdir()
+    (target / "nested" / "leitir-manifest.json").write_text("{}\n", encoding="utf-8")
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest = {
+        "commit_sha": _SHA, "fetch_method": "codeload-tarball", "fetched_at": fetched_at,
+        "host": "github.com", "owner": "owner", "repo": "donor", "repo_url": "https://github.com/owner/donor",
+        "source": "git-commit", "parity": "exact", "spec": "github:owner/donor", "tag": None,
+        "verified": True, "verified_at": fetched_at,
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    return DonorSnapshot("owner/donor", _SHA, "git-commit", "exact", digest, TREE_HASH_ALGORITHM, scope, target.parent, target)
+
+
+def _projection_rejects(shelf: Path, detail_code: str, *, reason: BTSRejectReason | None = None) -> None:
+    with pytest.raises(BTSError) as caught:
+        pipeline_cli._donor_projection_plan(shelf)
+    assert caught.value.evidence.detail_code == detail_code
+    if reason is not None:
+        assert caught.value.reason == reason
+
+
+def _projection_shelf_files(root: Path, files: dict[str, bytes], *, fetched_at: str) -> DonorSnapshot:
+    """Build a verified shelf from an exact path-to-bytes mapping plus manifest."""
+
+    target = target_path(root, "owner", "donor", _SHA)
+    target.mkdir(parents=True, exist_ok=True)
+    for path, content in sorted(files.items()):
+        output = target.joinpath(*path.split("/"))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(content)
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest = {
+        "commit_sha": _SHA, "fetch_method": "codeload-tarball", "fetched_at": fetched_at,
+        "host": "github.com", "owner": "owner", "repo": "donor", "repo_url": "https://github.com/owner/donor",
+        "source": "git-commit", "parity": "exact", "spec": "github:owner/donor", "tag": None,
+        "verified": True, "verified_at": fetched_at,
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (target / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    return DonorSnapshot("owner/donor", _SHA, "git-commit", "exact", digest, TREE_HASH_ALGORITHM, scope, target.parent, target)
+
+
+def test_donor_projection_plan_requires_a_regular_root_manifest(tmp_path: Path) -> None:
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+    (shelf / "module.py").write_text("x = 1\n", encoding="utf-8")
+
+    _projection_rejects(shelf, "pipeline_cli_donor_projection_manifest_missing_v1")
+
+    (shelf / MANIFEST_NAME).symlink_to("module.py")
+    _projection_rejects(shelf, "pipeline_cli_donor_projection_manifest_invalid_v1")
+
+
+def test_donor_projection_plan_rejects_symlinks_and_special_files_with_distinct_codes(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("platform has no FIFO support for the special-file probe")
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("platform has no AF_UNIX sockets")
+    if sys.platform == "darwin":
+        # GitHub's macOS runners put pytest temp roots beyond AF_UNIX's
+        # 104-byte sun_path limit; root the shelf under a short /tmp
+        # directory there so the socket probe still binds INSIDE the shelf
+        # the walk rejects on.  Every platform keeps socket coverage.
+        short_root = Path(tempfile.mkdtemp(prefix="ltr-", dir="/tmp"))
+        try:
+            _exercise_special_file_rejections(short_root / "shelf")
+        finally:
+            shutil.rmtree(short_root, ignore_errors=True)
+    else:
+        _exercise_special_file_rejections(tmp_path / "shelf")
+
+
+def _exercise_special_file_rejections(shelf: Path) -> None:
+    shelf.mkdir(parents=True)
+    (shelf / MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
+    (shelf / "module.py").write_text("x = 1\n", encoding="utf-8")
+
+    (shelf / "link.py").symlink_to("module.py")
+    _projection_rejects(shelf, "pipeline_cli_donor_projection_symlink_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
+    (shelf / "link.py").unlink()
+
+    fifo = shelf / "nested"
+    fifo.mkdir()
+    os.mkfifo(fifo / "pipe")
+    _projection_rejects(shelf, "pipeline_cli_donor_projection_special_file_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
+    (fifo / "pipe").unlink()
+
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(fifo / "sock"))
+    try:
+        _projection_rejects(shelf, "pipeline_cli_donor_projection_special_file_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
+    finally:
+        server.close()
+
+
+def test_donor_projection_plan_rejects_oversized_files_instead_of_truncating(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+    (shelf / MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
+    (shelf / "module.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(pipeline_cli, "_MAX_DONOR_PROJECTION_FILE_BYTES", 2)
+
+    with pytest.raises(BTSError) as caught:
+        pipeline_cli._donor_projection_plan(shelf)
+
+    assert caught.value.reason == BTSRejectReason.REJECT_EXTRACTION_BUDGET
+    assert caught.value.evidence.detail_code == "pipeline_cli_donor_projection_file_bound_v1"
+
+
+def test_donor_projection_bound_accepts_an_exact_boundary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The per-file bound rejects only strictly-over files, never truncates."""
+
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+    (shelf / MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
+    (shelf / "exact.py").write_bytes(b"ab")  # exactly at the monkeypatched bound
+    monkeypatch.setattr(pipeline_cli, "_MAX_DONOR_PROJECTION_FILE_BYTES", 2)
+
+    plan = pipeline_cli._donor_projection_plan(shelf)
+
+    assert set(plan) == {"exact.py"}
+    assert plan["exact.py"].is_directory is False
+    assert plan["exact.py"].sha256 == "sha256:" + hashlib.sha256(b"ab").hexdigest()
+
+
+def test_donor_projection_plan_includes_nested_manifests_and_canonicalizes_modes(tmp_path: Path) -> None:
+    snapshot = _projection_shelf(tmp_path, fetched_at="2026-08-15T00:00:00Z", file_mode=0o600)
+
+    plan = pipeline_cli._donor_projection_plan(snapshot.source_root)
+
+    assert MANIFEST_NAME not in plan  # exactly the root-level manifest is excluded
+    assert {"LICENSE", "nested", "nested/leitir-manifest.json", "package", "package/policy.py"} <= set(plan)
+    assert plan["LICENSE"].is_directory is False and plan["LICENSE"].sha256 is not None
+    assert plan["nested"].is_directory is True
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_donor_projection_digest_ignores_manifest_wall_clock_and_raw_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Identical donor content yields identical mounted bytes across CI runs."""
+
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    first_root = tmp_path / "first"
+    first_root.mkdir()
+    second_root = tmp_path / "second"
+    second_root.mkdir()
+    first = _projection_shelf(first_root, fetched_at="2026-08-15T00:00:00Z", file_mode=0o600)
+    second = _projection_shelf(second_root, fetched_at="2026-08-16T12:00:00Z", file_mode=0o755)
+
+    first_tree = pipeline_cli._prepare_donor_projection(first_root, first)
+    second_tree = pipeline_cli._prepare_donor_projection(second_root, second)
+
+    assert first_tree != second_tree  # distinct staging roots, identical bytes
+    assert not (first_tree / MANIFEST_NAME).exists()
+    assert (first_tree / "nested" / MANIFEST_NAME).is_file()
+    assert (first_tree / "LICENSE").stat().st_mode & 0o777 == 0o644
+    assert (first_tree / "package").stat().st_mode & 0o777 == 0o755
+    assert _tree_digest(first_tree) == _tree_digest(second_tree)
+    # The drift chain of issue #73 starts at the baseline mount plan: binding
+    # the projection makes that policy digest stable too.
+    substrate = BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, tmp_path, _DIGEST)
+    first_policy = pipeline_cli._baseline_containment_policy(substrate, first_tree, first_tree, tmp_path / "scratch-a", (".",))
+    second_policy = pipeline_cli._baseline_containment_policy(substrate, second_tree, second_tree, tmp_path / "scratch-b", (".",))
+    assert first_policy.mount_plan_digest == second_policy.mount_plan_digest
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_donor_projection_reuses_complete_stage_and_rebuilds_after_tamper(tmp_path: Path) -> None:
+    snapshot = _projection_shelf(tmp_path, fetched_at="2026-08-15T00:00:00Z", file_mode=0o644)
+    tree = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+    marker = tree.parent / pipeline_cli._STAGING_COMPLETE_NAME
+    expected_marker = (_tree_digest(tree) + "\n").encode("ascii")
+    assert marker.read_bytes() == expected_marker
+    assert marker.stat().st_mode & 0o777 == 0o444
+    pinned = (time.time_ns() - 3600, time.time_ns() - 3600)
+    os.utime(marker, ns=pinned)
+
+    reused = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+
+    assert reused == tree
+    assert marker.read_bytes() == expected_marker
+    # An untouched marker proves the complete stage was reused, not rewritten.
+    assert os.stat(marker).st_mtime_ns == pinned[1]
+
+    (tree / "LICENSE").write_text("tampered\n", encoding="utf-8")
+    rebuilt = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+
+    assert rebuilt == tree
+    assert (tree / "LICENSE").read_text(encoding="utf-8") == "MIT License\nPermission is hereby granted, free of charge\n"
+    assert marker.read_bytes() == expected_marker
+    assert os.stat(marker).st_mtime_ns != pinned[1]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_donor_projection_reuse_sweeps_crash_leftover_tree_temporaries(tmp_path: Path) -> None:
+    """A stranded ``.tree-*`` sibling is swept on the reuse path, under the lock."""
+
+    snapshot = _projection_shelf(tmp_path, fetched_at="2026-08-15T00:00:00Z", file_mode=0o644)
+    tree = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+    marker = tree.parent / pipeline_cli._STAGING_COMPLETE_NAME
+    expected_marker = marker.read_bytes()
+    # Simulate a crash between os.replace and the staging.rmdir() cleanup.
+    leftover = tree.parent / ".tree-crashleftover"
+    (leftover / "partial").mkdir(parents=True)
+    (leftover / "partial" / "file.py").write_text("partial\n", encoding="utf-8")
+
+    reused = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+
+    assert reused == tree
+    assert not leftover.exists()
+    assert marker.read_bytes() == expected_marker  # sweep never rewrote the stage
+    assert (tree.parent / pipeline_cli._STAGING_LOCK_NAME).is_file()
+    assert (tree / "LICENSE").is_file()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_donor_projection_of_an_empty_shelf_is_a_stable_empty_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A manifest-only shelf projects to a valid empty tree with a stable digest."""
+
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    first_root = tmp_path / "first"
+    first_root.mkdir()
+    second_root = tmp_path / "second"
+    second_root.mkdir()
+    first = _projection_shelf_files(first_root, {}, fetched_at="2026-08-15T00:00:00Z")
+    second = _projection_shelf_files(second_root, {}, fetched_at="2026-08-16T12:00:00Z")
+
+    first_tree = pipeline_cli._prepare_donor_projection(first_root, first)
+    second_tree = pipeline_cli._prepare_donor_projection(second_root, second)
+
+    assert first_tree.is_dir() and not list(first_tree.iterdir())
+    assert not (first_tree / MANIFEST_NAME).exists()
+    digest = _tree_digest(first_tree)
+    assert digest == _tree_digest(second_tree)
+    contract_root = tmp_path / "contract"
+    contract_root.mkdir()
+    (contract_root / "test_one.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    policy = pipeline_cli._baseline_containment_policy(
+        BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), first_tree, contract_root, scratch, (".",)
+    )
+    donor_mount = next(mount for mount in policy.readonly_mounts if mount.destination == "/donor")
+    assert donor_mount.source == str(first_tree)
+    assert donor_mount.source_digest == digest
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_donor_projection_stage_names_inside_donor_content_never_collide(tmp_path: Path) -> None:
+    """Donor entries named ``tree``/``COMPLETE``/``.lock`` live inside the tree."""
+
+    files = {
+        "module.py": b"x = 1\n",
+        "sub/tree": b"donor file named tree\n",
+        "sub/COMPLETE": b"donor file named COMPLETE\n",
+        "sub/.lock": b"donor file named .lock\n",
+    }
+    snapshot = _projection_shelf_files(tmp_path, files, fetched_at="2026-08-15T00:00:00Z")
+
+    tree = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+
+    assert (tree / "module.py").read_bytes() == files["module.py"]
+    assert (tree / "sub" / "tree").read_bytes() == files["sub/tree"]
+    assert (tree / "sub" / "COMPLETE").read_bytes() == files["sub/COMPLETE"]
+    assert (tree / "sub" / ".lock").read_bytes() == files["sub/.lock"]
+    # Stage-level names keep their stage meaning: the lock file, the digest
+    # marker, and the published projection root are untouched by the
+    # same-named donor entries nested inside the tree.
+    stage = tree.parent
+    assert (stage / pipeline_cli._STAGING_LOCK_NAME).is_file()
+    assert (stage / pipeline_cli._STAGING_COMPLETE_NAME).read_bytes() == (_tree_digest(tree) + "\n").encode("ascii")
+    assert stage / "tree" == tree and tree.is_dir()
+    assert (stage / pipeline_cli._STAGING_COMPLETE_NAME).stat().st_mode & 0o777 == 0o444
+    # The colliding names are part of the verified plan, so the stage reuses.
+    assert pipeline_cli._prepare_donor_projection(tmp_path, snapshot) == tree
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="donor projection staging requires Linux fcntl locking")
+def test_baseline_policy_binds_the_projection_and_not_the_shelf_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_cli, "_require_substrate", lambda: None)
+    snapshot = _projection_shelf(tmp_path, fetched_at="2026-08-15T00:00:00Z", file_mode=0o600)
+    donor_tree = pipeline_cli._prepare_donor_projection(tmp_path, snapshot)
+    contract_root = tmp_path / "contract"
+    contract_root.mkdir()
+    (contract_root / "test_one.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+
+    policy = pipeline_cli._baseline_containment_policy(
+        BTSSubstratePins(_DIGEST, "fixture", _DIGEST, _DIGEST, rootfs, _DIGEST), donor_tree, contract_root, scratch, (".",)
+    )
+
+    donor_mount = next(mount for mount in policy.readonly_mounts if mount.destination == "/donor")
+    contract_mount = next(mount for mount in policy.readonly_mounts if mount.destination == "/contract")
+    assert donor_mount.source == str(donor_tree)
+    assert donor_mount.source_digest == _tree_digest(donor_tree)  # execution-time verification input
+    assert contract_mount.source == str(contract_root)
+    assert not (donor_tree / MANIFEST_NAME).exists()
+    # The E1 scratch sibling never overlaps the projection mount source.
+    sandbox = pytest.importorskip("leitir.exec_sandbox")
+    sandbox._validate_policy(policy)
+
+
 def test_task_baseline_mismatch_exports_contained_recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A task-sidecar mismatch retains the per-test S2 observation for diagnosis."""
 
@@ -506,6 +835,9 @@ def test_task_baseline_mismatch_exports_contained_recording(tmp_path: Path, monk
     monkeypatch.setattr(pipeline_cli, "donor_execution_enabled", lambda: True)
     monkeypatch.setattr(pipeline_cli, "_relocate_prepared", lambda *args, **kwargs: SimpleNamespace(relocation_digest=_DIGEST))
     monkeypatch.setattr(pipeline_cli, "_prepare_shared_stage", lambda *args, **kwargs: (stage, staged))
+    # The recording-export seam under test is platform-independent; the real
+    # donor projection staging is covered by the Linux-gated ADR-0021 tests.
+    monkeypatch.setattr(pipeline_cli, "_prepare_donor_projection", lambda root, snapshot: snapshot.source_root)
     monkeypatch.setattr(pipeline_cli, "_record_baseline_with_evidence", lambda *args, **kwargs: (baseline, (observation,)))
 
     with pytest.raises(BTSError) as caught:

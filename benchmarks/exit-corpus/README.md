@@ -79,15 +79,18 @@ public key is in `trusted-keys-v1.json`; its key ID is
 The detached `ratification-v1.json` is retained as a ceremony artifact. The
 private key is held out of band by the owner ceremony and is never committed.
 
-Ratification is **HELD**: `ratified_runtime_digest` is `null` because the
-runtime corpus digest drifts run-to-run through staged mount-source tree
-digests. Phase-A [run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451)
+Ratification is **HELD**: `ratified_runtime_digest` is `null`. The original
+blocker — the runtime corpus digest drifting run-to-run through staged
+mount-source tree digests that embedded the shelf manifest's wall-clock
+`fetched_at`/`verified_at` fields — is removed by ADR-0021's manifest-free,
+mode-canonicalized donor mount projection. Phase-A [run 31964398451](https://github.com/anthonykewl20/leitir/actions/runs/31964398451)
 measured `sha256:a504ec929a59228ab570ac89dd6dbaaf494314f4bd55e508263548101564ce43`,
 while same-main diagnostic [run 31966286416](https://github.com/anthonykewl20/leitir/actions/runs/31966286416)
 measured `sha256:a76e3c68…`. The baseline mount-plan digest changed
 `a8116078…` → `ad54fb29…`, the execution-policy digest changed
 `9c3faf85…` → `54bb6aae…`, and the baseline digest changed
-`2f889172…` → `b20f5b5e…`.
+`2f889172…` → `b20f5b5e…`. Those pre-fix measurements remain historical
+evidence; a fresh owner run must re-measure the now-deterministic digest.
 
 The substrate pins are stable and remain pinned:
 
@@ -106,9 +109,10 @@ preservation and recompute this canonical tree digest before any policy is
 built. Its recorded tarball SHA-256 is
 `sha256:50cd430be18d424453569ed02a0f95b937ca44505762af446a001cdc7f72ddd2`.
 
-Next, add entry-level instrumentation for staged-tree digests using the existing
-`LEITIR_NSJAIL_DEBUG` diagnostic path, then re-sign only after the runtime
-digest is stable. The workflow passes the trusted-key file by its absolute
+Next, re-measure the runtime digest with the projection in place —
+`LEITIR_NSJAIL_DEBUG=1` now emits one canonical entry-level manifest line per
+mount source, so any residual drift is diagnosable from controller logs —
+then re-sign only the re-measured stable digest. The workflow passes the trusted-key file by its absolute
 workspace path because the trust-anchor loader rejects relative paths; it is
 outside the donor shelf (`$RUNNER_TEMP/leitir-corpus-root`). The owner should
 rotate this delegated session key to an owner-controlled long-term key before

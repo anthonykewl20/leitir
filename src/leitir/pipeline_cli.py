@@ -13,8 +13,9 @@ Intended CLI help (the public argparse integration belongs in :mod:`leitir.cli`)
 
 ``record_baseline`` records donor-present contract-test behaviour only through
 the same verified ``exec_sandbox.prepare_execution/run_contained`` authority as
-the donor-absent rerun.  The baseline policy differs solely by mounting the
-verified donor root read-only at ``/donor``; there is no host fallback.
+the donor-absent rerun.  The baseline policy differs solely by mounting a
+deterministic, manifest-free projection of the verified donor shelf read-only
+at ``/donor`` (see ``_prepare_donor_projection``); there is no host fallback.
 """
 
 from __future__ import annotations
@@ -667,6 +668,307 @@ def _prepare_shared_stage(corpus_root: Path, identity: object, relocation: Reloc
         os.close(descriptor)
 
 
+# The donor mount projection canonicalizes exactly one validated input: the
+# Hash1-verified donor shelf (ADR-0021).  Wall-clock manifest fields stay out
+# of the mounted bytes, and modes are pinned so the mount-source digest is a
+# pure function of pinned donor content.
+_DONOR_PROJECTION_TREE_NAME = "tree"
+_DONOR_PROJECTION_DIRECTORY_MODE = 0o755
+_DONOR_PROJECTION_FILE_MODE = 0o644
+# A NEW, deliberate per-file bound for the projection: the load-time tree
+# verifier had no per-file size cap (materialize.VERIFY_MAX_BYTES is an
+# aggregate sampling budget, not per-file), so a donor file over this bound
+# previously mounted.  The projection rejects such files fail-closed instead;
+# it never truncates.
+_MAX_DONOR_PROJECTION_FILE_BYTES = 64 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _DonorProjectionEntry:
+    """One canonical shelf entry below the manifest-free donor projection."""
+
+    path: str
+    is_directory: bool
+    sha256: str | None
+
+
+def _donor_projection_reject(message: str, detail_code: str, *, reason: BTSRejectReason = BTSRejectReason.REJECT_PROVENANCE_MISMATCH, cause: BaseException | None = None) -> NoReturn:
+    raise BTSError(reason, message, detail_code=detail_code, cause=cause)
+
+
+def _donor_projection_file_digest(path: Path) -> str:
+    """Hash one bounded regular file without following a terminal symlink."""
+
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("donor projection source is not a regular file")
+        digest = hashlib.sha256()
+        total = 0
+        while chunk := os.read(descriptor, 1024 * 1024):
+            total += len(chunk)
+            if total > _MAX_DONOR_PROJECTION_FILE_BYTES:
+                raise ValueError("donor projection file exceeds the size bound")
+            digest.update(chunk)
+        return "sha256:" + digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _donor_projection_plan(source_root: Path) -> dict[str, _DonorProjectionEntry]:
+    """Derive the canonical manifest-free projection inputs from the shelf.
+
+    The walk is deterministic (children sorted by ``os.fsencode(name)``, the
+    same ordering as the execution-time mount-source digest) and fail-closed
+    on every unexpected entry.  Only the validated root-level
+    ``leitir-manifest.json`` is skipped; sub-directory manifests of the same
+    name remain pinned donor content and are included.
+    """
+
+    from leitir.materialize import MANIFEST_NAME
+
+    try:
+        manifest_metadata = (source_root / MANIFEST_NAME).stat(follow_symlinks=False)
+    except OSError as exc:
+        _donor_projection_reject(f"donor shelf manifest is unavailable: {source_root}", "pipeline_cli_donor_projection_manifest_missing_v1", cause=exc)
+    if not stat.S_ISREG(manifest_metadata.st_mode):
+        _donor_projection_reject("donor shelf manifest is not a regular file", "pipeline_cli_donor_projection_manifest_invalid_v1")
+    plan: dict[str, _DonorProjectionEntry] = {}
+
+    def visit(directory: Path, relative: PurePosixPath) -> None:
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: os.fsencode(item.name))
+        for child in children:
+            name = child.name
+            if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+                _donor_projection_reject(f"donor shelf contains a noncanonical entry name: {name!r}", "pipeline_cli_donor_projection_entry_name_v1")
+            child_relative = relative / name
+            logical_path = child_relative.as_posix()
+            if not relative.parts and logical_path == MANIFEST_NAME:
+                # Exactly the validated root-level manifest is excluded from
+                # the mount binding; it is not executable donor content.
+                continue
+            metadata = child.stat(follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                plan[logical_path] = _DonorProjectionEntry(logical_path, True, None)
+                visit(Path(child.path), child_relative)
+            elif stat.S_ISREG(metadata.st_mode):
+                try:
+                    content_digest = _donor_projection_file_digest(Path(child.path))
+                except OSError as exc:
+                    _donor_projection_reject(f"donor projection file cannot be read: {logical_path}", "pipeline_cli_donor_projection_read_v1", cause=exc)
+                except ValueError as exc:
+                    _donor_projection_reject(f"donor projection file exceeds the size bound: {logical_path}", "pipeline_cli_donor_projection_file_bound_v1", reason=BTSRejectReason.REJECT_EXTRACTION_BUDGET, cause=exc)
+                plan[logical_path] = _DonorProjectionEntry(logical_path, False, content_digest)
+            elif stat.S_ISLNK(metadata.st_mode):
+                # A symlink in a donor shelf is a provenance defect, not an
+                # execution threat; keep the distinct detail code.
+                _donor_projection_reject(f"donor shelf contains a symlink: {logical_path}", "pipeline_cli_donor_projection_symlink_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
+            else:
+                _donor_projection_reject(f"donor shelf contains a special file: {logical_path}", "pipeline_cli_donor_projection_special_file_v1", reason=BTSRejectReason.REJECT_PROVENANCE_MISMATCH)
+
+    try:
+        visit(source_root, PurePosixPath())
+    except OSError as exc:
+        _donor_projection_reject(f"donor shelf cannot be walked: {source_root}", "pipeline_cli_donor_projection_read_v1", cause=exc)
+    return plan
+
+
+def _donor_projection_tree_matches(tree: Path, plan: dict[str, _DonorProjectionEntry]) -> bool:
+    """Verify the staged projection has precisely the expected canonical tree."""
+
+    try:
+        root_metadata = tree.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(root_metadata.st_mode) or stat.S_IMODE(root_metadata.st_mode) != _DONOR_PROJECTION_DIRECTORY_MODE:
+            return False
+        observed: set[str] = set()
+
+        def visit(directory: Path, relative: PurePosixPath) -> bool:
+            with os.scandir(directory) as iterator:
+                children = sorted(iterator, key=lambda item: os.fsencode(item.name))
+            for child in children:
+                name = child.name
+                if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+                    return False
+                child_relative = relative / name
+                logical_path = child_relative.as_posix()
+                entry = plan.get(logical_path)
+                if entry is None:
+                    return False
+                metadata = child.stat(follow_symlinks=False)
+                if entry.is_directory:
+                    if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != _DONOR_PROJECTION_DIRECTORY_MODE:
+                        return False
+                    observed.add(logical_path)
+                    if not visit(Path(child.path), child_relative):
+                        return False
+                elif not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != _DONOR_PROJECTION_FILE_MODE or _donor_projection_file_digest(Path(child.path)) != entry.sha256:
+                    return False
+                else:
+                    observed.add(logical_path)
+            return True
+
+        if not visit(tree, PurePosixPath()):
+            return False
+        return observed == set(plan)
+    except (OSError, ValueError):
+        return False
+
+
+def _donor_projection_tree_digest(tree: Path) -> str:
+    """Derive the mount digest with the execution-time authority function."""
+
+    from leitir.exec_sandbox import _verified_directory_tree_digest
+
+    try:
+        return _verified_directory_tree_digest(tree)
+    except OSError as exc:
+        _donor_projection_reject("donor projection tree cannot be digested", "pipeline_cli_donor_projection_integrity_v1", reason=BTSRejectReason.REJECT_EXECUTION_THREAT, cause=exc)
+
+
+def _copy_donor_projection_file(source: Path, target: Path) -> None:
+    """Copy one bounded regular file byte-exact without following symlinks."""
+
+    descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    output = -1
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("donor projection source is not a regular file")
+        output = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        written = 0
+        while chunk := os.read(descriptor, 1024 * 1024):
+            written += len(chunk)
+            if written > _MAX_DONOR_PROJECTION_FILE_BYTES:
+                raise ValueError("donor projection file exceeds the size bound")
+            offset = 0
+            while offset < len(chunk):
+                offset += os.write(output, chunk[offset:])
+        os.fsync(output)
+        os.chmod(target, _DONOR_PROJECTION_FILE_MODE)
+    finally:
+        if output >= 0:
+            os.close(output)
+        os.close(descriptor)
+
+
+def _publish_donor_projection_tree(source_root: Path, plan: dict[str, _DonorProjectionEntry], stage: Path) -> Path:
+    """Atomically publish the canonical projection into ``stage/tree``."""
+
+    staging = Path(tempfile.mkdtemp(prefix=f".{_DONOR_PROJECTION_TREE_NAME}-", dir=stage))
+    tree = staging / _DONOR_PROJECTION_TREE_NAME
+    try:
+        tree.mkdir(mode=_DONOR_PROJECTION_DIRECTORY_MODE)
+        os.chmod(tree, _DONOR_PROJECTION_DIRECTORY_MODE)
+        for path in sorted(plan):
+            entry = plan[path]
+            target = tree.joinpath(*path.split("/"))
+            if entry.is_directory:
+                target.mkdir(mode=_DONOR_PROJECTION_DIRECTORY_MODE)
+                os.chmod(target, _DONOR_PROJECTION_DIRECTORY_MODE)
+            else:
+                try:
+                    _copy_donor_projection_file(source_root.joinpath(*path.split("/")), target)
+                except OSError as exc:
+                    _donor_projection_reject(f"donor projection file cannot be copied: {path}", "pipeline_cli_donor_projection_read_v1", cause=exc)
+                except ValueError as exc:
+                    _donor_projection_reject(f"donor projection file exceeds the size bound: {path}", "pipeline_cli_donor_projection_file_bound_v1", reason=BTSRejectReason.REJECT_EXTRACTION_BUDGET, cause=exc)
+        os.replace(tree, stage / _DONOR_PROJECTION_TREE_NAME)
+        if os.name == "posix":
+            directory_fd = os.open(stage, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        staging.rmdir()
+    except BaseException:
+        _remove_staging(staging, ignore_errors=True)
+        raise
+    return stage / _DONOR_PROJECTION_TREE_NAME
+
+
+def _donor_projection_stage_complete(stage: Path, tree: Path, plan: dict[str, _DonorProjectionEntry]) -> bool:
+    """A complete stage has a regular marker binding the expected tree digest."""
+
+    try:
+        marker = stage / _STAGING_COMPLETE_NAME
+        if (
+            marker.is_symlink()
+            or not stat.S_ISREG(marker.stat(follow_symlinks=False).st_mode)
+            or not _donor_projection_tree_matches(tree, plan)
+        ):
+            return False
+        expected = (_donor_projection_tree_digest(tree) + "\n").encode("ascii")
+        return marker.read_bytes() == expected
+    except (OSError, ValueError):
+        return False
+
+
+def _sweep_donor_projection_temporaries(stage: Path) -> None:
+    """Best-effort removal of crash-leftover ``.tree-*`` staging siblings.
+
+    A crash between the atomic ``os.replace`` and the ``staging.rmdir()`` of
+    :func:`_publish_donor_projection_tree` can strand a ``.tree-*`` temporary
+    directory beside a complete stage.  Sweep them on the reuse path under the
+    held flock; failures are non-fatal because a leftover cannot affect the
+    verified ``tree/`` binding.  The exact-prefix match never touches the lock
+    file, the completion marker, or the published tree itself.
+    """
+
+    prefix = f".{_DONOR_PROJECTION_TREE_NAME}-"
+    for entry in sorted(stage.iterdir(), key=lambda item: item.name):
+        if entry.name.startswith(prefix):
+            _remove_staging(entry, ignore_errors=True)
+
+
+def _prepare_donor_projection(corpus_root: Path, snapshot: DonorSnapshot) -> Path:
+    """Stage the deterministic donor mount projection and return its tree.
+
+    The mounted ``/donor`` bytes are a manifest-free, mode-canonicalized
+    (directories 0755, files 0644) projection of the Hash1-verified shelf, so
+    the mount-source digest — and every digest derived from it — is a pure
+    function of pinned inputs instead of the shelf manifest's wall-clock
+    ``fetched_at``/``verified_at`` fields.  The projection excludes exactly
+    the validated root manifest; content verification of the shelf itself is
+    unchanged (ADR-0021).
+    """
+
+    if platform.system() != "Linux":
+        _reject("BTS staging is supported only on Linux", "unsupported_host")
+    try:
+        import fcntl
+    except ImportError as exc:
+        _reject("BTS staging requires the Linux fcntl interface", "unsupported_host", cause=exc)
+
+    plan = _donor_projection_plan(snapshot.source_root)
+    stage = _deterministic_stage_directory(
+        corpus_root,
+        {"kind": "donor-projection", "slug": snapshot.slug, "commit_sha": snapshot.commit_sha, "materialized_tree_hash": snapshot.materialized_tree_hash},
+    )
+    lock_path = stage / _STAGING_LOCK_NAME
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "r+b", closefd=False):
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                tree = stage / _DONOR_PROJECTION_TREE_NAME
+                if not _donor_projection_stage_complete(stage, tree, plan):
+                    _clear_incomplete_stage(stage)
+                    tree = _publish_donor_projection_tree(snapshot.source_root, plan, stage)
+                    _write_atomic(stage / _STAGING_COMPLETE_NAME, (_donor_projection_tree_digest(tree) + "\n").encode("ascii"))
+                    os.chmod(stage / _STAGING_COMPLETE_NAME, 0o444)
+                    if not _donor_projection_stage_complete(stage, tree, plan):
+                        raise BTSError(BTSRejectReason.REJECT_EXECUTION_THREAT, "donor projection completion verification failed", detail_code="pipeline_cli_donor_projection_integrity_v1")
+                else:
+                    _sweep_donor_projection_temporaries(stage)
+                map_sudo_runner_ownership(tree)
+                return tree
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def _rerun_policy_for_relocation(
     relocation: Relocation,
     staged_root: Path,
@@ -1168,7 +1470,7 @@ def assemble_bts_task_request(task: BTSEvalTask, root: Path, *, contract_tests: 
     try:
         specs = [ContractTestSpec(item.path, item.module, item.content) for item in contract_tests]
         baseline, baseline_observations = _record_baseline_with_evidence(
-            snapshot.source_root,
+            _prepare_donor_projection(root, snapshot),
             specs,
             substrate=substrate,
             scratch_dir=staging / "scratch",
@@ -1312,7 +1614,7 @@ def run_pipeline(root: Path, owner: str, repo: str, commit_sha: str, *, seed: bt
         relocation,
     )
     baseline = record_baseline(
-        snapshot.source_root,
+        _prepare_donor_projection(root, snapshot),
         specs,
         substrate=substrate,
         scratch_dir=_stage / "scratch",
@@ -1702,7 +2004,7 @@ def exit_gate_run(
             relocation,
         )
         baseline, baseline_observations = _record_runnable_baseline(
-            snapshot.source_root, tests, substrate=substrate_pins,
+            _prepare_donor_projection(root, snapshot), tests, substrate=substrate_pins,
             scratch_dir=_stage / "scratch",
             import_roots=import_roots,
             contract_root=staged / "staging-v1" / "tests" / "original",

@@ -795,10 +795,13 @@ def _mount_source_entry_manifest(source: Path) -> tuple[dict[str, object], ...]:
 
     def visit(directory: Path, relative: PurePosixPath) -> None:
         directory_metadata = directory.stat(follow_symlinks=False)
+        # Directory st_size is filesystem-dependent (not content); omitting it
+        # keeps the manifest byte-identical across machines so two green runs
+        # can be diffed for drift diagnosis.  File size stays: it is
+        # content-implied.
         entries.append({
             "mode": stat.S_IMODE(directory_metadata.st_mode),
             "path": relative.as_posix() or ".",
-            "size": directory_metadata.st_size,
             "type": "directory",
         })
         with os.scandir(directory) as iterator:
@@ -831,7 +834,27 @@ def record_debug_mount_source_manifests(policy: ContainmentPolicy) -> None:
         return
     for mount in policy.readonly_mounts:
         try:
-            _DEBUG_MOUNT_ENTRY_MANIFESTS[(mount.source, mount.source_digest)] = _mount_source_entry_manifest(Path(mount.source))
+            entries = _mount_source_entry_manifest(Path(mount.source))
+            _DEBUG_MOUNT_ENTRY_MANIFESTS[(mount.source, mount.source_digest)] = entries
+            # Emit one canonical entry-level line per mount so a drifting or
+            # tampered source is diagnosable from controller logs alone.  The
+            # rootfs keeps aggregate fields only: its entry list is the log
+            # volume of a full interpreter image.
+            payload: dict[str, object] = {
+                "destination": mount.destination,
+                "digest": mount.source_digest,
+                "entry_count": len(entries),
+                "entries_digest": _digest_payload(list(entries)),
+                "source": mount.source,
+            }
+            if mount.destination != "/":
+                payload["entries"] = [dict(item) for item in entries]
+            print(
+                "leitir mount-source manifest "
+                + json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                file=sys.stderr,
+                flush=True,
+            )
         except (OSError, UnicodeError, ValueError):
             # The authoritative verifier remains responsible for rejecting an
             # unavailable or malformed source. Diagnostics must not change it.

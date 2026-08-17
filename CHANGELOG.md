@@ -146,6 +146,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - keep sandbox tests portable (`bts`)
 - last 4 Windows CI failures (CRLF + non-UTF-8 setup skips) (`ci`)
 - make bts_bench tests cross-platform (PYTHONPATH os.pathsep, skip fixture test on non-Linux) (`bts`)
+- make donor-projection debug and rejection tests platform-portable
 - make nsjail --version capture non-fatal in build script (`bts`)
 - make validate_report fail-closed on span bounds without line_counts (`search`)
 - map invoking user for nsjail mounts

@@ -12,6 +12,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Security
+- reject symlink universe and content mismatches on mode-capable hosts (`materialize`)
+
 ## [0.1.4]
 
 ### ⚠ BREAKING CHANGES

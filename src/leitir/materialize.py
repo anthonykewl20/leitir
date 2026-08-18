@@ -937,18 +937,25 @@ def _verify_extracted_tree(
             raise VerificationError(
                 f"unsupported Git blob mode: {min(unsupported)}"
             )
-        symlink_universe_partial = set(extracted_symlinks) != set(expected_symlinks)
+        # A mode-bearing listing pins the complete symlink universe, so a
+        # symlink the archive added or dropped is a hard mismatch — never a
+        # downgrade to "sampled". Mode-less legacy sources cannot make this
+        # claim and stay on the sampled path below.
+        if set(extracted_symlinks) != set(expected_symlinks):
+            missing = sorted(set(expected_symlinks) - set(extracted_symlinks))
+            extra = sorted(set(extracted_symlinks) - set(expected_symlinks))
+            detail = missing[0] if missing else extra[0]
+            kind = "missing" if missing else "unexpected"
+            raise VerificationError(f"{kind} extracted symbolic link: {detail}")
         sizes = {path: entry.size for path, entry in candidates.items()}  # type: ignore[attr-defined]
     else:
         candidates = {path: expected.get(path) for path in extracted}
         expected_symlinks = {}
-        symlink_universe_partial = False
         sizes = {path: file.stat().st_size for path, file in extracted.items()}
 
     total_bytes = sum(sizes.values())
     sampled = (
         not modes_available
-        or symlink_universe_partial
         or len(candidates) > max_files
         or total_bytes > max_bytes
     )
@@ -991,16 +998,24 @@ def _verify_extracted_tree(
             ) from exc
         actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
-            if not isinstance(tree_source, GitHubTreeSource):
-                sampled = True
-                continue
+            # A mismatched digest on any host whose listing carries modes is
+            # re-checked against the pinned commit before rejection, so an
+            # enumeration glitch can never mask tampered bytes and a real
+            # mismatch can never be downgraded to "sampled".
             read_at_commit = getattr(tree_source, "read_blob_at_commit", None)
+            read_blob = getattr(tree_source, "read_blob", None)
             if read_at_commit is not None:
                 blob_bytes = read_at_commit(f"{owner}/{repo}", commit_sha, relative)
-            else:
-                blob_bytes = tree_source.read_blob(
+            elif read_blob is not None:
+                blob_bytes = read_blob(
                     f"{owner}/{repo}",
                     entry.blob_sha,  # type: ignore[attr-defined]
+                )
+            else:
+                # No way to re-read the pinned blob: a mismatch can never be
+                # confirmed or cleared, so fail closed instead of guessing.
+                raise VerificationError(
+                    f"tree source cannot re-read symbolic link blob: {relative}"
                 )
             if extracted_bytes != blob_bytes:
                 raise VerificationError(

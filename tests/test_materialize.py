@@ -18,10 +18,13 @@ import leitir.materialize as materialize_module
 from leitir.materialize import (
     MaterializationError,
     UnsafeArchiveError,
+    VerificationError,
     _extract_tarball,
+    _verify_extracted_tree,
     materialize_github_repo,
     read_valid_manifest,
 )
+from leitir.tree import BlobEntry, GitHubTreeSource, TreeReadError
 from leitir.trust import compute_trust
 
 SHA = "a" * 40
@@ -560,6 +563,184 @@ def test_benign_symlink_extracts_within_target(tmp_path):
 
     assert (destination / "link").is_symlink()
     assert (destination / "link").read_bytes() == b"safe"
+
+
+class _ModeBearingTreeSource:
+    """Non-GitHub TreeSource whose listing carries full blob modes."""
+
+    def __init__(
+        self,
+        entries: tuple[BlobEntry, ...],
+        blobs: dict[str, bytes],
+        *,
+        at_commit_fails: bool = False,
+    ) -> None:
+        self.entries = entries
+        self.blobs = blobs
+        self.at_commit_fails = at_commit_fails
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+    def read_blob(self, _slug: str, blob_sha: str) -> bytes:
+        return self.blobs[blob_sha]
+
+    def read_blob_at_commit(self, _slug: str, _commit_sha: str, path: str) -> bytes:
+        if self.at_commit_fails:
+            raise TreeReadError("tree source read failed")
+        entry = next(entry for entry in self.entries if entry.path == path)
+        return self.blobs[entry.blob_sha]
+
+
+class _ReadBlobOnlyTreeSource:
+    """Legacy injected TreeSource without commit-pinned re-read support."""
+
+    def __init__(self, entries: tuple[BlobEntry, ...], blobs: dict[str, bytes]) -> None:
+        self.entries = entries
+        self.blobs = blobs
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+    def read_blob(self, _slug: str, blob_sha: str) -> bytes:
+        return self.blobs[blob_sha]
+
+
+class _GitHubSymlinkTreeSource(GitHubTreeSource):
+    """GitHub-flavored source pinning the existing commit-pinned re-read path."""
+
+    def __init__(self, entries: tuple[BlobEntry, ...], blobs: dict[str, bytes]) -> None:
+        self.entries = entries
+        self.blobs = blobs
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+    def read_blob_at_commit(self, _slug: str, _commit_sha: str, path: str) -> bytes:
+        entry = next(entry for entry in self.entries if entry.path == path)
+        return self.blobs[entry.blob_sha]
+
+
+def _verify_staging(staging: Path, source: object) -> bool | str:
+    status, _normalized = _verify_extracted_tree(
+        staging,
+        "acme",
+        "demo",
+        SHA,
+        source,
+        max_files=100,
+        max_bytes=1024,
+    )
+    return status
+
+
+def _tampered_link_fixture(tmp_path):
+    expected_target = b"realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("other")
+    link_sha = GitHubTreeSource.git_blob_sha(expected_target)
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", link_sha, len(expected_target), "120000"),
+    )
+    return entries, link_sha, expected_target
+
+
+def test_tampered_symlink_content_non_github_rejected(tmp_path):
+    # G-0 / AC-1 / SP-1: a hostile archive alters one symlink target while
+    # the (non-GitHub) tree source can enumerate modes. The commit-pinned
+    # re-check still mismatches, so verification must fail closed with a
+    # typed error naming the path instead of downgrading to "sampled".
+    entries, link_sha, expected_target = _tampered_link_fixture(tmp_path)
+    source = _ModeBearingTreeSource(entries, {link_sha: expected_target})
+
+    with pytest.raises(
+        VerificationError, match="symbolic-link blob digest mismatch: link"
+    ):
+        _verify_staging(tmp_path, source)
+
+
+def test_tampered_symlink_recheck_via_read_blob_rejected(tmp_path):
+    # AC-1 (fallback arm) / SP-1: same tamper against a legacy injected
+    # TreeSource that only offers read_blob — the blob re-read must still
+    # reject instead of downgrading to "sampled".
+    entries, link_sha, expected_target = _tampered_link_fixture(tmp_path)
+    source = _ReadBlobOnlyTreeSource(entries, {link_sha: expected_target})
+
+    with pytest.raises(
+        VerificationError, match="symbolic-link blob digest mismatch: link"
+    ):
+        _verify_staging(tmp_path, source)
+
+
+def test_symlink_reread_failure_is_typed_rejection(tmp_path):
+    # SP-3: when the re-read helper itself fails (e.g. network), the typed
+    # error must propagate — a failed re-read can never become a pass or a
+    # sampled downgrade.
+    entries, link_sha, _expected_target = _tampered_link_fixture(tmp_path)
+    source = _ModeBearingTreeSource(entries, {}, at_commit_fails=True)
+
+    with pytest.raises(TreeReadError):
+        _verify_staging(tmp_path, source)
+
+
+@pytest.mark.parametrize("variant", ["missing", "extra"])
+def test_symlink_universe_mismatch_rejected(tmp_path, variant):
+    # AC-2 / SP-2: with modes available, an archive that drops or adds a
+    # symlink relative to the expected universe must be rejected by name,
+    # never silently repaired or downgraded to "sampled".
+    target = "realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    link_sha = GitHubTreeSource.git_blob_sha(target.encode())
+    entries = [BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644")]
+    if variant == "missing":
+        entries.append(BlobEntry("link", link_sha, len(target), "120000"))
+        expected_name = r"missing extracted symbolic link: link"
+    else:
+        (tmp_path / "extra").symlink_to(target)
+        expected_name = r"unexpected extracted symbolic link: extra"
+
+    with pytest.raises(VerificationError, match=expected_name):
+        _verify_staging(tmp_path, _ModeBearingTreeSource(tuple(entries), {link_sha: target.encode()}))
+
+
+def test_mode_less_source_keeps_sampled_ingest(tmp_path):
+    # AC-3 / C-3 / SP-4: a host that genuinely cannot enumerate modes keeps
+    # the explicit sampled outcome — no mode fabrication, no crash, no
+    # false full verification even with a consistent symlink on disk.
+    content = b"proof"
+    (tmp_path / "proof.txt").write_bytes(content)
+    (tmp_path / "link").symlink_to("proof.txt")
+    entries = (BlobEntry("proof.txt", GitHubTreeSource.git_blob_sha(content), len(content)),)
+
+    assert _verify_staging(tmp_path, _ModeBearingTreeSource(entries, {})) == "sampled"
+
+
+def test_matching_non_github_symlink_verifies_fully(tmp_path):
+    # C-2 counterweight: an honest non-GitHub archive with an intact symlink
+    # still verifies fully — fail-closed must not become false rejects.
+    target = "realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to(target)
+    link_sha = GitHubTreeSource.git_blob_sha(target.encode())
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", link_sha, len(target), "120000"),
+    )
+
+    assert _verify_staging(tmp_path, _ModeBearingTreeSource(entries, {})) is True
+
+
+def test_github_symlink_tamper_still_rejected(tmp_path):
+    # AC-4 / C-4: the existing GitHub commit-pinned re-read + reject
+    # behavior is unchanged by the unified mismatch handling.
+    entries, link_sha, expected_target = _tampered_link_fixture(tmp_path)
+    source = _GitHubSymlinkTreeSource(entries, {link_sha: expected_target})
+
+    with pytest.raises(
+        VerificationError, match="symbolic-link blob digest mismatch: link"
+    ):
+        _verify_staging(tmp_path, source)
 
 
 def test_oversized_archive_member_is_rejected(tmp_path, monkeypatch):

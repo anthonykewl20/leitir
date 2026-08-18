@@ -19,7 +19,13 @@ from leitir import _http
 logger = logging.getLogger(__name__)
 
 MAX_TREE_DEPTH = 64
-MAX_TREE_REQUESTS = 256
+# A truncation-recovery walk costs one request per distinct subtree.  GitHub
+# truncates recursive listings far below the directory count of large repos:
+# microsoft/TypeScript@b465fdb… exposes 2,002 subtree entries in its truncated
+# recursive listing (OBSERVED 2026-08-18) and the walk needs one page per
+# distinct subtree, so the budget must dwarf 256 while still bounding runaway
+# walks fail-closed (visited-set dedup plus depth/entry budgets assist).
+MAX_TREE_REQUESTS = 10_000
 MAX_TREE_ENTRIES = 600_000
 STREAM_CHUNK_SIZE = 64 * 1024
 
@@ -239,19 +245,21 @@ class GitHubTreeSource:
         return partial_blobs(), True
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
-        commit_sha = _require_hex_sha(commit_sha)
-        url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
-        logger.debug("tree API url=%s", url)
-        payload = self._get_json(url, self._headers())
-        if not isinstance(payload, dict):
-            raise TreeEnumerationError(
-                "malformed tree response: expected JSON object"
-            )
-        _require_response_sha(payload)
-        truncated = _require_truncated(payload)
-        if truncated:
-            raise TreeTruncatedError(slug, commit_sha, partial_blobs=())
-        return _recursive_blobs(payload)
+        """Return the complete blob universe reachable from *commit_sha*.
+
+        When GitHub marks the recursive listing truncated (large repositories
+        such as microsoft/TypeScript), enumeration completes through the same
+        deterministic, budgeted, non-recursive subtree walk that
+        ``list_blobs_ex`` performs — a truncated top-level listing no longer
+        raises ``TreeTruncatedError`` here and the result is never silently
+        downgraded to a sample.  Any mid-walk inconsistency still fails closed
+        with a typed ``TreeEnumerationError`` (transport exhaustion raises
+        ``TreeReadError`` after categorized retry) with the blobs recovered so
+        far attached.  Non-truncated repositories keep the single-request
+        recursive path with byte-identical output (same entries, same order).
+        """
+        blobs, _recovered = self.list_blobs_ex(slug, commit_sha)
+        return blobs
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
         import base64

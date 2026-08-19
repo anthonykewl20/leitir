@@ -445,10 +445,10 @@ class GitHubCodeSearchTransport:
         """Resolve the default discovery pin for one candidate donor.
 
         Default discovery pins the latest stable release tag (name plus
-        dereferenced commit SHA) and marks it immutable. When the repository
-        has no stable tag, the pin falls back to the default-branch HEAD and
-        is labeled non-immutable — a tag is never invented (issue #189
-        C-1/C-2).
+        dereferenced commit SHA) and marks it immutable. When no stable tag
+        is found within the bounded tag crawl, the pin falls back to the
+        default-branch HEAD and is labeled non-immutable — a tag is never
+        invented (issue #189 C-1/C-2).
         """
         tags = self.list_tags(slug)
         listed: dict[str, str] = {}
@@ -544,7 +544,9 @@ class ResolvedPin:
             )
         return (
             f"HEAD commit {self.commit_sha} "
-            f"(non-immutable: no stable release tags; resolved {self.resolved_at})"
+            f"(non-immutable: no stable release tag found within the crawl "
+            f"window (first {TAG_PAGE_SIZE * MAX_TAG_PAGES} tags); "
+            f"resolved {self.resolved_at})"
         )
 
 

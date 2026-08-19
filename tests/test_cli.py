@@ -1090,7 +1090,8 @@ class TestDiscoveryPinsLatestStableTag:
         assert payload["results"][0]["commit_sha"] == self.HEAD
         assert (
             f"pin acme/donor -> HEAD commit {self.HEAD} "
-            f"(non-immutable: no stable release tags"
+            f"(non-immutable: no stable release tag found within the crawl "
+            f"window (first 300 tags); resolved {self.FIXED_CLOCK})"
         ) in err
 
         manifest = json.loads(

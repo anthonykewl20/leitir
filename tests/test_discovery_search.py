@@ -3,7 +3,8 @@
 Discovery must pin candidate donors to immutable release tags by default:
 ``GitHubCodeSearchTransport.resolve_default_pin`` resolves the latest stable
 tag (name + dereferenced commit SHA) and only falls back to a default-branch
-HEAD pin — labeled non-immutable — when no stable tag exists. All fixtures
+HEAD pin — labeled non-immutable — when no stable tag is found within the
+bounded tag crawl. All fixtures
 drive the real transport against a routed local HTTP server (real sockets,
 real ``urllib``), never a mock object.
 """
@@ -204,6 +205,24 @@ class TestResolveDefaultPin:
         assert HEAD_SHA in described
         assert "non-immutable" in described
         assert f"/repos/{SLUG}/commits" in paths
+
+    def test_head_fallback_announcement_states_the_crawl_window_bound(self):
+        """P3 remediation (PR #214 review): the announcement is honest.
+
+        The tag crawl is bounded (3 pages x 100 tags), so the fallback must
+        not claim the repository has "no stable release tags" — stable tags
+        beyond the window are simply never seen. The rendered line pins the
+        exact bound (300 = TAG_PAGE_SIZE x MAX_TAG_PAGES); if the constants
+        change, this expectation must be re-validated deliberately.
+        """
+        with routed_server(_routes([])) as server:
+            transport = _transport(server.base_url)
+            pin = transport.resolve_default_pin(SLUG)
+        assert pin.describe() == (
+            f"HEAD commit {HEAD_SHA} "
+            f"(non-immutable: no stable release tag found within the crawl "
+            f"window (first 300 tags); resolved {FIXED_CLOCK})"
+        )
 
     def test_prerelease_only_repo_falls_back_to_head(self):
         with routed_server(_routes(TAGS_PRERELEASE_ONLY)) as server:

@@ -900,8 +900,9 @@ def _resolve_corpus_spec(
     Head-kind GitHub specs (no explicit ref) resolve through the transport's
     tag-aware default-pin path when available: the latest stable release tag
     plus its dereferenced commit SHA, announced as immutable. Repositories
-    without a stable tag fall back to a default-branch HEAD pin labeled
-    non-immutable; a tag is never invented (issue #189 C-1/C-2). Explicit
+    with no stable tag inside the bounded tag crawl fall back to a
+    default-branch HEAD pin labeled non-immutable; a tag is never invented
+    (issue #189 C-1/C-2). Explicit
     branch specs keep ``resolve_head_sha`` semantics and are announced
     non-immutable with the resolution date (C-3). Transports without the
     tag-aware path (embedding seams, fakes) keep the legacy resolution.

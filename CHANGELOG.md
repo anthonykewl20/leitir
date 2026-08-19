@@ -20,7 +20,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - harden import-purity child report channel and import-path isolation (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
-- state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
+- require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
+- retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 
 ### Security
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

@@ -252,11 +252,12 @@ class GitHubTreeSource:
         deterministic, budgeted, non-recursive subtree walk that
         ``list_blobs_ex`` performs — a truncated top-level listing no longer
         raises ``TreeTruncatedError`` here and the result is never silently
-        downgraded to a sample.  Any mid-walk inconsistency still fails closed
-        with a typed ``TreeEnumerationError`` (transport exhaustion raises
-        ``TreeReadError`` after categorized retry) with the blobs recovered so
-        far attached.  Non-truncated repositories keep the single-request
-        recursive path with byte-identical output (same entries, same order).
+        downgraded to a sample.  Enumeration inconsistencies fail closed with
+        a typed ``TreeEnumerationError`` with the blobs recovered so far
+        attached as ``partial_blobs``; transport exhaustion after categorized
+        retry raises ``TreeReadError``, which carries no partial blobs.
+        Non-truncated repositories keep the single-request recursive path
+        with byte-identical output (same entries, same order).
         """
         blobs, _recovered = self.list_blobs_ex(slug, commit_sha)
         return blobs

@@ -14,6 +14,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
+- pin donors to latest stable release tags by default (`discovery`)
 
 ### Fixed
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)

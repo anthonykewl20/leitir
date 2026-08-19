@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from leitir.credentials import Credentials, github_token_from_env
+from leitir.credentials import _PROVIDERS, Credentials, github_token_from_env
 
 
 def test_anonymous_by_default():
@@ -104,3 +104,86 @@ def test_normal_token_still_works():
         "https://registry.npmjs.org/x"
     )
     assert headers["Authorization"] == "Bearer normal-token"
+
+
+def test_github_provider_honors_gh_token():
+    """Regression for the GH_TOKEN-only environment bug (issue #188 G-0 one-liner)."""
+    auth = Credentials({"GH_TOKEN": "x"}).auth_for_url(
+        "https://codeload.github.com/o/r/tar.gz/abc"
+    )
+    assert auth is not None
+    assert auth.scheme == "bearer"
+    assert auth.value == "x"
+    assert auth.header == "Authorization"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.github.com/repos/o/r",
+        "https://codeload.github.com/o/r/tar.gz/a",
+    ],
+)
+def test_gh_token_authenticates_github_hosts(url):
+    headers = Credentials({"GH_TOKEN": "gh"}).headers(url)
+    assert headers["Authorization"] == "Bearer gh"
+
+
+def test_gh_token_wins_over_github_token_in_provider_table():
+    headers = Credentials({"GH_TOKEN": "first", "GITHUB_TOKEN": "second"}).headers(
+        "https://api.github.com/repos/o/r"
+    )
+    assert headers["Authorization"] == "Bearer first"
+
+
+def test_empty_gh_token_is_treated_as_unset():
+    credentials = Credentials({"GH_TOKEN": ""})
+    assert credentials.auth_for_url("https://api.github.com/repos/o/r") is None
+    assert "Authorization" not in credentials.headers("https://api.github.com/repos/o/r")
+    fallback = Credentials({"GH_TOKEN": "", "GITHUB_TOKEN": "g"})
+    assert fallback.headers("https://api.github.com/repos/o/r")["Authorization"] == "Bearer g"
+
+
+def test_gh_token_is_not_attached_to_unapproved_hosts():
+    credentials = Credentials({"GH_TOKEN": "secret"})
+    assert credentials.auth_for_url("https://api.github.com.evil.example/x") is None
+    assert credentials.auth_for_url("https://evil.example/github") is None
+    assert credentials.auth_for_url("http://api.github.com/repos/o/r") is None
+    assert "Authorization" not in credentials.headers("https://example.com/x")
+
+
+def test_gh_token_with_control_character_is_rejected_without_disclosure():
+    token = "gh\nleak"
+    with pytest.raises(ValueError) as exc_info:
+        Credentials({"GH_TOKEN": token}).auth_for_url("https://api.github.com/repos/o/r")
+    assert token not in str(exc_info.value)
+    assert "leak" not in str(exc_info.value)
+
+
+_EXPECTED_PROVIDER_ENV_NAMES = {
+    "github": {"GH_TOKEN", "GITHUB_TOKEN"},
+    "gitlab": {"GITLAB_TOKEN"},
+    "bitbucket": {"BITBUCKET_TOKEN"},
+    "codeberg": {"CODEBERG_TOKEN"},
+    "sourcehut": {"SRHT_TOKEN"},
+    "npm": {"NPM_TOKEN"},
+    "pypi": {"PYPI_TOKEN", "PIP_TOKEN"},
+    "crates": {"CARGO_TOKEN"},
+}
+
+
+def test_provider_table_env_names_are_pinned():
+    observed = {name: set(provider.token_envs) for name, provider in _PROVIDERS.items()}
+    assert observed == _EXPECTED_PROVIDER_ENV_NAMES
+    # Precedence order matters: first truthy env var wins, so GH_TOKEN must lead.
+    assert _PROVIDERS["github"].token_envs == ("GH_TOKEN", "GITHUB_TOKEN")
+
+
+def test_each_documented_env_name_authenticates_its_provider_hosts():
+    for name in sorted(_PROVIDERS):
+        provider = _PROVIDERS[name]
+        for env_name in provider.token_envs:
+            credentials = Credentials({env_name: "token"})
+            for host in provider.hosts:
+                auth = credentials.auth_for_url(f"https://{host}/x")
+                assert auth is not None, f"{env_name} failed to authenticate {host} ({name})"

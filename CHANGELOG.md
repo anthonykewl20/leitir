@@ -14,11 +14,13 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
+- full-coverage load-time verification via per-file digest map (`materialize`)
 
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
 - fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
+- type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
 
 ### Security
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

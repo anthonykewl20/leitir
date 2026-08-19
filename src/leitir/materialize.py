@@ -35,7 +35,9 @@ from leitir.search import RepoScope
 from leitir.treehash import (
     TreeHashError,
     compute_materialized_tree_hash,
+    full_coverage_manifest_fields,
     manifest_digest_fields,
+    verify_file_digest_map,
     verify_materialized_tree_hash,
 )
 
@@ -56,6 +58,12 @@ _HOST_METADATA = {
 MANIFEST_NAME = "leitir-manifest.json"
 VERIFY_MAX_FILES = 1_000
 VERIFY_MAX_BYTES = 64 * 1024 * 1024
+# Manifests now embed the flat per-file digest map (issue #194), so the
+# serialized-manifest bound must cover the worst-case map within the archive
+# member limit (ARCHIVE_MAX_MEMBERS entries at ~12 + 64 + path bytes each)
+# instead of the legacy 1 MiB provenance object.  Enforced on both the write
+# side (_write_manifest) and every bounded read; breaches fail closed.
+MANIFEST_MAX_BYTES = 96 * 1024 * 1024
 ARCHIVE_MAX_MEMBERS = 500_000
 ARCHIVE_MAX_MEMBER_BYTES = 1024 * 1024 * 1024
 ARCHIVE_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
@@ -247,13 +255,20 @@ def _failure_detail(exc: BaseException) -> str:
 
 def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
     """Write a manifest atomically, including upgrades of cached manifests."""
+    data = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(data) > MANIFEST_MAX_BYTES:
+        # A manifest that cannot be read back within the load-time bound
+        # would strand the shelf: fail the write instead (issue #194, C-1).
+        raise MaterializationError(
+            "manifest exceeds the maximum serialized size; the per-file "
+            "digest map would be unreadable at load time"
+        )
     fd, name = tempfile.mkstemp(prefix=f".{MANIFEST_NAME}.tmp-", dir=path.parent)
     temporary = Path(name)
     logger.debug("writing manifest path=%s", path)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(manifest, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
@@ -266,31 +281,103 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
         raise
 
 
+def _manifest_has_file_map(payload: Mapping[str, object]) -> bool:
+    """Return whether the manifest claims a per-file digest map."""
+    return (
+        "materialized_file_digests" in payload
+        or "materialized_file_digests_algorithm" in payload
+    )
+
+
+def verify_materialized_integrity(
+    target: str | os.PathLike[str], manifest: Mapping[str, object]
+) -> None:
+    """Verify a shelf's load-time integrity anchor (issue #194).
+
+    Manifests carrying the per-file digest map are verified with full
+    coverage in one streaming pass: every file's digest is compared to the
+    map and the map is compared to the anchored full-scope tree hash.
+    Legacy manifests without a map take the unchanged aggregate path.  Any
+    malformed anchor, unreadable tree, per-file mismatch, or unanchored map
+    raises :class:`VerificationError` (fail-closed, never load-and-warn);
+    per-file mismatches name the offending path.
+
+    Raises
+    ------
+    VerificationError
+        If the shelf's bytes do not match the manifest's integrity anchor.
+    """
+    try:
+        if _manifest_has_file_map(manifest):
+            verify_file_digest_map(
+                Path(target),
+                manifest.get("materialized_file_digests"),
+                algorithm=manifest.get("materialized_file_digests_algorithm"),
+                expected_tree_hash=manifest.get("materialized_tree_hash"),
+                tree_hash_algorithm=manifest.get("materialized_tree_hash_algorithm"),
+                tree_hash_scope=manifest.get("materialized_tree_hash_scope"),
+            )
+        else:
+            verify_materialized_tree_hash(
+                Path(target),
+                manifest.get("materialized_tree_hash"),
+                algorithm=manifest.get("materialized_tree_hash_algorithm"),
+                scope=manifest.get("materialized_tree_hash_scope", "full"),
+            )
+    except TreeHashError as exc:
+        raise VerificationError(str(exc)) from exc
+
+
 def update_manifest(
     target: str | os.PathLike[str], fields: Mapping[str, object]
 ) -> dict[str, object]:
     """Verify a shelf, then atomically merge fields into its manifest.
 
-    Raises :class:`ManifestIntegrityError` without writing if the existing
-    manifest's materialized-tree integrity anchor cannot be verified.
+    The source manifest is read through the same bounded reader and
+    duplicate-key-rejecting parser as the load gate (``_read_valid_manifest``),
+    so no manifest shape that gate rejects can be laundered through this
+    write path.  Raises :class:`ManifestIntegrityError` without writing if
+    the source manifest is over-bound or malformed, or if its
+    materialized-tree integrity anchor cannot be verified.
     """
     path = Path(target) / MANIFEST_NAME
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    from leitir.manifest_auth import ManifestAuthMalformedError, _parse_json
+
+    try:
+        raw = read_regular_file(
+            path, maximum_bytes=MANIFEST_MAX_BYTES, no_follow=False
+        )
+    except ValueError as exc:
+        # An over-bound manifest cannot be re-read (let alone verified) at
+        # load time; refuse the update with the typed error instead of the
+        # bounded reader's raw ValueError (fail-closed stays).
+        raise ManifestIntegrityError(
+            f"source manifest for {target} exceeds the maximum serialized size"
+        ) from exc
+    try:
+        payload = _parse_json(
+            raw.decode("utf-8", "strict"), subject="materialized manifest"
+        )
+    except (UnicodeError, ManifestAuthMalformedError) as exc:
+        # Matching the load gate's stated policy: a duplicate-key (or
+        # otherwise unparseable) manifest is invalid, never last-wins
+        # decoded and rewritten by this path.
+        raise ManifestIntegrityError(
+            f"source manifest for {target} is malformed and cannot be verified"
+        ) from exc
     if not isinstance(payload, dict):
         raise ValueError("source manifest must be an object")
     expected_hash = payload.get("materialized_tree_hash")
-    if expected_hash is not None:
+    if expected_hash is not None or _manifest_has_file_map(payload):
+        # Map-carrying manifests are always written with their anchored
+        # full-scope aggregate; a missing anchor on such a manifest means it
+        # was tampered with, so it is rejected rather than backfilled.
         try:
-            verify_materialized_tree_hash(
-                Path(target),
-                expected_hash,
-                algorithm=payload.get("materialized_tree_hash_algorithm"),
-                scope=payload.get("materialized_tree_hash_scope", "full"),
-            )
-        except TreeHashError as exc:
-            logger.warning("materialized tree hash verification failed for %s", target)
+            verify_materialized_integrity(Path(target), payload)
+        except VerificationError as exc:
+            logger.warning("load-time integrity verification failed for %s", target)
             raise ManifestIntegrityError(
-                f"materialized tree hash verification failed for {target}"
+                f"load-time integrity verification failed for {target}"
             ) from exc
     else:
         owner = payload.get("owner")
@@ -467,7 +554,7 @@ def _read_valid_manifest(
             # The parsed manifest is subsequently bound to its materialized
             # tree digest, so this digest-anchored cache input can support
             # platforms without O_NOFOLLOW.
-            read_regular_file(Path(target) / MANIFEST_NAME, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"),
+            read_regular_file(Path(target) / MANIFEST_NAME, maximum_bytes=MANIFEST_MAX_BYTES, no_follow=False).decode("utf-8", "strict"),
             subject="materialized manifest",
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, ManifestAuthMalformedError):
@@ -608,21 +695,19 @@ def _read_valid_manifest(
                     return None
             if not isinstance(factor["evidence"], dict):
                 return None
-    expected_hash = payload.get("materialized_tree_hash")
-    if expected_hash is not None:
+    if payload.get("materialized_tree_hash") is not None or _manifest_has_file_map(
+        payload
+    ):
         try:
-            verify_materialized_tree_hash(
-                Path(target),
-                expected_hash,
-                algorithm=payload.get("materialized_tree_hash_algorithm"),
-                scope=payload.get("materialized_tree_hash_scope", "full"),
-            )
-        except TreeHashError:
-            logger.warning("materialized tree hash verification failed for %s", target)
+            verify_materialized_integrity(target, payload)
+        except VerificationError:
+            logger.warning("load-time integrity verification failed for %s", target)
             return None
     elif not allow_missing_tree_hash:
         # Every producer writes the anchor. Missing anchors are accepted only
         # by update_manifest's private, provenance-checked backfill path.
+        # A map-carrying manifest without an aggregate is malformed and was
+        # rejected above, never backfilled (issue #194, SP-2).
         return None
     return payload
 
@@ -1084,7 +1169,7 @@ def recompute_github_git_parity(
         try:
             # The cache manifest is bound again by the verified tree hash below,
             # so this portable parity-recomputation input may omit O_NOFOLLOW.
-            payload = json.loads(read_regular_file(manifest_path, maximum_bytes=1 << 20, no_follow=False).decode("utf-8", "strict"))
+            payload = json.loads(read_regular_file(manifest_path, maximum_bytes=MANIFEST_MAX_BYTES, no_follow=False).decode("utf-8", "strict"))
             if not isinstance(payload, dict):
                 raise ValueError("manifest must be an object")
             owner = payload.get("owner")
@@ -1421,8 +1506,10 @@ def _materialize_hosted_repo_locked(
                 else "unknown",
             }
         )
-        tree_digest, tree_scope = compute_materialized_tree_hash(staging)
-        manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
+        # One scan yields the flat per-file digest map and the full-scope
+        # aggregate that anchors it; load-time verification is full-coverage
+        # for shelves of any size within the archive limits (issue #194).
+        manifest.update(full_coverage_manifest_fields(staging))
         _write_manifest(staging / MANIFEST_NAME, manifest)
         _refresh_license_manifest(staging, manifest)
         _assert_target_confinement(Path(root), target)
@@ -1585,8 +1672,9 @@ def materialize_go_module_zip(
                 "zip_sha256": hashlib.sha256(data).hexdigest(),
                 "sumdb_h1": sum_hash,
             })
-            digest, digest_scope = compute_materialized_tree_hash(staging)
-            manifest.update(manifest_digest_fields(digest, scope=digest_scope))
+            # One scan yields the per-file digest map plus the full-scope
+            # aggregate anchoring it (issue #194).
+            manifest.update(full_coverage_manifest_fields(staging))
             _write_manifest(staging / MANIFEST_NAME, manifest)
             _refresh_license_manifest(staging, manifest)
             if target.exists():
@@ -1743,8 +1831,9 @@ def _materialize_artifact_locked(
                 "artifact_checksum": artifact.checksum,
             }
         )
-        tree_digest, tree_scope = compute_materialized_tree_hash(staging)
-        manifest.update(manifest_digest_fields(tree_digest, scope=tree_scope))
+        # One scan yields the per-file digest map plus the full-scope
+        # aggregate anchoring it (issue #194).
+        manifest.update(full_coverage_manifest_fields(staging))
         _write_manifest(staging / MANIFEST_NAME, manifest)
         _refresh_license_manifest(staging, manifest)
         _assert_target_confinement(Path(root), target)

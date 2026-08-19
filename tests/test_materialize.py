@@ -1286,6 +1286,96 @@ def test_manifest_size_bound_is_enforced_on_write(tmp_path, monkeypatch):
     assert not (tmp_path / "repos").exists()
 
 
+def _canonical_manifest_bytes(payload: dict) -> bytes:
+    # Exactly _write_manifest's serialization: indent=2, sorted keys, LF.
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+@pytest.mark.parametrize("overflow", [-1, 0, 1])
+def test_manifest_size_bound_transition(tmp_path, monkeypatch, overflow):
+    # Dual-review remediation: pin the MANIFEST_MAX_BYTES transition exactly.
+    # At bound-1/bound the manifest is writable AND loadable through
+    # update_manifest; at bound+1 both sides fail loudly and typed — the
+    # write side (_write_manifest) as MaterializationError, the read side
+    # (update_manifest's bounded read) as ManifestIntegrityError.
+    from leitir.materialize import (
+        MANIFEST_NAME,
+        ManifestIntegrityError,
+        _write_manifest,
+        update_manifest,
+    )
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    manifest_path = target / MANIFEST_NAME
+    # A "pad" string field is ignored by the map verification and the load
+    # gate; each pad byte adds exactly one byte to the canonical form, so
+    # the serialized size is controllable to the byte.
+    base = dict(manifest, pad="")
+    bound = len(_canonical_manifest_bytes(base)) + 8
+    total = bound + overflow
+    payload = dict(manifest, pad="x" * (total - len(_canonical_manifest_bytes(base))))
+    data = _canonical_manifest_bytes(payload)
+    assert len(data) == total  # exact transition point under test
+    manifest_path.write_bytes(data)
+
+    monkeypatch.setattr(materialize_module, "MANIFEST_MAX_BYTES", bound)
+
+    if overflow <= 0:
+        _write_manifest(manifest_path, payload)  # at-or-under bound: writable
+        assert manifest_path.read_bytes() == data
+        # Shrinking the pad field keeps the merged write under the bound.
+        merged = update_manifest(target, {"pad": "y"})
+        assert merged["pad"] == "y"
+        assert read_valid_manifest(target, "example", "demo", SHA) is not None
+    else:
+        with pytest.raises(MaterializationError, match="maximum serialized size"):
+            _write_manifest(manifest_path, payload)
+        with pytest.raises(
+            ManifestIntegrityError, match="maximum serialized size"
+        ):
+            update_manifest(target, {"pad": "y"})
+        # Refused without writing: the shelf is left byte-identical, and the
+        # load gate independently treats the over-bound manifest as a miss.
+        assert manifest_path.read_bytes() == data
+        assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def test_update_manifest_rejects_duplicate_key_manifest(tmp_path):
+    # Dual-review remediation: update_manifest must parse with the load
+    # gate's duplicate-key-rejecting parser. A duplicated key (here: a
+    # second "materialized_tree_hash") must never be last-wins decoded
+    # into a clean, rewritten manifest.
+    from leitir.materialize import MANIFEST_NAME, ManifestIntegrityError, update_manifest
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    canonical = json.dumps(manifest, indent=2, sort_keys=True)
+    marker = '"materialized_tree_hash":'
+    assert marker in canonical
+    # json.dumps cannot emit duplicate keys; splice a second occurrence of
+    # the anchor key directly after the first so last-wins decoding would
+    # verify against the attacker's digest.
+    lines = canonical.splitlines()
+    insert_at = next(i for i, line in enumerate(lines) if marker in line) + 1
+    duplicated = (
+        "\n".join(
+            [
+                *lines[:insert_at],
+                f'  "materialized_tree_hash": "h1:{"B" * 43}=",',
+                *lines[insert_at:],
+            ]
+        )
+        + "\n"
+    )
+    (target / MANIFEST_NAME).write_text(duplicated, encoding="utf-8")
+
+    # Plain json.loads would take the attacker's last value silently.
+    assert json.loads(duplicated)["materialized_tree_hash"] == "h1:" + "B" * 43 + "="
+    with pytest.raises(ManifestIntegrityError, match="malformed"):
+        update_manifest(target, {"parity": "exact"})
+    # No laundering: the duplicated-key manifest is left untouched.
+    assert (target / MANIFEST_NAME).read_text(encoding="utf-8") == duplicated
+
+
 def test_manifest_fields_deterministic_across_independent_trees(tmp_path):
     # AC-5: same input -> byte-identical manifest fields (sorted, stable),
     # independent of insertion or iteration order.

@@ -333,15 +333,38 @@ def update_manifest(
 ) -> dict[str, object]:
     """Verify a shelf, then atomically merge fields into its manifest.
 
-    Raises :class:`ManifestIntegrityError` without writing if the existing
-    manifest's materialized-tree integrity anchor cannot be verified.
+    The source manifest is read through the same bounded reader and
+    duplicate-key-rejecting parser as the load gate (``_read_valid_manifest``),
+    so no manifest shape that gate rejects can be laundered through this
+    write path.  Raises :class:`ManifestIntegrityError` without writing if
+    the source manifest is over-bound or malformed, or if its
+    materialized-tree integrity anchor cannot be verified.
     """
     path = Path(target) / MANIFEST_NAME
-    payload = json.loads(
-        read_regular_file(
+    from leitir.manifest_auth import ManifestAuthMalformedError, _parse_json
+
+    try:
+        raw = read_regular_file(
             path, maximum_bytes=MANIFEST_MAX_BYTES, no_follow=False
-        ).decode("utf-8", "strict")
-    )
+        )
+    except ValueError as exc:
+        # An over-bound manifest cannot be re-read (let alone verified) at
+        # load time; refuse the update with the typed error instead of the
+        # bounded reader's raw ValueError (fail-closed stays).
+        raise ManifestIntegrityError(
+            f"source manifest for {target} exceeds the maximum serialized size"
+        ) from exc
+    try:
+        payload = _parse_json(
+            raw.decode("utf-8", "strict"), subject="materialized manifest"
+        )
+    except (UnicodeError, ManifestAuthMalformedError) as exc:
+        # Matching the load gate's stated policy: a duplicate-key (or
+        # otherwise unparseable) manifest is invalid, never last-wins
+        # decoded and rewritten by this path.
+        raise ManifestIntegrityError(
+            f"source manifest for {target} is malformed and cannot be verified"
+        ) from exc
     if not isinstance(payload, dict):
         raise ValueError("source manifest must be an object")
     expected_hash = payload.get("materialized_tree_hash")

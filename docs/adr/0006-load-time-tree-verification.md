@@ -129,10 +129,20 @@ re-enumeration heuristics (`_verify_extracted_tree`'s deterministic
 sampling) and legacy aggregate scope, never load-time coverage.
 
 Because the map lives inside the manifest, the serialized-manifest bound
-grew from 1 MiB to 96 MiB (`MANIFEST_MAX_BYTES`), sized for the worst-case
-map within the archive member limit; it is enforced on both writes
-(`_write_manifest` fails materialization — no mapless "full" shelf is ever
-published) and bounded reads (an over-bound manifest is a cache miss).
+grew from 1 MiB to 96 MiB (`MANIFEST_MAX_BYTES`). The arithmetic for why
+that fits legitimate worst-case shelves within the archive member limit
+(`ARCHIVE_MAX_MEMBERS` = 500,000): the written form
+(`json.dumps(..., indent=2, sort_keys=True)`) costs each map entry
+`len(path) + 76` bytes — 4 indent spaces, two path quotes, `": "`, two
+digest quotes around the 64-hex SHA-256, a comma, and a newline. Fixed
+overhead alone is 500,000 × 76 = 38,000,000 ≈ 36.2 MiB, leaving
+100,663,296 − 38,000,000 ≈ 59.8 MiB for path bytes — an average member
+path of ~125 bytes fits at the member cap, which covers real registry
+shelves (npm/PyPI/crates member paths average well under that budget). A
+pathological shelf whose serialized map still exceeds the bound fails at
+write (`_write_manifest` refuses materialization — no mapless "full" shelf
+is ever published) and is a cache miss on every bounded read, so the bound
+never strands a shelf it had accepted.
 
 ## Migration
 
@@ -166,10 +176,19 @@ Every load currently incurs an I/O scan (bounded hashing work for large trees,
 but directory enumeration and content-digest ordering still have costs). The
 residual O(total-tree-bytes) initial scan is documented in `treehash.py`'s
 module docstring; if benchmarks at production scale show this matters, a
-follow-up will be filed. Map-carrying shelves verify in a single O(bytes)
-streaming pass whose cost is linear in bytes with bounded memory; legacy
-above-cap shelves may pay the historical sampled-then-forced-full double
-read when verified through the aggregate path directly.
+follow-up will be filed. Map-carrying shelves verified through the map-aware
+`verify_materialized_integrity` — the entry point the load gates use — take
+a single O(bytes) streaming pass whose cost is linear in bytes with bounded
+memory. However, ANY shelf verified through `verify_materialized_tree_hash`
+*directly* incurs the historical sampled-then-forced-full double scan
+whenever its stored scope is `full` but the caps make its natural computed
+scope `sampled` — which includes map-carrying above-cap shelves: the first
+computation reads the whole tree to derive the sampled ordering and
+determines the sampled scope, and the stored-full mismatch then triggers a
+second, forced-full recomputation of the same bytes. This is a performance
+cost only, never a coverage or trust difference — the forced-full digest
+still covers every entry — and the load gates never route a map-carrying
+shelf that way.
 
 The locks are advisory. They protect against leitir writers and other
 cooperating processes, not a process that ignores the protocol and edits files

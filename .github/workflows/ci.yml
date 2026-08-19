@@ -280,7 +280,9 @@ jobs:
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          python -m pytest -q -rs tests/test_manifest_auth.py tests/test_pipeline_cli.py | tee pytest-auth-tests.log
+          # 2>&1: capture stderr too — if pytest ever routed the skip summary
+          # to stderr, a stdout-only tee would let skips past the guard (#196).
+          python -m pytest -q -rs tests/test_manifest_auth.py tests/test_pipeline_cli.py 2>&1 | tee pytest-auth-tests.log
           ! grep -q '^SKIPPED' pytest-auth-tests.log
 
   # Configure "CI / required checks pass" as a required status check in branch

@@ -15,6 +15,15 @@ enumerated submodule is imported in its own isolated child and checked against
 ``ALLOWLIST_IMPURE`` with a one-line reason (platform-scoped exemptions live in
 ``PLATFORM_ALLOWLIST_IMPURE``). Adding a submodule that pulls a forbidden
 module without an allowlist entry fails the gate naming the module.
+
+Child results travel through a dedicated file at a parent-chosen path, never
+stdout: an import-time (or atexit-registered) ``print`` of a valid-JSON decoy
+cannot forge, mask, or reorder what the parent reads. The children also run
+with ``-S`` and a scrubbed ``PYTHONPATH``/``PYTHONHOME``, and both child
+templates verify the top package's ``__path__`` resolves solely to the tree
+under test, so a pip-installed ``leitir`` cannot shadow or namespace-merge
+into the enumeration — a polluted environment fails loudly naming the foreign
+paths instead of producing a confusing bijection mismatch.
 """
 
 from __future__ import annotations
@@ -23,11 +32,14 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from string import Template
 from typing import NamedTuple
+
+from pytest import MonkeyPatch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -118,33 +130,42 @@ _MAX_PROBE_WORKERS = 8
 _CHILD_TIMEOUT_S = 60.0
 
 # Isolated-child script templates ($-placeholders are substituted with repr()s).
+# Each child reports through $result — a dedicated file at a parent-chosen path —
+# so stdout noise from probed code cannot forge or mask the result, and each
+# verifies the package did not namespace-merge with locations outside $src.
 _ENUMERATE_TEMPLATE = Template(
-    """import importlib, json, sys
-import pkgutil
+    """import importlib, json, os, pkgutil, sys
 
 sys.path.insert(0, $src)
 errors = []
-
-
-def _onerror(name):
-    errors.append(name)
-
-
+modules = []
 pkg = importlib.import_module($package)
-modules = [pkg.__name__] + sorted(
-    name for _, name, _ in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + ".", onerror=_onerror)
-)
-print(json.dumps({"modules": modules, "errors": sorted(set(errors))}))
+pkg_dir = os.path.realpath(os.path.join($src, $package))
+foreign = sorted(p for p in pkg.__path__ if os.path.realpath(p) != pkg_dir)
+if not foreign:
+    def _onerror(name):
+        errors.append(name)
+    modules = [pkg.__name__] + sorted(
+        name for _, name, _ in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + ".", onerror=_onerror)
+    )
+with open($result, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps({"modules": modules, "errors": sorted(set(errors)), "foreign_paths": foreign}))
 """
 )
 
 _PROBE_TEMPLATE = Template(
-    """import importlib, json, sys
+    """import importlib, json, os, sys
 
 sys.path.insert(0, $src)
-importlib.import_module($module)
-present = sorted(m for m in $forbidden if m in sys.modules)
-print(json.dumps({"present": present}))
+pkg = importlib.import_module($package)
+pkg_dir = os.path.realpath(os.path.join($src, $package))
+foreign = sorted(p for p in pkg.__path__ if os.path.realpath(p) != pkg_dir)
+present = []
+if not foreign:
+    importlib.import_module($module)
+    present = sorted(m for m in $forbidden if m in sys.modules)
+with open($result, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps({"present": present, "foreign_paths": foreign}))
 """
 )
 
@@ -162,7 +183,7 @@ class _PurityResult(NamedTuple):
 
     module: str
     present: list[str]  # forbidden modules found in sys.modules (sorted)
-    crash: str  # last stderr line (or synthetic message) if the import failed
+    crash: str  # last stderr line (or synthetic message) if the import failed or the child refused the environment
     leftovers: list[str]  # files the import wrote into the child cwd (sorted)
 
 
@@ -170,12 +191,18 @@ def _run_isolated(script: str, cwd: Path) -> tuple[int, str, str]:
     env = dict(os.environ)
     # Do not let a parent environment credential leak into the child.
     env.pop("OPENROUTER_API_KEY", None)
+    # Child import-path isolation: ``-S`` skips site/``.pth`` processing and the
+    # ``PYTHON*`` path/home variables are scrubbed, so a pip-installed
+    # ``leitir`` (or any path-injected copy) cannot shadow or namespace-merge
+    # with the source tree the gate is asked to probe.
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
     # Interpreter bytecode-cache writes are not a module side effect; keep the
     # child sandboxes free of __pycache__ noise.
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         proc = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, "-S", "-c", script],
             capture_output=True,
             text=True,
             env=env,
@@ -192,18 +219,16 @@ def _stderr_tail(err: str, code: int) -> str:
     return lines[-1] if lines else f"exit code {code}"
 
 
-def _last_json_object(out: str) -> dict[str, object] | None:
-    """Parse the last non-empty stdout line as a JSON object, else ``None``.
+def _read_result_payload(result_path: Path) -> dict[str, object] | None:
+    """Parse the child's dedicated result file, else ``None``.
 
-    An import-time ``print`` in probed code must degrade into a named gate
-    failure, never an unhandled ``ValueError`` in the test process.
+    The report channel is a file at a parent-chosen path, never stdout: an
+    import-time (or atexit-registered) ``print`` in probed code cannot forge,
+    mask, or reorder the result the parent reads.
     """
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    if not lines:
-        return None
     try:
-        payload = json.loads(lines[-1])
-    except ValueError:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -229,50 +254,82 @@ def _enumerate(src_root: Path, package: str) -> tuple[list[str], list[str]]:
     Returns ``(modules, problems)``: ``modules`` is the sorted pkgutil walk
     (authoritative); ``problems`` is empty when the filesystem walk of
     ``src_root/package/*.py`` matches it exactly and no package import errored
-    during the walk.
+    during the walk. A ``package`` whose ``__path__`` resolves anywhere other
+    than ``src_root/package`` is reported loudly as pollution instead of being
+    walked as a silently merged namespace.
     """
-    script = _ENUMERATE_TEMPLATE.substitute(src=repr(str(src_root)), package=repr(package))
-    code, out, err = _run_isolated(script, src_root)
-    problems: list[str] = []
-    if code != 0:
-        return [], [f"pkgutil enumeration of {package!r} failed: {_stderr_tail(err, code)}"]
-    payload = _last_json_object(out)
-    if payload is None:
-        return [], [f"pkgutil enumeration of {package!r} produced unparseable stdout"]
-    raw_modules = payload.get("modules")
-    raw_errors = payload.get("errors")
-    if not isinstance(raw_modules, list):
-        return [], [f"pkgutil enumeration of {package!r} produced an unexpected payload"]
-    modules = sorted({str(name) for name in raw_modules})
-    errors = sorted({str(name) for name in raw_errors}) if isinstance(raw_errors, list) else []
-    if errors:
-        problems.append(f"pkgutil walk hit import errors in packages: {errors}")
-    fs_modules = _enumerate_filesystem(src_root, package)
-    only_pkgutil = sorted(set(modules) - set(fs_modules))
-    only_fs = sorted(set(fs_modules) - set(modules))
-    if only_pkgutil or only_fs or len(modules) != len(fs_modules):
-        problems.append(
-            f"enumeration divergence: pkgutil walk has {len(modules)} modules, "
-            f"filesystem walk has {len(fs_modules)}; pkgutil-only={only_pkgutil}; "
-            f"filesystem-only={only_fs}"
+    with tempfile.TemporaryDirectory(prefix="leitir-import-purity-") as scratch:
+        result_path = Path(scratch) / "enumerate.json"
+        script = _ENUMERATE_TEMPLATE.substitute(
+            src=repr(str(src_root)), package=repr(package), result=repr(str(result_path))
         )
-    return modules, problems
+        code, _out, err = _run_isolated(script, src_root)
+        problems: list[str] = []
+        if code != 0:
+            return [], [f"pkgutil enumeration of {package!r} failed: {_stderr_tail(err, code)}"]
+        payload = _read_result_payload(result_path)
+        if payload is None:
+            return [], [f"pkgutil enumeration of {package!r} produced no result file"]
+        raw_foreign = payload.get("foreign_paths")
+        if isinstance(raw_foreign, list) and raw_foreign:
+            foreign = sorted({str(path) for path in raw_foreign})
+            return [], [
+                f"package path pollution: {package!r} resolved to {foreign} beside or instead of "
+                f"{src_root / package}; a foreign installation (e.g. a pip-installed copy) is on "
+                "the child import path — remove it or fix the environment before running the gate"
+            ]
+        raw_modules = payload.get("modules")
+        raw_errors = payload.get("errors")
+        if not isinstance(raw_modules, list):
+            return [], [f"pkgutil enumeration of {package!r} produced an unexpected payload"]
+        modules = sorted({str(name) for name in raw_modules})
+        errors = sorted({str(name) for name in raw_errors}) if isinstance(raw_errors, list) else []
+        if errors:
+            problems.append(f"pkgutil walk hit import errors in packages: {errors}")
+        fs_modules = _enumerate_filesystem(src_root, package)
+        only_pkgutil = sorted(set(modules) - set(fs_modules))
+        only_fs = sorted(set(fs_modules) - set(modules))
+        if only_pkgutil or only_fs or len(modules) != len(fs_modules):
+            problems.append(
+                f"enumeration divergence: pkgutil walk has {len(modules)} modules, "
+                f"filesystem walk has {len(fs_modules)}; pkgutil-only={only_pkgutil}; "
+                f"filesystem-only={only_fs}"
+            )
+        return modules, problems
 
 
 def _probe_module(src_root: Path, module: str, workroot: Path) -> _PurityResult:
     """Import ``module`` in an isolated child cwd'd to a fresh sandbox dir."""
     workdir = workroot / module
     workdir.mkdir(parents=True, exist_ok=True)
+    # The result file lives beside (never inside) the sandbox dir so it cannot
+    # pollute the filesystem-leftovers check, and its parent-chosen path is
+    # unknowable to probed code, which only ever sees its own cwd.
+    result_path = workroot / f"{module}.result.json"
     script = _PROBE_TEMPLATE.substitute(
-        src=repr(str(src_root)), module=repr(module), forbidden=repr(FORBIDDEN_MODULES)
+        src=repr(str(src_root)),
+        package=repr(module.partition(".")[0]),
+        module=repr(module),
+        forbidden=repr(FORBIDDEN_MODULES),
+        result=repr(str(result_path)),
     )
-    code, out, err = _run_isolated(script, workdir)
+    code, _out, err = _run_isolated(script, workdir)
     leftovers = sorted(p.name for p in workdir.iterdir())
     if code != 0:
         return _PurityResult(module, [], _stderr_tail(err, code), leftovers)
-    payload = _last_json_object(out)
+    payload = _read_result_payload(result_path)
     if payload is None:
-        return _PurityResult(module, [], "probe produced unparseable stdout (import-time print?)", leftovers)
+        return _PurityResult(module, [], "probe produced no result file (child exited without writing it)", leftovers)
+    raw_foreign = payload.get("foreign_paths")
+    if isinstance(raw_foreign, list) and raw_foreign:
+        foreign = sorted({str(path) for path in raw_foreign})
+        return _PurityResult(
+            module,
+            [],
+            f"package path pollution: probe resolved {module.partition('.')[0]!r} to {foreign} "
+            f"instead of {src_root / module.partition('.')[0]} (foreign installation on the import path)",
+            leftovers,
+        )
     raw_present = payload.get("present")
     if not isinstance(raw_present, list):
         return _PurityResult(module, [], "probe produced an unexpected payload", leftovers)
@@ -461,3 +518,93 @@ def test_platform_branch_scopes_allowlist_entries(tmp_path: Path) -> None:
         tmp_path / "work_here",
     )
     assert not [f for f in passing if f.startswith("fixture_tree.platform_only:")], passing
+
+
+def test_atexit_stdout_decoy_cannot_mask_impurity(tmp_path: Path) -> None:
+    """Report-channel hardening: a module that emits a trailing valid-JSON
+    decoy to stdout — registered via ``atexit`` so it lands after the child's
+    own output — cannot mask the forbidden modules it pulled."""
+    pkg = tmp_path / "fixture_tree"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "decoy.py").write_text(
+        "import atexit, subprocess\n"
+        "atexit.register(lambda: print('{\"present\": []}'))\n",
+        encoding="utf-8",
+    )
+    failures = _purity_gate_failures(tmp_path, "fixture_tree", {}, {}, tmp_path / "work")
+    decoy_failures = [f for f in failures if f.startswith("fixture_tree.decoy:")]
+    assert decoy_failures != [], f"gate must fail naming fixture_tree.decoy; got: {failures}"
+    assert "subprocess" in decoy_failures[0]
+
+
+def test_children_isolate_the_import_path(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """Child isolation: an inherited ``PYTHONPATH`` is ignored and site/``.pth``
+    processing is skipped, so path-injected or pip-installed packages cannot
+    reach the gate's children."""
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "leitir_decoy.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(shadow))
+    script = (
+        "import sys\n"
+        "print('site-loaded:', 'site' in sys.modules)\n"
+        "try:\n"
+        "    import leitir_decoy\n"
+        "    print('leitir_decoy: importable')\n"
+        "except ImportError:\n"
+        "    print('leitir_decoy: absent')\n"
+    )
+    code, out, err = _run_isolated(script, tmp_path)
+    assert code == 0, err
+    assert "site-loaded: False" in out
+    assert "leitir_decoy: absent" in out
+
+
+def test_enumerate_child_fails_loudly_on_namespace_merge(tmp_path: Path) -> None:
+    """Pollution backstop: when the top package's ``__path__`` resolves to
+    locations other than ``src_root/package``, the child reports the foreign
+    locations instead of walking a silently merged namespace."""
+    src = tmp_path / "src_tree"
+    foreign = tmp_path / "foreign_tree"
+    for root in (src, foreign):
+        (root / "fixture_tree").mkdir(parents=True)
+    (src / "fixture_tree" / "pure_mod.py").write_text("", encoding="utf-8")
+    (foreign / "fixture_tree" / "stray_mod.py").write_text("", encoding="utf-8")
+    result_path = tmp_path / "enumerate.json"
+    script = _ENUMERATE_TEMPLATE.substitute(
+        src=repr(str(src)), package=repr("fixture_tree"), result=repr(str(result_path))
+    )
+    # The child's cwd is the '' sys.path entry: pointing it at the foreign
+    # tree's parent makes fixture_tree resolve to both directories.
+    code, _out, err = _run_isolated(script, foreign)
+    assert code == 0, err
+    payload = _read_result_payload(result_path)
+    assert payload is not None
+    assert payload.get("foreign_paths") == [os.path.realpath(str(foreign / "fixture_tree"))]
+    assert payload.get("modules") == []
+
+
+def test_probe_child_fails_loudly_on_namespace_merge(tmp_path: Path) -> None:
+    """Pollution backstop (probe side): a merged namespace is reported as
+    foreign paths and the module is not probed against the polluted tree."""
+    src = tmp_path / "src_tree"
+    foreign = tmp_path / "foreign_tree"
+    for root in (src, foreign):
+        (root / "fixture_tree").mkdir(parents=True)
+    (src / "fixture_tree" / "pure_mod.py").write_text("", encoding="utf-8")
+    (foreign / "fixture_tree" / "stray_mod.py").write_text("", encoding="utf-8")
+    result_path = tmp_path / "probe.json"
+    script = _PROBE_TEMPLATE.substitute(
+        src=repr(str(src)),
+        package=repr("fixture_tree"),
+        module=repr("fixture_tree.pure_mod"),
+        forbidden=repr(FORBIDDEN_MODULES),
+        result=repr(str(result_path)),
+    )
+    code, _out, err = _run_isolated(script, foreign)
+    assert code == 0, err
+    payload = _read_result_payload(result_path)
+    assert payload is not None
+    assert payload.get("foreign_paths") == [os.path.realpath(str(foreign / "fixture_tree"))]
+    assert payload.get("present") == []

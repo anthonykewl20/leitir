@@ -116,6 +116,42 @@ class TestTransportRetryReal:
         assert h.state.served_count == 2
 
     @pytest.mark.parametrize("iteration", range(ITERATIONS))
+    def test_403_reset_beyond_cap_fails_fast_no_sleep(self, iteration):
+        """#201 G-0/AC-1: a server-advised rate-limit wait beyond the cap
+        (default 300s; GitHub primary resets can be 3600s) must raise
+        immediately naming the recovery timestamp — never sleep the full cap
+        and retry into a guaranteed re-fail. Baseline behavior sleeps 300s
+        per retry until attempts exhaust; this test pins the fixed contract:
+        one request served, zero sleeper calls, typed error surfaced through
+        the transport's domain wrap."""
+        import re
+        import time
+
+        reset_epoch = int(time.time()) + 3600  # server hint far beyond the cap
+        sleeps = []
+        # The scripted server repeats the last response, so every retry hits
+        # the same oversized 403 — the guaranteed re-fail cycle.
+        with hs.scripted_server([
+            (
+                403,
+                {
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(reset_epoch),
+                },
+                b"",
+            ),
+        ]) as h:
+            t = _transport(h.base_url, sleeper=sleeps.append)
+            with pytest.raises(CodeSearchError) as exc_info:
+                t.search("urlencode")
+        message = str(exc_info.value)
+        assert "RateLimitCapExceededError" in message
+        assert "resets at" in message
+        assert re.search(r"resets at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", message)
+        assert sleeps == []  # zero sleeper calls — no wall-clock consumed
+        assert h.state.served_count == 1  # no retry after the oversized hint
+
+    @pytest.mark.parametrize("iteration", range(ITERATIONS))
     def test_404_is_fatal_no_retry(self, iteration):
         sleeps = []
         with hs.scripted_server([(404, {}, b"")]) as h:

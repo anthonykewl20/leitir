@@ -17,6 +17,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Fixed
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
+- run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
 
 ### Security
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

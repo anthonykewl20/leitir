@@ -247,6 +247,42 @@ jobs:
           PYTHONPATH: src
         run: python -c "import leitir; import leitir.cli; import leitir.treehash; import leitir.materialize; import leitir.resolver; import leitir.snapshot; import leitir.corpus; import leitir.trust"
 
+  # Ed25519/auth signature-verification tests (ADR-0018): every offline leg
+  # skips them because requirements.txt has no cryptography provider. This job
+  # installs the separately reviewed, hash-locked provider and runs the two
+  # gated files with zero skips allowed (issue #196).
+  auth-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          # The auth lock's reviewed transitive wheel closure (cffi single-hash
+          # pin) fail-closes at installation on every other interpreter;
+          # python 3.12 mirrors the bts-containment.yml install leg.
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-auth.lock
+      - name: Install test requirements
+        # requirements.txt provides pytest; requirements-auth.lock provides the
+        # Ed25519 verifier and MUST be installed with --require-hashes
+        # --only-binary :all: per its header contract — a hash or platform
+        # mismatch fails the install (fail-closed), never a source fallback.
+        run: |
+          uv pip install --system --requirement requirements.txt
+          uv pip install --system --requirement requirements-auth.lock --require-hashes --only-binary :all:
+      - name: Run auth-gated tests (cryptography skips forbidden)
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rs tests/test_manifest_auth.py tests/test_pipeline_cli.py | tee pytest-auth-tests.log
+          ! grep -q '^SKIPPED' pytest-auth-tests.log
+
   # Configure "CI / required checks pass" as a required status check in branch
   # protection. Branch protection must be configured separately in GitHub settings.
   required-checks-pass:
@@ -259,6 +295,7 @@ jobs:
       - coverage
       - package
       - lint
+      - auth-tests
     runs-on: ubuntu-latest
     steps:
       # v1.2.4 does not exist upstream; v1.2.2 is the latest published tag.

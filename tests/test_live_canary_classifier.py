@@ -34,7 +34,7 @@ def _http_error(code: int, headers: dict[str, str] | None = None) -> HTTPError:
     [
         (_http_error(429), ("infra-failure", "rate_limited")),
         (_http_error(403, {"X-RateLimit-Remaining": "0"}), ("infra-failure", "rate_limited")),
-        (_http_error(403, {"Retry-After": "1"}), ("infra-failure", "rate_limited")),
+        (_http_error(403, {"Retry-After": "0"}), ("infra-failure", "rate_limited")),
         (_http_error(403), ("configuration-failure", "")),
         (_http_error(408), ("infra-failure", "transient")),
         (_http_error(425), ("infra-failure", "transient")),

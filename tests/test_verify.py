@@ -19,7 +19,6 @@ from leitir.cli import ExitCode, main
 from leitir.materialize import (
     MaterializationError,
     VerificationError,
-    _github_git_parity,
     _verify_extracted_tree,
     materialize_github_repo,
     read_valid_manifest,
@@ -243,17 +242,18 @@ def test_tampered_symbolic_link_is_rejected(tmp_path):
         _verify_direct(tmp_path, source)
 
 
-def test_non_github_symbolic_link_digest_mismatch_is_sampled(tmp_path):
+def test_non_github_symbolic_link_digest_mismatch_is_rejected(tmp_path):
     expected_target = b"realfile"
     (tmp_path / "link").symlink_to("other")
     link_sha = GitHubTreeSource.git_blob_sha(expected_target)
     entries = (BlobEntry("link", link_sha, len(expected_target), "120000"),)
 
-    assert _verify_direct(tmp_path, _FakeTreeSource(entries, {link_sha: b"followed"})) == "sampled"
+    with pytest.raises(VerificationError, match="symbolic-link blob digest mismatch: link"):
+        _verify_direct(tmp_path, _FakeTreeSource(entries, {link_sha: b"followed"}))
 
 
 @pytest.mark.parametrize("variant", ["missing", "extra"])
-def test_symbolic_link_universe_mismatch_is_sampled(tmp_path, variant):
+def test_symbolic_link_universe_mismatch_is_rejected(tmp_path, variant):
     target = "realfile"
     (tmp_path / "realfile").write_bytes(b"proof")
     if variant == "extra":
@@ -263,9 +263,8 @@ def test_symbolic_link_universe_mismatch_is_sampled(tmp_path, variant):
         BlobEntry("link", GitHubTreeSource.git_blob_sha(target.encode()), len(target), "120000"),
     )
 
-    status = _verify_direct(tmp_path, _FakeTreeSource(entries, {}))
-    assert status == "sampled"
-    assert _github_git_parity(status, 0) == "unknown"
+    with pytest.raises(VerificationError, match="extracted symbolic link"):
+        _verify_direct(tmp_path, _FakeTreeSource(entries, {}))
 
 
 def test_symbolic_link_eol_difference_is_rejected(tmp_path):

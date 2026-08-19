@@ -15,6 +15,12 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
 
+### Fixed
+- qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
+
+### Security
+- reject symlink universe and content mismatches on mode-capable hosts (`materialize`)
+
 ## [0.1.4]
 
 ### ⚠ BREAKING CHANGES

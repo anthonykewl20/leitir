@@ -104,7 +104,7 @@ def test_truncated_recursive_response_recovers_all_blobs():
     assert recovered is True
 
 
-def test_compat_wrapper_truncation_raises_without_walking():
+def test_compat_wrapper_truncation_walks_to_full_enumeration():
     source = truncated_source(
         {
             ROOT: {"tree": [item("root.py", "blob", BLOB_A), item("src", "tree", TREE_A)]},
@@ -112,10 +112,14 @@ def test_compat_wrapper_truncation_raises_without_walking():
         }
     )
 
-    with pytest.raises(TreeTruncatedError) as error:
-        source.list_blobs("owner/repo", ROOT)
-    assert error.value.partial_blobs == ()
-    assert len(source.requests) == 1
+    blobs = source.list_blobs("owner/repo", ROOT)
+
+    assert [blob.path for blob in blobs] == ["root.py", "src/nested.py"]
+    # One truncated recursive probe, then one non-recursive page per distinct
+    # subtree — the wrapper recovers instead of raising TreeTruncatedError.
+    assert len(source.requests) == 3
+    assert source.requests[0].endswith("?recursive=1")
+    assert [url.rsplit("/", 1)[-1] for url in source.requests[1:]] == [ROOT, TREE_A]
 
 
 def test_compat_wrapper_propagates_tree_walk_budget_error():

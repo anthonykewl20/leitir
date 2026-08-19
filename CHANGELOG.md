@@ -14,13 +14,13 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
-- full-coverage load-time verification via per-file digest map (`materialize`)
+- pin donors to latest stable release tags by default (`discovery`)
 
 ### Fixed
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - harden import-purity child report channel and import-path isolation (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
-- type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
+- state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 
 ### Security
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

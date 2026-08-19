@@ -19,6 +19,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 
 ### Security
+- honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)
 
 ## [0.1.4]

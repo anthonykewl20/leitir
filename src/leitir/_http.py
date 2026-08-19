@@ -5,7 +5,14 @@ that the kernel must not treat identically:
 
 - Rate-limited: ``429`` (secondary rate limit) or ``403`` with
   ``X-RateLimit-Remaining: 0`` (primary). The response carries a wait hint
-  (``Retry-After`` or ``X-RateLimit-Reset``) that must be honored.
+  (``Retry-After`` or ``X-RateLimit-Reset``). A hint at or below
+  ``max_rate_limit_delay`` is slept out before the retry; a hint beyond the
+  cap raises immediately with the advised recovery time, because clamping it
+  and retrying can only re-fail (#201). An optional ``max_total_wait``
+  budget bounds cumulative sleeping across attempts. Rate-limit notices go
+  to stderr at most once per provider (resolved from the failing request's
+  host), are labeled with the provider, and advise that provider's token
+  environment variable.
 - Transient: ``5xx`` server errors (except ``501``), ``408``/``425``, and
   ``OSError`` network/timeout failures (``URLError`` and ``TimeoutError`` are
   both ``OSError`` subclasses). Bounded exponential backoff recovers without
@@ -30,6 +37,7 @@ from __future__ import annotations
 import logging
 import math
 import sys
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC
@@ -38,7 +46,28 @@ from typing import TypeVar
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
-_rate_limit_notice_emitted = False
+
+# Rate-limit notice bookkeeping (#201): at most one notice per provider (or,
+# for hosts outside the known provider table, per hostname) per process.
+# Check-and-set happens under ``_rate_limit_notice_lock`` so concurrent
+# transports never interleave duplicate lines; tests reset the set via
+# :func:`reset_rate_limit_notices`.
+_rate_limit_notices_emitted: set[str] = set()
+_rate_limit_notice_lock = threading.Lock()
+
+# Display labels for the provider keys in ``leitir.credentials``. Host-to-
+# provider resolution and token environment names are owned by that table;
+# only the human-facing wording lives here.
+_PROVIDER_LABELS = {
+    "github": "GitHub API",
+    "gitlab": "GitLab",
+    "bitbucket": "Bitbucket",
+    "codeberg": "Codeberg",
+    "sourcehut": "sourcehut",
+    "npm": "npm registry",
+    "pypi": "PyPI",
+    "crates": "crates.io",
+}
 
 
 def __getattr__(name: str):
@@ -69,6 +98,34 @@ class HttpErrorKind(Enum):
     TRANSIENT = "transient"
     RATE_LIMITED = "rate_limited"
     FATAL = "fatal"
+
+
+class _RetrySemanticsError(OSError):
+    """Base for the retry loop's fail-fast errors (#201).
+
+    Subclasses :class:`OSError` so call sites' ``except
+    _http.RETRIABLE_EXCEPTIONS`` handlers keep wrapping these into their
+    domain errors, and mirrors the message into ``reason`` so
+    :func:`describe_failure` preserves the full diagnostic (recovery
+    timestamp, budget) inside the wrapped message instead of dropping it.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.reason = message
+
+
+class RateLimitCapExceededError(_RetrySemanticsError):
+    """Server-advised rate-limit wait exceeds ``max_rate_limit_delay``.
+
+    Sleeping the cap and retrying is a guaranteed re-fail within any bounded
+    attempt budget, so the loop raises immediately; the message carries the
+    advised recovery timestamp.
+    """
+
+
+class RetryBudgetExceededError(_RetrySemanticsError):
+    """Cumulative retry wait would exceed the optional ``max_total_wait``."""
 
 
 def _safe_redirect_handler():
@@ -227,6 +284,92 @@ def describe_failure(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def _format_utc(epoch: float) -> str:
+    """Render an epoch timestamp as a locale-independent UTC ISO string."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _rate_limit_provider(exc: BaseException) -> tuple[str, str, str | None]:
+    """Resolve ``(notice key, label, token advice)`` for a rate-limited failure.
+
+    The provider is derived from the failing request's host so every
+    transport gets truthful per-provider notices without call-site changes.
+    Hosts outside the provider table are noticed per hostname (no token
+    advice — there is no known environment variable to recommend).
+    """
+    url = getattr(exc, "url", None)
+    host = None
+    if isinstance(url, str):
+        from urllib.parse import urlsplit
+
+        try:
+            host = urlsplit(url).hostname
+        except ValueError:
+            host = None
+    if not host:
+        return "unknown", "remote host", None
+    host = host.lower()
+
+    # Host-to-provider and token-env names are owned by the credentials
+    # table (single source of truth); only display wording is local.
+    from .credentials import _PROVIDERS
+
+    for key, provider in _PROVIDERS.items():
+        if host in provider.hosts:
+            label = _PROVIDER_LABELS.get(key, key)
+            advice: str | None
+            if key == "github":
+                # GH_TOKEN matches the gh CLI precedence in
+                # credentials.github_token_from_env and the historical notice.
+                advice = "set GH_TOKEN to raise limits"
+            else:
+                envs = " or ".join(provider.token_envs)
+                advice = f"set {envs} to raise limits" if envs else None
+            return key, label, advice
+    return host, host, None
+
+
+def _emit_rate_limit_notice(exc: BaseException) -> None:
+    """Print the one-line rate-limit notice for ``exc``'s provider, once.
+
+    One line on stderr, no secrets: provider label, the reset time when the
+    response advertises one, and the provider's token environment advice.
+    At-most-once per provider is guaranteed by the check-and-set under
+    ``_rate_limit_notice_lock`` (SP-3).
+    """
+    headers = getattr(exc, "headers", None)
+    reset = None if headers is None else headers.get("X-RateLimit-Reset")
+    key, label, advice = _rate_limit_provider(exc)
+    until = ""
+    if reset:
+        try:
+            reset_at = float(reset)
+            until = (
+                f" until {_format_utc(reset_at)}"
+                if math.isfinite(reset_at)
+                else f" until {reset}"
+            )
+        except ValueError:
+            until = f" until {reset}"
+    tail = f"; {advice}" if advice else ""
+    line = f"leitir: {label} rate limited{until}{tail}"
+    with _rate_limit_notice_lock:
+        if key in _rate_limit_notices_emitted:
+            return
+        _rate_limit_notices_emitted.add(key)
+    print(line, file=sys.stderr)
+
+
+def reset_rate_limit_notices() -> None:
+    """Forget which providers already emitted a rate-limit notice.
+
+    Test hook so notice assertions are order-independent; production has no
+    reason to re-notify within a process.
+    """
+    with _rate_limit_notice_lock:
+        _rate_limit_notices_emitted.clear()
+
+
 def make_retry(
     *,
     max_attempts: int,
@@ -234,19 +377,28 @@ def make_retry(
     max_delay: float,
     max_rate_limit_delay: float,
     sleeper: Callable[[float], None] | None,
+    max_total_wait: float | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> Callable[[Callable[[], T]], T]:
     """Build a bound retry callable capturing one policy configuration.
 
     Shared by the transport, all resolvers, and ``GitHubTreeSource`` so retry
     knobs are configured in exactly one place. Validates parameters at
-    construction time (so an invalid knob fails fast instead of surfacing as a
-    bare ``ValueError`` on the first network call).
+    construction time (so an invalid knob fails fast instead of surfacing as
+    a bare ``ValueError`` on the first network call).
+
+    ``max_total_wait`` (optional) bounds cumulative sleeping per retried
+    operation; ``clock`` (optional) is the injection seam for deterministic
+    tests — transports built without it keep ``time.time``.
     """
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     if base_delay < 0 or max_delay < 0 or max_rate_limit_delay < 0:
         raise ValueError("delay parameters must be non-negative")
+    if max_total_wait is not None and max_total_wait < 0:
+        raise ValueError("max_total_wait must be non-negative when set")
     bound_sleeper = sleeper or time.sleep
+    bound_clock = clock or time.time
 
     def retry(fn: Callable[[], T]) -> T:
         return retry_http(
@@ -255,7 +407,9 @@ def make_retry(
             base_delay=base_delay,
             max_delay=max_delay,
             max_rate_limit_delay=max_rate_limit_delay,
+            max_total_wait=max_total_wait,
             sleeper=bound_sleeper,
+            clock=bound_clock,
         )
 
     return retry
@@ -268,18 +422,26 @@ def retry_http(
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     max_rate_limit_delay: float = 300.0,
+    max_total_wait: float | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.time,
 ) -> T:
     """Call ``fn`` with categorized retry until it succeeds or attempts run out.
 
-    - Rate-limited failures wait for the server-advised duration, capped at
-      ``max_rate_limit_delay`` (default 300s — GitHub primary limits can be up
-      to 3600s out); if the server gave no hint, exponential backoff is used.
+    - Rate-limited failures: a server-advised wait at or below
+      ``max_rate_limit_delay`` (default 300s) is slept out before the retry;
+      a hint beyond the cap raises :class:`RateLimitCapExceededError`
+      immediately with the advised recovery timestamp — clamping the wait and
+      retrying could only re-fail (#201). With no hint, exponential backoff
+      (clamped at the cap) is used.
     - Transient failures honor a valid server wait hint, capped at ``max_delay``;
       otherwise they use deterministic exponential backoff
       ``base_delay * 2**(attempt-1)``.
     - Fatal failures raise immediately with no retry.
+    - ``max_total_wait`` (when set) bounds cumulative sleeping: a wait that
+      would push the cumulative total past the budget raises
+      :class:`RetryBudgetExceededError` instead of sleeping. Unset (the
+      default) preserves per-attempt semantics.
 
     On exhaustion the last exception is re-raised unchanged so callers can wrap
     it into their own domain error type. ``max_attempts`` counts total calls:
@@ -289,8 +451,10 @@ def retry_http(
         raise ValueError("max_attempts must be >= 1")
     if base_delay < 0 or max_delay < 0 or max_rate_limit_delay < 0:
         raise ValueError("delay parameters must be non-negative")
+    if max_total_wait is not None and max_total_wait < 0:
+        raise ValueError("max_total_wait must be non-negative when set")
 
-    global _rate_limit_notice_emitted
+    waited = 0.0
     for attempt in range(1, max_attempts + 1):
         logger.debug("http attempt %d/%d", attempt, max_attempts)
         try:
@@ -306,23 +470,30 @@ def retry_http(
             if attempt >= max_attempts:
                 raise
 
-            hint = retry_after_seconds(exc, now=clock())
+            now = clock()
+            hint = retry_after_seconds(exc, now=now)
             if kind is HttpErrorKind.RATE_LIMITED:
-                if not _rate_limit_notice_emitted:
-                    headers = getattr(exc, "headers", None)
-                    reset = None if headers is None else headers.get("X-RateLimit-Reset")
-                    until = f" until {reset}" if reset else ""
-                    print(
-                        f"leitir: GitHub API rate limited{until}; set GH_TOKEN to raise limits",
-                        file=sys.stderr,
-                    )
-                    _rate_limit_notice_emitted = True
+                _emit_rate_limit_notice(exc)
                 cap = max_rate_limit_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
+                if hint is not None and hint > cap:
+                    raise RateLimitCapExceededError(
+                        f"server-advised rate-limit wait {hint:g}s exceeds the "
+                        f"configured cap max_rate_limit_delay={cap:g}s; refusing to "
+                        f"sleep the cap and retry into a guaranteed re-fail — rate "
+                        f"limit resets at {_format_utc(now + hint)}"
+                    ) from exc
             else:
                 cap = max_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
             wait = min(delay, cap)
+            if max_total_wait is not None and waited + wait > max_total_wait:
+                raise RetryBudgetExceededError(
+                    f"retry budget exceeded: next wait {wait:g}s on top of "
+                    f"{waited:g}s already slept would exceed the configured "
+                    f"max_total_wait={max_total_wait:g}s"
+                ) from exc
+            waited += wait
             logger.debug("http retry wait %.2fs (kind=%s)", wait, kind.name)
             sleeper(wait)
 

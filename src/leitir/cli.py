@@ -889,16 +889,62 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
 
 
 def _resolve_corpus_spec(
-    parsed: CorpusSpec, resolver: object, heads: object, cwd: Path
+    parsed: CorpusSpec,
+    resolver: object,
+    heads: object,
+    cwd: Path,
+    announce: TextIO | None = None,
 ) -> tuple[RepoScope | ResolvedPackage, str | None, str | None, str | None]:
+    """Resolve a parsed corpus spec, pinning donors to immutable tags by default.
+
+    Head-kind GitHub specs (no explicit ref) resolve through the transport's
+    tag-aware default-pin path when available: the latest stable release tag
+    plus its dereferenced commit SHA, announced as immutable. Repositories
+    with no stable tag inside the bounded tag crawl fall back to a
+    default-branch HEAD pin labeled non-immutable; a tag is never invented
+    (issue #189 C-1/C-2). Explicit
+    branch specs keep ``resolve_head_sha`` semantics and are announced
+    non-immutable with the resolution date (C-3). Transports without the
+    tag-aware path (embedding seams, fakes) keep the legacy resolution.
+
+    ``announce`` is deliberately positional so test seams that replace this
+    function with ``lambda *_args: ...`` keep working.
+    """
     from .resolver import resolve_corpus_spec
 
-    return resolve_corpus_spec(
+    if (
+        parsed.ecosystem is None
+        and parsed.ref_kind == "head"
+        and parsed.host in (None, "github.com")
+    ):
+        pin_resolver = getattr(heads, "resolve_default_pin", None)
+        if callable(pin_resolver):
+            pin = pin_resolver(parsed.name)
+            if announce is not None:
+                print(f"leitir: pin {parsed.raw} -> {pin.describe()}", file=announce)
+            return (
+                RepoScope(parsed.name, pin.commit_sha),
+                pin.ref_name if pin.ref_kind == "tag" else None,
+                None,
+                None,
+            )
+    resolved, tag, version_source, detection_source = resolve_corpus_spec(
         parsed,
         cast("_CorpusResolver", resolver),
         cast("_HeadResolver", heads),
         cwd,
     )
+    if announce is not None and parsed.ecosystem is None and parsed.ref_kind == "branch":
+        scope = cast(RepoScope, getattr(resolved, "scope", resolved))
+        from .materialize import _utc_now
+
+        print(
+            f"leitir: pin {parsed.raw} -> branch {parsed.ref} "
+            f"commit {scope.commit_sha} "
+            f"(non-immutable: branch head; resolved {_utc_now()})",
+            file=announce,
+        )
+    return resolved, tag, version_source, detection_source
 
 
 def _write_diff_human(report: DiffReport, out: TextIO) -> None:
@@ -1357,7 +1403,7 @@ def _run_corpus_command(
             for raw in (args.spec_a, args.spec_b):
                 parsed = parse_corpus_spec(raw)
                 resolved, tag, version_source, _detection = _resolve_corpus_spec(
-                    parsed, resolver, heads, cwd
+                    parsed, resolver, heads, cwd, err
                 )
                 scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 materialize_host = (
@@ -1464,7 +1510,7 @@ def _run_corpus_command(
                 resolver = resolver_factory(token)
                 heads = code_search_factory(token)
                 resolved, _, _, _ = _resolve_corpus_spec(
-                    parsed, resolver, heads, Path.cwd()
+                    parsed, resolver, heads, Path.cwd(), err
                 )
                 typed_scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 owner, repo = typed_scope.slug.split("/", 1)
@@ -1622,7 +1668,7 @@ def _run_corpus_command(
             print(f"leitir: resolving {raw} (cwd={cwd})", file=err)
             parsed = parse_corpus_spec(raw)
             resolved, tag, version_source, detection_source = _resolve_corpus_spec(
-                parsed, resolver, heads, cwd
+                parsed, resolver, heads, cwd, err
             )
             if version_source == "lockfile":
                 resolved_package = cast(Any, resolved)

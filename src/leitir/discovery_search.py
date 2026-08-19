@@ -45,6 +45,14 @@ _RAW = "https://raw.githubusercontent.com"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 MAX_SEARCH_RESULTS = 1000
 MAX_SEARCH_PAGES = 100
+TAG_PAGE_SIZE = 100
+MAX_TAG_PAGES = 3
+# A stable release tag is exactly ``X.Y.Z`` with an optional single ``v``/``V``
+# prefix and no prerelease/build suffix. Prereleases and non-semver names are
+# never candidates (stable-before-prerelease is structural, not a sort step).
+_STABLE_TAG = re.compile(
+    r"^[vV]?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -199,6 +207,7 @@ class GitHubCodeSearchTransport:
         max_delay: float = 60.0,
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
+        clock: Callable[[], str] | None = None,
     ) -> None:
         self._token = token
         self._timeout = timeout
@@ -211,6 +220,7 @@ class GitHubCodeSearchTransport:
             max_rate_limit_delay=max_rate_limit_delay,
             sleeper=sleeper,
         )
+        self._clock = clock or _utc_now
 
     def _headers(self) -> dict[str, str]:
         from urllib.parse import urlsplit
@@ -322,6 +332,148 @@ class GitHubCodeSearchTransport:
             raise CodeSearchError(f"invalid commit returned for {slug} at {branch or 'HEAD'}")
         return sha
 
+    def _fetch_json(self, url: str, *, what: str) -> object:
+        """GET one JSON document through the shared retry policy, fail-closed."""
+        from urllib.request import Request
+
+        logger.debug("discovery fetch url=%s", url)
+        headers = self._headers()
+
+        def _fetch() -> object:
+            with _http.safe_urlopen(Request(url, headers=headers), timeout=self._timeout) as resp:
+                return json.load(resp)
+
+        try:
+            return self._retry(_fetch)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise CodeSearchError(f"{what}: {_http.describe_failure(exc)}") from exc
+        except json.JSONDecodeError as exc:
+            raise CodeSearchError(f"{what}: malformed JSON payload") from exc
+
+    def list_tags(
+        self, slug: str, *, max_pages: int = MAX_TAG_PAGES
+    ) -> tuple[tuple[str, str], ...]:
+        """Return ``(name, peeled commit sha)`` pairs for a repository's tags.
+
+        Pages are bounded by ``max_pages`` so a pathological repository
+        cannot turn discovery into an unbounded crawl. Entries missing
+        required fields are rejected fail-closed, never skipped.
+        """
+        from urllib.parse import urlencode
+
+        tags: list[tuple[str, str]] = []
+        for page in range(1, max_pages + 1):
+            query = urlencode({"per_page": TAG_PAGE_SIZE, "page": page})
+            url = f"{self._base_url}/repos/{slug}/tags?{query}"
+            payload = self._fetch_json(url, what=f"cannot list tags for {slug}")
+            if not isinstance(payload, list):
+                raise CodeSearchError(
+                    f"malformed tag list for {slug}: expected a JSON array"
+                )
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    raise CodeSearchError(
+                        f"malformed tag entry for {slug}: {entry!r}"
+                    )
+                name = entry.get("name")
+                commit = entry.get("commit")
+                sha = commit.get("sha") if isinstance(commit, dict) else None
+                if not isinstance(name, str) or not name:
+                    raise CodeSearchError(
+                        f"malformed tag entry for {slug}: missing tag name"
+                    )
+                if not isinstance(sha, str) or not _SHA1.fullmatch(sha):
+                    raise CodeSearchError(
+                        f"malformed tag entry for {slug}: tag {name!r} has no commit sha"
+                    )
+                tags.append((name, sha))
+            if len(payload) < TAG_PAGE_SIZE:
+                break
+        return tuple(tags)
+
+    def _tag_commit_sha(self, slug: str, name: str, listed_sha: str) -> str:
+        """Dereference one tag to its commit SHA, fail-closed (issue #189 SP-2).
+
+        The tag list already carries GitHub's peeled commit SHA; the ref GET
+        re-resolves the tag independently so an annotated tag is dereferenced
+        through its tag object rather than trusted from one listing. The two
+        resolutions must agree, otherwise the tag moved mid-flight.
+        """
+        from urllib.parse import quote
+
+        ref_url = f"{self._base_url}/repos/{slug}/git/ref/tags/{quote(name, safe='')}"
+        payload = self._fetch_json(
+            ref_url, what=f"cannot resolve tag {name!r} for {slug}"
+        )
+        obj = payload.get("object") if isinstance(payload, dict) else None
+        obj_sha = obj.get("sha") if isinstance(obj, dict) else None
+        obj_type = obj.get("type") if isinstance(obj, dict) else None
+        if (
+            not isinstance(obj_sha, str)
+            or not _SHA1.fullmatch(obj_sha)
+            or not isinstance(obj_type, str)
+        ):
+            raise CodeSearchError(f"malformed tag ref for {slug} tag {name!r}")
+        if obj_type == "commit":
+            commit_sha = obj_sha
+        elif obj_type == "tag":
+            tag_url = f"{self._base_url}/repos/{slug}/git/tags/{obj_sha}"
+            peeled = self._fetch_json(
+                tag_url,
+                what=f"cannot dereference annotated tag {name!r} for {slug}",
+            )
+            peeled_obj = peeled.get("object") if isinstance(peeled, dict) else None
+            peeled_sha = peeled_obj.get("sha") if isinstance(peeled_obj, dict) else None
+            peeled_type = peeled_obj.get("type") if isinstance(peeled_obj, dict) else None
+            if peeled_type != "commit" or not isinstance(peeled_sha, str) or not _SHA1.fullmatch(peeled_sha):
+                raise CodeSearchError(
+                    f"annotated tag {name!r} in {slug} does not point to a commit"
+                )
+            commit_sha = peeled_sha
+        else:
+            raise CodeSearchError(
+                f"tag {name!r} in {slug} points at unsupported object type {obj_type!r}"
+            )
+        if commit_sha != listed_sha:
+            raise CodeSearchError(
+                f"tag {name!r} in {slug} moved during resolution: "
+                f"listed {listed_sha} != resolved {commit_sha}"
+            )
+        return commit_sha
+
+    def resolve_default_pin(self, slug: str) -> ResolvedPin:
+        """Resolve the default discovery pin for one candidate donor.
+
+        Default discovery pins the latest stable release tag (name plus
+        dereferenced commit SHA) and marks it immutable. When no stable tag
+        is found within the bounded tag crawl, the pin falls back to the
+        default-branch HEAD and is labeled non-immutable — a tag is never
+        invented (issue #189 C-1/C-2).
+        """
+        tags = self.list_tags(slug)
+        listed: dict[str, str] = {}
+        for tag_name, sha in tags:
+            listed[tag_name] = sha
+        resolved_at = self._clock()
+        selected = latest_stable_tag_name(listed)
+        if selected is not None:
+            return ResolvedPin(
+                slug=slug,
+                ref_name=selected,
+                ref_kind="tag",
+                commit_sha=self._tag_commit_sha(slug, selected, listed[selected]),
+                immutable=True,
+                resolved_at=resolved_at,
+            )
+        return ResolvedPin(
+            slug=slug,
+            ref_name="HEAD",
+            ref_kind="head",
+            commit_sha=self.resolve_head_sha(slug),
+            immutable=False,
+            resolved_at=resolved_at,
+        )
+
     def read_blob_by_path(self, slug: str, commit_sha: str, path: str) -> bytes:
         from urllib.parse import quote
         from urllib.request import Request
@@ -347,6 +499,85 @@ class GitHubCodeSearchTransport:
 
 class CodeSearchError(Exception):
     """The code search API call failed."""
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPin:
+    """One donor discovery pin: a human ref plus its dereferenced commit.
+
+    Tag pins are immutable (the ref is an object that cannot move on the
+    host); HEAD pins carry ``ref_kind="head"`` and are explicitly labeled
+    non-immutable because the default branch advances.
+    """
+
+    slug: str
+    ref_name: str
+    ref_kind: str
+    commit_sha: str
+    immutable: bool
+    resolved_at: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.slug, str) or "/" not in self.slug:
+            raise ValueError("slug must look like 'owner/repo'")
+        if (
+            not isinstance(self.ref_name, str)
+            or not self.ref_name
+            or self.ref_name != self.ref_name.strip()
+        ):
+            raise ValueError("ref_name must be non-empty without surrounding whitespace")
+        if self.ref_kind not in {"tag", "head"}:
+            raise ValueError("ref_kind must be 'tag' or 'head'")
+        if not isinstance(self.commit_sha, str) or not _SHA1.fullmatch(self.commit_sha):
+            raise ValueError("commit_sha must be a 40-char git SHA")
+        if self.immutable is not (self.ref_kind == "tag"):
+            raise ValueError("only tag pins may be marked immutable")
+        if not isinstance(self.resolved_at, str) or not self.resolved_at:
+            raise ValueError("resolved_at must be a non-empty timestamp")
+
+    def describe(self) -> str:
+        """Render one deterministic announcement line for discovery output."""
+        if self.ref_kind == "tag":
+            return (
+                f"tag {self.ref_name} commit {self.commit_sha} "
+                f"(immutable; resolved {self.resolved_at})"
+            )
+        return (
+            f"HEAD commit {self.commit_sha} "
+            f"(non-immutable: no stable release tag found within the crawl "
+            f"window (first {TAG_PAGE_SIZE * MAX_TAG_PAGES} tags); "
+            f"resolved {self.resolved_at})"
+        )
+
+
+def _stable_tag_version(name: str) -> tuple[int, int, int] | None:
+    """Return the numeric version of a stable release tag name, else ``None``."""
+    match = _STABLE_TAG.fullmatch(name) if isinstance(name, str) else None
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return (int(major), int(minor), int(patch))
+
+
+def latest_stable_tag_name(names: Iterable[str]) -> str | None:
+    """Return the highest stable ``[v]X.Y.Z`` tag name, or ``None``.
+
+    Ordering is semver-descending and stable-before-prerelease by
+    construction: prerelease and non-semver names are not candidates. Ties on
+    equal versions resolve to the lexicographically smallest name so the
+    winner is independent of input order and ``PYTHONHASHSEED``.
+    """
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for name in names:
+        version = _stable_tag_version(name)
+        if version is not None:
+            candidates.append((version, name))
+    if not candidates:
+        return None
+    major_minor_patch_name = sorted(
+        candidates, key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[1])
+    )
+    return major_minor_patch_name[0][1]
 
 
 _LOSSLESS_QUERY_KINDS = frozenset(

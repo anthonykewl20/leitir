@@ -14,13 +14,14 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
-- full-coverage load-time verification via per-file digest map (`materialize`)
+- pin donors to latest stable release tags by default (`discovery`)
 
 ### Fixed
-- apply rate-limit cap fail-fast on the final attempt too (`http`)
-- fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
+- enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
+- harden import-purity child report channel and import-path isolation (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
-- type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
+- require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
+- retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 
 ### Security
 - honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)

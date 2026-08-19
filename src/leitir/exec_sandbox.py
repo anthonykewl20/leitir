@@ -35,6 +35,8 @@ RESULT_SCHEMA = "leitir-execution-result-v1"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _NSJAIL_VERSION_RE = re.compile(r"nsjail@([0-9a-f]{40})\Z")
 _MAX_NSJAIL_PROBE_OUTPUT_BYTES = 64 * 1024
+_NSJAIL_PROBE_TIMEOUT_SECONDS = 2.0
+_CHILD_REAP_TIMEOUT_SECONDS = 2.0
 _ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
@@ -676,6 +678,69 @@ def _plan_payload(plan: ExecutionPlan, *, include_digest: bool) -> dict[str, obj
     return payload
 
 
+def _probe_backend_output(nsjail_path: str) -> bytes:
+    """Run the pinned binary's liveness probe under both byte and time bounds.
+
+    The read never blocks past ``_NSJAIL_PROBE_TIMEOUT_SECONDS``: it drains
+    stdout through a selector deadline instead of an unbounded ``read``, and
+    stops after ``_MAX_NSJAIL_PROBE_OUTPUT_BYTES + 1`` bytes.  A child that
+    outlives the bound (hung with stdout open, or flooding it) is killed and
+    reaped before the failure surfaces (issue #192: the previous probe read
+    before a bounded ``wait`` and could block forever).
+    """
+
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            (nsjail_path, "--help"),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env={},
+        )
+        if process.stdout is None:
+            raise OSError("nsjail probe has no output pipe")
+        output = bytearray()
+        deadline = time.monotonic() + _NSJAIL_PROBE_TIMEOUT_SECONDS
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        try:
+            reached_end = False
+            while not reached_end:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(nsjail_path, _NSJAIL_PROBE_TIMEOUT_SECONDS)
+                events = selector.select(min(remaining, 0.1))
+                if not events:
+                    continue
+                chunk = os.read(
+                    process.stdout.fileno(), min(65536, _MAX_NSJAIL_PROBE_OUTPUT_BYTES + 1 - len(output))
+                )
+                if not chunk:
+                    reached_end = True
+                else:
+                    output.extend(chunk)
+                    if len(output) > _MAX_NSJAIL_PROBE_OUTPUT_BYTES:
+                        reached_end = True
+        finally:
+            selector.close()
+        # EOF on stdout does not imply exit; the reap stays bounded and falls
+        # into the kill path below when the child outlives it.
+        process.wait(timeout=_NSJAIL_PROBE_TIMEOUT_SECONDS)
+        return bytes(output)
+    except (OSError, subprocess.SubprocessError):
+        if process is not None:
+            process.kill()
+            try:
+                process.wait(timeout=_NSJAIL_PROBE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        raise
+    finally:
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+
+
 def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     path = Path(policy.nsjail_path)
     try:
@@ -692,27 +757,10 @@ def _verify_backend(policy: ContainmentPolicy) -> None:  # pragma: no cover  # e
     # human-facing help text is intentionally not an identity input because
     # release builds may embed timestamps in it. The pinned upstream build does
     # not implement --version; --help deliberately exits nonzero after usage.
-    process: subprocess.Popen[bytes] | None = None
     try:
-        process = subprocess.Popen(
-            (policy.nsjail_path, "--help"),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env={},
-        )
-        if process.stdout is None:
-            raise OSError("nsjail probe has no output pipe")
-        probe_output = process.stdout.read(_MAX_NSJAIL_PROBE_OUTPUT_BYTES + 1)
-        process.wait(timeout=2)
+        probe_output = _probe_backend_output(policy.nsjail_path)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        if process is not None:
-            process.kill()
-            process.wait()
         raise _reject("nsjail build identity could not be verified", "nsjail_identity_unavailable") from exc
-    finally:
-        if process is not None and process.stdout is not None:
-            process.stdout.close()
     if len(probe_output) > _MAX_NSJAIL_PROBE_OUTPUT_BYTES:
         raise _reject("nsjail build identity probe failed", "nsjail_identity_unavailable")
     try:
@@ -1046,6 +1094,21 @@ class _AppliedState:
     cgroup_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _ReapOutcome:
+    """Outcome of an abort-path reap (issue #192, PR #213 review P2).
+
+    ``reaped`` is ``True`` once the direct child is dead and waited on.
+    ``group_kill_unconfirmed`` is ``True`` only when the direct-pid fallback
+    ran without a demonstrable group SIGKILL, so a jailed grandchild may have
+    outlived it; the caller must escalate to the leak taxonomy instead of a
+    plain launcher failure.
+    """
+
+    reaped: bool
+    group_kill_unconfirmed: bool
+
+
 def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     metadata = Path(f"/proc/{pid}/ns/{namespace}").stat()
     return metadata.st_dev, metadata.st_ino
@@ -1134,7 +1197,11 @@ def validate_startup_attestation(value: object) -> None:
         raise ValueError("startup containment attestation did not observe PID namespace init")
     if type(value.get("no_new_privs")) is not bool or type(value.get("seccomp_mode")) is not int:
         raise ValueError("startup containment privilege receipt is malformed")
-    if value["seccomp_mode"] != 2 and value["no_new_privs"] is not True:
+    # ADR-0009 privilege containment requires BOTH an installed seccomp filter
+    # (mode 2) and NoNewPrivs; either alone does not contain the donor
+    # (issue #192: this was previously an OR and accepted seccomp-less
+    # receipts whenever NoNewPrivs alone was set).
+    if value["seccomp_mode"] != 2 or value["no_new_privs"] is not True:
         raise ValueError("startup containment privilege receipt is not applied")
 
 
@@ -1160,14 +1227,76 @@ def _kill_cgroup_tree(path: Path) -> bool:  # pragma: no cover  # exercised only
     return False
 
 
+def _killpg_delivered(pgid: int) -> bool:
+    """SIGKILL a process group and report whether a live group received it.
+
+    ``ProcessLookupError`` means no process currently holds the pgid: either
+    the child has not completed its ``setsid()`` yet (the ``start_new_session``
+    launch race, PR #213 review P2) or the group is already empty.  Delivery
+    is not death; it is only the strongest group-level fact available without
+    a cgroup receipt.
+    """
+
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | None) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if state is not None and _kill_cgroup_tree(state.cgroup_path):
         return True
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    _killpg_delivered(process.pid)
     return False
+
+
+def _close_child_pipes(process: subprocess.Popen[bytes]) -> None:
+    """Close the controller's PIPE fds so no abort path leaks them."""
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            stream.close()
+
+
+def _reap_launched_child(process: subprocess.Popen[bytes]) -> _ReapOutcome:
+    """Terminate, reap, and close a launched contained child on an abort path.
+
+    Issue #192: a controller-side failure after spawn must never return an
+    abort envelope while the child lives.  The process tree is killed via the
+    child's session, the child is waited on so it cannot linger as a zombie,
+    and both PIPE fds are closed.  ``reaped`` is ``True`` when the child is
+    dead and reaped; ``False`` only when it survived SIGKILL, in which case
+    the caller must fail closed.  The group kill is attempted even when the
+    child has already exited — the PGID remains valid after the group leader
+    exits (PR #213 review, hy3 P3-2) — and, when the bounded wait times out,
+    once more before the direct-pid fallback: the first attempt can race the
+    child's ``setsid()`` and deliver no signal at all, while ``process.kill()``
+    alone would orphan a jailed grandchild (PR #213 review P2).  Idempotent:
+    reaping an already-reaped child is a no-op.
+    """
+
+    group_kill_delivered = _killpg_delivered(process.pid)
+    group_kill_unconfirmed = False
+    reaped = False
+    try:
+        process.wait(timeout=_CHILD_REAP_TIMEOUT_SECONDS)
+        reaped = True
+    except subprocess.TimeoutExpired:
+        if not group_kill_delivered:
+            # The aborted child has had a full reap window to complete
+            # setsid(); retry the group kill so the fallback below cannot
+            # become the only signal the tree ever received.
+            group_kill_delivered = _killpg_delivered(process.pid)
+        process.kill()
+        group_kill_unconfirmed = not group_kill_delivered
+        try:
+            process.wait(timeout=_CHILD_REAP_TIMEOUT_SECONDS)
+            reaped = True
+        except subprocess.TimeoutExpired:
+            reaped = False  # unkillable child (e.g. uninterruptible IO); caller fails closed
+    finally:
+        _close_child_pipes(process)
+    return _ReapOutcome(reaped=reaped, group_kill_unconfirmed=group_kill_unconfirmed)
 
 
 def _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1291,6 +1420,7 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
     config_fd: int | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     config_path: str | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     debug_trace_path: str | None = None  # pragma: no cover - controller-only CI diagnostics
+    process: subprocess.Popen[bytes] | None = None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     try:
         config_fd, config_path = tempfile.mkstemp(prefix=".leitir-nsjail-", suffix=".cfg")  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         os.fchmod(config_fd, 0o600)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1339,7 +1469,16 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
             except OSError:
                 pass
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        # No abort envelope may leave a live child behind (issue #192): kill,
+        # reap, and close the PIPE fds first.  A child that survives SIGKILL,
+        # or one whose process group never demonstrably received the kill — so
+        # a jailed grandchild may have outlived the direct-pid fallback (PR
+        # #213 review P2) — escalates to the leak taxonomy instead of
+        # launcher_failure.
+        outcome = _reap_launched_child(process) if process is not None else None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if outcome is None or (outcome.reaped and not outcome.group_kill_unconfirmed):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        return _abort(plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     finally:
         if config_fd is not None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             os.close(config_fd)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

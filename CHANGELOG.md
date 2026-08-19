@@ -16,6 +16,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate truncated trees via paginated walk fallback (`tree`)
 
 ### Fixed
+- fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 
 ### Security

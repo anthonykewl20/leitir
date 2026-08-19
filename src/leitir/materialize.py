@@ -998,10 +998,15 @@ def _verify_extracted_tree(
             ) from exc
         actual = GitHubTreeSource.git_blob_sha(extracted_bytes)
         if actual != entry.blob_sha:  # type: ignore[attr-defined]
-            # A mismatched digest on any host whose listing carries modes is
-            # re-checked against the pinned commit before rejection, so an
-            # enumeration glitch can never mask tampered bytes and a real
-            # mismatch can never be downgraded to "sampled".
+            # A mismatched digest on any host whose listing carries modes
+            # triggers a commit-pinned re-read (read_blob_at_commit, then
+            # read_blob). If the re-read equals the extracted bytes, the
+            # mismatch is treated as an enumeration glitch and cleared. That
+            # clearance binds the re-read channel to disk — it is not a
+            # cryptographic match against entry.blob_sha — so it assumes the
+            # re-read channel is honest (endpoint diversity / same-host
+            # trust). A source offering neither re-read fails closed with a
+            # typed error below.
             read_at_commit = getattr(tree_source, "read_blob_at_commit", None)
             read_blob = getattr(tree_source, "read_blob", None)
             if read_at_commit is not None:

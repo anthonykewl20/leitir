@@ -621,6 +621,25 @@ class _GitHubSymlinkTreeSource(GitHubTreeSource):
         return self.blobs[entry.blob_sha]
 
 
+class _ListOnlyTreeSource:
+    """Mode-bearing TreeSource that can enumerate but not re-read blobs."""
+
+    def __init__(self, entries: tuple[BlobEntry, ...]) -> None:
+        self.entries = entries
+
+    def list_blobs(self, _slug: str, _commit_sha: str) -> tuple[BlobEntry, ...]:
+        return self.entries
+
+
+class _RereadOrderPinningSource(_ModeBearingTreeSource):
+    """Pin the re-read arm order: read_blob must never be consulted."""
+
+    def read_blob(self, _slug: str, _blob_sha: str) -> bytes:
+        raise AssertionError(
+            "read_blob must not be consulted while read_blob_at_commit is offered"
+        )
+
+
 def _verify_staging(staging: Path, source: object) -> bool | str:
     status, _normalized = _verify_extracted_tree(
         staging,
@@ -739,6 +758,39 @@ def test_github_symlink_tamper_still_rejected(tmp_path):
 
     with pytest.raises(
         VerificationError, match="symbolic-link blob digest mismatch: link"
+    ):
+        _verify_staging(tmp_path, source)
+
+
+def test_symlink_enumeration_glitch_cleared_by_commit_pinned_reread(tmp_path):
+    # Review residual (positive arm): the listing vouches a digest that does
+    # not match the bytes extracted to disk (an enumeration glitch). The
+    # commit-pinned re-read returns exactly the extracted bytes, so the
+    # mismatch is cleared and verification completes fully. The at-commit
+    # arm is selected — read_blob is never consulted while it is offered.
+    target = b"realfile"
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    entries = (
+        BlobEntry("realfile", GitHubTreeSource.git_blob_sha(b"proof"), 5, "100644"),
+        BlobEntry("link", glitched_sha, len(target), "120000"),
+    )
+    source = _RereadOrderPinningSource(entries, {glitched_sha: target})
+
+    assert _verify_staging(tmp_path, source) is True
+
+
+def test_symlink_mismatch_without_any_reread_method_fails_closed(tmp_path):
+    # Review residual (else arm): a mode-bearing source offering neither
+    # read_blob_at_commit nor read_blob can neither confirm nor clear a
+    # symlink digest mismatch — the mismatch must fail closed with a typed
+    # error instead of a downgrade to "sampled".
+    entries, _link_sha, _expected_target = _tampered_link_fixture(tmp_path)
+    source = _ListOnlyTreeSource(entries)
+
+    with pytest.raises(
+        VerificationError, match="cannot re-read symbolic link blob: link"
     ):
         _verify_staging(tmp_path, source)
 

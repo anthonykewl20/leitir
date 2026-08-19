@@ -428,6 +428,74 @@ class TestRateLimitCapFailFast:
         err = capsys.readouterr().err
         assert "GitHub API rate limited" in err
 
+    def test_oversized_hint_on_final_attempt_raises_typed_not_raw(self, capsys):
+        # Review remediation: the exhaustion raise used to sit BEFORE the
+        # rate-limit arm, so an oversized hint arriving on the LAST attempt
+        # escaped as the raw HTTPError — losing the typed error (with its
+        # recovery timestamp) and the per-provider notice. The fail-fast arm
+        # must be evaluated regardless of attempt number.
+        reset_rate_limit_notices()
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def fn():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise _http_error(503)  # transient attempts 1-2 sleep+retry
+            raise _http_error(429, {"Retry-After": "301"},
+                              url="https://api.github.com/search/code")
+
+        with pytest.raises(RateLimitCapExceededError) as exc_info:
+            retry_http(fn, max_attempts=3, base_delay=1.0,
+                       sleeper=sleeps.append, clock=lambda: 1010.0)
+        message = str(exc_info.value)
+        assert "301s" in message
+        assert "max_rate_limit_delay=300" in message
+        assert "resets at 1970-01-01T00:21:51Z" in message  # 1010 + 301
+        assert isinstance(exc_info.value.__cause__, HTTPError)
+        assert exc_info.value.__cause__.code == 429  # the final 429, chained
+        assert calls["n"] == 3
+        assert sleeps == [1.0, 2.0]  # only transient backoffs — zero for the hint
+        err = capsys.readouterr().err
+        assert err.count("GitHub API rate limited") == 1  # notice exactly once
+
+    def test_oversized_hint_on_only_attempt_raises_typed(self):
+        # Degenerate final attempt: max_attempts=1 means the first attempt is
+        # the last — the exhaustion raise must still not mask the typed error.
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def fn():
+            calls["n"] += 1
+            raise _http_error(429, {"Retry-After": "3600"})
+
+        with pytest.raises(RateLimitCapExceededError):
+            retry_http(fn, max_attempts=1, sleeper=sleeps.append,
+                       clock=lambda: 1010.0)
+        assert calls["n"] == 1
+        assert sleeps == []
+
+    def test_affordable_hint_on_final_attempt_still_exhausts_raw(self, capsys):
+        # Regression guard: a hint at or below the cap on the final attempt
+        # keeps the pre-existing exhaustion contract — the raw HTTPError is
+        # re-raised unchanged after the earlier attempts slept and retried.
+        reset_rate_limit_notices()
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def fn():
+            calls["n"] += 1
+            raise _http_error(429, {"Retry-After": "45"},
+                              url="https://api.github.com/search/code")
+
+        with pytest.raises(HTTPError) as exc_info:
+            retry_http(fn, max_attempts=2, sleeper=sleeps.append)
+        assert exc_info.value.code == 429  # raw error, not the typed wrapper
+        assert calls["n"] == 2
+        assert sleeps == [45.0]
+        err = capsys.readouterr().err
+        assert err.count("GitHub API rate limited") == 1  # once, from attempt 1
+
     def test_typed_error_wraps_into_domain_errors(self):
         # Call sites wrap `except _http.RETRIABLE_EXCEPTIONS` and render via
         # describe_failure; the typed error must keep both working so the

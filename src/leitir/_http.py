@@ -7,8 +7,9 @@ that the kernel must not treat identically:
   ``X-RateLimit-Remaining: 0`` (primary). The response carries a wait hint
   (``Retry-After`` or ``X-RateLimit-Reset``). A hint at or below
   ``max_rate_limit_delay`` is slept out before the retry; a hint beyond the
-  cap raises immediately with the advised recovery time, because clamping it
-  and retrying can only re-fail (#201). An optional ``max_total_wait``
+  cap raises immediately with the advised recovery time — on any attempt,
+  including the last — because clamping it and retrying can only re-fail
+  (#201). An optional ``max_total_wait``
   budget bounds cumulative sleeping across attempts. Rate-limit notices go
   to stderr at most once per provider (resolved from the failing request's
   host), are labeled with the provider, and advise that provider's token
@@ -431,9 +432,10 @@ def retry_http(
     - Rate-limited failures: a server-advised wait at or below
       ``max_rate_limit_delay`` (default 300s) is slept out before the retry;
       a hint beyond the cap raises :class:`RateLimitCapExceededError`
-      immediately with the advised recovery timestamp — clamping the wait and
-      retrying could only re-fail (#201). With no hint, exponential backoff
-      (clamped at the cap) is used.
+      immediately with the advised recovery timestamp — on any attempt,
+      including the final one — because clamping the wait and retrying could
+      only re-fail (#201). With no hint, exponential backoff (clamped at the
+      cap) is used.
     - Transient failures honor a valid server wait hint, capped at ``max_delay``;
       otherwise they use deterministic exponential backoff
       ``base_delay * 2**(attempt-1)``.
@@ -467,22 +469,32 @@ def retry_http(
             logger.debug("http classified %s: %s", kind.name, describe_failure(exc))
             if kind is HttpErrorKind.FATAL:
                 raise
-            if attempt >= max_attempts:
-                raise
 
             now = clock()
             hint = retry_after_seconds(exc, now=now)
+            if (
+                kind is HttpErrorKind.RATE_LIMITED
+                and hint is not None
+                and hint > max_rate_limit_delay
+            ):
+                # An oversized hint fails fast on EVERY attempt — including the
+                # final one, where the exhaustion raise below must not mask the
+                # typed error (with its recovery timestamp) or the per-provider
+                # notice (#201 review remediation).
+                _emit_rate_limit_notice(exc)
+                raise RateLimitCapExceededError(
+                    f"server-advised rate-limit wait {hint:g}s exceeds the "
+                    f"configured cap max_rate_limit_delay={max_rate_limit_delay:g}s; refusing to "
+                    f"sleep the cap and retry into a guaranteed re-fail — rate "
+                    f"limit resets at {_format_utc(now + hint)}"
+                ) from exc
+            if attempt >= max_attempts:
+                raise
+
             if kind is HttpErrorKind.RATE_LIMITED:
                 _emit_rate_limit_notice(exc)
                 cap = max_rate_limit_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))
-                if hint is not None and hint > cap:
-                    raise RateLimitCapExceededError(
-                        f"server-advised rate-limit wait {hint:g}s exceeds the "
-                        f"configured cap max_rate_limit_delay={cap:g}s; refusing to "
-                        f"sleep the cap and retry into a guaranteed re-fail — rate "
-                        f"limit resets at {_format_utc(now + hint)}"
-                    ) from exc
             else:
                 cap = max_delay
                 delay = hint if hint is not None else base_delay * (2 ** (attempt - 1))

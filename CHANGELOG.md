@@ -12,6 +12,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Added
+- enumerate truncated trees via paginated walk fallback (`tree`)
+
 ### Fixed
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 

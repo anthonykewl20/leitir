@@ -14,6 +14,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - enumerate truncated trees via paginated walk fallback (`tree`)
+- pin donors to latest stable release tags by default (`discovery`)
 
 ### Fixed
 - capture stderr in auth-tests zero-skip guard (`ci`)
@@ -21,6 +22,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
 
 ### Security
+- honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)
 
 ## [0.1.4]

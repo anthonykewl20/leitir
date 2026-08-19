@@ -58,7 +58,7 @@ class _Provider:
 
 
 _PROVIDERS = {
-    "github": _Provider(("api.github.com", "codeload.github.com"), ("GITHUB_TOKEN",)),
+    "github": _Provider(("api.github.com", "codeload.github.com"), ("GH_TOKEN", "GITHUB_TOKEN")),
     "gitlab": _Provider(("gitlab.com",), ("GITLAB_TOKEN",), "PRIVATE-TOKEN"),
     "bitbucket": _Provider(
         ("api.bitbucket.org", "bitbucket.org"),

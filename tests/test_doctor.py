@@ -326,6 +326,35 @@ def test_doctor_credentials_check_does_not_leak_values(
     assert "secret-value" not in error
 
 
+def test_doctor_reports_gh_token_only_environment_as_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in doctor._CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GH_TOKEN", "gh-only-token")
+    check = doctor.check_credentials()
+    assert check.status == "pass"
+    assert check.json_data is not None
+    assert check.json_data["present"] == ["GH_TOKEN"]
+    assert check.json_data["malformed"] == []
+    assert "anonymous" not in check.summary
+    code, output, error = _invoke(tmp_path, "--json", "--no-network")
+    assert code == 0
+    assert "gh-only-token" not in output
+    assert "gh-only-token" not in error
+
+
+def test_doctor_reports_anonymous_when_no_tokens_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in doctor._CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+    check = doctor.check_credentials()
+    assert check.status == "pass"
+    assert check.summary == "no host tokens in environment (anonymous by default)"
+    assert check.json_data == {"present": [], "malformed": []}
+
+
 def test_doctor_exit_codes(monkeypatch: pytest.MonkeyPatch) -> None:
     stream = StringIO()
     cases = [

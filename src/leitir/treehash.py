@@ -50,6 +50,24 @@ selected from a non-empty tree, then summarized in path order. The manifest
 records ``sampled`` separately from ``full`` so partial verification is never
 represented as complete.
 
+Per-file digest map (issue #194)
+--------------------------------
+Sampling bounds the *legacy aggregate* anchor, not load-time coverage.
+Manifests written since issue #194 additionally carry
+``materialized_file_digests`` — a flat Cargo-``.cargo-checksum.json``-style
+map of POSIX path to the same per-entry SHA-256 digests the aggregate
+summarizes — and their ``materialized_tree_hash`` is recorded at scope
+``full`` regardless of the caps: every entry's digest enters the stored
+aggregate, so the stored digest is a digest *of the map*. At load,
+:func:`verify_file_digest_map` streams the tree once, compares every entry's
+recomputed digest to the map, and compares the aggregate rebuilt from the
+verified map to the stored anchor. A tampered map that is made consistent
+with tampered bytes therefore still breaks the stored aggregate (which the
+existing tree-hash and detached manifest-auth chains already protect), while
+a tampered map alone fails the per-file comparison. The caps keep bounding
+only ingest-time re-enumeration heuristics; they never bound the load-time
+trust level of a map-carrying shelf.
+
 Verified shelves must carry this digest. Legacy shelves can be upgraded with
 ``leitir upgrade-cache`` before they are loaded by normal corpus operations.
 
@@ -72,7 +90,8 @@ References
 * npm ``ssri``: integrity-string parsing for archive digests.
 * pip ``Hashes.check_against_chunks``: streamed re-hash of cached downloads.
 * Cargo directory source ``.cargo-checksum.json``: per-file map verified on
-  every build (we centralize on the cheaper aggregate form).
+  every build (adopted for load-time full coverage by issue #194; see
+  ``materialized_file_digests`` below — the aggregate remains the anchor).
 
 Stdlib-only, deterministic, PYTHONHASHSEED-independent, fails closed.
 """
@@ -83,15 +102,24 @@ import base64
 import binascii
 import hashlib
 import os
+import re
 import secrets
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 # Public algorithm identifier stored alongside the digest so future formats
 # (e.g. one that includes modes or empty directories) can coexist.
 TREE_HASH_ALGORITHM = "dirhash-h1-sha256-v1"
+
+# Algorithm identifier of the flat per-file SHA-256 digest map (issue #194).
+# Map values are exactly the per-entry digests that feed the full-scope
+# aggregate: sha256(content) for regular files, sha256(linkname_bytes) for
+# symbolic links. The stored full-scope ``materialized_tree_hash`` is a
+# digest over the map's records, which anchors the map in the existing
+# tree-hash (and detached manifest-auth) chain.
+FILE_DIGEST_ALGORITHM = "per-file-sha256-v1"
 
 # Wire prefix; intentionally matches Go's ``h1:`` so anyone reading the manifest
 # can recognize the format without leitir-specific documentation.
@@ -104,6 +132,15 @@ FULL = "full"
 
 # Streaming chunk size; bounded memory regardless of file size.
 _CHUNK = 1024 * 1024
+
+# Root-level manifest file name excluded from digests (and from the map).
+_ROOT_MANIFEST_NAME = "leitir-manifest.json"
+
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+# One scanned entry: (relative path, relative bytes, hex digest, linkname
+# bytes or None for regular files, size in bytes).
+_Entry = tuple[str, bytes, str, bytes | None, int]
 
 
 class TreeHashError(Exception):
@@ -120,6 +157,85 @@ class TreeHashMismatchError(TreeHashError):
 
 class TreeHashStructureError(TreeHashError):
     """The tree is unreadable or contains an unsupported entry."""
+
+
+def _scan_entries(root: Path) -> list[_Entry]:
+    """One sorted streaming scan returning per-entry digests and metadata.
+
+    Regular files contribute ``sha256(content)``; symbolic links contribute
+    ``sha256(linkname_bytes)``.  Raises :class:`TreeHashStructureError` for
+    unreadable trees and entries the line format cannot represent.
+    """
+    entries: list[_Entry] = []
+    for relative, absolute, is_symlink, metadata in _sorted_regular_files(root):
+        relative_bytes = _strict_utf8(relative)
+        entry_digest = hashlib.sha256()
+        linkname_bytes: bytes | None = None
+        if is_symlink:
+            try:
+                # A bytes path makes os.readlink return the exact on-disk
+                # bytes instead of decoding first with platform rules.
+                raw_linkname = os.readlink(os.fsencode(absolute))
+                linkname_bytes = _linkname_bytes(raw_linkname)
+                if os.name == "nt":
+                    # Windows exposes the NT substitution path for absolute
+                    # links; hash the user-visible target used to create it.
+                    if linkname_bytes.startswith(b"\\\\?\\UNC\\"):
+                        linkname_bytes = b"\\\\" + linkname_bytes[8:]
+                    elif linkname_bytes.startswith(b"\\\\?\\"):
+                        linkname_bytes = linkname_bytes[4:]
+                linkname = linkname_bytes.decode("utf-8", errors="strict")
+            except UnicodeError as exc:
+                raise TreeHashStructureError(
+                    "path or linkname contains non-UTF-8 bytes "
+                    f"(unsupported): {relative!r}"
+                ) from exc
+            except OSError as exc:
+                raise TreeHashStructureError(
+                    f"cannot read entry in materialized tree: {relative} ({exc})"
+                ) from exc
+            if "\n" in linkname:
+                raise TreeHashStructureError(
+                    f"linkname contains a newline (unsupported): {relative!r}"
+                )
+            entry_digest.update(linkname_bytes)
+            size = len(linkname_bytes)
+        else:
+            size = 0
+            try:
+                with _open_checked_regular_file(absolute, metadata) as handle:
+                    while True:
+                        chunk = handle.read(_CHUNK)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        entry_digest.update(chunk)
+            except OSError as exc:
+                raise TreeHashStructureError(
+                    f"cannot read entry in materialized tree: {relative} ({exc})"
+                ) from exc
+        entries.append(
+            (relative, relative_bytes, entry_digest.hexdigest(), linkname_bytes, size)
+        )
+    return entries
+
+
+def _summary_digest(entries: Iterable[_Entry]) -> str:
+    """Hash sorted entries with the Go ``Hash1`` line format."""
+    summary = hashlib.sha256()
+    for _relative, relative_bytes, digest_hex, linkname_bytes, _size in sorted(
+        entries, key=lambda entry: entry[0]
+    ):
+        summary.update(digest_hex.encode("ascii"))
+        if linkname_bytes is not None:
+            summary.update(b" -> ")
+            summary.update(linkname_bytes)
+        summary.update(b"  ")
+        summary.update(relative_bytes)
+        summary.update(b"\n")
+    return TREE_HASH_PREFIX + base64.standard_b64encode(summary.digest()).decode(
+        "ascii"
+    )
 
 
 def compute_materialized_tree_hash(
@@ -141,58 +257,8 @@ def compute_materialized_tree_hash(
         root = Path(root)
         if not root.is_dir():
             raise TreeHashStructureError(f"not a directory: {root}")
-        entries: list[tuple[str, bytes, str, bytes | None, int]] = []
-        total_bytes = 0
-        for relative, absolute, is_symlink, metadata in _sorted_regular_files(root):
-            relative_bytes = _strict_utf8(relative)
-            entry_digest = hashlib.sha256()
-            linkname_bytes: bytes | None = None
-            if is_symlink:
-                try:
-                    # A bytes path makes os.readlink return the exact on-disk
-                    # bytes instead of decoding first with platform rules.
-                    raw_linkname = os.readlink(os.fsencode(absolute))
-                    linkname_bytes = _linkname_bytes(raw_linkname)
-                    if os.name == "nt":
-                        # Windows exposes the NT substitution path for absolute
-                        # links; hash the user-visible target used to create it.
-                        if linkname_bytes.startswith(b"\\\\?\\UNC\\"):
-                            linkname_bytes = b"\\\\" + linkname_bytes[8:]
-                        elif linkname_bytes.startswith(b"\\\\?\\"):
-                            linkname_bytes = linkname_bytes[4:]
-                    linkname = linkname_bytes.decode("utf-8", errors="strict")
-                except UnicodeError as exc:
-                    raise TreeHashStructureError(
-                        "path or linkname contains non-UTF-8 bytes "
-                        f"(unsupported): {relative!r}"
-                    ) from exc
-                except OSError as exc:
-                    raise TreeHashStructureError(
-                        f"cannot read entry in materialized tree: {relative} ({exc})"
-                    ) from exc
-                if "\n" in linkname:
-                    raise TreeHashStructureError(
-                        f"linkname contains a newline (unsupported): {relative!r}"
-                    )
-                entry_digest.update(linkname_bytes)
-                size = len(linkname_bytes)
-            else:
-                size = 0
-                try:
-                    with _open_checked_regular_file(absolute, metadata) as handle:
-                        while True:
-                            chunk = handle.read(_CHUNK)
-                            if not chunk:
-                                break
-                            size += len(chunk)
-                            entry_digest.update(chunk)
-                except OSError as exc:
-                    raise TreeHashStructureError(
-                        f"cannot read entry in materialized tree: {relative} ({exc})"
-                    ) from exc
-            digest_hex = entry_digest.hexdigest()
-            total_bytes += size
-            entries.append((relative, relative_bytes, digest_hex, linkname_bytes, size))
+        entries = _scan_entries(root)
+        total_bytes = sum(entry[4] for entry in entries)
 
         natural_scope = (
             FULL
@@ -220,27 +286,215 @@ def compute_materialized_tree_hash(
             if not selected and ordered:
                 selected.append(ordered[0])
 
-        summary = hashlib.sha256()
-        for _relative, relative_bytes, digest_hex, linkname_bytes, _size in sorted(
-            selected, key=lambda entry: entry[0]
-        ):
-            summary.update(digest_hex.encode("ascii"))
-            if linkname_bytes is not None:
-                summary.update(b" -> ")
-                summary.update(linkname_bytes)
-            summary.update(b"  ")
-            summary.update(relative_bytes)
-            summary.update(b"\n")
-        digest = TREE_HASH_PREFIX + base64.standard_b64encode(summary.digest()).decode(
-            "ascii"
-        )
-        return digest, scope
+        return _summary_digest(selected), scope
     except TreeHashError:
         raise
     except Exception as exc:
         raise TreeHashStructureError(
             f"cannot hash materialized tree safely: {root} ({exc})"
         ) from exc
+
+
+def compute_file_digest_map(root: Path) -> dict[str, str]:
+    """Return the flat per-file SHA-256 digest map for ``root``.
+
+    Values are the per-entry digests :func:`compute_materialized_tree_hash`
+    summarizes: ``sha256(content)`` for regular files and
+    ``sha256(linkname_bytes)`` for symbolic links.  The root-level manifest is
+    excluded, matching the aggregate.  Raises :class:`TreeHashStructureError`
+    for the same unsupported trees as the aggregate computation.
+    """
+    try:
+        root = Path(root)
+        if not root.is_dir():
+            raise TreeHashStructureError(f"not a directory: {root}")
+        return {
+            relative: digest_hex
+            for relative, _relative_bytes, digest_hex, _linkname, _size in _scan_entries(
+                root
+            )
+        }
+    except TreeHashError:
+        raise
+    except Exception as exc:
+        raise TreeHashStructureError(
+            f"cannot hash materialized tree safely: {root} ({exc})"
+        ) from exc
+
+
+def file_map_manifest_fields(mapping: Mapping[str, str]) -> dict[str, object]:
+    """Build the manifest fields recording a per-file digest map."""
+    return {
+        "materialized_file_digests_algorithm": FILE_DIGEST_ALGORITHM,
+        "materialized_file_digests": dict(mapping),
+    }
+
+
+def full_coverage_manifest_fields(root: Path) -> dict[str, object]:
+    """Return map plus full-scope aggregate fields from a single scan.
+
+    The aggregate is always recorded at scope ``full``: every entry's digest
+    enters it through the map, so the stored ``materialized_tree_hash`` is a
+    digest over the map's records and anchors the map in the existing
+    tree-hash chain (issue #194).  Below-cap shelves get the same digest value
+    the legacy natural-scope computation produced, byte-identically.
+    """
+    try:
+        root = Path(root)
+        if not root.is_dir():
+            raise TreeHashStructureError(f"not a directory: {root}")
+        entries = _scan_entries(root)
+    except TreeHashError:
+        raise
+    except Exception as exc:
+        raise TreeHashStructureError(
+            f"cannot hash materialized tree safely: {root} ({exc})"
+        ) from exc
+    fields: dict[str, object] = file_map_manifest_fields(
+        {relative: digest_hex for relative, _rb, digest_hex, _lb, _size in entries}
+    )
+    fields.update(manifest_digest_fields(_summary_digest(entries), scope=FULL))
+    return fields
+
+
+def _validated_h1_digest(expected: object) -> str:
+    """Validate an ``h1:`` digest string and return it unchanged."""
+    if not isinstance(expected, str) or not expected.startswith(TREE_HASH_PREFIX):
+        raise TreeHashFormatError(
+            "materialized_tree_hash must be an 'h1:'-prefixed base64 string"
+        )
+    encoded = expected[len(TREE_HASH_PREFIX) :]
+    try:
+        # Strict round-trip: standard_b64encode(b64decode(x, validate=True)) == x
+        # enforces canonical alphabet (+ and /) and rejects embedded whitespace.
+        decoded = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise TreeHashFormatError(
+            f"materialized_tree_hash is not valid base64: {exc}"
+        ) from exc
+    if base64.standard_b64encode(decoded) != encoded.encode("ascii"):
+        raise TreeHashFormatError(
+            "materialized_tree_hash is not in canonical base64 form"
+        )
+    return expected
+
+
+def _validated_file_digest_map(expected_map: object) -> Mapping[str, str]:
+    """Validate the stored map's shape; return it when well-formed."""
+    if not isinstance(expected_map, Mapping):
+        raise TreeHashFormatError(
+            "materialized_file_digests must be an object mapping paths to "
+            "SHA-256 digests"
+        )
+    # Key types are checked before sorting so a programmatically supplied
+    # non-string key is a typed format error, never a raw TypeError.
+    for path in expected_map:
+        if not isinstance(path, str):
+            raise TreeHashFormatError(
+                f"invalid materialized_file_digests path: {path!r}"
+            )
+    for path, digest in sorted(expected_map.items()):
+        if (
+            not isinstance(path, str)
+            or not path
+            or "\\" in path
+            or "\n" in path
+            or path.startswith("/")
+            or path == _ROOT_MANIFEST_NAME
+            or any(segment in ("", ".", "..") for segment in path.split("/"))
+        ):
+            raise TreeHashFormatError(
+                f"invalid materialized_file_digests path: {path!r}"
+            )
+        if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
+            raise TreeHashFormatError(
+                f"invalid materialized_file_digests digest for path: {path!r}"
+            )
+    return expected_map
+
+
+def verify_file_digest_map(
+    root: Path,
+    expected_map: object,
+    *,
+    algorithm: object = None,
+    expected_tree_hash: object = None,
+    tree_hash_algorithm: object = None,
+    tree_hash_scope: object = None,
+) -> None:
+    """Verify every entry of ``root`` against the stored per-file digest map.
+
+    One streaming pass recomputes each entry's digest, checks the disk
+    universe against the map, compares every digest, and finally rebuilds the
+    full-scope aggregate from the verified map and compares it (constant-time)
+    to the stored ``materialized_tree_hash``.  That last step anchors the map
+    in the existing tree-hash chain: a map rewritten to agree with tampered
+    bytes no longer matches the stored aggregate, and a tampered aggregate no
+    longer matches the map.
+
+    Raises
+    ------
+    TreeHashFormatError
+        If the map, its algorithm, or the anchored aggregate is missing or
+        malformed, or the stored scope is not ``full``.
+    TreeHashStructureError
+        If the tree on disk contains unsupported entries or is unreadable.
+    TreeHashMismatchError
+        If any file's digest differs from the map, the disk/map universes
+        differ, or the map does not match the anchored aggregate.  Mismatches
+        name the offending path.
+    """
+    if algorithm != FILE_DIGEST_ALGORITHM:
+        raise TreeHashFormatError(
+            f"unsupported materialized_file_digests_algorithm: {algorithm!r}"
+        )
+    if tree_hash_algorithm is not None and tree_hash_algorithm != TREE_HASH_ALGORITHM:
+        raise TreeHashFormatError(
+            f"unsupported materialized_tree_hash_algorithm: {tree_hash_algorithm!r}"
+        )
+    if tree_hash_scope != FULL:
+        raise TreeHashFormatError(
+            "a manifest carrying materialized_file_digests must anchor a "
+            f"full-scope materialized_tree_hash (stored {tree_hash_scope!r})"
+        )
+    expected = _validated_h1_digest(expected_tree_hash)
+    validated_map = _validated_file_digest_map(expected_map)
+    try:
+        root = Path(root)
+        if not root.is_dir():
+            raise TreeHashStructureError(f"not a directory: {root}")
+        entries = _scan_entries(root)
+    except TreeHashError:
+        raise
+    except Exception as exc:
+        raise TreeHashStructureError(
+            f"cannot hash materialized tree safely: {root} ({exc})"
+        ) from exc
+
+    disk = {
+        relative: digest_hex
+        for relative, _rb, digest_hex, _lb, _size in entries
+    }
+    missing = sorted(set(validated_map) - set(disk))
+    if missing:
+        raise TreeHashMismatchError(
+            f"file listed in the digest map is absent from the shelf: {missing[0]}"
+        )
+    unexpected = sorted(set(disk) - set(validated_map))
+    if unexpected:
+        raise TreeHashMismatchError(
+            f"unexpected file on disk is absent from the digest map: {unexpected[0]}"
+        )
+    for relative in sorted(disk):
+        if not secrets.compare_digest(disk[relative], validated_map[relative]):
+            raise TreeHashMismatchError(
+                f"materialized file digest mismatch: {relative}"
+            )
+    if not secrets.compare_digest(_summary_digest(entries), expected):
+        raise TreeHashMismatchError(
+            "materialized file digest map does not match the anchored "
+            "materialized_tree_hash; refusing to serve tampered bytes"
+        )
 
 
 def verify_materialized_tree_hash(
@@ -270,23 +524,7 @@ def verify_materialized_tree_hash(
         raise TreeHashFormatError(
             f"unsupported materialized_tree_hash_scope: {scope!r}"
         )
-    if not isinstance(expected, str) or not expected.startswith(TREE_HASH_PREFIX):
-        raise TreeHashFormatError(
-            "materialized_tree_hash must be an 'h1:'-prefixed base64 string"
-        )
-    encoded = expected[len(TREE_HASH_PREFIX) :]
-    try:
-        # Strict round-trip: standard_b64encode(b64decode(x, validate=True)) == x
-        # enforces canonical alphabet (+ and /) and rejects embedded whitespace.
-        decoded = base64.b64decode(encoded, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise TreeHashFormatError(
-            f"materialized_tree_hash is not valid base64: {exc}"
-        ) from exc
-    if base64.standard_b64encode(decoded) != encoded.encode("ascii"):
-        raise TreeHashFormatError(
-            "materialized_tree_hash is not in canonical base64 form"
-        )
+    expected = _validated_h1_digest(expected)
 
     actual, actual_scope = compute_materialized_tree_hash(root)
     if actual_scope != scope:
@@ -388,7 +626,7 @@ def _sorted_regular_files(
             relative = _posix_relative(root, full)
 
             # Exclude only the root-level manifest.
-            if relative == "leitir-manifest.json" and Path(dirpath) == root:
+            if relative == _ROOT_MANIFEST_NAME and Path(dirpath) == root:
                 continue
 
             _validate_relative(relative)

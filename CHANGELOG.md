@@ -16,6 +16,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate truncated trees via paginated walk fallback (`tree`)
 
 ### Fixed
+- capture stderr in auth-tests zero-skip guard (`ci`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
 

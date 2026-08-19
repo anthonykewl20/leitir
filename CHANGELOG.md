@@ -18,6 +18,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Fixed
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
+- state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 
 ### Security
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

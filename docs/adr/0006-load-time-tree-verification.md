@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-08-05
 - Implementation: complete
-- Related: issues #17, #18, #19, #20, #39; [ADR-0004](0004-local-source-materialization.md)
+- Related: issues #17, #18, #19, #20, #39, #194; [ADR-0004](0004-local-source-materialization.md), [ADR-0018](0018-manifest-authenticity.md)
 
 ## Context
 
@@ -81,6 +81,59 @@ within both limits and always selecting at least one entry. The manifest marks
 the scope as `full` or `sampled`; sampled verification is never represented as
 complete.
 
+### Amendment — full-coverage load-time verification via the per-file digest map (2026-08-19; issue #194)
+
+The caps above bounded not only computation but *trust*: an above-cap shelf's
+load-time anchor was a sampled aggregate, so most bytes on disk were
+unanchored at load. Since issue #194 every newly materialized manifest also
+carries `materialized_file_digests` — a flat Cargo-`.cargo-checksum.json`-style
+map of strict-UTF-8 POSIX path to SHA-256 (`materialized_file_digests_algorithm`
+`per-file-sha256-v1`). Values are exactly the per-entry digests the aggregate
+summarizes: `sha256(content)` for regular files, `sha256(linkname_bytes)` for
+symbolic links; the root manifest remains excluded. When the map is present,
+`materialized_tree_hash` is recorded at scope `full` regardless of the caps —
+every entry's digest enters the stored aggregate, so the stored digest is a
+digest *of the map*.
+
+Load-time verification of a map-carrying shelf (`verify_file_digest_map`,
+reached through `read_valid_manifest`, `update_manifest`, and the public
+`verify_materialized_integrity`) performs one streaming O(bytes) pass:
+it checks the disk universe against the map (missing or unexpected entries
+are named and rejected), compares every recomputed digest to the map entry
+(a mismatch raises `VerificationError` naming the path — never
+load-and-warn), and finally rebuilds the full-scope aggregate from the
+verified map and compares it constant-time to the stored
+`materialized_tree_hash`. That last step anchors the map in the existing
+tree-hash chain — and transitively in the detached manifest-auth projection
+(ADR-0018), which signs `materialized_tree_hash`:
+
+- corrupt a file only → per-file mismatch;
+- rewrite a map entry only → per-file mismatch;
+- corrupt a file *and* rewrite its map entry consistently → the rebuilt
+  aggregate no longer matches the stored anchor → reject;
+- rewrite the stored aggregate only → it no longer matches the map → reject.
+
+The authenticity residual is unchanged from this ADR's threat boundary: an
+attacker able to replace the shelf *and* the whole manifest (including the
+aggregate) was never in scope; signatures are ADR-0018's opt-in layer. The
+map introduces no new trust root.
+
+Legacy manifests without the map verify through the unchanged aggregate
+path with their honest stored scope (`sampled` stays `sampled`);
+`upgrade-cache` backfill is unchanged and does not add maps, because
+striping the aggregate from a map-carrying manifest is treated as tampering
+and rejected rather than backfilled. `verified: "sampled"` survives as the
+*ingest-time* cross-check label only; it is never the load-time trust level
+of a map-carrying shelf. The caps keep bounding ingest-time
+re-enumeration heuristics (`_verify_extracted_tree`'s deterministic
+sampling) and legacy aggregate scope, never load-time coverage.
+
+Because the map lives inside the manifest, the serialized-manifest bound
+grew from 1 MiB to 96 MiB (`MANIFEST_MAX_BYTES`), sized for the worst-case
+map within the archive member limit; it is enforced on both writes
+(`_write_manifest` fails materialization — no mapless "full" shelf is ever
+published) and bounded reads (an over-bound manifest is a cache miss).
+
 ## Migration
 
 The migration progressed from optional digests in issue #17 to mandatory
@@ -113,7 +166,10 @@ Every load currently incurs an I/O scan (bounded hashing work for large trees,
 but directory enumeration and content-digest ordering still have costs). The
 residual O(total-tree-bytes) initial scan is documented in `treehash.py`'s
 module docstring; if benchmarks at production scale show this matters, a
-follow-up will be filed.
+follow-up will be filed. Map-carrying shelves verify in a single O(bytes)
+streaming pass whose cost is linear in bytes with bounded memory; legacy
+above-cap shelves may pay the historical sampled-then-forced-full double
+read when verified through the aggregate path directly.
 
 The locks are advisory. They protect against leitir writers and other
 cooperating processes, not a process that ignores the protocol and edits files

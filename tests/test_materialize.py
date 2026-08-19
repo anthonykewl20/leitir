@@ -150,6 +150,13 @@ def test_manifest_records_immutable_provenance(tmp_path):
         "license_confidence": "low",
         "license_identifier": None,
         "license_method": "unknown",
+        # Issue #194: the flat per-file digest map, plus the aggregate at
+        # full scope anchoring it. The digest value itself is unchanged from
+        # the pre-map below-cap computation (byte-identical anchor).
+        "materialized_file_digests": {
+            "src/example.py": "073bd3c4ab4735908691f35310ecc19e8c1ba1bb993fd74f6738e4d0f8dcef72"
+        },
+        "materialized_file_digests_algorithm": "per-file-sha256-v1",
         "materialized_tree_hash": "h1:cOO2Q95wvMIfJHy3T7u15v8K/y5EH8GT0x24FCEgzEU=",
         "materialized_tree_hash_algorithm": "dirhash-h1-sha256-v1",
         "materialized_tree_hash_scope": "full",
@@ -861,3 +868,444 @@ def test_codeload_token_control_character_is_rejected_without_disclosure(
             verify=False,
         )
     assert token not in str(error.value)
+
+
+# --- Issue #194: full-coverage load-time verification (per-file digest map) ---
+
+_ABOVE_CAP_FILES = 1_010
+_ABOVE_CAP_FILE_BYTES = 67_000  # 1010 * 67000 > 64 MiB aggregate byte cap
+# SHA-256 over the canonical compact JSON of the fixture shelf's per-file
+# digest map (sorted keys). Pinning it keeps the fixture byte-stable.
+ABOVE_CAP_MAP_DIGEST = (
+    "216e635366fe847ccbcf0ba69fbec43f108d11c2ba170cd8fce134314081925b"
+)
+
+
+def _above_cap_content(index: int) -> bytes:
+    pattern = f"{index:04d}-pinned-source\n".encode("ascii")
+    return (pattern * (_ABOVE_CAP_FILE_BYTES // len(pattern) + 1))[:_ABOVE_CAP_FILE_BYTES]
+
+
+def _above_cap_tarball() -> bytes:
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        root = tarfile.TarInfo(f"demo-{SHA}/")
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o755
+        archive.addfile(root)
+        for index in range(_ABOVE_CAP_FILES):
+            content = _above_cap_content(index)
+            member = tarfile.TarInfo(f"demo-{SHA}/file_{index:04d}.bin")
+            member.size = len(content)
+            member.mode = 0o644
+            archive.addfile(member, io.BytesIO(content))
+    return data.getvalue()
+
+
+def _above_cap_tree_source() -> tuple[object, dict[str, bytes]]:
+    entries = []
+    blobs = {}
+    for index in range(_ABOVE_CAP_FILES):
+        content = _above_cap_content(index)
+        blob_sha = GitHubTreeSource.git_blob_sha(content)
+        entries.append(
+            BlobEntry(f"file_{index:04d}.bin", blob_sha, len(content), "100644")
+        )
+        blobs[blob_sha] = content
+    return _ModeBearingTreeSource(tuple(entries), blobs), blobs
+
+
+def _legacy_sampled_window(contents: dict[str, bytes]) -> set[str]:
+    """Mirror the legacy treehash sampled selection for the fixture shelf.
+
+    Entries are ordered by SHA-256 of ``<digest_hex>\\0<path>`` and selected
+    greedily while both caps permit; with 1010 uniform files the 1000-file
+    cap binds first, so exactly ten fixture paths fall outside the window.
+    """
+    import hashlib as _hashlib
+
+    from leitir import treehash as _treehash
+
+    ordered = sorted(
+        contents,
+        key=lambda path: _hashlib.sha256(
+            _hashlib.sha256(contents[path]).hexdigest().encode("ascii")
+            + b"\0"
+            + path.encode("utf-8")
+        ).digest(),
+    )
+    selected: list[str] = []
+    selected_bytes = 0
+    for path in ordered:
+        if len(selected) >= _treehash.MAX_FILES:
+            break
+        if selected_bytes + len(contents[path]) <= _treehash.MAX_BYTES:
+            selected.append(path)
+            selected_bytes += len(contents[path])
+    if not selected and ordered:
+        selected.append(ordered[0])
+    return set(selected)
+
+
+def _materialize_above_cap(root: Path) -> Path:
+    source, _blobs = _above_cap_tree_source()
+    with scripted_server([(200, {}, _above_cap_tarball())]) as server:
+        return materialize_github_repo(
+            root,
+            "example/demo#v1",
+            "example",
+            "demo",
+            SHA,
+            tag="v1",
+            base_url=server.base_url,
+            max_attempts=1,
+            verify=True,
+            tree_source=source,
+        )
+
+
+def test_above_cap_shelf_load_verifies_every_file(tmp_path):
+    # G-0 (issue #194): a shelf above both verification caps must still be
+    # FULLY anchored at load time via the per-file digest map. Corrupting a
+    # file outside the legacy sampled window is detected on load. Before the
+    # map existed, the load anchor was the sampled aggregate digest and such
+    # corruption loaded clean (this test failed at the contract baseline).
+    import hashlib as _hashlib
+
+    target = _materialize_above_cap(tmp_path)
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+
+    # C-1: the manifest records a flat per-file SHA-256 digest map.
+    file_digests = manifest["materialized_file_digests"]
+    assert manifest["materialized_file_digests_algorithm"] == "per-file-sha256-v1"
+    assert len(file_digests) == _ABOVE_CAP_FILES
+    assert file_digests[f"file_{0:04d}.bin"] == _hashlib.sha256(
+        _above_cap_content(0)
+    ).hexdigest()
+
+    # C-5 / AC-2: caps no longer bound the load-time trust level.
+    assert manifest["materialized_tree_hash_scope"] == "full"
+
+    # C-4: `sampled` survives only as the ingest-time cross-check label.
+    assert manifest["verified"] == "sampled"
+
+    # Pin the fixture's map digest (deterministic content -> stable digest).
+    import hashlib as _map_digest
+
+    canonical = json.dumps(file_digests, sort_keys=True, separators=(",", ":"))
+    assert _map_digest.sha256(canonical.encode("utf-8")).hexdigest() == ABOVE_CAP_MAP_DIGEST
+
+    # AC-2: a healthy above-cap shelf loads with full-coverage verification.
+    from leitir.materialize import verify_materialized_integrity
+
+    verify_materialized_integrity(target, manifest)  # no raise
+    assert read_valid_manifest(target, "example", "demo", SHA) is not None
+
+    # AC-1 / SP-1: corrupt a file OUTSIDE the legacy sampled window.
+    contents = {
+        f"file_{index:04d}.bin": _above_cap_content(index)
+        for index in range(_ABOVE_CAP_FILES)
+    }
+    window = _legacy_sampled_window(contents)
+    victim = sorted(set(contents) - window)[0]
+    assert victim not in window
+    (target / victim).write_bytes(b"tampered bytes\n")
+
+    with pytest.raises(VerificationError, match=victim):
+        verify_materialized_integrity(target, manifest)
+    # The load gate rejects the shelf outright; it never loads-and-warns.
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def _strip_map_fields(manifest: dict) -> dict:
+    for field in (
+        "materialized_file_digests",
+        "materialized_file_digests_algorithm",
+    ):
+        manifest.pop(field, None)
+    return manifest
+
+
+def _healthy_mapped_shelf(tmp_path: Path) -> tuple[Path, dict]:
+    with scripted_server([(200, {}, _tarball())]) as server:
+        target = _materialize(tmp_path, server.base_url)
+    return target, json.loads((target / "leitir-manifest.json").read_text())
+
+
+def test_legacy_manifest_without_map_loads_via_existing_path(tmp_path):
+    # AC-3 / C-3: a manifest with the map fields stripped (the pre-#194
+    # shape) loads through the unchanged aggregate path. The shelf is
+    # below-cap so the full-scope aggregate still verifies byte-identically.
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    path = target / "leitir-manifest.json"
+    legacy = _strip_map_fields(manifest)
+    path.write_text(json.dumps(legacy, indent=2, sort_keys=True), encoding="utf-8")
+
+    from leitir.materialize import verify_materialized_integrity
+
+    verify_materialized_integrity(target, legacy)  # no raise
+    loaded = read_valid_manifest(target, "example", "demo", SHA)
+    assert loaded is not None
+    assert loaded["materialized_tree_hash_scope"] == "full"
+    assert "materialized_file_digests" not in loaded
+
+
+_SAMPLED_CAP_FILES = 1_001  # one file above the real 1000-file cap
+
+
+def _sampled_cap_tarball() -> bytes:
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        root = tarfile.TarInfo(f"demo-{SHA}/")
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o755
+        archive.addfile(root)
+        for index in range(_SAMPLED_CAP_FILES):
+            content = f"tiny-{index:04d}\n".encode("ascii")
+            member = tarfile.TarInfo(f"demo-{SHA}/file_{index:04d}.txt")
+            member.size = len(content)
+            member.mode = 0o644
+            archive.addfile(member, io.BytesIO(content))
+    return data.getvalue()
+
+
+def _materialize_sampled_cap(root: Path) -> Path:
+    with scripted_server([(200, {}, _sampled_cap_tarball())]) as server:
+        return materialize_github_repo(
+            root,
+            "example/demo#v1",
+            "example",
+            "demo",
+            SHA,
+            tag="v1",
+            base_url=server.base_url,
+            max_attempts=1,
+            verify=False,
+        )
+
+
+def test_legacy_sampled_manifest_keeps_honest_label_next_to_mapped_shelf(tmp_path):
+    # AC-3 / SP-3: an old-style above-cap manifest (sampled aggregate, no
+    # map) keeps its honest sampled label; a sibling map-carrying shelf in
+    # the same corpus reports full. Per-shelf labels, no global downgrade.
+    from leitir import treehash
+    from leitir.materialize import verify_materialized_integrity
+
+    target = _materialize_sampled_cap(tmp_path)
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+
+    sampled_digest, sampled_scope = treehash.compute_materialized_tree_hash(target)
+    assert sampled_scope == treehash.SAMPLED  # 1001 files > real file cap
+    legacy = _strip_map_fields(dict(manifest))
+    legacy.update(
+        treehash.manifest_digest_fields(sampled_digest, scope=sampled_scope)
+    )
+    (target / "leitir-manifest.json").write_text(
+        json.dumps(legacy, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    loaded_legacy = read_valid_manifest(target, "example", "demo", SHA)
+    assert loaded_legacy is not None
+    assert loaded_legacy["materialized_tree_hash_scope"] == "sampled"
+    verify_materialized_integrity(target, legacy)  # legacy path accepts it
+
+    # The mapped sibling keeps its full label in the same corpus root.
+    sibling_sha = "b" * 40
+    sibling_data = io.BytesIO()
+    with tarfile.open(fileobj=sibling_data, mode="w:gz") as archive:
+        root_member = tarfile.TarInfo(f"demo2-{sibling_sha}/")
+        root_member.type = tarfile.DIRTYPE
+        root_member.mode = 0o755
+        archive.addfile(root_member)
+        content = b"pinned source\n"
+        source = tarfile.TarInfo(f"demo2-{sibling_sha}/src/example.py")
+        source.size = len(content)
+        source.mode = 0o644
+        archive.addfile(source, io.BytesIO(content))
+    with scripted_server([(200, {}, sibling_data.getvalue())]) as server:
+        sibling = materialize_github_repo(
+            tmp_path,
+            "example/demo2#v1",
+            "example",
+            "demo2",
+            sibling_sha,
+            tag="v1",
+            base_url=server.base_url,
+            max_attempts=1,
+            verify=False,
+        )
+    loaded_mapped = read_valid_manifest(sibling, "example", "demo2", sibling_sha)
+    assert loaded_mapped is not None
+    assert loaded_mapped["materialized_tree_hash_scope"] == "full"
+    assert loaded_mapped["materialized_file_digests"]["src/example.py"] == (
+        __import__("hashlib").sha256(b"pinned source\n").hexdigest()
+    )
+
+
+def test_mapped_sampled_cap_shelf_upgrades_to_full_coverage(tmp_path):
+    # C-5: the same 1001-file shelf, materialized by the current producer,
+    # carries the map and reports full despite being above the caps.
+    target = _materialize_sampled_cap(tmp_path)
+    manifest = json.loads((target / "leitir-manifest.json").read_text())
+    assert manifest["materialized_tree_hash_scope"] == "full"
+    assert len(manifest["materialized_file_digests"]) == _SAMPLED_CAP_FILES
+    # The aggregate still equals the legacy forced-full computation.
+    from leitir import treehash
+
+    assert manifest["materialized_tree_hash"] == (
+        treehash.compute_materialized_tree_hash(target, _force_full=True)[0]
+    )
+    assert read_valid_manifest(target, "example", "demo", SHA) is not None
+
+
+def test_malformed_map_is_fail_closed_reject(tmp_path):
+    # AC-4: malformed or truncated map -> typed reject, never ignore.
+    from leitir.materialize import verify_materialized_integrity
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    path = target / "leitir-manifest.json"
+
+    for corruption in (
+        {"materialized_file_digests": "truncated"},
+        {"materialized_file_digests": ["a", "b"]},
+        {"materialized_file_digests": {"src/example.py": "not-hex"}},
+        {"materialized_file_digests": None, "materialized_file_digests_algorithm": "per-file-sha256-v1"},
+        {"materialized_file_digests": {"src/example.py": "0" * 64}},
+    ):
+        tampered = dict(manifest)
+        tampered.update(corruption)
+        with pytest.raises(VerificationError):
+            verify_materialized_integrity(target, tampered)
+        path.write_text(json.dumps(tampered, indent=2, sort_keys=True), encoding="utf-8")
+        assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+    # Restore: the healthy manifest loads again (no lasting damage).
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    assert read_valid_manifest(target, "example", "demo", SHA) is not None
+
+
+def test_map_consistent_file_tamper_breaks_the_anchor(tmp_path):
+    # SP-2 at the manifest load gate: corrupt the file AND rewrite its map
+    # entry. The stored full-scope aggregate no longer matches the map, so
+    # the load rejects instead of trusting the attacker-rewritten map.
+    import hashlib
+
+    from leitir.materialize import verify_materialized_integrity
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    (target / "src/example.py").write_bytes(b"attacker bytes\n")
+    tampered = dict(manifest)
+    tampered["materialized_file_digests"] = {
+        "src/example.py": hashlib.sha256(b"attacker bytes\n").hexdigest()
+    }
+    (target / "leitir-manifest.json").write_text(
+        json.dumps(tampered, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(VerificationError, match="anchored"):
+        verify_materialized_integrity(target, tampered)
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def test_update_manifest_refuses_tampered_mapped_shelf(tmp_path):
+    # Manifest updates must never merge fields over a broken anchor.
+    from leitir.materialize import ManifestIntegrityError, update_manifest
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    (target / "src/example.py").write_bytes(b"bitrot\n")
+    with pytest.raises(ManifestIntegrityError):
+        update_manifest(target, {"parity": "exact"})
+    rewritten = json.loads((target / "leitir-manifest.json").read_text())
+    assert rewritten["parity"] == manifest["parity"]  # unchanged
+
+
+def test_update_manifest_never_backfills_a_stripped_anchor_on_mapped_shelf(tmp_path):
+    # SP-2: stripping materialized_tree_hash from a map-carrying manifest is
+    # tampering, not a legacy shelf; the provenance backfill path must not
+    # repair it.
+    from leitir.materialize import ManifestIntegrityError, update_manifest
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    stripped = dict(manifest)
+    for field in (
+        "materialized_tree_hash",
+        "materialized_tree_hash_algorithm",
+        "materialized_tree_hash_scope",
+    ):
+        stripped.pop(field)
+    (target / "leitir-manifest.json").write_text(
+        json.dumps(stripped, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    with pytest.raises(ManifestIntegrityError):
+        update_manifest(target, {"parity": "exact"})
+
+
+def test_io_error_mid_verify_is_typed_and_never_partially_accepted(
+    tmp_path, monkeypatch
+):
+    # SP-4: an IO failure during load verification surfaces as a typed
+    # error; the shelf is rejected outright, not partially verified.
+    import os as _os
+
+    from leitir.materialize import verify_materialized_integrity
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    real_open = _os.open
+
+    def denied(path, flags, mode=0o777):
+        if Path(path) == target / "src/example.py":
+            raise PermissionError("disk failing")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(_os, "open", denied)
+    with pytest.raises(VerificationError):
+        verify_materialized_integrity(target, manifest)
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
+def test_map_writing_failure_fails_materialization(tmp_path, monkeypatch):
+    # C-1 error contract: if the map cannot be computed, materialization
+    # fails; no mapless shelf is published.
+    def broken(_root: Path) -> dict:
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(materialize_module, "full_coverage_manifest_fields", broken)
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError):
+            _materialize(tmp_path, server.base_url)
+    assert not (tmp_path / "repos").exists()
+
+
+def test_manifest_size_bound_is_enforced_on_write(tmp_path, monkeypatch):
+    # The in-manifest map must stay loadable: an over-bound manifest fails
+    # materialization instead of stranding an unreadable shelf.
+    monkeypatch.setattr(materialize_module, "MANIFEST_MAX_BYTES", 4)
+    with scripted_server([(200, {}, _tarball())]) as server:
+        with pytest.raises(MaterializationError, match="maximum serialized size"):
+            _materialize(tmp_path, server.base_url)
+    assert not (tmp_path / "repos").exists()
+
+
+def test_manifest_fields_deterministic_across_independent_trees(tmp_path):
+    # AC-5: same input -> byte-identical manifest fields (sorted, stable),
+    # independent of insertion or iteration order.
+    from leitir.treehash import full_coverage_manifest_fields
+
+    files = {f"dir{i}/file{j}.txt": f"{i}-{j}".encode() for i in range(5) for j in range(5)}
+    root_a = _extract_tree(tmp_path / "a", files)
+    root_b = _extract_tree(tmp_path / "b", dict(reversed(list(files.items()))))
+    fields_a = full_coverage_manifest_fields(root_a)
+    fields_b = full_coverage_manifest_fields(root_b)
+    assert fields_a == fields_b
+    assert (
+        json.dumps(fields_a, sort_keys=True) == json.dumps(fields_b, sort_keys=True)
+    )
+
+
+def _extract_tree(root: Path, files: dict[str, bytes]) -> Path:
+    root.mkdir(parents=True)
+    for rel, content in files.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return root

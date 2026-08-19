@@ -467,3 +467,345 @@ def test_empty_tree_is_full_scope(tmp_path):
     digest, scope = treehash.compute_materialized_tree_hash(root)
     assert scope == treehash.FULL
     assert digest == _manual_h1(root, {})
+
+
+# --- Issue #194: the flat per-file SHA-256 digest map ---
+
+def _make_tree_with_links(
+    tmp_path: Path, files: dict[str, bytes], links: dict[str, str]
+) -> Path:
+    root = _make_tree(tmp_path, files)
+    for rel, target in links.items():
+        (root / rel).symlink_to(target)
+    return root
+
+
+def test_file_digest_map_matches_contents_and_linknames(tmp_path):
+    files = {"README.md": b"hello\n", "src/a.py": b"print('a')\n"}
+    links = {"docs-link": "README.md"}
+    root = _make_tree_with_links(tmp_path, files, links)
+    mapping = treehash.compute_file_digest_map(root)
+    assert mapping == {
+        "README.md": hashlib.sha256(b"hello\n").hexdigest(),
+        "src/a.py": hashlib.sha256(b"print('a')\n").hexdigest(),
+        "docs-link": hashlib.sha256(b"README.md").hexdigest(),
+    }
+
+
+def test_file_digest_map_excludes_only_the_root_manifest(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a", "sub/leitir-manifest.json": b"m"})
+    root.joinpath("leitir-manifest.json").write_bytes(b"{}")
+    assert set(treehash.compute_file_digest_map(root)) == {
+        "a.txt",
+        "sub/leitir-manifest.json",
+    }
+
+
+def test_file_digest_map_symlinked_directory_is_not_followed(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    target = tmp_path / "external"
+    target.mkdir()
+    target.joinpath("secret.txt").write_bytes(b"exfiltrated")
+    (root / "sub").symlink_to(target)
+    mapping = treehash.compute_file_digest_map(root)
+    assert set(mapping) == {"a.txt", "sub"}
+    assert mapping["sub"] == hashlib.sha256(str(target).encode("utf-8")).hexdigest()
+
+
+def test_file_digest_map_is_deterministic_across_invocations(tmp_path):
+    files = {f"f{i:03d}": bytes([i]) * 50 for i in range(30)}
+    root_a = _make_tree(tmp_path / "one", files)
+    root_b = _make_tree(tmp_path / "two", dict(reversed(list(files.items()))))
+    assert treehash.compute_file_digest_map(root_a) == treehash.compute_file_digest_map(
+        root_b
+    )
+
+
+def test_file_map_manifest_fields_helper():
+    fields = treehash.file_map_manifest_fields({"a.txt": "0" * 64})
+    assert fields == {
+        "materialized_file_digests_algorithm": "per-file-sha256-v1",
+        "materialized_file_digests": {"a.txt": "0" * 64},
+    }
+
+
+def test_full_coverage_fields_pin_full_scope_above_caps(tmp_path, monkeypatch):
+    monkeypatch.setattr(treehash, "MAX_FILES", 2)
+    root = _make_tree(tmp_path, {"a": b"a", "b": b"b", "c": b"c"})
+    fields = treehash.full_coverage_manifest_fields(root)
+    assert fields["materialized_tree_hash_scope"] == treehash.FULL
+    assert fields["materialized_file_digests_algorithm"] == (
+        treehash.FILE_DIGEST_ALGORITHM
+    )
+    # The map covers every file even though the caps would sample.
+    assert set(fields["materialized_file_digests"]) == {"a", "b", "c"}
+    # And the aggregate equals the forced-full legacy computation.
+    assert fields["materialized_tree_hash"] == treehash.compute_materialized_tree_hash(
+        root, _force_full=True
+    )[0]
+
+
+def test_full_coverage_digest_is_byte_identical_below_caps(tmp_path):
+    files = {"README.md": b"hello\n", "src/a.py": b"x"}
+    root = _make_tree(tmp_path, files)
+    fields = treehash.full_coverage_manifest_fields(root)
+    legacy_digest, legacy_scope = treehash.compute_materialized_tree_hash(root)
+    assert legacy_scope == treehash.FULL
+    assert fields["materialized_tree_hash"] == legacy_digest == _manual_h1(root, files)
+
+
+def _map_verify_kwargs(root: Path, **overrides: object) -> dict[str, object]:
+    fields = treehash.full_coverage_manifest_fields(root)
+    kwargs: dict[str, object] = {
+        "algorithm": fields["materialized_file_digests_algorithm"],
+        "expected_map": fields["materialized_file_digests"],
+        "expected_tree_hash": fields["materialized_tree_hash"],
+        "tree_hash_algorithm": fields["materialized_tree_hash_algorithm"],
+        "tree_hash_scope": fields["materialized_tree_hash_scope"],
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_verify_file_digest_map_accepts_healthy_tree(tmp_path, monkeypatch):
+    monkeypatch.setattr(treehash, "MAX_FILES", 1)
+    root = _make_tree_with_links(
+        tmp_path, {"a.txt": b"a", "b.txt": b"b"}, {"link": "a.txt"}
+    )
+    treehash.verify_file_digest_map(root, **_map_verify_kwargs(root))  # no raise
+
+
+def test_verify_file_digest_map_detects_corruption_naming_path(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a", "b/c.txt": b"c"})
+    kwargs = _map_verify_kwargs(root)
+    root.joinpath("b/c.txt").write_bytes(b"C")
+    with pytest.raises(TreeHashMismatchError, match="b/c.txt"):
+        treehash.verify_file_digest_map(root, **kwargs)
+
+
+def test_verify_file_digest_map_detects_added_and_deleted_files(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a", "b.txt": b"b"})
+    kwargs = _map_verify_kwargs(root)
+    root.joinpath("injected.txt").write_bytes(b"evil")
+    with pytest.raises(TreeHashMismatchError, match="injected.txt"):
+        treehash.verify_file_digest_map(root, **kwargs)
+
+    root2 = _make_tree(tmp_path / "two", {"a.txt": b"a", "b.txt": b"b"})
+    kwargs2 = _map_verify_kwargs(root2)
+    root2.joinpath("b.txt").unlink()
+    with pytest.raises(TreeHashMismatchError, match="b.txt"):
+        treehash.verify_file_digest_map(root2, **kwargs2)
+
+
+def test_verify_file_digest_map_detects_symlink_target_tampering(tmp_path):
+    root = _make_tree_with_links(tmp_path, {"a.txt": b"a"}, {"link": "a.txt"})
+    kwargs = _map_verify_kwargs(root)
+    link = root / "link"
+    link.unlink()
+    link.symlink_to("a.txt/../a.txt")
+    with pytest.raises(TreeHashMismatchError, match="link"):
+        treehash.verify_file_digest_map(root, **kwargs)
+
+
+def test_verify_file_digest_map_detects_tampered_map_value(tmp_path):
+    # SP-2 (map-only tamper): files are healthy, one map digest is rewritten.
+    root = _make_tree(tmp_path, {"a.txt": b"a", "b.txt": b"b"})
+    kwargs = _map_verify_kwargs(root)
+    tampered = dict(kwargs["expected_map"])  # type: ignore[arg-type]
+    tampered["a.txt"] = "f" * 64
+    with pytest.raises(TreeHashMismatchError, match="a.txt"):
+        treehash.verify_file_digest_map(root, **{**kwargs, "expected_map": tampered})
+
+
+def test_verify_file_digest_map_rejects_map_made_consistent_with_tampered_bytes(
+    tmp_path,
+):
+    # SP-2 (anchoring): an attacker rewrites BOTH the file and its map entry.
+    # The per-file comparison passes, but the rebuilt aggregate no longer
+    # matches the stored materialized_tree_hash -> fail-closed reject.
+    root = _make_tree(tmp_path, {"a.txt": b"a", "b.txt": b"b"})
+    kwargs = _map_verify_kwargs(root)
+    root.joinpath("a.txt").write_bytes(b"attacker")
+    tampered = dict(kwargs["expected_map"])  # type: ignore[arg-type]
+    tampered["a.txt"] = hashlib.sha256(b"attacker").hexdigest()
+    with pytest.raises(TreeHashMismatchError, match="anchored"):
+        treehash.verify_file_digest_map(root, **{**kwargs, "expected_map": tampered})
+
+
+def test_verify_file_digest_map_rejects_tampered_aggregate(tmp_path):
+    # SP-2 (other direction): the stored aggregate is rewritten while the
+    # map and files stay healthy.
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    kwargs = _map_verify_kwargs(root)
+    forged = "h1:" + base64.standard_b64encode(b"\x01" * 32).decode("ascii")
+    with pytest.raises(TreeHashMismatchError, match="anchored"):
+        treehash.verify_file_digest_map(root, **{**kwargs, "expected_tree_hash": forged})
+
+
+@pytest.mark.parametrize(
+    "bad_map",
+    [
+        ["not", "a", "mapping"],
+        {"a.txt": 123},
+        {"a.txt": "XYZBD3C4AB4735908691F35310ECC19E8C1BA1BB993FD74F6738E4D0F8DCEF72"},
+        {"a.txt": "073bd3c4ab4735908691f35310ecc19e8c1ba1bb993fd74f6738e4d0f8dcef7"},
+        {"": "0" * 64},
+        {"../escape": "0" * 64},
+        {"/absolute": "0" * 64},
+        {"a//b": "0" * 64},
+        {"a/./b": "0" * 64},
+        {"back\\slash": "0" * 64},
+        {"leitir-manifest.json": "0" * 64},
+        {42: "0" * 64},  # type: ignore[dict-item]
+    ],
+)
+def test_verify_file_digest_map_rejects_malformed_maps(tmp_path, bad_map):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    with pytest.raises(TreeHashFormatError):
+        treehash.verify_file_digest_map(root, **_map_verify_kwargs(root, expected_map=bad_map))
+
+
+def test_verify_file_digest_map_requires_algorithm_and_full_scope(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    with pytest.raises(TreeHashFormatError, match="file_digests_algorithm"):
+        treehash.verify_file_digest_map(root, **_map_verify_kwargs(root, algorithm=None))
+    with pytest.raises(TreeHashFormatError, match="file_digests_algorithm"):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, algorithm="future-v2")
+        )
+    with pytest.raises(TreeHashFormatError, match="full-scope"):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, tree_hash_scope=treehash.SAMPLED)
+        )
+    with pytest.raises(TreeHashFormatError, match="full-scope"):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, tree_hash_scope=None)
+        )
+    with pytest.raises(TreeHashFormatError, match="tree_hash_algorithm"):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, tree_hash_algorithm="future-v9")
+        )
+
+
+def test_verify_file_digest_map_requires_an_anchored_aggregate(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    with pytest.raises(TreeHashFormatError):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, expected_tree_hash=None)
+        )
+    with pytest.raises(TreeHashFormatError):
+        treehash.verify_file_digest_map(
+            root, **_map_verify_kwargs(root, expected_tree_hash="sha256:abc")
+        )
+
+
+def test_verify_file_digest_map_wraps_unreadable_tree(tmp_path, monkeypatch):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    real_open = os.open
+
+    def denied(path, flags, mode=0o777):
+        if Path(path) == root / "a.txt":
+            raise PermissionError("denied")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", denied)
+    with pytest.raises(TreeHashStructureError, match="cannot read entry"):
+        treehash.verify_file_digest_map(root, **_map_verify_kwargs(root))
+
+
+# --- Issue #194 error-path hardening (typed failures for every new entry point) ---
+
+def test_file_digest_map_rejects_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.compute_file_digest_map(tmp_path / "absent")
+
+
+def test_full_coverage_fields_reject_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.full_coverage_manifest_fields(tmp_path / "absent")
+
+
+def test_verify_file_digest_map_rejects_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.verify_file_digest_map(
+            tmp_path / "absent", {}, algorithm=treehash.FILE_DIGEST_ALGORITHM,
+            expected_tree_hash="h1:AA==", tree_hash_scope=treehash.FULL,
+        )
+
+
+def test_map_entry_points_wrap_unexpected_scan_failures(tmp_path, monkeypatch):
+    # Unexpected non-tree errors are wrapped as typed structure errors, so
+    # no caller ever sees a raw exception from the scan.
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    fields = treehash.full_coverage_manifest_fields(root)
+
+    def exploding(_root: Path) -> list[object]:
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(treehash, "_scan_entries", exploding)
+    for entry_point in (
+        treehash.compute_file_digest_map,
+        treehash.full_coverage_manifest_fields,
+    ):
+        with pytest.raises(TreeHashStructureError, match="cannot hash"):
+            entry_point(root)
+    with pytest.raises(TreeHashStructureError, match="cannot hash"):
+        treehash.verify_file_digest_map(
+            root,
+            fields["materialized_file_digests"],
+            algorithm=fields["materialized_file_digests_algorithm"],
+            expected_tree_hash=fields["materialized_tree_hash"],
+            tree_hash_algorithm=fields["materialized_tree_hash_algorithm"],
+            tree_hash_scope=fields["materialized_tree_hash_scope"],
+        )
+
+
+def test_dirty_trailing_bits_base64_is_rejected_as_non_canonical(tmp_path):
+    # A digest whose final character carries ignored low bits decodes fine
+    # but re-encodes differently: it must be rejected as non-canonical.
+    import string as _string
+
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    real, _scope = treehash.compute_materialized_tree_hash(root)
+    body = real[len("h1:"):]
+    assert body[-1] == "="
+    alphabet = _string.ascii_uppercase + _string.ascii_lowercase + _string.digits + "+/"
+    index = alphabet.index(body[-2])
+    group = alphabet[(index // 4) * 4 : (index // 4) * 4 + 4]
+    replacement = next(char for char in group if char != body[-2])
+    bumped = body[:-2] + replacement + body[-1:]
+    assert base64.b64decode(bumped, validate=True) == base64.b64decode(
+        body, validate=True
+    )
+    assert bumped != body
+    with pytest.raises(TreeHashFormatError, match="canonical"):
+        treehash.verify_materialized_tree_hash(root, "h1:" + bumped)
+    with pytest.raises(TreeHashFormatError, match="canonical"):
+        treehash.verify_file_digest_map(
+            root, treehash.compute_file_digest_map(root),
+            algorithm=treehash.FILE_DIGEST_ALGORITHM,
+            expected_tree_hash="h1:" + bumped,
+            tree_hash_scope=treehash.FULL,
+        )
+
+
+def test_sampled_selection_always_keeps_at_least_one_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr(treehash, "MAX_BYTES", 0)
+    root = _make_tree(tmp_path, {"a": b"aa", "b": b"bb"})
+    digest, scope = treehash.compute_materialized_tree_hash(root)
+    assert scope == treehash.SAMPLED
+    # Even with a zero byte budget the summary still covers one entry, so
+    # the digest differs from the empty-tree digest.
+    assert digest != _manual_h1(root, {})
+
+
+def test_manifest_digest_fields_rejects_unknown_scope():
+    with pytest.raises(ValueError, match="scope"):
+        treehash.manifest_digest_fields("h1:abc=", scope="bogus")
+
+
+def test_verify_rejects_unknown_scope_value(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    digest, _scope = treehash.compute_materialized_tree_hash(root)
+    with pytest.raises(TreeHashFormatError, match="scope"):
+        treehash.verify_materialized_tree_hash(root, digest, scope="bogus")

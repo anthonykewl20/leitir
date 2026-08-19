@@ -17,6 +17,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Fixed
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
+- harden import-purity child report channel and import-path isolation (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 
 ### Security

@@ -234,6 +234,7 @@ Add `list_blobs_ex()` with recovery metadata, bounded non-recursive subtree expa
 
 ## Real-world acceptance criteria
 - [ ] `list_blobs_ex()` returns `(tuple[BlobEntry, ...], was_recovered)`; `list_blobs()` remains the raising wrapper.
+  > Superseded 2026-08-19: `list_blobs()` now completes truncation recovery via the paginated walk (PR #209 / issue #187); see docs/search-capabilities.md.
 - [ ] Recovery requests non-recursive trees by SHA, tracks visited SHAs, validates entries, enforces depth/request/entry budgets, and sorts paths.
 - [ ] `TreeEnumerationError` is the base; `TreeWalkBudgetError` is a sibling of `TreeTruncatedError`.
 - [ ] Scoped search catches enumeration failures and reports `PARTIAL`, never complete.

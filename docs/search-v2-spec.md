@@ -198,6 +198,8 @@ blobs and `was_recovered`. Keep `list_blobs()` as the raising compatibility
 wrapper. Add a new `TreeEnumerationError` base. `TreeWalkBudgetError` is its
 sibling to `TreeTruncatedError`, not a subtype of it.
 
+> Superseded 2026-08-19: `list_blobs()` now completes truncation recovery via the paginated walk (PR #209 / issue #187); see docs/search-capabilities.md.
+
 Recovery expands non-recursive tree responses by SHA with a visited set,
 explicit depth/request/entry budgets, validated types, validated SHAs, and
 sorted paths. Cycles and budget exhaustion are incomplete, never success.

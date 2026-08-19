@@ -948,3 +948,213 @@ def test_global_searcher_error_is_infrastructure_failure():
     )
     assert code == ExitCode.INFRASTRUCTURE_FAILURE
     assert "api down" in err.getvalue()
+
+
+class TestDiscoveryPinsLatestStableTag:
+    """CLI donor discovery pins immutable tags by default (issue #189)."""
+
+    PINNED = "c" * 39 + "1"        # peeled commit of the annotated v2.3.0 tag
+    TAG_OBJECT = "d" * 39 + "2"    # annotated tag object (never a commit pin)
+    HEAD = "e" * 39 + "3"
+    BRANCH = "5" * 39 + "a"
+    LEGACY = "6" * 39 + "b"
+    FIXED_CLOCK = "2026-08-19T00:00:00+00:00"
+
+    @staticmethod
+    def _tarball(commit_sha: str) -> bytes:
+        import io as _io
+        import tarfile
+
+        data = _io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            member = tarfile.TarInfo(f"donor-{commit_sha}/proof.txt")
+            content = b"proof\n"
+            member.size = len(content)
+            archive.addfile(member, _io.BytesIO(content))
+        return data.getvalue()
+
+    @classmethod
+    def _routes(
+        cls, *, tags: list[dict[str, object]]
+    ) -> dict[str, tuple[int, dict[str, str], bytes]]:
+        return {
+            "/repos/acme/donor/tags": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(tags),
+            ),
+            "/repos/acme/donor/git/ref/tags/v2.3.0": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(
+                    {
+                        "ref": "refs/tags/v2.3.0",
+                        "object": {"type": "tag", "sha": cls.TAG_OBJECT},
+                    }
+                ),
+            ),
+            f"/repos/acme/donor/git/tags/{cls.TAG_OBJECT}": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(
+                    {"tag": "v2.3.0", "object": {"type": "commit", "sha": cls.PINNED}}
+                ),
+            ),
+            "/repos/acme/donor/commits": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body([{"sha": cls.HEAD}]),
+            ),
+        }
+
+    @classmethod
+    def _stable_tag_routes(cls) -> dict[str, tuple[int, dict[str, str], bytes]]:
+        routes = cls._routes(
+            tags=[
+                {"name": "v1.0.0", "commit": {"sha": "f" * 40}},
+                {"name": "v2.2.0", "commit": {"sha": "0" * 40}},
+                {"name": "v2.3.0", "commit": {"sha": cls.PINNED}},
+                {"name": "v2.4.0-rc.1", "commit": {"sha": "1" * 40}},
+            ]
+        )
+        routes[f"/acme/donor/tar.gz/{cls.PINNED}"] = (
+            200,
+            {"Content-Type": "application/gzip"},
+            cls._tarball(cls.PINNED),
+        )
+        return routes
+
+    def _invoke(self, routes, argv, *, heads_factory=None, monkeypatch):
+        from leitir.discovery_search import GitHubCodeSearchTransport
+
+        out, err = io.StringIO(), io.StringIO()
+        with routed_server(routes) as server:
+            monkeypatch.setenv("LEITIR_CODELOAD_BASE_URL", server.base_url)
+            if heads_factory is None:
+
+                def heads_factory(token: str | None) -> object:
+                    return GitHubCodeSearchTransport(
+                        base_url=server.base_url,
+                        raw_base_url=server.base_url,
+                        clock=lambda: self.FIXED_CLOCK,
+                    )
+
+            code = main(
+                argv,
+                resolver_factory=lambda _token: object(),
+                code_search_factory=heads_factory,
+                stdout=out,
+                stderr=err,
+            )
+        return code, out.getvalue(), err.getvalue()
+
+    def test_get_without_ref_pins_latest_stable_tag(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+        code, out, err = self._invoke(
+            self._stable_tag_routes(),
+            ["get", "acme/donor", "--json", "--no-verify"],
+            monkeypatch=monkeypatch,
+        )
+        assert code == ExitCode.SUCCESS, err
+        payload = json.loads(out)
+        assert payload["results"][0]["commit_sha"] == self.PINNED
+        assert (
+            f"pin acme/donor -> tag v2.3.0 commit {self.PINNED} "
+            f"(immutable; resolved {self.FIXED_CLOCK})"
+        ) in err
+        assert self.TAG_OBJECT not in err and self.TAG_OBJECT not in out
+
+        manifest = json.loads(
+            (Path(payload["results"][0]["path"]) / "leitir-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["commit_sha"] == self.PINNED
+        assert manifest["tag"] == "v2.3.0"
+
+    def test_get_tagless_repo_announces_non_immutable_head(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+        routes = self._routes(tags=[])
+        routes[f"/acme/donor/tar.gz/{self.HEAD}"] = (
+            200,
+            {"Content-Type": "application/gzip"},
+            self._tarball(self.HEAD),
+        )
+        code, out, err = self._invoke(
+            routes,
+            ["get", "acme/donor", "--json", "--no-verify"],
+            monkeypatch=monkeypatch,
+        )
+        assert code == ExitCode.SUCCESS, err
+        payload = json.loads(out)
+        assert payload["results"][0]["commit_sha"] == self.HEAD
+        assert (
+            f"pin acme/donor -> HEAD commit {self.HEAD} "
+            f"(non-immutable: no stable release tags"
+        ) in err
+
+        manifest = json.loads(
+            (Path(payload["results"][0]["path"]) / "leitir-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["commit_sha"] == self.HEAD
+        assert manifest["tag"] is None
+
+    def test_explicit_branch_is_honored_and_labeled_non_immutable(
+        self, tmp_path, monkeypatch
+    ):
+        import re as _re
+
+        monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+        routes = self._routes(tags=[])
+        routes["/repos/acme/donor/commits"] = (
+            200,
+            {"Content-Type": "application/json"},
+            json_body([{"sha": self.BRANCH}]),
+        )
+        routes[f"/acme/donor/tar.gz/{self.BRANCH}"] = (
+            200,
+            {"Content-Type": "application/gzip"},
+            self._tarball(self.BRANCH),
+        )
+        code, out, err = self._invoke(
+            routes,
+            ["get", "acme/donor#develop", "--json", "--no-verify"],
+            monkeypatch=monkeypatch,
+        )
+        assert code == ExitCode.SUCCESS, err
+        payload = json.loads(out)
+        assert payload["results"][0]["commit_sha"] == self.BRANCH
+        assert _re.search(
+            rf"pin acme/donor#develop -> branch develop commit {self.BRANCH} "
+            rf"\(non-immutable: branch head; resolved \S+\)",
+            err,
+        )
+
+    def test_legacy_heads_transport_keeps_head_resolution(self, tmp_path, monkeypatch):
+        class _LegacyHeads:
+            def __init__(self, sha: str) -> None:
+                self._sha = sha
+
+            def resolve_head_sha(self, slug: str, branch: str | None = None) -> str:
+                assert slug == "acme/donor"
+                return self._sha
+
+        monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+        routes = self._routes(tags=[])
+        routes[f"/acme/donor/tar.gz/{self.LEGACY}"] = (
+            200,
+            {"Content-Type": "application/gzip"},
+            self._tarball(self.LEGACY),
+        )
+        code, out, err = self._invoke(
+            routes,
+            ["get", "acme/donor", "--json", "--no-verify"],
+            heads_factory=lambda _token: _LegacyHeads(self.LEGACY),
+            monkeypatch=monkeypatch,
+        )
+        assert code == ExitCode.SUCCESS, err
+        payload = json.loads(out)
+        assert payload["results"][0]["commit_sha"] == self.LEGACY
+        assert "pin acme/donor ->" not in err

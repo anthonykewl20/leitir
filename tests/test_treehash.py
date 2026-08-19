@@ -711,3 +711,101 @@ def test_verify_file_digest_map_wraps_unreadable_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "open", denied)
     with pytest.raises(TreeHashStructureError, match="cannot read entry"):
         treehash.verify_file_digest_map(root, **_map_verify_kwargs(root))
+
+
+# --- Issue #194 error-path hardening (typed failures for every new entry point) ---
+
+def test_file_digest_map_rejects_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.compute_file_digest_map(tmp_path / "absent")
+
+
+def test_full_coverage_fields_reject_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.full_coverage_manifest_fields(tmp_path / "absent")
+
+
+def test_verify_file_digest_map_rejects_missing_directory(tmp_path):
+    with pytest.raises(TreeHashStructureError, match="not a directory"):
+        treehash.verify_file_digest_map(
+            tmp_path / "absent", {}, algorithm=treehash.FILE_DIGEST_ALGORITHM,
+            expected_tree_hash="h1:AA==", tree_hash_scope=treehash.FULL,
+        )
+
+
+def test_map_entry_points_wrap_unexpected_scan_failures(tmp_path, monkeypatch):
+    # Unexpected non-tree errors are wrapped as typed structure errors, so
+    # no caller ever sees a raw exception from the scan.
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    fields = treehash.full_coverage_manifest_fields(root)
+
+    def exploding(_root: Path) -> list[object]:
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(treehash, "_scan_entries", exploding)
+    for entry_point in (
+        treehash.compute_file_digest_map,
+        treehash.full_coverage_manifest_fields,
+    ):
+        with pytest.raises(TreeHashStructureError, match="cannot hash"):
+            entry_point(root)
+    with pytest.raises(TreeHashStructureError, match="cannot hash"):
+        treehash.verify_file_digest_map(
+            root,
+            fields["materialized_file_digests"],
+            algorithm=fields["materialized_file_digests_algorithm"],
+            expected_tree_hash=fields["materialized_tree_hash"],
+            tree_hash_algorithm=fields["materialized_tree_hash_algorithm"],
+            tree_hash_scope=fields["materialized_tree_hash_scope"],
+        )
+
+
+def test_dirty_trailing_bits_base64_is_rejected_as_non_canonical(tmp_path):
+    # A digest whose final character carries ignored low bits decodes fine
+    # but re-encodes differently: it must be rejected as non-canonical.
+    import string as _string
+
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    real, _scope = treehash.compute_materialized_tree_hash(root)
+    body = real[len("h1:"):]
+    assert body[-1] == "="
+    alphabet = _string.ascii_uppercase + _string.ascii_lowercase + _string.digits + "+/"
+    index = alphabet.index(body[-2])
+    group = alphabet[(index // 4) * 4 : (index // 4) * 4 + 4]
+    replacement = next(char for char in group if char != body[-2])
+    bumped = body[:-2] + replacement + body[-1:]
+    assert base64.b64decode(bumped, validate=True) == base64.b64decode(
+        body, validate=True
+    )
+    assert bumped != body
+    with pytest.raises(TreeHashFormatError, match="canonical"):
+        treehash.verify_materialized_tree_hash(root, "h1:" + bumped)
+    with pytest.raises(TreeHashFormatError, match="canonical"):
+        treehash.verify_file_digest_map(
+            root, treehash.compute_file_digest_map(root),
+            algorithm=treehash.FILE_DIGEST_ALGORITHM,
+            expected_tree_hash="h1:" + bumped,
+            tree_hash_scope=treehash.FULL,
+        )
+
+
+def test_sampled_selection_always_keeps_at_least_one_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr(treehash, "MAX_BYTES", 0)
+    root = _make_tree(tmp_path, {"a": b"aa", "b": b"bb"})
+    digest, scope = treehash.compute_materialized_tree_hash(root)
+    assert scope == treehash.SAMPLED
+    # Even with a zero byte budget the summary still covers one entry, so
+    # the digest differs from the empty-tree digest.
+    assert digest != _manual_h1(root, {})
+
+
+def test_manifest_digest_fields_rejects_unknown_scope():
+    with pytest.raises(ValueError, match="scope"):
+        treehash.manifest_digest_fields("h1:abc=", scope="bogus")
+
+
+def test_verify_rejects_unknown_scope_value(tmp_path):
+    root = _make_tree(tmp_path, {"a.txt": b"a"})
+    digest, _scope = treehash.compute_materialized_tree_hash(root)
+    with pytest.raises(TreeHashFormatError, match="scope"):
+        treehash.verify_materialized_tree_hash(root, digest, scope="bogus")

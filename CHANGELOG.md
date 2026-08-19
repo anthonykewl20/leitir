@@ -17,8 +17,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - pin donors to latest stable release tags by default (`discovery`)
 
 ### Fixed
-- apply rate-limit cap fail-fast on the final attempt too (`http`)
-- fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
+- enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
+- harden import-purity child report channel and import-path isolation (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 

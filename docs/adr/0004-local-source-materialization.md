@@ -238,6 +238,23 @@ may re-enumerate and fully reprove eligible GitHub Git-commit shelves under
 their target locks, leaving the claim unchanged when proof is partial or
 unavailable.
 
+### Amendment — symlink mismatches fail closed on every mode-capable host (2026-08-19; issue #193 / PR #208)
+
+For any tree source whose listing carries blob modes, an extracted
+symbolic-link universe mismatch (missing or unexpected) is a hard
+`VerificationError` on all hosts — previously non-GitHub sources downgraded
+this to "sampled". A symbolic-link digest mismatch on any host takes the
+commit-pinned re-read order `read_blob_at_commit` → `read_blob` and is
+rejected with a typed error when the source offers neither method. Mode-less
+sources retain the explicit "sampled" outcome unchanged (a genuine host
+capability gap is never fabricated into modes). Trust assumption: the glitch
+clearance — the re-read equals the extracted bytes, so the listing mismatch
+is treated as an enumeration glitch — assumes an honest re-read channel
+(endpoint diversity); the equality binds to the re-read channel, not
+cryptographically to the listing's blob_sha. GitHub's `read_blob` is
+digest-verifying (response SHA and recomputed blob SHA are both checked);
+path-based re-reads are not.
+
 - Gained: a browsable, provenance-bound local corpus; version-accurate
   references via lockfile detection; verifiable integrity; project-local
   gitignored mode.

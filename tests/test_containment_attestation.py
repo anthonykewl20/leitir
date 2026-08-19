@@ -120,6 +120,21 @@ def test_procfs_receipt_with_no_new_privs_but_seccomp_absent_is_rejected_end_to_
 # ---------------------------------------------------------------------------
 
 
+def _assert_child_fully_reaped(pid: int) -> None:
+    """Prove a probe/reap victim is dead and reaped, not merely signalled.
+
+    A zombie would still be signalable, so ESRCH on signal 0 already proves
+    the child was waited on; the ``/proc/<pid>`` re-check corroborates that
+    ground truth directly so a recycled pid cannot fake the proof (PR #213
+    review test hardening: tolerate pid reuse by requiring both probes to
+    agree on the pid's absence).
+    """
+
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    assert not Path(f"/proc/{pid}").exists()
+
+
 def _fake_backend(tmp_path: Path, name: str, probe_body: str) -> tuple[Path, str, str]:
     path = tmp_path / name
     path.write_text(f"#!{sys.executable}\n{probe_body}", encoding="utf-8")
@@ -244,8 +259,11 @@ def test_controller_failure_kills_and_reaps_the_child_before_aborting(
     assert process.returncode is not None and process.returncode < 0
     assert process.stdout is not None and process.stdout.closed
     assert process.stderr is not None and process.stderr.closed
-    # C-3 idempotency: reaping the already-reaped child again is a no-op.
-    assert sandbox._reap_launched_child(process) is True
+    # C-3 idempotency: reaping the already-reaped child again is a no-op; the
+    # empty group raises no escalation because no direct-pid fallback ran.
+    second = sandbox._reap_launched_child(process)
+    assert second.reaped is True
+    assert second.group_kill_unconfirmed is False
 
 
 @_LINUX_ONLY
@@ -259,10 +277,112 @@ def test_reap_helper_is_idempotent_on_an_already_exited_child() -> None:
     )
     process.wait(timeout=10)
 
-    assert sandbox._reap_launched_child(process) is True
+    outcome = sandbox._reap_launched_child(process)
+    assert outcome.reaped is True
+    assert outcome.group_kill_unconfirmed is False
     assert process.stdout is not None and process.stdout.closed
     assert process.stderr is not None and process.stderr.closed
-    assert sandbox._reap_launched_child(process) is True
+    again = sandbox._reap_launched_child(process)
+    assert again.reaped is True
+    assert again.group_kill_unconfirmed is False
+
+
+@_LINUX_ONLY
+def test_unconfirmed_group_kill_on_abort_escalates_to_child_leak_not_launcher_failure(
+    monkeypatch: pytest.MonkeyPatch, fake_nsjail: tuple[Path, str, str]
+) -> None:
+    """PR #213 review P2: a direct-pid fallback that no group kill covers is a leak.
+
+    Simulates the Popen-to-setsid race window from both sides: every group
+    kill attempt misses (no signal is ever delivered to a process group), the
+    bounded wait times out, and the direct-pid SIGKILL reaps only the leader
+    — a jailed grandchild would be orphaned by it, so the abort must carry
+    the child_leak / REJECT_EXECUTION_THREAT taxonomy, not launcher_failure.
+    """
+
+    monkeypatch.setenv(sandbox.DONOR_EXECUTION_ENV, "1")
+    plan = prepare_execution(_policy(fake_nsjail))
+    spawned: list[subprocess.Popen[bytes]] = []
+
+    def controller_failure(
+        process: subprocess.Popen[bytes], *, limit: int, timeout: int, applied_state: object
+    ) -> object:
+        spawned.append(process)
+        raise OSError("controller-side failure after child spawn")
+
+    monkeypatch.setattr(sandbox, "_bounded_communicate", controller_failure)
+    monkeypatch.setattr(sandbox, "_killpg_delivered", lambda pgid: False)
+
+    result = run_contained(plan, (sys.executable, "-c", "import time; time.sleep(60)"))
+
+    [process] = spawned
+    assert result.completed is False
+    assert result.abort is not None
+    assert result.abort.detail_category == "child_leak"
+    assert result.abort.reason is BTSRejectReason.REJECT_EXECUTION_THREAT
+    # The leader itself was still reaped by the direct-pid fallback; the
+    # escalation comes from the unconfirmed group kill, not a live leader.
+    assert process.poll() is not None
+    assert process.returncode is not None and process.returncode < 0
+    assert process.stdout is not None and process.stdout.closed
+    assert process.stderr is not None and process.stderr.closed
+
+
+@_LINUX_ONLY
+def test_reap_helper_retries_the_group_kill_before_the_direct_pid_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The P2 remediation itself: a missed first group kill is retried post-setsid.
+
+    The retry delivering makes the direct-pid fallback canonical, so the
+    outcome stays launcher-grade instead of escalating to a leak.
+    """
+
+    process = subprocess.Popen(
+        (sys.executable, "-c", "import time; time.sleep(60)"),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    attempts: list[int] = []
+
+    def first_attempt_misses_then_delivers(pgid: int) -> bool:
+        attempts.append(pgid)
+        return len(attempts) > 1
+
+    try:
+        monkeypatch.setattr(sandbox, "_killpg_delivered", first_attempt_misses_then_delivers)
+        outcome = sandbox._reap_launched_child(process)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    assert attempts == [process.pid, process.pid]
+    assert outcome.reaped is True
+    assert outcome.group_kill_unconfirmed is False
+    assert process.returncode is not None and process.returncode < 0
+
+
+@_LINUX_ONLY
+def test_reap_helper_confirms_a_real_group_kill_for_a_live_session_leader() -> None:
+    """Unmocked end-to-end: the live leader's real group receives the SIGKILL."""
+
+    process = subprocess.Popen(
+        (sys.executable, "-c", "import time; time.sleep(60)"),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+
+    outcome = sandbox._reap_launched_child(process)
+
+    assert outcome.reaped is True
+    assert outcome.group_kill_unconfirmed is False
+    assert process.returncode is not None and process.returncode < 0
+    _assert_child_fully_reaped(process.pid)
 
 
 # ---------------------------------------------------------------------------
@@ -293,10 +413,7 @@ def test_probe_is_bounded_and_kills_a_child_that_never_closes_stdout(
     # the double's own 60s self-termination.
     assert elapsed < 30
     child_pid = int((tmp_path / "hung-child.pid").read_text(encoding="ascii"))
-    # A zombie would still be signalable: ENOENT proves the hung child was
-    # killed AND reaped (waited on) before the probe surfaced its failure.
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    _assert_child_fully_reaped(child_pid)
 
 
 @_LINUX_ONLY
@@ -320,8 +437,29 @@ def test_probe_never_reads_beyond_the_output_cap_from_a_flooding_child(tmp_path:
     # consume megabytes; the bounded probe fails within its deadline instead.
     assert time.monotonic() - started < 30
     child_pid = int((tmp_path / "flooding-child.pid").read_text(encoding="ascii"))
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    _assert_child_fully_reaped(child_pid)
+
+
+@_LINUX_ONLY
+def test_probe_returns_exactly_the_cap_from_a_self_exiting_flooding_child(tmp_path: Path) -> None:
+    """Pin the exact byte cap (PR #213 review test hardening).
+
+    A well-behaved child that floods past the cap and then exits on its own
+    is not killed: the probe drains exactly cap + 1 bytes and returns them,
+    which is precisely the input the ``> cap`` identity-reject branch consumes.
+    """
+
+    backend = _fake_backend(
+        tmp_path,
+        "nsjail-self-exiting-flood",
+        "import sys\n"
+        f"sys.stdout.write('x' * {sandbox._MAX_NSJAIL_PROBE_OUTPUT_BYTES + 4})\n"
+        "sys.stdout.flush()\n",
+    )
+
+    output = sandbox._probe_backend_output(str(backend[0]))
+
+    assert len(output) == sandbox._MAX_NSJAIL_PROBE_OUTPUT_BYTES + 1
 
 
 @_LINUX_ONLY

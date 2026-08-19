@@ -1094,6 +1094,21 @@ class _AppliedState:
     cgroup_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _ReapOutcome:
+    """Outcome of an abort-path reap (issue #192, PR #213 review P2).
+
+    ``reaped`` is ``True`` once the direct child is dead and waited on.
+    ``group_kill_unconfirmed`` is ``True`` only when the direct-pid fallback
+    ran without a demonstrable group SIGKILL, so a jailed grandchild may have
+    outlived it; the caller must escalate to the leak taxonomy instead of a
+    plain launcher failure.
+    """
+
+    reaped: bool
+    group_kill_unconfirmed: bool
+
+
 def _ns_identity(pid: int, namespace: str) -> tuple[int, int]:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     metadata = Path(f"/proc/{pid}/ns/{namespace}").stat()
     return metadata.st_dev, metadata.st_ino
@@ -1212,13 +1227,27 @@ def _kill_cgroup_tree(path: Path) -> bool:  # pragma: no cover  # exercised only
     return False
 
 
+def _killpg_delivered(pgid: int) -> bool:
+    """SIGKILL a process group and report whether a live group received it.
+
+    ``ProcessLookupError`` means no process currently holds the pgid: either
+    the child has not completed its ``setsid()`` yet (the ``start_new_session``
+    launch race, PR #213 review P2) or the group is already empty.  Delivery
+    is not death; it is only the strongest group-level fact available without
+    a cgroup receipt.
+    """
+
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def _terminate_tree(process: subprocess.Popen[bytes], state: _AppliedState | None) -> bool:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     if state is not None and _kill_cgroup_tree(state.cgroup_path):
         return True
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    _killpg_delivered(process.pid)
     return False
 
 
@@ -1229,25 +1258,37 @@ def _close_child_pipes(process: subprocess.Popen[bytes]) -> None:
             stream.close()
 
 
-def _reap_launched_child(process: subprocess.Popen[bytes]) -> bool:
+def _reap_launched_child(process: subprocess.Popen[bytes]) -> _ReapOutcome:
     """Terminate, reap, and close a launched contained child on an abort path.
 
     Issue #192: a controller-side failure after spawn must never return an
     abort envelope while the child lives.  The process tree is killed via the
     child's session, the child is waited on so it cannot linger as a zombie,
-    and both PIPE fds are closed.  Returns ``True`` when the child is dead and
-    reaped; ``False`` only when it survived SIGKILL, in which case the caller
-    must fail closed.  Idempotent: reaping an already-reaped child is a no-op.
+    and both PIPE fds are closed.  ``reaped`` is ``True`` when the child is
+    dead and reaped; ``False`` only when it survived SIGKILL, in which case
+    the caller must fail closed.  The group kill is attempted even when the
+    child has already exited — the PGID remains valid after the group leader
+    exits (PR #213 review, hy3 P3-2) — and, when the bounded wait times out,
+    once more before the direct-pid fallback: the first attempt can race the
+    child's ``setsid()`` and deliver no signal at all, while ``process.kill()``
+    alone would orphan a jailed grandchild (PR #213 review P2).  Idempotent:
+    reaping an already-reaped child is a no-op.
     """
 
-    if process.poll() is None:
-        _terminate_tree(process, None)
+    group_kill_delivered = _killpg_delivered(process.pid)
+    group_kill_unconfirmed = False
     reaped = False
     try:
         process.wait(timeout=_CHILD_REAP_TIMEOUT_SECONDS)
         reaped = True
     except subprocess.TimeoutExpired:
+        if not group_kill_delivered:
+            # The aborted child has had a full reap window to complete
+            # setsid(); retry the group kill so the fallback below cannot
+            # become the only signal the tree ever received.
+            group_kill_delivered = _killpg_delivered(process.pid)
         process.kill()
+        group_kill_unconfirmed = not group_kill_delivered
         try:
             process.wait(timeout=_CHILD_REAP_TIMEOUT_SECONDS)
             reaped = True
@@ -1255,7 +1296,7 @@ def _reap_launched_child(process: subprocess.Popen[bytes]) -> bool:
             reaped = False  # unkillable child (e.g. uninterruptible IO); caller fails closed
     finally:
         _close_child_pipes(process)
-    return reaped
+    return _ReapOutcome(reaped=reaped, group_kill_unconfirmed=group_kill_unconfirmed)
 
 
 def _bounded_communicate(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
@@ -1429,17 +1470,15 @@ def run_contained(plan: ExecutionPlan, argv: Sequence[str]) -> ExecutionResult:
                 pass
     except (OSError, subprocess.SubprocessError):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
         # No abort envelope may leave a live child behind (issue #192): kill,
-        # reap, and close the PIPE fds first.  A child that survives SIGKILL
-        # escalates to the leak taxonomy instead of launcher_failure.
-        if process is not None and not _reap_launched_child(process):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-            return _abort(  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-                plan,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-                "child_leak",  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-                BTSRejectReason.REJECT_EXECUTION_THREAT,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-                0,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-                0,  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-            )  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
-        return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        # reap, and close the PIPE fds first.  A child that survives SIGKILL,
+        # or one whose process group never demonstrably received the kill — so
+        # a jailed grandchild may have outlived the direct-pid fallback (PR
+        # #213 review P2) — escalates to the leak taxonomy instead of
+        # launcher_failure.
+        outcome = _reap_launched_child(process) if process is not None else None  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        if outcome is None or (outcome.reaped and not outcome.group_kill_unconfirmed):  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+            return _abort(plan, "launcher_failure", BTSRejectReason.REJECT_HARD_GATE_FAILED, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
+        return _abort(plan, "child_leak", BTSRejectReason.REJECT_EXECUTION_THREAT, 0, 0)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
     finally:
         if config_fd is not None:  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)
             os.close(config_fd)  # pragma: no cover  # exercised only by the containment CI job (ADR-009 §10, bts-containment.yml)

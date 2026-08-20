@@ -490,6 +490,15 @@ class _HostedRepoResolver:
             max_rate_limit_delay=max_rate_limit_delay,
             sleeper=sleeper,
         )
+        # Enumeration resume state (issue #195): pages already fetched for the
+        # current (slug, commit) and the most recent source archive. A retry
+        # after a mid-walk rate limit reuses them instead of refetching, and
+        # the single archive slot is shared with the materialization path,
+        # which routes its own archive downloads through ``_get_archive_bytes``.
+        self._page_cache_key: tuple[str, str] | None = None
+        self._page_cache: dict[str, object] = {}
+        self._archive_cache_url: str | None = None
+        self._archive_cache_data: bytes | None = None
 
     def _headers(self, url: str, accept: str = "application/json") -> dict[str, str]:
         headers = {"Accept": accept, "User-Agent": "leitir"}
@@ -549,7 +558,36 @@ class _HostedRepoResolver:
         return self._get_bytes_limited(url, None)
 
     def _get_archive_bytes(self, url: str, max_bytes: int) -> bytes:
-        return self._get_bytes_limited(url, max_bytes)
+        """Download (or reuse) one source archive through a single-slot cache.
+
+        The slot is keyed by URL and bounded to the most recent archive, so a
+        tree enumeration and the materialization path that routes through this
+        method share one download per (host, commit).
+        """
+        if self._archive_cache_url == url and self._archive_cache_data is not None:
+            if len(self._archive_cache_data) > max_bytes:
+                raise ResolutionError("archive download exceeds compressed size limit")
+            return self._archive_cache_data
+        data = self._get_bytes_limited(url, max_bytes)
+        self._archive_cache_url = url
+        self._archive_cache_data = data
+        return data
+
+    def _cached_page(self, slug: str, sha: str, url: str) -> object:
+        """Fetch one enumeration page, resuming from the per-(slug, sha) cache.
+
+        A secondary rate limit mid-walk surfaces as a typed error; retrying the
+        enumeration reuses pages already fetched instead of refetching them.
+        """
+        key = (slug, sha)
+        if self._page_cache_key != key:
+            self._page_cache_key = key
+            self._page_cache.clear()
+        if url in self._page_cache:
+            return self._page_cache[url]
+        payload = self._get_json(url)
+        self._page_cache[url] = payload
+        return payload
 
     @staticmethod
     def _sha(payload: object, field: str, host: str) -> str:
@@ -557,6 +595,66 @@ class _HostedRepoResolver:
         if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None:
             raise ResolutionError(f"{host} returned malformed commit metadata")
         return value.lower()
+
+
+# Compressed source-archive size bound for enumeration. Mirrors
+# ``materialize.ARCHIVE_MAX_COMPRESSED_BYTES`` without importing it
+# (materialize imports this module; the value must stay in sync).
+_ARCHIVE_MAX_BYTES = 1024 * 1024 * 1024
+
+
+def _archive_blob_universe(data: bytes, host: str) -> dict[str, tuple[int, str, bool]]:
+    """Map every file path in a host source archive to ``(size, git blob sha,
+    is_symlink)``.
+
+    Archives produced by the hosted forges carry a single leading root
+    directory (``<repo>-<ref>/``); it is stripped so keys are repository
+    paths. Malformed archives (multiple roots, path components outside the
+    archive, unsupported member kinds) fail closed with a typed error. The
+    result is deterministic for a given archive.
+    """
+    import io
+    import tarfile
+
+    from leitir.tree import GitHubTreeSource
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+            blobs: dict[str, tuple[int, str, bool]] = {}
+            roots: set[str] = set()
+            for member in archive.getmembers():
+                if member.isdir():
+                    continue
+                parts = member.name.split("/")
+                if len(parts) < 2 or any(part in ("", ".", "..") for part in parts):
+                    raise ResolutionError(f"{host} returned a malformed source archive")
+                roots.add(parts[0])
+                path = "/".join(parts[1:])
+                if member.issym():
+                    content = member.linkname.encode("utf-8", "surrogateescape")
+                    is_symlink = True
+                elif member.isreg():
+                    fileobj = archive.extractfile(member)
+                    if fileobj is None:
+                        raise ResolutionError(f"{host} returned a malformed source archive")
+                    content = fileobj.read()
+                    is_symlink = False
+                else:
+                    raise ResolutionError(
+                        f"{host} source archive contains unsupported entry: {path}"
+                    )
+                blobs[path] = (
+                    len(content),
+                    GitHubTreeSource.git_blob_sha(content),
+                    is_symlink,
+                )
+            if len(roots) > 1:
+                raise ResolutionError(f"{host} returned a malformed source archive")
+            return blobs
+    except ResolutionError:
+        raise
+    except (tarfile.TarError, OSError, EOFError, ValueError) as exc:
+        raise ResolutionError(f"{host} returned a malformed source archive") from exc
 
 
 class GitLabResolver(_HostedRepoResolver):
@@ -631,14 +729,16 @@ class GitLabResolver(_HostedRepoResolver):
         from leitir.tree import BlobEntry
 
         sha = self._sha({"sha": commit_sha}, "sha", self._HOST)
-        entries: list[BlobEntry] = []
+        listed: list[tuple[str, str, str | None]] = []
         page = 1
         while True:
             query = urlencode(
                 {"ref": sha, "recursive": "true", "per_page": 100, "page": page}
             )
-            payload = self._get_json(
-                f"{self._base_url}/projects/{self._project(slug)}/repository/tree?{query}"
+            payload = self._cached_page(
+                slug,
+                sha,
+                f"{self._base_url}/projects/{self._project(slug)}/repository/tree?{query}",
             )
             if not isinstance(payload, list):
                 raise ResolutionError("gitlab.com returned malformed tree metadata")
@@ -648,26 +748,56 @@ class GitLabResolver(_HostedRepoResolver):
                 if item.get("type") != "blob":
                     continue
                 try:
-                    metadata = self._get_json(
-                        f"{self._base_url}/projects/{self._project(slug)}/repository/blobs/"
-                        f"{self._sha(item, 'id', self._HOST)}"
-                    )
-                    size = metadata.get("size") if isinstance(metadata, dict) else None
-                    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                    # Validation only (typed-error parity with the per-blob
+                    # probe this replaces); the entry keeps the raw listing id.
+                    self._sha(item, "id", self._HOST)
+                    path = item["path"]
+                    raw_mode = item.get("mode")
+                    if not isinstance(path, str) or (
+                        raw_mode is not None and not isinstance(raw_mode, str)
+                    ):
                         raise ValueError
-                    entries.append(
-                        BlobEntry(
-                            path=item["path"],
-                            blob_sha=item["id"],
-                            size=size,
-                            mode=item.get("mode"),
-                        )
-                    )
+                    listed.append((path, cast(str, item["id"]), raw_mode))
                 except (KeyError, TypeError, ValueError) as exc:
                     raise ResolutionError("gitlab.com returned malformed tree metadata") from exc
             if len(payload) < 100:
                 break
             page += 1
+        # No GitLab API carries blob sizes inside tree pagination (see the
+        # FINDING on issue #195): one archive download is the bulk source for
+        # sizes, and its per-blob digests are cross-checked against the tree
+        # listing ids — strictly stronger than the per-blob size probe.
+        archive = self._get_archive_bytes(self.archive_url(slug, sha), _ARCHIVE_MAX_BYTES)
+        universe = _archive_blob_universe(archive, self._HOST)
+        entries: list[BlobEntry] = []
+        for path, blob_id, mode in listed:
+            found = universe.get(path)
+            if found is None:
+                raise ResolutionError(
+                    f"gitlab.com source archive is missing listed blob: {path}"
+                )
+            size, computed, is_symlink = found
+            if computed != blob_id.lower():
+                raise ResolutionError(
+                    f"gitlab.com blob digest mismatch between tree listing and archive: {path}"
+                )
+            if (mode == "120000") != is_symlink:
+                raise ResolutionError(
+                    f"gitlab.com blob mode disagrees with archive entry kind: {path}"
+                )
+            entries.append(
+                BlobEntry(
+                    path=path,
+                    blob_sha=blob_id,
+                    size=size,
+                    mode=mode,
+                )
+            )
+        extra = sorted(set(universe) - {path for path, _, _ in listed})
+        if extra:
+            raise ResolutionError(
+                f"gitlab.com source archive contains unlisted blob: {extra[0]}"
+            )
         return tuple(sorted(entries, key=lambda entry: entry.path))
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:
@@ -755,11 +885,11 @@ class BitbucketResolver(_HostedRepoResolver):
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[object, ...]:
         from urllib.parse import quote
 
-        from leitir.tree import BlobEntry, GitHubTreeSource
+        from leitir.tree import BlobEntry
 
         sha = self._sha({"sha": commit_sha}, "sha", "bitbucket.org")
         pending = [""]
-        entries: list[BlobEntry] = []
+        listed: list[tuple[str, list[str], int]] = []
         while pending:
             directory = pending.pop(0)
             suffix = f"/{quote(directory, safe='/')}" if directory else ""
@@ -768,7 +898,7 @@ class BitbucketResolver(_HostedRepoResolver):
                 f"{suffix}/?pagelen=100"
             )
             while url:
-                payload = self._get_json(url)
+                payload = self._cached_page(slug, sha, url)
                 if not isinstance(payload, dict):
                     raise ResolutionError("bitbucket.org returned malformed tree metadata")
                 values = payload.get("values")
@@ -780,17 +910,20 @@ class BitbucketResolver(_HostedRepoResolver):
                     if item.get("type") == "commit_directory":
                         pending.append(item["path"])
                     elif item.get("type") == "commit_file":
-                        content = self.read_blob_at_commit(slug, sha, item["path"])
                         attributes = item.get("attributes", [])
-                        mode = "120000" if isinstance(attributes, list) and "link" in attributes else "100644"
-                        entries.append(
-                            BlobEntry(
-                                path=item["path"],
-                                blob_sha=GitHubTreeSource.git_blob_sha(content),
-                                size=len(content),
-                                mode=mode,
+                        if not isinstance(attributes, list) or not all(
+                            isinstance(attribute, str) for attribute in attributes
+                        ):
+                            raise ResolutionError(
+                                "bitbucket.org returned malformed tree metadata"
                             )
-                        )
+                        size = item.get("size")
+                        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                            raise ResolutionError(
+                                "bitbucket.org tree metadata lacks integer size field: "
+                                f"{item['path']}"
+                            )
+                        listed.append((item["path"], attributes, size))
                 next_url = payload.get("next")
                 if next_url is None:
                     url = ""
@@ -799,6 +932,42 @@ class BitbucketResolver(_HostedRepoResolver):
                 else:
                     raise ResolutionError("bitbucket.org returned an unsafe tree page URL")
             pending.sort()
+        # Expected digests come from the single archive download (no per-file
+        # HTTP); the listing's size field is cross-checked fail-closed. The
+        # download goes through ``archive_url`` so a configured override (and
+        # the materialization path) shares the resolver's archive cache slot.
+        archive = self._get_archive_bytes(self.archive_url(slug, sha), _ARCHIVE_MAX_BYTES)
+        universe = _archive_blob_universe(archive, "bitbucket.org")
+        entries: list[BlobEntry] = []
+        for path, attributes, listed_size in listed:
+            found = universe.get(path)
+            if found is None:
+                raise ResolutionError(
+                    f"bitbucket.org source archive is missing listed blob: {path}"
+                )
+            size, computed, is_symlink = found
+            mode = "120000" if "link" in attributes else "100644"
+            if (mode == "120000") != is_symlink:
+                raise ResolutionError(
+                    f"bitbucket.org blob attributes disagree with archive entry kind: {path}"
+                )
+            if size != listed_size:
+                raise ResolutionError(
+                    f"bitbucket.org blob size mismatch between listing and archive: {path}"
+                )
+            entries.append(
+                BlobEntry(
+                    path=path,
+                    blob_sha=computed,
+                    size=size,
+                    mode=mode,
+                )
+            )
+        extra = sorted(set(universe) - {path for path, _, _ in listed})
+        if extra:
+            raise ResolutionError(
+                f"bitbucket.org source archive contains unlisted blob: {extra[0]}"
+            )
         return tuple(sorted(entries, key=lambda entry: entry.path))
 
     def read_blob(self, slug: str, blob_sha: str) -> bytes:

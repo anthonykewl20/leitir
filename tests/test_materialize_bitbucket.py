@@ -123,7 +123,7 @@ def test_bitbucket_verification_mismatch_fails_closed(tmp_path):
         (200, {}, CONTENT),
     ]
     with hs.scripted_server(responses) as server:
-        with pytest.raises(MaterializationError, match="VerificationError"):
+        with pytest.raises(MaterializationError, match="ResolutionError"):
             materialize_repo(
                 tmp_path,
                 f"bitbucket:owner/demo@{SHA}",

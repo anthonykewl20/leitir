@@ -142,6 +142,17 @@ Unsigned, malformed, unknown-key, or invalidly signed shelves reject; this is
 an optional authenticity layer, separate from tree-integrity verification.
 The authentication trust-anchor surface requires a platform with no-follow-capable file reads; unsupported platforms fail closed.
 
+Trusted-key files carry a lifecycle from schema version 2 onward
+(`{"schema_version": 2, "keys": [...]}`): per-key `expires_at` and
+`revoked_at` (with a required `revocation_reason`) are strict RFC-3339 UTC
+timestamps enforced fail-closed at load — expired and revoked keys are
+refused with distinct typed errors (`manifest_auth_key_expired_v1` /
+`manifest_auth_key_revoked_v1`), retired and compromised rows stay listed as
+the audit trail, and a file left with no active keys rejects outright.
+Version 1 files load unchanged. Scheduled rotation (retire via `expires_at`)
+and incident response (compromise via `revoked_at` + reason) are documented
+as ceremonies in [ADR-0022](docs/adr/0022-trusted-key-lifecycle.md).
+
 Relocated contract tests are rerun with the donor excluded by the read-only
 filesystem mount plan, not by Python import hooks. The rerun report requires the
 exact pinned canonical test-ID set, pass/fail/skip totals, and per-ID outcomes;

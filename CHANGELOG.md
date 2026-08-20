@@ -29,6 +29,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
 - state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
+- verify the recursive-listing sha echo live, disclose recovery-walk status, and route the canary fetch through the retry seam (`tests`)
 
 ### Security
 - create the three missing live canary surfaces, assert workflow references, and harden read_blob_stream (`tests`)

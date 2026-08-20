@@ -327,20 +327,33 @@ class GitHubTreeSource:
     def read_blob_stream(
         self, slug: str, blob_sha: str, *, max_bytes: int = STREAM_MAX_BYTES
     ) -> Iterator[bytes]:
-        """Stream one blob's raw bytes with read_blob's full discipline.
+        """Stream one blob's raw bytes with *part* of read_blob's discipline.
 
-        Unlike the pre-#197 implementation, the requested SHA is validated
+        What IS inherited from read_blob: the requested SHA is validated
         (``_require_hex_sha``) before any URL is built — a malformed or
         hostile ``blob_sha`` raises a typed :class:`TreeReadError` eagerly,
         never a raw ``HTTPError``/``AttributeError`` escape — connection
         setup goes through the shared categorized retry policy, transport
         failures surface as typed ``TreeReadError`` instead of escaping the
-        taxonomy, the response is closed promptly even when the consumer
-        abandons the generator mid-iteration, and the total streamed size is
+        taxonomy, and the response is closed promptly even when the consumer
+        abandons the generator mid-iteration. The total streamed size is
         bounded by ``max_bytes`` (a stream crossing the bound fails closed
-        with a typed error).  Mid-stream read failures are not retried: bytes
-        were already yielded, so a replay would duplicate them; they fail
-        typed instead.
+        with a typed error).
+
+        What is NOT inherited: read_blob's response-envelope verification
+        (response SHA == requested, declared size == decoded length,
+        git-blob digest of decoded content == requested SHA). A raw stream
+        has no JSON envelope to check, so the caller MUST verify the
+        streamed bytes' digest and length itself — as
+        ``streaming.score_blob_stream`` does (git-blob sha1 over the chunks
+        plus a declared-size check).
+
+        Mid-stream read failures are not retried here: bytes were already
+        yielded, so a replay would duplicate them; they fail typed instead.
+        The prior consumer-replay behavior is preserved at the consumer
+        level: ``streaming.score_blob_stream`` wraps the entire consumption
+        in its own retry seam, and each replay starts a fresh generator, so
+        whole-attempt replay remains safe.
         """
         if (
             isinstance(max_bytes, bool)

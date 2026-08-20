@@ -19,6 +19,13 @@ two pinned public fixtures, read-only:
   surface asserts the walk completes, reports ``recovered=True``, and returns
   a strictly larger blob universe than the truncated listing exposed.
 
+Status disclosure (2026-08-21): the ~2k-request recovery walk below has NOT
+yet produced a green live run end-to-end; until it does, the workflow
+variable ``LEITIR_CANARY_TREE_V2`` stays ``false`` (owner-gated, see the
+``truncated-tree-recovery`` job and ``gate`` outputs in
+``.github/workflows/live-canary.yml``). Building this surface is the
+prerequisite; observing it green is the promotion evidence.
+
 API/host failures propagate as typed tree errors; the canary plugin then
 classifies them honestly (infra-failure/configuration-failure) — never a
 silent pass.
@@ -79,12 +86,31 @@ def _headers() -> dict[str, str]:
 
 
 def _fetch_recursive_listing(slug: str, commit_sha: str) -> dict[str, object]:
+    # Routed through the shared categorized retry seam (_http.make_retry,
+    # same default policy as GitHubTreeSource) so transient transport
+    # failures retry like every production call instead of failing the
+    # canary on first blip. The response body is read inside the retried
+    # operation: no bytes are yielded mid-flight, so replay is safe here
+    # (unlike read_blob_stream's mid-stream discipline).
+    retry = _http.make_retry(
+        max_attempts=4,
+        base_delay=1.0,
+        max_delay=60.0,
+        max_rate_limit_delay=300.0,
+        sleeper=None,
+    )
     url = f"https://api.github.com/repos/{slug}/git/trees/{commit_sha}?recursive=1"
-    with _http.safe_urlopen(Request(url, headers=_headers()), timeout=60) as response:
-        payload: object = json.load(response)
-    if not isinstance(payload, dict):
-        raise AssertionError("recursive tree listing must be a JSON object")
-    return payload
+
+    def _open() -> dict[str, object]:
+        with _http.safe_urlopen(
+            Request(url, headers=_headers()), timeout=60
+        ) as response:
+            payload: object = json.load(response)
+        if not isinstance(payload, dict):
+            raise AssertionError("recursive tree listing must be a JSON object")
+        return payload
+
+    return retry(_open)
 
 
 def test_pinned_fixture_recursive_listing_arrives_truncated() -> None:
@@ -96,6 +122,13 @@ def test_pinned_fixture_recursive_listing_arrives_truncated() -> None:
             f"{TRUNCATION_REPO}@{TRUNCATION_COMMIT} recursive listing is no "
             "longer truncated; the canary precondition drifted — repin"
         )
+    # Provenance (OBSERVED 2026-08-21, authenticated call through
+    # leitir._http.safe_urlopen): ``GET /git/trees/{commit}?recursive=1``
+    # echoes the *requested* identifier in the response ``sha`` field — here
+    # the commit SHA d58772d8…, NOT the commit's underlying tree SHA
+    # (e61a1d8e0fd5f82e786b93bb95607378b069eb9b, cross-checked via
+    # ``GET /git/commits/{commit}`` and confirmed different). The assertion
+    # below therefore pins response-echo consistency against the commit pin.
     assert payload.get("sha") == TRUNCATION_COMMIT
 
 

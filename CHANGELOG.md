@@ -16,6 +16,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)
+- report honest coverage bounds in search output and help (`discovery`)
 
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)

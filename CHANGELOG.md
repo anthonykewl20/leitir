@@ -13,6 +13,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ## [Unreleased]
 
 ### Added
+- enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)

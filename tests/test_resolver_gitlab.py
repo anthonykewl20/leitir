@@ -184,7 +184,10 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
 
 _GITLAB_FIXTURE_ROOT = "gitlab-fixture-root"
 _GITLAB_TREE_PAYLOAD_SHA256 = "643ab2c84f28b7a34ec06ddb6026ab1501ea9b6a26a1b507b4c06bab8aa1661f"
-_GITLAB_ARCHIVE_SHA256 = "649dd244c86dd3f70cde23da2f2bd7a4dbcf3f73bd266c59c152419f8d4fd442"
+# Pin the UNCOMPRESSED tar stream: gzip.compress output bytes vary with the
+# platform zlib (Python 3.11/3.12 and Windows emit different, equally valid
+# deflate streams), while the tar member bytes/order are identical everywhere.
+_GITLAB_ARCHIVE_TAR_SHA256 = "bab1839a5fd83d319c46500c1820b2539f3f957acbfa7d5eaaf24ae368f731f7"
 _GITLAB_AC1_ENTRIES_SHA256 = "4c9e448bafe0efb5d5bd9db21d3f64f397bc6284caa46903c333b3b2b2dda728"
 _AC1_TOTAL = 2500
 _AC1_PER_PAGE = 100
@@ -295,9 +298,9 @@ def test_gitlab_entries_are_byte_identical_to_baseline_capture():
     )
     assert (
         hashlib.sha256(
-            routes["/projects/owner%2Frepo/repository/archive.tar.gz"][2]
+            gzip.decompress(routes["/projects/owner%2Frepo/repository/archive.tar.gz"][2])
         ).hexdigest()
-        == _GITLAB_ARCHIVE_SHA256
+        == _GITLAB_ARCHIVE_TAR_SHA256
     )
     with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)

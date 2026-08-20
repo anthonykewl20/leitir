@@ -201,7 +201,10 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
 _BB_FIXTURE_ROOT = "bb-fixture-root"
 _BB_ROOT_PAYLOAD_SHA256 = "17f96416d15b761699777f89ed6fbe05e9bdb0c16f5c365399eb6bffb1d08594"
 _BB_PKG_PAYLOAD_SHA256 = "d6fd3e22a2c7cb8ef1230ba9d7e950712cf3ac194131e4e25fe2af12d5a551c9"
-_BB_ARCHIVE_SHA256 = "5471338f3447ec446f21891ad41bd022896dc833aad25cc4d283e5de18b1af9f"
+# Pin the UNCOMPRESSED tar stream: gzip.compress output bytes vary with the
+# platform zlib (Python 3.11/3.12 and Windows emit different, equally valid
+# deflate streams), while the tar member bytes/order are identical everywhere.
+_BB_ARCHIVE_TAR_SHA256 = "d25612df6396b8c100b35bf3024ca2b3e89efa215e060c84944976d3aea93e1b"
 
 
 def _bb_blob_sha(content: bytes) -> str:
@@ -331,9 +334,9 @@ def test_bitbucket_entries_are_byte_identical_to_baseline_capture():
     )
     assert (
         hashlib.sha256(
-            routes[f"/repositories/owner/repo/get/{SHA}.tar.gz"][2]
+            gzip.decompress(routes[f"/repositories/owner/repo/get/{SHA}.tar.gz"][2])
         ).hexdigest()
-        == _BB_ARCHIVE_SHA256
+        == _BB_ARCHIVE_TAR_SHA256
     )
     with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)

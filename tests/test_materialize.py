@@ -12,7 +12,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import pytest
-from _http_server import scripted_server
+from _http_server import json_body, scripted_server
 
 import leitir.materialize as materialize_module
 from leitir.materialize import (
@@ -24,6 +24,7 @@ from leitir.materialize import (
     materialize_github_repo,
     read_valid_manifest,
 )
+from leitir.resolver import CodebergResolver, ResolutionError
 from leitir.tree import BlobEntry, GitHubTreeSource, TreeReadError
 from leitir.trust import compute_trust
 
@@ -800,6 +801,160 @@ def test_symlink_mismatch_without_any_reread_method_fails_closed(tmp_path):
         VerificationError, match="cannot re-read symbolic link blob: link"
     ):
         _verify_staging(tmp_path, source)
+
+
+def _gitea_trees_payload(rows: list[dict]) -> dict:
+    return {"tree": rows}
+
+
+def _gitea_symlink_contents_payload(
+    target: str, blob_sha: str, *, with_target: bool = True
+) -> dict:
+    payload = {
+        "name": "link",
+        "path": "link",
+        "sha": blob_sha,
+        "type": "symlink",
+        "size": len(target),
+        "encoding": None,
+        "content": None,
+    }
+    if with_target:
+        payload["target"] = target
+    return payload
+
+
+def _codeberg_shelf_responses(
+    link_blob_sha: str,
+    contents_response: tuple,
+    fallback_response: tuple | None = None,
+) -> list[tuple]:
+    target = "realfile"
+    trees = _gitea_trees_payload(
+        [
+            {
+                "type": "blob",
+                "path": "realfile",
+                "sha": GitHubTreeSource.git_blob_sha(b"proof"),
+                "size": 5,
+                "mode": "100644",
+            },
+            {
+                "type": "blob",
+                "path": "link",
+                "sha": link_blob_sha,
+                "size": len(target),
+                "mode": "120000",
+            },
+        ]
+    )
+    responses = [
+        (200, {}, json.dumps(trees).encode("utf-8")),
+        contents_response,
+    ]
+    if fallback_response is not None:
+        responses.append(fallback_response)
+    return responses
+
+
+def test_codeberg_symlink_enumeration_glitch_cleared_by_digest_verified_reread(tmp_path):
+    # AC-2 / C-2 (issue #219): a Codeberg shelf whose tree listing vouches a
+    # stale digest for an intact on-disk symlink (an enumeration glitch).
+    # The commit-pinned re-read now succeeds for symlink paths and returns
+    # digest-verified bytes equal to the extracted ones, so the mismatch is
+    # cleared and the outcome is identical to the no-glitch run — full
+    # verification, never a downgrade to "sampled".
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload("realfile", honest_sha)
+    responses = _codeberg_shelf_responses(glitched_sha, (200, {}, json_body(contents)))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        assert _verify_staging(tmp_path, resolver) is True
+    assert server.state.request_paths == [
+        f"/repos/acme/demo/git/trees/{SHA}?recursive=true",
+        f"/repos/acme/demo/contents/link?ref={SHA}",
+    ]
+
+
+def test_codeberg_symlink_tamper_rejected_naming_path(tmp_path):
+    # AC-3 / C-3 (issue #219): a genuinely tampered Codeberg symlink. The
+    # listing digest is honest, the extracted bytes are not; the re-read
+    # returns the digest-verified pinned bytes, which differ from the
+    # extracted ones, so verification rejects with the path-naming
+    # VerificationError instead of surfacing a ResolutionError.
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("other")  # tampered target
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload("realfile", honest_sha)
+    responses = _codeberg_shelf_responses(honest_sha, (200, {}, json_body(contents)))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        with pytest.raises(
+            VerificationError, match="Git symbolic-link blob digest mismatch: link"
+        ):
+            _verify_staging(tmp_path, resolver)
+
+
+def test_codeberg_symlink_glitch_cleared_via_git_blob_fallback_channel(tmp_path):
+    # AC-2 via the no-``target`` contents shape (older Gitea): the re-read
+    # takes the digest-verified git-blob fallback channel and still clears
+    # the enumeration glitch — full verification, never a downgrade.
+    import base64
+
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload(
+        "realfile", honest_sha, with_target=False
+    )
+    git_blob = {
+        "content": base64.b64encode(b"realfile").decode("ascii"),
+        "encoding": "base64",
+        "sha": honest_sha,
+        "size": len(b"realfile"),
+    }
+    responses = _codeberg_shelf_responses(
+        glitched_sha,
+        (200, {}, json.dumps(contents).encode("utf-8")),
+        (200, {}, json.dumps(git_blob).encode("utf-8")),
+    )
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(base_url=server.base_url, sleeper=lambda _: None)
+        assert _verify_staging(tmp_path, resolver) is True
+    assert server.state.request_paths == [
+        f"/repos/acme/demo/git/trees/{SHA}?recursive=true",
+        f"/repos/acme/demo/contents/link?ref={SHA}",
+        f"/repos/acme/demo/git/blobs/{honest_sha}",
+    ]
+
+
+def test_codeberg_symlink_glitch_reread_channel_failure_fails_closed(tmp_path):
+    # SP-1 at the materialize boundary (issue #219): a glitch listing whose
+    # re-read channel fails can neither clear nor confirm the mismatch — the
+    # typed ResolutionError propagates and verification fails closed (no
+    # clearance, no "sampled" downgrade).
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    responses = _codeberg_shelf_responses(glitched_sha, (500, {}, b""))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        with pytest.raises(ResolutionError, match="HTTP 500"):
+            _verify_staging(tmp_path, resolver)
 
 
 def test_oversized_archive_member_is_rejected(tmp_path, monkeypatch):

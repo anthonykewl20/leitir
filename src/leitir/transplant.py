@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import tempfile
 import unicodedata
 from dataclasses import dataclass, fields
 from enum import Enum
@@ -26,6 +24,7 @@ from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.bts_pipeline import PIPELINE_SCHEMA_VERSION, PipelineValidationVerdict
 from leitir.relocate import RELOCATION_SCHEMA_VERSION, FileRole, Relocation
 from leitir.rerun import ValidationStatus
+from leitir.safeio import atomic_write_bytes
 
 BUNDLE_SCHEMA_VERSION = "leitir-transplant-bundle-v1"
 BUNDLE_V2_SCHEMA_VERSION = "leitir-transplant-bundle-v2"
@@ -1097,23 +1096,7 @@ def publish_packet(packet: Packet, target: Path) -> None:
             "a different artifact already exists at the publication target",
             detail_code="packet_publish_conflict_v1",
         )
-    fd, name = tempfile.mkstemp(prefix=f".{target.name}.tmp-", dir=target.parent)
-    temporary = Path(name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(packet.archive_bytes)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, target)
-        if os.name == "posix":
-            directory_fd = os.open(target.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(target, packet.archive_bytes)
 
 
 __all__ = [

@@ -24,13 +24,14 @@ import json
 import os
 import re
 import sys
-import tempfile
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+
+from leitir.safeio import atomic_text_writer
 
 _DISTRIBUTION_NAME = "leitir"
 _GITHUB_RELEASES_URL = "https://api.github.com/repos/anthonykewl20/leitir/releases/latest"
@@ -144,31 +145,13 @@ def _read_cache(path: Path) -> dict[str, object] | None:
 def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
     """Atomically write the cache, returning False for every filesystem failure."""
 
-    fd = -1
-    temporary: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix=".update-check.json.tmp-", dir=path.parent)
-        temporary = Path(name)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
+        with atomic_text_writer(path, encoding="utf-8", newline=None) as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
         return True
     except (OSError, TypeError, ValueError):
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if temporary is not None:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
         return False
 
 

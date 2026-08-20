@@ -113,7 +113,7 @@ from leitir.rerun import (
     TestOutcomeEvidence,
     canonical_test_id,
 )
-from leitir.safeio import confined_path, read_regular_file
+from leitir.safeio import atomic_write_bytes, confined_path, read_regular_file
 from leitir.suitability import build_survivor_set
 from leitir.transplant import PacketInputs, build_reference_packet, publish_packet
 from leitir.treehash import TreeHashError, verify_materialized_tree_hash
@@ -1582,17 +1582,10 @@ def _task_baseline_from_sidecar(
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
+    # The atomic-write mechanics live in leitir.safeio (issue #200); this
+    # wrapper preserves the site's parent-directory provisioning contract.
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_bytes(path, data)
 
 
 def run_pipeline(root: Path, owner: str, repo: str, commit_sha: str, *, seed: bts_cli.SeedSelector, contract_tests_path: Path, out_dir: Path, recipient_package: str, nsjail_sha256: str, nsjail_version: str, nsjail_build_identity: str, config_schema_digest: str, rootfs_source: Path, rootfs_digest: str, policy_path: Path | None = None, emit_packets: PacketInputs | None = None) -> BTSPipelineResult:

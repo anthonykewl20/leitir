@@ -147,12 +147,14 @@ def test_tree_listing_hashes_host_native_file_content():
             {},
             _fixture_archive("single-root", {"a.py": b"hello"}),
         ),
+        # K=3 spot check raw read (K collapses to 1 for a one-file repo).
+        f"/repositories/owner/repo/src/{SHA}/a.py": (200, {}, b"hello"),
     }
     with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
     assert [(entry.path, entry.size, entry.mode) for entry in entries] == [("a.py", 5, "100644")]
     assert entries[0].blob_sha == "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
-    assert server.state.served_count == 2  # one listing page + one archive download
+    assert server.state.served_count == 3  # listing + archive + 1 spot-check read
 
 
 def test_environment_token_uses_bearer_only_for_https_api_host(monkeypatch):
@@ -292,33 +294,29 @@ def _bb_fixture_repo():
             _fixture_archive(_BB_FIXTURE_ROOT, contents, frozenset({"pkg/link.txt"})),
         ),
     }
-    # Per-file raw reads (baseline behavior only; page-bounded enumeration
-    # must never request these).
+    # Per-file raw routes: consumed by the K=3 deterministic spot check and
+    # the bounded divergence fallback only — never as a per-file fetch
+    # pattern (issue #195 remediation, CCR-amended AC-2).
     for path, content in contents.items():
         routes[f"/repositories/owner/repo/src/{SHA}/{path}"] = (200, {}, content)
     return routes, contents
 
 
-def test_bitbucket_enumeration_makes_no_per_file_requests():
+def test_bitbucket_enumeration_has_no_per_file_fetch_pattern():
     routes, _ = _bb_fixture_repo()
     with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
-    listing_pages = {
-        f"/repositories/owner/repo/src/{SHA}/",
-        f"/repositories/owner/repo/src/{SHA}/pkg/",
-    }
-    per_file = [
-        path
-        for path in server.state.request_paths
-        if not path.endswith(".tar.gz") and path not in listing_pages
-    ]
-    assert per_file == []
+    # The only raw reads are the fixed K=3 spot check: the first three
+    # entries in sorted order (fewer if the repo were smaller).
     assert server.state.request_paths == [
         f"/repositories/owner/repo/src/{SHA}/",
         f"/repositories/owner/repo/src/{SHA}/pkg/",
         f"/repositories/owner/repo/get/{SHA}.tar.gz",
+        f"/repositories/owner/repo/src/{SHA}/file_000.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_002.txt",
     ]
-    assert server.state.served_count <= 4  # 2 directory pages + 1 archive + slack
+    assert server.state.served_count == 6  # 2 pages + 1 archive + K=3 spot check
     assert len(entries) == 60
 
 
@@ -352,17 +350,40 @@ def test_bitbucket_repeated_enumeration_is_cached_and_identical():
         first = resolver.list_blobs("owner/repo", SHA)
         second = resolver.list_blobs("owner/repo", SHA)
     assert second == first
-    assert server.state.served_count == 3  # second call served from cache
+    # 2 pages + 1 archive (cached across calls) + K=3 spot-check raw reads
+    # per enumeration (the spot check is deliberately re-run, bounded at K).
+    assert server.state.served_count == 9
 
 
-def test_bitbucket_size_mismatch_between_listing_and_archive_fails_closed():
+def test_bitbucket_size_mismatch_falls_back_to_baseline_read():
+    # CCR-amended SP-2 (issue #195 remediation): one listing-vs-archive size
+    # divergence (export-subst shape) re-verifies THAT path on the baseline
+    # raw channel — digest and size from the raw content at the pinned
+    # commit — leaving the entry byte-identical to the baseline capture.
     routes, _ = _bb_fixture_repo()
     root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
     root["values"][0]["size"] = 999
     routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
     with hs.routed_server(routes) as server:
-        with pytest.raises(ResolutionError, match="size mismatch between listing and archive"):
-            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == _BITBUCKET_BASELINE_ENTRIES
+    raw_reads = [
+        path
+        for path in server.state.request_paths
+        if path == f"/repositories/owner/repo/src/{SHA}/file_000.txt"
+    ]
+    # Exactly one baseline-channel read for the divergent path; the spot
+    # check skips it (already raw-verified) and covers the next three.
+    assert raw_reads == [f"/repositories/owner/repo/src/{SHA}/file_000.txt"]
+    assert server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt"
+    ) + server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_002.txt"
+    ) + server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_003.txt"
+    ) == 3
 
 
 def test_bitbucket_missing_size_field_is_typed_error():
@@ -386,6 +407,9 @@ def test_bitbucket_link_attribute_disagreement_fails_closed():
 
 
 def test_bitbucket_archive_missing_blob_fails_closed():
+    # The ghost path is divergent (export-ignore shape) but the baseline
+    # channel refuses it too: no raw route exists, so the fallback's raw
+    # read fails closed with a typed error (CCR-amended SP-2).
     routes, _ = _bb_fixture_repo()
     root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
     root["values"].append(
@@ -393,8 +417,9 @@ def test_bitbucket_archive_missing_blob_fails_closed():
     )
     routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
     with hs.routed_server(routes) as server:
-        with pytest.raises(ResolutionError, match="missing listed blob: ghost.txt"):
+        with pytest.raises(ResolutionError, match="HTTP 404"):
             _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert f"/repositories/owner/repo/src/{SHA}/ghost.txt" in server.state.request_paths
 
 
 def test_bitbucket_archive_unlisted_blob_fails_closed():
@@ -426,6 +451,108 @@ def test_bitbucket_malformed_values_is_typed_error():
     with hs.routed_server(routes) as server:
         with pytest.raises(ResolutionError, match="malformed tree metadata"):
             _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_bitbucket_spot_check_detects_raw_archive_digest_discrepancy():
+    # The K=3 spot check is the raw↔archive second channel: a raw route that
+    # serves different bytes than the archive member must fail closed with a
+    # typed error naming the path (issue #195 remediation, glm P2-2).
+    routes, _ = _bb_fixture_repo()
+    routes[f"/repositories/owner/repo/src/{SHA}/file_001.txt"] = (
+        200,
+        {},
+        b"silently different bytes\n",
+    )
+    with hs.routed_server(routes) as server:
+        with pytest.raises(
+            ResolutionError,
+            match=r"digest mismatch between raw content and archive: file_001.txt",
+        ):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    spot_reads = [
+        path
+        for path in server.state.request_paths
+        if path.startswith(f"/repositories/owner/repo/src/{SHA}/")
+        and not path.endswith("/")
+    ]
+    assert spot_reads == [
+        f"/repositories/owner/repo/src/{SHA}/file_000.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt",
+    ]
+
+
+def test_bitbucket_symlink_entry_is_byte_identical_to_baseline_read():
+    # Symlink parity: the archive's linkname bytes and the baseline raw read
+    # must agree — same digest, same size — yielding a byte-identical entry
+    # (kind cross-checked against the listing's "link" attribute, and the
+    # K=1 spot check re-proves the link target bytes through the raw route).
+    linkname = b"target.txt"
+    payload = {
+        "values": [
+            {
+                "type": "commit_file",
+                "path": "link.txt",
+                "size": len(linkname),
+                "attributes": ["link"],
+            }
+        ]
+    }
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body(payload)),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("symlink-root", {"link.txt": linkname}, frozenset({"link.txt"})),
+        ),
+        f"/repositories/owner/repo/src/{SHA}/link.txt": (200, {}, linkname),
+    }
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == [("link.txt", _bb_blob_sha(linkname), len(linkname), "120000")]
+    assert server.state.request_paths[-1] == f"/repositories/owner/repo/src/{SHA}/link.txt"
+
+
+def test_bitbucket_fallback_cap_thirty_three_divergent_paths_fails_closed():
+    # 34 listed files, 1 archived → 33 divergent > cap 32 → the archive
+    # channel is judged inconsistent: typed error BEFORE any per-path fetch
+    # (fail-closed, no request storm).
+    total, archived = 34, 1
+    contents = {
+        f"file_{i:04d}.txt": f"divergence fixture {i}\n".encode() for i in range(total)
+    }
+    values = [
+        {
+            "type": "commit_file",
+            "path": path,
+            "size": len(content),
+            "attributes": [],
+        }
+        for path, content in sorted(contents.items())
+    ]
+    archived_contents = dict(list(sorted(contents.items()))[:archived])
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body({"values": values})),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("divergence-root", archived_contents),
+        ),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(
+            ResolutionError, match=r"diverges from tree listing on 33 paths \(limit 32\)"
+        ):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    raw_reads = [
+        path
+        for path in server.state.request_paths
+        if path.startswith(f"/repositories/owner/repo/src/{SHA}/")
+        and not path.endswith("/")
+    ]
+    assert raw_reads == []  # the cap fires before any fallback fetch
+    assert server.state.served_count == 2  # one listing page + one archive
 
 
 _BITBUCKET_BASELINE_ENTRIES = [

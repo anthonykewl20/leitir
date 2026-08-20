@@ -238,8 +238,14 @@ def _gitlab_fixture_content(path):
     return f"# leitir gitlab fixture {path}\n".encode()
 
 
-def _gitlab_fixture_repo():
-    """Deterministic 60-blob repo: 58 regular files, 1 executable, 1 symlink."""
+def _gitlab_fixture_repo(omit_archive=frozenset(), substitute_archive=None):
+    """Deterministic 60-blob repo: 58 regular files, 1 executable, 1 symlink.
+
+    ``omit_archive`` drops paths from the ARCHIVE only (export-ignore
+    shape); ``substitute_archive`` replaces a member's archived bytes
+    (export-subst shape). The tree listing and per-blob probes always
+    describe the pristine content, exactly like a gitattributes repo.
+    """
     contents = {
         path: _gitlab_fixture_content(path) for path, _ in _gitlab_fixture_paths()
     }
@@ -253,18 +259,29 @@ def _gitlab_fixture_repo():
         }
         for path, mode in _gitlab_fixture_paths()
     ]
+    archived = {
+        path: content
+        for path, content in contents.items()
+        if path not in omit_archive
+    }
+    if substitute_archive:
+        archived = {
+            path: substitute_archive.get(path, content)
+            for path, content in archived.items()
+        }
     routes = {
         "/projects/owner%2Frepo/repository/tree": (200, {}, hs.json_body(items)),
         "/projects/owner%2Frepo/repository/archive.tar.gz": (
             200,
             {},
             _fixture_archive(
-                _GITLAB_FIXTURE_ROOT, contents, frozenset({"docs/link.md"})
+                _GITLAB_FIXTURE_ROOT, archived, frozenset({"docs/link.md"})
             ),
         ),
     }
-    # Per-blob size probes (baseline behavior only; the page-bounded
-    # enumeration must never request these).
+    # Per-blob size probes: the baseline channel. Clean enumerations never
+    # request these; the bounded divergence fallback does, one per
+    # divergent path (issue #195 remediation).
     for item in items:
         routes[f"/projects/owner%2Frepo/repository/blobs/{item['id']}"] = (
             200,
@@ -414,17 +431,41 @@ def test_gitlab_rate_limit_mid_walk_resumes_without_refetching_pages():
     assert server.state.served_count <= pages_total + retry_slack
 
 
-def test_gitlab_archive_digest_mismatch_fails_closed():
+def test_gitlab_single_digest_divergence_falls_back_to_baseline_probe():
+    # CCR-amended SP-2 (issue #195 remediation): one tampered listing id is
+    # one divergent path — re-verified on the baseline per-blob channel, the
+    # entry byte-identical to what the baseline per-blob enumeration built.
     routes, _ = _gitlab_fixture_repo()
     tree = json.loads(routes["/projects/owner%2Frepo/repository/tree"][2])
-    tree[0]["id"] = "0" * 40  # tampered listing id disagrees with the archive
+    tree[0]["id"] = "0" * 40  # listing id disagrees with the archive digest
     routes["/projects/owner%2Frepo/repository/tree"] = (200, {}, hs.json_body(tree))
+    routes[f"/projects/owner%2Frepo/repository/blobs/{'0' * 40}"] = (
+        200,
+        {},
+        hs.json_body({"size": 40}),  # the baseline probe's size for src/file_000.py
+    )
     with hs.routed_server(routes) as server:
-        with pytest.raises(ResolutionError, match="digest mismatch"):
-            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    baseline_first = _GITLAB_BASELINE_ENTRIES[2]  # src/file_000.py, sorted position
+    assert baseline_first == (
+        "src/file_000.py",
+        "21b10b1efa0e3e30d572dbabc2c3c1fa6edd236b",
+        40,
+        "100644",
+    )
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ][2] == ("src/file_000.py", "0" * 40, 40, "100644")
+    blob_probes = [
+        path for path in server.state.request_paths if "/repository/blobs/" in path
+    ]
+    assert blob_probes == [f"/projects/owner%2Frepo/repository/blobs/{'0' * 40}"]
 
 
 def test_gitlab_archive_missing_blob_fails_closed():
+    # The ghost path is divergent (export-ignore shape) but the baseline
+    # channel refuses it too: no probe route exists, so the fallback's
+    # per-blob fetch fails closed with a typed error (CCR-amended SP-2).
     routes, _ = _gitlab_fixture_repo()
     tree = json.loads(routes["/projects/owner%2Frepo/repository/tree"][2])
     tree.append(
@@ -438,8 +479,12 @@ def test_gitlab_archive_missing_blob_fails_closed():
     )
     routes["/projects/owner%2Frepo/repository/tree"] = (200, {}, hs.json_body(tree))
     with hs.routed_server(routes) as server:
-        with pytest.raises(ResolutionError, match="missing listed blob: src/ghost.py"):
+        with pytest.raises(ResolutionError, match="HTTP 404"):
             _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert (
+        f"/projects/owner%2Frepo/repository/blobs/{'f' * 40}"
+        in server.state.request_paths
+    )
 
 
 def test_gitlab_archive_unlisted_blob_fails_closed():
@@ -498,6 +543,229 @@ def test_gitlab_malformed_tree_page_is_typed_error():
     with hs.routed_server(routes) as server:
         with pytest.raises(ResolutionError, match="malformed tree metadata"):
             _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_gitlab_export_ignored_path_falls_back_exactly_like_baseline():
+    # .gitattributes export-ignore: the archive omits src/file_030.py but the
+    # tree listing still carries it. The bounded fallback re-verifies that
+    # ONE path on the baseline per-blob channel; every entry — including the
+    # fallback one — is byte-identical to the baseline capture.
+    routes, _ = _gitlab_fixture_repo(omit_archive=frozenset({"src/file_030.py"}))
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == _GITLAB_BASELINE_ENTRIES
+    blob_probes = [
+        path for path in server.state.request_paths if "/repository/blobs/" in path
+    ]
+    assert len(blob_probes) == 1  # exactly one baseline-channel probe
+    assert blob_probes[0].endswith(
+        _gitlab_blob_sha(b"# leitir gitlab fixture src/file_030.py\n")
+    )
+
+
+def test_gitlab_export_subst_content_falls_back_exactly_like_baseline():
+    # .gitattributes export-subst: the archived bytes for src/file_031.py are
+    # substituted (here also a different length); the listing id still names
+    # the pristine blob. The fallback takes size from the baseline probe, so
+    # every entry stays byte-identical to the baseline capture.
+    substituted = b"$Id: expanded by export-subst beyond original length\x1a\n"
+    routes, _ = _gitlab_fixture_repo(
+        substitute_archive={"src/file_031.py": substituted}
+    )
+    assert len(substituted) != 40  # sizes genuinely differ between channels
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == _GITLAB_BASELINE_ENTRIES
+    blob_probes = [
+        path for path in server.state.request_paths if "/repository/blobs/" in path
+    ]
+    assert len(blob_probes) == 1
+
+
+def _divergent_fixture_repo(total, archived):
+    """Repo with ``total`` listed files and an archive carrying only the
+    first ``archived`` of them (export-ignore at scale)."""
+    contents = {
+        f"src/file_{i:04d}.py": f"# divergence fixture {i}\n".encode()
+        for i in range(total)
+    }
+    items = [
+        {
+            "id": _gitlab_blob_sha(contents[path]),
+            "name": path.rsplit("/", 1)[-1],
+            "type": "blob",
+            "path": path,
+            "mode": "100644",
+        }
+        for path in sorted(contents)
+    ]
+    routes = {
+        "/projects/owner%2Frepo/repository/tree": (200, {}, hs.json_body(items)),
+        "/projects/owner%2Frepo/repository/archive.tar.gz": (
+            200,
+            {},
+            _fixture_archive(
+                "divergence-root", dict(list(sorted(contents.items()))[:archived])
+            ),
+        ),
+    }
+    for item in items:
+        routes[f"/projects/owner%2Frepo/repository/blobs/{item['id']}"] = (
+            200,
+            {},
+            hs.json_body({"size": len(contents[item["path"]])}),
+        )
+    return routes, contents
+
+
+def test_gitlab_fallback_cap_thirty_three_divergent_paths_fails_closed():
+    # 34 listed files, 1 archived → 33 divergent > cap 32 → the archive
+    # channel is judged inconsistent: typed error BEFORE any per-path fetch
+    # (fail-closed, no request storm).
+    routes, _ = _divergent_fixture_repo(total=34, archived=1)
+    with hs.routed_server(routes) as server:
+        with pytest.raises(
+            ResolutionError, match=r"diverges from tree listing on 33 paths \(limit 32\)"
+        ):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    blob_probes = [
+        path for path in server.state.request_paths if "/repository/blobs/" in path
+    ]
+    assert blob_probes == []  # the cap fires before any fallback fetch
+    assert server.state.served_count == 2  # one tree page + one archive
+
+
+def test_gitlab_fallback_cap_boundary_thirty_two_divergent_paths_succeeds():
+    # Exactly at the cap: 34 listed, 2 archived → 32 divergent paths, each
+    # re-verified on the baseline channel — enumeration succeeds with
+    # baseline-identical entries.
+    routes, contents = _divergent_fixture_repo(total=34, archived=2)
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == [
+        (path, _gitlab_blob_sha(content), len(content), "100644")
+        for path, content in sorted(contents.items())
+    ]
+    blob_probes = [
+        path for path in server.state.request_paths if "/repository/blobs/" in path
+    ]
+    assert len(blob_probes) == 32
+
+
+def test_gitlab_archive_member_count_cap_is_typed_error(monkeypatch):
+    monkeypatch.setattr("leitir.resolver._ARCHIVE_MAX_MEMBERS", 2)
+    content = {"a.txt": b"hello\n", "b.txt": b"world\n", "c.txt": b"extra\n"}
+    routes = _gitlab_archive_routes(content)
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="too many members"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_gitlab_archive_member_size_cap_is_typed_error(monkeypatch):
+    monkeypatch.setattr("leitir.resolver._ARCHIVE_MAX_MEMBER_BYTES", 4)
+    content = {"a.txt": b"hello\n"}
+    routes = _gitlab_archive_routes(content)
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="member exceeds size limit"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_gitlab_archive_total_size_cap_is_typed_error(monkeypatch):
+    monkeypatch.setattr("leitir.resolver._ARCHIVE_MAX_TOTAL_BYTES", 8)
+    content = {"a.txt": b"hello\n", "b.txt": b"world\n"}
+    routes = _gitlab_archive_routes(content)
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="total size limit"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_gitlab_duplicate_archive_path_is_typed_error():
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for _ in range(2):
+            info = tarfile.TarInfo("dup-root/a.txt")
+            info.size = 6
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(b"hello\n"))
+    routes = {
+        "/projects/owner%2Frepo/repository/tree": (
+            200,
+            {},
+            hs.json_body(
+                [
+                    {
+                        "id": _gitlab_blob_sha(b"hello\n"),
+                        "name": "a.txt",
+                        "type": "blob",
+                        "path": "a.txt",
+                        "mode": "100644",
+                    }
+                ]
+            ),
+        ),
+        "/projects/owner%2Frepo/repository/archive.tar.gz": (
+            200,
+            {},
+            gzip.compress(raw.getvalue(), mtime=0),
+        ),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="duplicate path: a.txt"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_gitlab_non_gzip_archive_is_typed_error():
+    # The archive channel is pinned to tar.gz (materialize parity); an xz
+    # stream must surface as a typed ResolutionError, never an untyped
+    # LZMAError escape.
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w:xz", format=tarfile.PAX_FORMAT) as tar:
+        info = tarfile.TarInfo("xz-root/a.txt")
+        info.size = 6
+        info.mtime = 0
+        tar.addfile(info, io.BytesIO(b"hello\n"))
+    routes = {
+        "/projects/owner%2Frepo/repository/tree": (
+            200,
+            {},
+            hs.json_body([]),
+        ),
+        "/projects/owner%2Frepo/repository/archive.tar.gz": (
+            200,
+            {},
+            raw.getvalue(),
+        ),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="malformed source archive"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def _gitlab_archive_routes(content):
+    tree = [
+        {
+            "id": _gitlab_blob_sha(data),
+            "name": path,
+            "type": "blob",
+            "path": path,
+            "mode": "100644",
+        }
+        for path, data in sorted(content.items())
+    ]
+    return {
+        "/projects/owner%2Frepo/repository/tree": (200, {}, hs.json_body(tree)),
+        "/projects/owner%2Frepo/repository/archive.tar.gz": (
+            200,
+            {},
+            _fixture_archive("caps-root", content),
+        ),
+    }
 
 
 _GITLAB_BASELINE_ENTRIES = [

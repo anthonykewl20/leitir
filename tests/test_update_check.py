@@ -350,7 +350,10 @@ def test_stale_cache_temp_is_swept_on_next_run(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     path = update._cache_path()
     assert path is not None
-    path.parent.mkdir(parents=True)
+    # XDG_CACHE_HOME only redirects the cache on non-darwin/non-win32 hosts;
+    # on macOS/Windows the platform cache directory may already exist from
+    # earlier tests in the same run.
+    path.parent.mkdir(parents=True, exist_ok=True)
     stale = path.parent / ".update-check.json.tmp-orphaned"
     stale.write_text("{}", encoding="utf-8")
     ancient = time.time() - update._STALE_TMP_MAX_AGE_SECONDS - 3600.0
@@ -358,10 +361,14 @@ def test_stale_cache_temp_is_swept_on_next_run(
     fresh = path.parent / ".update-check.json.tmp-live-run"
     fresh.write_text("{}", encoding="utf-8")
 
-    update._run_update_check("0.1.0")
+    try:
+        update._run_update_check("0.1.0")
 
-    assert not stale.exists()
-    assert fresh.exists()
+        assert not stale.exists()
+        assert fresh.exists()
+    finally:
+        fresh.unlink(missing_ok=True)
+        stale.unlink(missing_ok=True)
 
 
 def test_cache_write_cleans_its_own_temp_on_base_exception(

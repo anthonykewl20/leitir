@@ -138,10 +138,14 @@ def test_replace_failure_closes_fd_exactly_once_and_cleans_temp(
 
     def replace_failure(src: object, dst: object) -> None:
         # Recycle the just-closed temp fd: lowest-free allocation hands this
-        # descriptor number back, so a buggy except path would close a live fd.
-        recycled.append(os.open(tmp_path, os.O_RDONLY))
+        # descriptor number back, so a buggy except path would close a live
+        # fd. A canary FILE is used because os.open() on a directory is a
+        # PermissionError on Windows.
+        recycled.append(os.open(canary, os.O_RDONLY))
         raise OSError("injected replace failure")
 
+    canary = tmp_path / "canary.dat"
+    canary.write_bytes(b"canary")
     monkeypatch.setattr(tempfile, "mkstemp", spy_mkstemp)
     monkeypatch.setattr(os, "close", spy_close)
     monkeypatch.setattr(os, "replace", replace_failure)
@@ -294,11 +298,16 @@ def test_concurrent_writers_are_atomic_last_writer_wins(tmp_path: Path) -> None:
             barrier.wait(timeout=30)
             for _ in range(iterations):
                 atomic_write_bytes(target, payload)
-                observed = target.read_bytes()
-                if observed not in payloads:
-                    failures.append(
-                        AssertionError(f"torn content observed: {observed[:32]!r}")
-                    )
+                if os.name != "nt":
+                    # Windows denies os.replace() onto a destination another
+                    # handle has open, so read-while-write is POSIX-only; on
+                    # every platform the writers still interleave and the
+                    # final content must be exactly one payload.
+                    observed = target.read_bytes()
+                    if observed not in payloads:
+                        failures.append(
+                            AssertionError(f"torn content observed: {observed[:32]!r}")
+                        )
         except BaseException as exc:  # noqa: BLE001 - propagated to the main thread
             failures.append(exc)
 

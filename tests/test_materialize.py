@@ -1417,10 +1417,13 @@ def test_write_manifest_replace_failure_never_closes_recycled_fd(
     from leitir.materialize import MANIFEST_NAME, _write_manifest
 
     target = tmp_path / MANIFEST_NAME
+    # A canary FILE: os.open() on a directory is a PermissionError on Windows.
+    canary = tmp_path / "canary.dat"
+    canary.write_bytes(b"canary")
     recycled: list[int] = []
 
     def replace_failure(src: object, dst: object) -> None:
-        recycled.append(os.open(tmp_path, os.O_RDONLY))
+        recycled.append(os.open(canary, os.O_RDONLY))
         raise OSError("injected replace failure")
 
     monkeypatch.setattr(os, "replace", replace_failure)

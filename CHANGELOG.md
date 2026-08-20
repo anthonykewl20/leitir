@@ -19,6 +19,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - register the live pytest marker and make the live inventory authoritative (`tests`)
 
 ### Fixed
+- accept os-native separators in live inventory skip lines (`tests`)
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)

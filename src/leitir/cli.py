@@ -41,6 +41,7 @@ from .spec import CorpusSpec, parse_corpus_spec
 
 if TYPE_CHECKING:
     from .diff import DiffReport
+    from .discovery_search import CoverageBounds
     from .resolver import ResolvedPackage, _CorpusResolver, _HeadResolver
     from .trust import TrustScore
 
@@ -596,7 +597,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         dest="global_search",
-        help="global discovery via GitHub Code Search (coverage is indeterminate)",
+        help=(
+            "global discovery via GitHub Code Search; coverage is bounded, "
+            "not total: output reports pages fetched, matches returned, and "
+            "an incomplete flag with the bound that fired (page cap, "
+            "server-side truncation, or a result budget)"
+        ),
     )
 
     search.add_argument("--commit", default=None, help="40-char git SHA")
@@ -2106,16 +2112,43 @@ def _resolve_scope_via_package(
     return resolved.scope
 
 
-def _write_summary(report: SearchReport, *, file: TextIO) -> None:
+def _write_summary(
+    report: SearchReport,
+    *,
+    file: TextIO,
+    bounds: CoverageBounds | None = None,
+) -> None:
     cov = report.coverage
-    print(
-        f"coverage={cov.status.value} "
-        f"eligible={cov.files_eligible} "
-        f"indexed={cov.files_indexed} "
-        f"excluded={cov.files_excluded} "
-        f"matches={len(report.matches)}",
-        file=file,
-    )
+    if bounds is not None:
+        # Global discovery (issue #191): a lower-bound coverage statement —
+        # pages fetched / matches returned / incomplete flag — instead of the
+        # raw indeterminate status.  Never a total-coverage claim.
+        line = (
+            f"coverage=bounded-discovery "
+            f"pages={bounds.pages_fetched} "
+            f"matches={bounds.matches_returned} "
+            f"incomplete={str(bounds.incomplete).lower()}"
+        )
+        if bounds.incomplete:
+            provenance = ",".join(bounds.bounds) or "unspecified"
+            line += f" bound={provenance}"
+            print(line, file=file)
+            print(
+                "note: results may be incomplete — the coverage above is a "
+                f"lower bound (bound that fired: {provenance}), not a total",
+                file=file,
+            )
+        else:
+            print(line, file=file)
+    else:
+        print(
+            f"coverage={cov.status.value} "
+            f"eligible={cov.files_eligible} "
+            f"indexed={cov.files_indexed} "
+            f"excluded={cov.files_excluded} "
+            f"matches={len(report.matches)}",
+            file=file,
+        )
     for match in report.matches[:10]:
         src = match.source
         kinds = ",".join(k.value for k in match.matched_kinds)
@@ -2496,6 +2529,7 @@ def main(
 
     token = _github_token()
 
+    coverage_bounds: CoverageBounds | None = None
     try:
         if args.global_search:
             spec = SearchSpec(
@@ -2528,6 +2562,12 @@ def main(
                     ),
                 )
             report = searcher.search(spec)
+            # Honest coverage bounds from the global searcher (issue #191).
+            # ``getattr`` keeps injected fake searchers (no bounds) on the
+            # legacy summary line.
+            coverage_bounds = cast(
+                "CoverageBounds | None", getattr(searcher, "last_coverage_bounds", None)
+            )
         else:
             if args.repo is not None:
                 scope = RepoScope(slug=args.repo, commit_sha=args.commit)
@@ -2589,7 +2629,7 @@ def main(
         return int(ExitCode.INFRASTRUCTURE_FAILURE)
 
     print(report.to_json(), file=out)
-    _write_summary(report, file=err)
+    _write_summary(report, file=err, bounds=coverage_bounds)
     return successful()
 
 

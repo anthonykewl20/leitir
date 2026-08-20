@@ -211,13 +211,18 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
                 # backup dirs orphaned by a crash between the two os.replace
                 # calls both carry the owning commit sha, so a concurrent run
                 # for any other source is never touched (issue #205 C-5/SP-2).
-                stale_patterns = (f".{commit_sha}.tmp-*", f".{commit_sha}.old-*")
-                for stale in sorted(
-                    match
-                    for pattern in stale_patterns
-                    for match in target.parent.glob(pattern)
-                ):
+                # Staging temps are always removable debris. A backup dir is
+                # stale only while the verified target still exists: after a
+                # crash between the two os.replace calls it is the sole
+                # surviving verified generation — the state the corpus gc
+                # (cli.py) documents as the only valid cache generation and
+                # restores under this same lock — so it is never swept here
+                # (hy3 P1 remediation).
+                for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
                     _remove_path(stale)
+                if target.exists():
+                    for stale in sorted(target.parent.glob(f".{commit_sha}.old-*")):
+                        _remove_path(stale)
             yield
         finally:
             held.remove(lock_identity)

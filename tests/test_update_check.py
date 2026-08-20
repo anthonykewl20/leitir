@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import sys
+import time
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -333,3 +335,51 @@ def test_credentials_not_in_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
     assert update._fetch_latest_version("0.1.0") == "0.1.1"
     assert seen == "leitir/0.1.0 update-check"
+
+
+def test_stale_cache_temp_is_swept_on_next_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #205 C-4/AC-4/SP-2: crash-orphaned cache temps are swept.
+
+    A temp older than the age bound cannot belong to a live write and is
+    removed by the next run; a fresh temp — possibly a concurrent live run's
+    file — is never touched.
+    """
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    path = update._cache_path()
+    assert path is not None
+    path.parent.mkdir(parents=True)
+    stale = path.parent / ".update-check.json.tmp-orphaned"
+    stale.write_text("{}", encoding="utf-8")
+    ancient = time.time() - update._STALE_TMP_MAX_AGE_SECONDS - 3600.0
+    os.utime(stale, (ancient, ancient))
+    fresh = path.parent / ".update-check.json.tmp-live-run"
+    fresh.write_text("{}", encoding="utf-8")
+
+    update._run_update_check("0.1.0")
+
+    assert not stale.exists()
+    assert fresh.exists()
+
+
+def test_cache_write_cleans_its_own_temp_on_base_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #205 C-4/AC-4: cleanup runs in ``finally``, not ``except``.
+
+    A BaseException (here KeyboardInterrupt) between mkstemp and replace is
+    outside the ordinary except tuple; the finally-based cleanup must still
+    remove the write's own temp file.
+    """
+
+    path = tmp_path / "cache" / "leitir" / "update-check.json"
+
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(update.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        update._write_cache(path, {"schema": 2})
+    assert list(path.parent.glob(".update-check.json.tmp-*")) == []

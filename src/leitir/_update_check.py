@@ -26,6 +26,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -39,6 +40,11 @@ _CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 _NETWORK_TIMEOUT_SECONDS = 1.0
 _CACHE_SCHEMA = 2
 _MAX_RESPONSE_BYTES = 64 * 1024
+# A live cache write holds its temp file for milliseconds; one older than
+# this bound is an orphan from an interrupted exit and is swept by the next
+# run (issue #205 C-4). Fresh temps — possibly a concurrent live run's — are
+# never touched (SP-2).
+_STALE_TMP_MAX_AGE_SECONDS = 300.0
 _NUMERIC_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 _TRUE_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
 _TRUE_CI_VALUES = frozenset({"1", "true", "yes"})
@@ -141,6 +147,31 @@ def _read_cache(path: Path) -> dict[str, object] | None:
     return payload
 
 
+def _sweep_stale_cache_temps(directory: Path) -> None:
+    """Remove crash-orphaned cache temps, never a live run's file.
+
+    The sweep mirrors materialization's stale-``.tmp-`` cleanup pattern: a
+    temp file older than the age bound cannot belong to a live write (writes
+    complete in milliseconds), so it is debris from an interrupted exit;
+    anything fresher is left untouched for a concurrent run to finish
+    (issue #205 C-4/SP-2). Failures are silently ignored — sweeping is
+    hygiene, never a behavioral gate.
+    """
+
+    try:
+        candidates = sorted(directory.glob(".update-check.json.tmp-*"))
+    except OSError:
+        return
+    now = time.time()
+    for candidate in candidates:
+        try:
+            if now - candidate.stat().st_mtime <= _STALE_TMP_MAX_AGE_SECONDS:
+                continue
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
     """Atomically write the cache, returning False for every filesystem failure."""
 
@@ -157,8 +188,15 @@ def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        temporary = None
         return True
     except (OSError, TypeError, ValueError):
+        return False
+    finally:
+        # Cleanup runs for EVERY outcome, including a BaseException (e.g.
+        # KeyboardInterrupt) between mkstemp and replace: the except tuple
+        # above cannot catch it, and an orphaned temp would otherwise linger
+        # until the next run's sweep (issue #205 C-4).
         if fd >= 0:
             try:
                 os.close(fd)
@@ -169,7 +207,6 @@ def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
-        return False
 
 
 def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:
@@ -245,6 +282,7 @@ def _run_update_check(installed: str) -> None:
         path = _cache_path()
         if path is None:
             return
+        _sweep_stale_cache_temps(path.parent)
         now = _utc_now()
         cache = _read_cache(path)
         if cache is None or cache.get("installed_version") != installed:

@@ -207,7 +207,16 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
         try:
             _assert_target_confinement(root, target)
             if target.parent.exists():
-                for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
+                # Sweep crash debris for THIS target only: staging temps and
+                # backup dirs orphaned by a crash between the two os.replace
+                # calls both carry the owning commit sha, so a concurrent run
+                # for any other source is never touched (issue #205 C-5/SP-2).
+                stale_patterns = (f".{commit_sha}.tmp-*", f".{commit_sha}.old-*")
+                for stale in sorted(
+                    match
+                    for pattern in stale_patterns
+                    for match in target.parent.glob(pattern)
+                ):
                     _remove_path(stale)
             yield
         finally:

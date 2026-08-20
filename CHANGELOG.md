@@ -16,6 +16,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)
+- register the live pytest marker and make the live inventory authoritative (`tests`)
 
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)

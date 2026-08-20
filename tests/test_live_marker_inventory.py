@@ -91,13 +91,15 @@ def _inventory_files() -> set[str]:
     )
     files: set[str] = set()
     for line in result.stdout.splitlines():
-        nodeid = re.match(r"^(tests/[^\s:]+\.py)::", line)
+        nodeid = re.match(r"^(tests[/\\][^\s:]+\.py)::", line)
         if nodeid:
-            files.add(nodeid.group(1))
+            files.add(nodeid.group(1).replace("\\", "/"))
             continue
-        skipped = re.match(r"^SKIPPED \[\d+\] (tests/[^\s:]+\.py):\d+: (.*)$", line)
+        skipped = re.match(r"^SKIPPED \[\d+\] (tests[/\\][^\s:]+\.py):\d+: (.*)$", line)
         if skipped and _ENV_GATE in skipped.group(2):
-            files.add(skipped.group(1))
+            # pytest emits os-native separators in skip-summary locations
+            # on Windows; normalize to the forward-slash nodeid form.
+            files.add(skipped.group(1).replace("\\", "/"))
     assert files, "live inventory came back empty — marker application drifted"
     return files
 

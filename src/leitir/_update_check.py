@@ -26,7 +26,6 @@ import re
 import sys
 import tempfile
 import threading
-import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -196,16 +195,11 @@ def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:
         if not isinstance(release_url, str):
             release_url = _GITHUB_RELEASES_PAGE
         return latest, release_url
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        OSError,
-        ValueError,
-        KeyError,
-        TypeError,
-        json.JSONDecodeError,
-    ):
+    except (OSError, ValueError, KeyError, TypeError):
+        # Redundancy-free equivalent of the former 8-type tuple: HTTPError,
+        # URLError, and TimeoutError are OSError subtypes, and
+        # json.JSONDecodeError is a ValueError subtype, so naming them
+        # alongside their supertypes could never change the match.
         return None
     except Exception:
         # Third-party response wrappers and platform URL handlers may raise

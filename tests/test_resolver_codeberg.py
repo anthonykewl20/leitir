@@ -53,6 +53,7 @@ def test_environment_token_is_bearer_and_redacted(monkeypatch, capsys):
     assert "never-print-this" not in capsys.readouterr().err
 
 
+@pytest.mark.live
 @pytest.mark.skipif(os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1", reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification")
 def test_live_pinned_commit_resolves():
     sha = "db760a61d52ac179f8f308f089b4741c072f17ce"

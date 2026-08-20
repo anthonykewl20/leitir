@@ -449,6 +449,7 @@ def test_artifact_records_unknown_tests_when_git_tree_cannot_be_fetched(tmp_path
     assert manifest["has_tests"] is None
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live artifact materialization",

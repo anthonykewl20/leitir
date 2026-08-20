@@ -16,10 +16,13 @@ import urllib.request
 import fixtures_real as fx
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    )
+]
 
 _API = "https://api.github.com"
 _HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "leitir"}

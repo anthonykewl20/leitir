@@ -9,10 +9,13 @@ import pytest
 from leitir.bench import load_manifest
 from leitir.tree import GitHubTreeSource
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
+    )
+]
 
 
 def test_all_manifest_sources_are_reachable_and_byte_exact():

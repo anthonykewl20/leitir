@@ -178,6 +178,7 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
     assert "never-print-this" not in capsys.readouterr().err
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",

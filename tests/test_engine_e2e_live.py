@@ -27,10 +27,13 @@ from leitir.search import (
 )
 from leitir.tree import GitHubTreeSource
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    )
+]
 
 
 def _token() -> str | None:

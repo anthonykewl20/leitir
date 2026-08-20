@@ -83,6 +83,7 @@ def test_repository_materialization_records_unknown(tmp_path):
     assert manifest["parity"] == "unknown"
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live parity verification",

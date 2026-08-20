@@ -362,6 +362,7 @@ TYPESCRIPT_COMMIT = "b465fdbfe175304d9b977da137b2c178ae1091d3"
 TYPESCRIPT_TRUNCATED_BLOB_COUNT = 53_309
 
 
+@pytest.mark.live
 @live_gate
 def test_live_list_blobs_truncated_tree_fallback():
     class _CountingSource(GitHubTreeSource):

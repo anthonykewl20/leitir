@@ -114,3 +114,18 @@ def test_final_summary_is_always_run_and_carries_every_classification() -> None:
         "skipped-not-landed",
     ):
         assert classification in classifier
+
+
+def test_every_workflow_referenced_test_file_exists() -> None:
+    """Static canary-integrity assertion (#197 C-1/AC-1).
+
+    Every ``tests/…py`` path named anywhere in live-canary.yml must exist on
+    disk.  A workflow naming a missing test file is a silent one-surface
+    canary: the gate variable would flip, pytest would exit 4 (collection
+    error), ``continue-on-error`` would swallow it, and the classifier would
+    read a nonexistent/empty events file.  This test fails CI instead.
+    """
+    referenced = sorted(set(re.findall(r"tests/[A-Za-z0-9_/.-]+\.py", _text())))
+    assert referenced, "live-canary.yml must reference at least one test file"
+    missing = [path for path in referenced if not (_ROOT / path).is_file()]
+    assert not missing, f"live-canary.yml references missing test files: {missing}"

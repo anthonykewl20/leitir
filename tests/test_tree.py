@@ -387,3 +387,187 @@ def test_live_list_blobs_truncated_tree_fallback():
     print(
         f"typescript fallback walk: blobs={len(blobs)} api_calls={source.api_calls}"
     )
+
+
+class _StreamResponse(io.BytesIO):
+    """Response double that records reads/closes like a real stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self.reads: list[int] = []
+        self.close_calls = 0
+
+    def read(self, size: int = -1) -> bytes:
+        self.reads.append(size)
+        return super().read(size)
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def _stream_source(**overrides: object) -> GitHubTreeSource:
+    options: dict[str, object] = {
+        "base_url": "https://api.example",
+        "max_attempts": 3,
+        "base_delay": 0.0,
+        "sleeper": lambda _seconds: None,
+    }
+    options.update(overrides)
+    return GitHubTreeSource(**options)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "blob_sha",
+    [
+        "short",
+        "z" * 41,
+        "g" * 40,
+        "a" * 39 + "/../../repos/other",
+        "a" * 39 + "%2f",
+        "",
+    ],
+)
+def test_read_blob_stream_malformed_sha_is_rejected_eagerly(
+    monkeypatch: pytest.MonkeyPatch, blob_sha: str
+) -> None:
+    opened: list[object] = []
+
+    def fail_urlopen(request: object, timeout: int) -> object:
+        opened.append(request)
+        raise AssertionError("malformed SHA must never reach the transport")
+
+    monkeypatch.setattr("leitir._http.safe_urlopen", fail_urlopen)
+    source = _stream_source()
+
+    # Eager, typed rejection at call time (validated like read_blob), before
+    # the returned generator is even iterated.
+    with pytest.raises(TreeReadError, match="malformed requested blob SHA"):
+        source.read_blob_stream("owner/repo", blob_sha)
+    assert opened == []
+
+
+def test_read_blob_stream_invalid_max_bytes_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "leitir._http.safe_urlopen",
+        lambda request, timeout: _StreamResponse(b"x"),
+    )
+    source = _stream_source()
+    for bad in (0, -1, True, "64"):  # type: ignore[list-item]
+        with pytest.raises(TreeReadError, match="max_bytes"):
+            source.read_blob_stream("owner/repo", "a" * 40, max_bytes=bad)  # type: ignore[arg-type]
+
+
+def test_read_blob_stream_oversized_stream_fails_closed_and_closes_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamResponse(b"abcdefghijK")
+
+    monkeypatch.setattr(
+        "leitir._http.safe_urlopen", lambda request, timeout: response
+    )
+    source = _stream_source()
+
+    stream = source.read_blob_stream("owner/repo", "a" * 40, max_bytes=10)
+    with pytest.raises(TreeReadError, match="streamed 11 bytes exceeds max_bytes=10"):
+        next(stream)
+    assert response.close_calls == 1
+
+
+def test_read_blob_stream_abandonment_closes_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamResponse(b"abcdefghij")
+
+    monkeypatch.setattr(
+        "leitir._http.safe_urlopen", lambda request, timeout: response
+    )
+    source = _stream_source()
+
+    stream = source.read_blob_stream("owner/repo", "a" * 40)
+    assert next(stream) == b"abcdefghij"
+    reads_before = len(response.reads)
+    stream.close()
+    assert response.close_calls == 1
+    assert len(response.reads) == reads_before  # no reads after abandonment
+    # A closed generator stays closed: no further transport activity.
+    with pytest.raises(StopIteration):
+        next(stream)
+    assert response.close_calls == 1
+
+
+def test_read_blob_stream_retries_transient_open_failure_then_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from http.client import IncompleteRead
+
+    attempts: list[int] = []
+
+    def flaky_urlopen(request: object, timeout: int) -> _StreamResponse:
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise IncompleteRead(b"partial")
+        return _StreamResponse(b"chunked-payload")
+
+    monkeypatch.setattr("leitir._http.safe_urlopen", flaky_urlopen)
+    source = _stream_source()
+
+    assert b"".join(source.read_blob_stream("owner/repo", "b" * 40)) == b"chunked-payload"
+    assert len(attempts) == 3
+
+
+def test_read_blob_stream_retry_exhaustion_is_typed_not_raw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from email.message import Message
+
+    attempts: list[int] = []
+
+    def limited_urlopen(request: object, timeout: int) -> object:
+        attempts.append(1)
+        headers = Message()
+        headers["Retry-After"] = "0"
+        raise HTTPError(
+            "https://api.example/blob", 429, "Too Many Requests", headers, None
+        )
+
+    monkeypatch.setattr("leitir._http.safe_urlopen", limited_urlopen)
+    source = _stream_source()
+
+    with pytest.raises(TreeReadError, match="cannot stream blob .* HTTP 429"):
+        list(source.read_blob_stream("owner/repo", "b" * 40))
+    assert len(attempts) == 3
+
+
+def test_read_blob_stream_mid_stream_failure_is_typed_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from http.client import IncompleteRead
+
+    class _DyingResponse(_StreamResponse):
+        def read(self, size: int = -1) -> bytes:
+            first = super().read(size)
+            if first:
+                return first
+            raise IncompleteRead(b"")
+
+    response = _DyingResponse(b"first-chunk")
+
+    monkeypatch.setattr(
+        "leitir._http.safe_urlopen", lambda request, timeout: response
+    )
+    source = _stream_source()
+
+    stream = source.read_blob_stream("owner/repo", "b" * 40)
+    assert next(stream) == b"first-chunk"
+    with pytest.raises(TreeReadError, match="cannot stream blob"):
+        next(stream)
+    assert response.close_calls == 1
+
+
+def test_read_blob_stream_default_bound_matches_contract_constant() -> None:
+    from leitir.tree import STREAM_CHUNK_SIZE, STREAM_MAX_BYTES
+
+    assert STREAM_MAX_BYTES == 64 * 1024 * 1024
+    assert STREAM_CHUNK_SIZE < STREAM_MAX_BYTES

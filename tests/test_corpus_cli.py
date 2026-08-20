@@ -416,7 +416,13 @@ def test_list_human_and_json(tmp_path, monkeypatch):
 
     code, out, _ = _invoke(["list", "--json"])
     assert code == ExitCode.SUCCESS
-    assert json.loads(out) == [dict(entry, verification="unverified")]
+    assert json.loads(out) == [
+        dict(
+            entry,
+            verification="unverified",
+            routing={"verdict": "study-only", "reason": "license-undetermined"},
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -442,7 +448,13 @@ def test_list_renders_each_verification_state(tmp_path, monkeypatch, verified, l
     assert label in out
     code, out, _ = _invoke(["list", "--json"])
     assert code == ExitCode.SUCCESS
-    assert json.loads(out) == [dict(entry, verification=label)]
+    assert json.loads(out) == [
+        dict(
+            entry,
+            verification=label,
+            routing={"verdict": "study-only", "reason": "license-undetermined"},
+        )
+    ]
 
 
 def _legacy_upgrade_shelf(root, name, *, verified=True, digest=False):

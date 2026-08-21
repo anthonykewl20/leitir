@@ -24,6 +24,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - harden import-purity child report channel and import-path isolation (`tests`)
+- mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
 - retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)

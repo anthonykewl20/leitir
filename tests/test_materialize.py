@@ -1554,3 +1554,101 @@ def _extract_tree(root: Path, files: dict[str, bytes]) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return root
+
+
+def test_stale_old_backup_dirs_are_swept_under_target_lock(tmp_path: Path) -> None:
+    """Issue #205 C-5/AC-5/SP-2: crash-orphaned ``.old-`` backups are GC'd.
+
+    A crash between the two ``os.replace`` calls orphans a ``.{sha}.old-``
+    backup next to the shelf. While the verified target still exists, the
+    target-lock sweep removes both staging temps and stale backups for THIS
+    commit sha only — another source's debris is never ours to delete (hy3
+    P1 remediation: backup staleness is target-relative).
+    """
+
+    sha = "a" * 40
+    foreign_sha = "b" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The verified generation is present, so the leftover backup is stale.
+    target.mkdir()
+    stale_tmp = target.parent / f".{sha}.tmp-1"
+    stale_old = target.parent / f".{sha}.old-2"
+    foreign_old = target.parent / f".{foreign_sha}.old-3"
+    for directory in (stale_tmp, stale_old, foreign_old):
+        directory.mkdir()
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert not stale_tmp.exists()
+    assert not stale_old.exists()
+    assert foreign_old.exists()
+
+
+def test_target_lock_sweep_preserves_sole_survivor_backup(tmp_path: Path) -> None:
+    """hy3 P1: the sweep never deletes the sole surviving generation.
+
+    After ``os.replace(target, backup)`` succeeded but the process died
+    before ``os.replace(staging, target)`` and before any rollback, the
+    ``.{sha}.old-*`` backup is the only remaining verified shelf — the
+    state ``cli.py``'s gc documents as "the only valid cache generation"
+    and restores under this same per-target lock. The sweep must leave it
+    in place; only the always-removable ``.{sha}.tmp-*`` staging debris
+    (and never another sha's files) is swept.
+    """
+
+    sha = "d" * 40
+    foreign_sha = "e" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The target was moved away by the interrupted swap: it does not exist.
+    survivor_backup = target.parent / f".{sha}.old-1"
+    crash_staging = target.parent / f".{sha}.tmp-2"
+    foreign_old = target.parent / f".{foreign_sha}.old-3"
+    for directory in (survivor_backup, crash_staging, foreign_old):
+        directory.mkdir()
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert survivor_backup.exists()
+    assert not crash_staging.exists()
+    assert foreign_old.exists()
+
+
+def test_target_lock_sweep_skips_cleanly_when_shelf_parent_is_absent(
+    tmp_path: Path,
+) -> None:
+    """Issue #205 SP-4: a sweep that cannot run skips, never blocks or crashes."""
+
+    sha = "c" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert not target.parent.exists()
+
+
+def test_http_server_harness_threads_join_cleanly() -> None:
+    """Issue #205 C-3/AC-3: test-server joins are asserted, not discarded.
+
+    Every harness server thread must be confirmed dead before its context
+    manager returns; the started/joined counters must stay in lockstep, so a
+    lingering server thread fails the suite instead of accruing sockets.
+    """
+
+    from _http_server import routed_server, server_thread_stats
+
+    before = server_thread_stats()
+    with scripted_server([(200, {}, b"ok")]):
+        pass
+    with routed_server({"/ping": (200, {}, b"pong")}):
+        pass
+    after = server_thread_stats()
+    assert after["started"] - before["started"] == 2
+    assert after["joined"] - before["joined"] == 2

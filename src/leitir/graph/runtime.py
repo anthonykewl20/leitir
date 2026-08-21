@@ -708,59 +708,59 @@ class RuntimeImportRecorder:
                 "a runtime recorder cannot be reused across execution windows",
                 detail_code="runtime_recorder_reuse_v1",
             )
+        original_import = builtins.__import__
         if not _ACTIVE_LOCK.acquire(blocking=False):
             raise BTSError(
                 BTSRejectReason.REJECT_HARD_GATE_FAILED,
                 "another process-global runtime recorder is active",
                 detail_code="runtime_recorder_concurrency_v1",
             )
-        original_import = builtins.__import__
-        initial = _module_inventory_digest()
-        self._used = True
-        self._armed = True
+        try:
+            initial = _module_inventory_digest()
+            self._used = True
+            self._armed = True
 
-        def observed_import(
-            name: str,
-            globals: Mapping[str, object] | None = None,
-            locals: Mapping[str, object] | None = None,
-            fromlist: Sequence[str] | None = (),
-            level: int = 0,
-        ) -> ModuleType:
-            if not self._armed:
-                error = BTSError(
-                    BTSRejectReason.REJECT_HARD_GATE_FAILED,
-                    "runtime import hook was invoked outside its armed window",
-                    detail_code="runtime_recorder_not_armed_v1",
-                )
-                self._terminal = error
-                raise error
-            absolute = self._absolute_name(name, globals, level)
-            try:
-                imported = original_import(name, globals, locals, fromlist, level)
-            except BTSError:
-                raise
-            except BaseException as exc:
-                if _matches_identity(absolute, self._policy.donor_module_identities):
+            def observed_import(
+                name: str,
+                globals: Mapping[str, object] | None = None,
+                locals: Mapping[str, object] | None = None,
+                fromlist: Sequence[str] | None = (),
+                level: int = 0,
+            ) -> ModuleType:
+                if not self._armed:
                     error = BTSError(
-                        BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED,
-                        "a donor import attempt was observed by the diagnostic recorder",
-                        detail_code="runtime_donor_import_v1",
+                        BTSRejectReason.REJECT_HARD_GATE_FAILED,
+                        "runtime import hook was invoked outside its armed window",
+                        detail_code="runtime_recorder_not_armed_v1",
+                    )
+                    self._terminal = error
+                    raise error
+                absolute = self._absolute_name(name, globals, level)
+                try:
+                    imported = original_import(name, globals, locals, fromlist, level)
+                except BTSError:
+                    raise
+                except BaseException as exc:
+                    if _matches_identity(absolute, self._policy.donor_module_identities):
+                        error = BTSError(
+                            BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED,
+                            "a donor import attempt was observed by the diagnostic recorder",
+                            detail_code="runtime_donor_import_v1",
+                            cause=exc,
+                        )
+                        self._terminal = error
+                        raise error from exc
+                    error = BTSError(
+                        BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                        "an import attempt could not be classified successfully",
+                        detail_code="runtime_import_failed_v1",
                         cause=exc,
                     )
                     self._terminal = error
                     raise error from exc
-                error = BTSError(
-                    BTSRejectReason.REJECT_UNRESOLVED_EDGE,
-                    "an import attempt could not be classified successfully",
-                    detail_code="runtime_import_failed_v1",
-                    cause=exc,
-                )
-                self._terminal = error
-                raise error from exc
-            self._observe(absolute)
-            return imported
+                self._observe(absolute)
+                return imported
 
-        try:
             builtins.__import__ = observed_import
             function()
             if self._terminal is not None:

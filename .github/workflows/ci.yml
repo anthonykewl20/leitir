@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   test:
+    # Observed wall-time ≤2:43 (run 32282707805); 15 min ≥ 5× margin
+    # incl. cold uv cache (issue #199).
+    timeout-minutes: 15
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,10 +32,13 @@ jobs:
             python-version: '3.13'
           - os: ubuntu-latest
             python-version: '3.14'
+          # Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
+          # are both ≥ the ubuntu floor (3.11) and already exercised minors —
+          # reproducible legs instead of runner-image drift (issue #199).
           - os: macos-latest
-            python-version: '3.x'
+            python-version: '3.13'
           - os: windows-latest
-            python-version: '3.x'
+            python-version: '3.12'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -50,11 +56,24 @@ jobs:
         run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
 
   determinism:
+    # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs
+    # under both the explicit baseline env (TZ=UTC, LC_ALL=C.UTF-8) and a
+    # shifted env (TZ=Asia/Kathmandu — a +05:45 offset — LC_ALL=C, which also
+    # engages PEP 540 UTF-8 mode). Ordering-sensitive modules beyond the
+    # original four: sbom (+ spdx/cyclonedx), apisurface (+ heuristic), diff,
+    # index/builder, graph/registry, docpointers (issue #199).
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         hash-seed: ['0', '1', '42']
+        env:
+          - tz: UTC
+            lc_all: C.UTF-8
+          - tz: Asia/Kathmandu
+            lc_all: C
+    name: determinism (seed ${{ matrix.hash-seed }}, TZ ${{ matrix.env.tz }}, LC_ALL ${{ matrix.env.lc_all }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -66,16 +85,24 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: requirements.txt
-      - name: Test deterministic behavior with PYTHONHASHSEED=${{ matrix.hash-seed }}
+      - name: Test deterministic behavior with PYTHONHASHSEED=${{ matrix.hash-seed }} TZ=${{ matrix.env.tz }} LC_ALL=${{ matrix.env.lc_all }}
         env:
           PYTHONHASHSEED: ${{ matrix.hash-seed }}
+          TZ: ${{ matrix.env.tz }}
+          LC_ALL: ${{ matrix.env.lc_all }}
           PYTHONPATH: src
         run: >-
           uv run --no-project --with-requirements requirements.txt
           python -m pytest tests/test_treehash.py tests/test_materialize.py
-          tests/test_parity.py tests/test_snapshot.py -q
+          tests/test_parity.py tests/test_snapshot.py
+          tests/test_sbom.py tests/test_sbom_spdx.py tests/test_sbom_cyclonedx.py
+          tests/test_apisurface.py tests/test_apisurface_heuristic.py
+          tests/test_diff.py tests/test_trigram_index.py
+          tests/test_graph_polyglot.py tests/test_docpointers.py -q
 
   tree-sitter-extra:
+    # Observed ≤0:18; 15 min covers cold hash-locked wheel installs (issue #199).
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -124,6 +151,8 @@ jobs:
           PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
 
   coverage:
+    # Observed 1:38; 15 min ≥ 9× margin (issue #199).
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -183,6 +212,8 @@ jobs:
           path: coverage.xml
 
   package:
+    # Observed 0:21; 10 min ≥ 28× margin (issue #199).
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -219,6 +250,8 @@ jobs:
           path: dist/
 
   lint:
+    # Observed 0:17; 15 min covers the full-surface mypy run cold (issue #199).
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -237,7 +270,10 @@ jobs:
       - name: Ruff
         run: uv run --no-project --with ruff ruff check .
       - name: Mypy
-        run: uv run --no-project --with mypy --with-requirements requirements.txt python -m mypy src/leitir
+        # No path argument: honor pyproject [tool.mypy] files = src/leitir + tools
+        # (score_engine excluded there), so tools/ — including sync_changelog.py,
+        # executed two steps below — is type-checked by this gate (issue #199).
+        run: uv run --no-project --with mypy --with-requirements requirements.txt python -m mypy
       - name: Changelog sync
         run: uv run --no-project --with-requirements requirements.txt python tools/sync_changelog.py --check
       - name: Byte-compile source
@@ -252,6 +288,8 @@ jobs:
   # installs the separately reviewed, hash-locked provider and runs the two
   # gated files with zero skips allowed (issue #196).
   auth-tests:
+    # Observed 0:16; 10 min ≥ 37× margin (issue #199).
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -298,6 +336,8 @@ jobs:
       - package
       - lint
       - auth-tests
+    # Aggregate gate only; observed 0:03 (issue #199).
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       # v1.2.4 does not exist upstream; v1.2.2 is the latest published tag.

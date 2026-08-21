@@ -25,6 +25,7 @@ from leitir.materialize import (
     update_manifest,
 )
 from leitir.resolver import ResolvedPackage
+from leitir.safeio import atomic_text_writer
 from leitir.search import RepoScope
 
 INDEX_NAME = "sources.json"
@@ -79,18 +80,9 @@ def write_sources(
     """Atomically replace the corpus source index."""
     corpus_root = resolve_root(root)
     corpus_root.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{INDEX_NAME}.tmp-", dir=corpus_root)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(entries, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, corpus_root / INDEX_NAME)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    with atomic_text_writer(corpus_root / INDEX_NAME, encoding="utf-8", newline=None) as handle:
+        json.dump(entries, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 def enumerate_shelved_sources(
@@ -236,18 +228,9 @@ def write_api_index(
     """Atomically cache an API index and return its absolute path."""
     path = api_index_path(root, entry, manifest)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=".index.json.tmp-", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(index, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    with atomic_text_writer(path, encoding="utf-8", newline="\n") as handle:
+        json.dump(index, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     return path.absolute()
 
 
@@ -300,18 +283,9 @@ def write_examples_index(
     """Atomically cache an examples index and return its absolute path."""
     path = examples_index_path(root, entry, manifest)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=".index.json.tmp-", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(index, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    with atomic_text_writer(path, encoding="utf-8", newline="\n") as handle:
+        json.dump(index, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     return path.absolute()
 
 

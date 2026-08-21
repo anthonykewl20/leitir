@@ -5,8 +5,10 @@ from __future__ import annotations
 import io
 import json
 import multiprocessing
+import os
 import shutil
 import tarfile
+import tempfile
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -1554,6 +1556,78 @@ def _extract_tree(root: Path, files: dict[str, bytes]) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return root
+
+
+def test_write_manifest_replace_failure_never_closes_recycled_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G-0 / SP-1 (issue #200): a failing ``os.replace`` must not double-close.
+
+    The pre-consolidation except path closed the descriptor a second time
+    after ``os.fdopen``'s context exit had already closed it.  Descriptor
+    numbers are recycled lowest-first, so this canary ``os.open`` inside the
+    injected failure receives the same number: a double-close would close a
+    live descriptor owned by whoever recycled it.
+    """
+    from leitir.materialize import MANIFEST_NAME, _write_manifest
+
+    target = tmp_path / MANIFEST_NAME
+    # A canary FILE: os.open() on a directory is a PermissionError on Windows.
+    canary = tmp_path / "canary.dat"
+    canary.write_bytes(b"canary")
+    recycled: list[int] = []
+
+    def replace_failure(src: object, dst: object) -> None:
+        recycled.append(os.open(canary, os.O_RDONLY))
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr(os, "replace", replace_failure)
+
+    with pytest.raises(OSError, match="injected replace failure"):
+        _write_manifest(target, {"schema": 2})
+
+    # Temp litter is never left behind, even on the failure path.
+    assert list(tmp_path.glob(f".{MANIFEST_NAME}.tmp-*")) == []
+    # The recycled (canary) descriptor must still be open: the except path
+    # closed nothing.  On the buggy baseline this fstat raised EBADF.
+    assert recycled, "os.replace was invoked"
+    os.fstat(recycled[0])
+    os.close(recycled[0])
+
+
+def test_write_manifest_fdopen_failure_closes_fd_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SP-2 (issue #200): an ``os.fdopen`` failure must not leak the fd."""
+    from leitir.materialize import MANIFEST_NAME, _write_manifest
+
+    created: list[int] = []
+    closed: list[int] = []
+    real_mkstemp = tempfile.mkstemp
+    real_close = os.close
+
+    def spy_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-types]
+        created.append(fd)
+        return fd, name
+
+    def spy_close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    def fdopen_failure(fd: int, *args: object, **kwargs: object) -> object:
+        raise OSError("injected fdopen failure")
+
+    monkeypatch.setattr(tempfile, "mkstemp", spy_mkstemp)
+    monkeypatch.setattr(os, "close", spy_close)
+    monkeypatch.setattr(os, "fdopen", fdopen_failure)
+
+    target = tmp_path / MANIFEST_NAME
+    with pytest.raises(OSError, match="injected fdopen failure"):
+        _write_manifest(target, {"schema": 2})
+
+    assert closed == created
+    assert list(tmp_path.glob(f".{MANIFEST_NAME}.tmp-*")) == []
 
 
 def test_stale_old_backup_dirs_are_swept_under_target_lock(tmp_path: Path) -> None:

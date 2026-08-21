@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from leitir.safeio import atomic_write_text
 
 POINTERS_NAME = "POINTERS.md"
 PRIMARY_REFERENCE = "The source itself is the primary reference."
@@ -226,17 +227,7 @@ def regenerate_pointers(
         lines.extend(_render_source(corpus_root, entry))
     content = "\n".join(lines)
 
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{POINTERS_NAME}.tmp-", dir=corpus_root)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, corpus_root / POINTERS_NAME)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    atomic_write_text(corpus_root / POINTERS_NAME, content, encoding="utf-8", newline="\n")
     return corpus_root / POINTERS_NAME
 
 

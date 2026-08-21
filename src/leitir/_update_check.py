@@ -24,13 +24,14 @@ import json
 import os
 import re
 import sys
-import tempfile
 import threading
 import time
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+
+from leitir.safeio import atomic_text_writer
 
 _DISTRIBUTION_NAME = "leitir"
 _GITHUB_RELEASES_URL = "https://api.github.com/repos/anthonykewl20/leitir/releases/latest"
@@ -174,38 +175,14 @@ def _sweep_stale_cache_temps(directory: Path) -> None:
 def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
     """Atomically write the cache, returning False for every filesystem failure."""
 
-    fd = -1
-    temporary: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix=".update-check.json.tmp-", dir=path.parent)
-        temporary = Path(name)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
+        with atomic_text_writer(path, encoding="utf-8", newline=None) as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        temporary = None
         return True
     except (OSError, TypeError, ValueError):
         return False
-    finally:
-        # Cleanup runs for EVERY outcome, including a BaseException (e.g.
-        # KeyboardInterrupt) between mkstemp and replace: the except tuple
-        # above cannot catch it, and an orphaned temp would otherwise linger
-        # until the next run's sweep (issue #205 C-4).
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if temporary is not None:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
 
 
 def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:

@@ -1,10 +1,21 @@
-"""Small fail-closed readers for corpus-controlled regular files."""
+"""Small fail-closed readers and atomic writers for corpus-controlled files.
+
+The atomic-write mechanics for every durable artifact in leitir live here
+(issue #200): temp file in the target's directory, write, ``os.fsync(file)``,
+``os.replace``, then ``fsync`` of the parent directory, with an fd sentinel so
+every failure path closes the descriptor exactly once and never closes a
+recycled descriptor owned by another thread.
+"""
 
 from __future__ import annotations
 
 import os
 import stat
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO, TextIO
 
 
 class SafeIOError(OSError):
@@ -62,3 +73,137 @@ def read_regular_file(path: Path, *, maximum_bytes: int, no_follow: bool = True)
         return bytes(data)
     finally:
         os.close(descriptor)
+
+
+def fsync_directory(path: Path) -> None:
+    """Flush a directory entry so a completed rename is durable (no-op on nt)."""
+    if os.name == "nt":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+class _StagedFile:
+    """A staged temporary file whose descriptor ownership is sentinel-tracked.
+
+    ``fd`` holds the raw descriptor until ownership transfers to a file
+    object (``open_binary``/``open_text`` set the sentinel to ``-1``); a
+    failed ``os.fdopen`` hands ownership back so the failure path closes the
+    descriptor exactly once and never touches a recycled one.  The staged
+    path stays a plain ``str`` so no pathlib factory dispatch (which is
+    ``os.name``-dependent) re-renders the tempfile name mid-write.
+    """
+
+    __slots__ = ("_fd", "path")
+
+    def __init__(self, path: str, fd: int) -> None:
+        self.path = path
+        self._fd = fd
+
+    @property
+    def fd(self) -> int:
+        return self._fd
+
+    def _release(self) -> int:
+        fd, self._fd = self._fd, -1
+        return fd
+
+    def _reclaim(self, fd: int) -> None:
+        self._fd = fd
+
+    def open_binary(self) -> BinaryIO:
+        fd = self._release()
+        try:
+            return os.fdopen(fd, "wb")
+        except BaseException:
+            self._reclaim(fd)
+            raise
+
+    def open_text(self, *, encoding: str, newline: str | None) -> TextIO:
+        fd = self._release()
+        try:
+            return os.fdopen(fd, "w", encoding=encoding, newline=newline)
+        except BaseException:
+            self._reclaim(fd)
+            raise
+
+    def discard(self) -> None:
+        if self._fd >= 0:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = -1
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+
+
+@contextmanager
+def _staged_file(path: Path, *, fsync_dir: bool) -> Iterator[_StagedFile]:
+    """Stage one atomic replacement of ``path`` (temp in the target directory)."""
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
+    staged = _StagedFile(name, fd)
+    try:
+        yield staged
+        os.replace(staged.path, path)
+        if fsync_dir:
+            fsync_directory(path.parent)
+    except BaseException:
+        staged.discard()
+        raise
+
+
+@contextmanager
+def atomic_writer(path: Path, *, fsync_dir: bool = True) -> Iterator[BinaryIO]:
+    """Yield a binary handle whose close publishes ``path`` atomically.
+
+    The handle writes a temporary file in ``path``'s directory; a normal
+    exit flushes, fsyncs the file, renames it onto ``path``, and fsyncs the
+    parent directory. Any failure removes the temporary, closes the
+    descriptor exactly once, and re-raises the original error.
+    """
+    with _staged_file(path, fsync_dir=fsync_dir) as staged:
+        with staged.open_binary() as handle:
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
+@contextmanager
+def atomic_text_writer(
+    path: Path,
+    *,
+    encoding: str = "utf-8",
+    newline: str | None = "\n",
+    fsync_dir: bool = True,
+) -> Iterator[TextIO]:
+    """Text sibling of :func:`atomic_writer` with io-compatible newlines."""
+    with _staged_file(path, fsync_dir=fsync_dir) as staged:
+        with staged.open_text(encoding=encoding, newline=newline) as handle:
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, fsync_dir: bool = True) -> None:
+    """Atomically replace ``path`` with ``data`` (file + parent-dir fsync)."""
+    with atomic_writer(path, fsync_dir=fsync_dir) as handle:
+        handle.write(data)
+
+
+def atomic_write_text(
+    path: Path,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    newline: str | None = "\n",
+    fsync_dir: bool = True,
+) -> None:
+    """Atomically replace ``path`` with ``text`` (file + parent-dir fsync)."""
+    with atomic_text_writer(path, encoding=encoding, newline=newline, fsync_dir=fsync_dir) as handle:
+        handle.write(text)

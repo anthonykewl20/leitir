@@ -30,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 from leitir import _http
-from leitir.safeio import read_regular_file
+from leitir.safeio import atomic_write_bytes, fsync_directory, read_regular_file
 from leitir.search import RepoScope
 from leitir.treehash import (
     TreeHashError,
@@ -228,14 +228,10 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
             held.remove(lock_identity)
 
 
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+# Directory fsync is consolidated in leitir.safeio (issue #200); the
+# historical ``_fsync_directory`` name is kept as an alias for existing
+# importers (corpus.py, index/builder.py, cli.py).
+_fsync_directory = fsync_directory
 
 
 @contextmanager
@@ -277,22 +273,8 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
             "manifest exceeds the maximum serialized size; the per-file "
             "digest map would be unreadable at load time"
         )
-    fd, name = tempfile.mkstemp(prefix=f".{MANIFEST_NAME}.tmp-", dir=path.parent)
-    temporary = Path(name)
     logger.debug("writing manifest path=%s", path)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        temporary.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(path, data)
 
 
 def _manifest_has_file_map(payload: Mapping[str, object]) -> bool:

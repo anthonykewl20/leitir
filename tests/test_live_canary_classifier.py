@@ -161,6 +161,50 @@ def test_malformed_events_fail_closed(tmp_path: Path) -> None:
     assert "`configuration-failure`" in result.stdout
 
 
+def _run_classifier_path(
+    tmp_path: Path, event_path: Path, *, outcome: str = "success"
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        (
+            sys.executable,
+            str(_CLASSIFIER),
+            str(event_path),
+            "--surface",
+            "fixture-surface",
+            "--pytest-outcome",
+            outcome,
+        ),
+        cwd=_ROOT,
+        env={**os.environ, "PYTHONPATH": "src"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_missing_events_file_fails_closed(tmp_path: Path) -> None:
+    # The exact canary failure mode when a probe step dies before the plugin
+    # can write events.json: the classifier must never classify a missing
+    # events file as a pass, even when the recorded pytest outcome succeeded.
+    result = _run_classifier_path(tmp_path, tmp_path / "events-never-written.json")
+    assert result.returncode == 1
+    assert "`configuration-failure`" in result.stdout
+    assert "`pass`" not in result.stdout
+    assert "invalid live canary events" in result.stdout
+
+
+def test_empty_events_file_fails_closed(tmp_path: Path) -> None:
+    # Zero-byte events.json (created but never populated) must fail closed
+    # with a typed error, never classify as pass.
+    event_path = tmp_path / "events.json"
+    event_path.write_bytes(b"")
+    result = _run_classifier_path(tmp_path, event_path)
+    assert result.returncode == 1
+    assert "`configuration-failure`" in result.stdout
+    assert "`pass`" not in result.stdout
+    assert "invalid live canary events" in result.stdout
+
+
 def test_disabled_declared_surface_records_explicit_skip(tmp_path: Path) -> None:
     test_file = tmp_path / "test_declared_surface.py"
     events = tmp_path / "events.json"
@@ -358,23 +402,51 @@ def test_plugin_records_assertion_failure_for_classifier(tmp_path: Path) -> None
     assert event["surface"] == "product-surface"
 
 
-def test_enabled_gate_with_missing_named_test_fails_closed() -> None:
+def test_enabled_gate_with_missing_named_test_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Post-#197 every surface test the gate names exists in the repo, so the
+    # enabled-but-missing refusal is exercised against an isolated root that
+    # deliberately lacks the named file (same typed error as before).
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("live_canary_gate_module", _GATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("LEITIR_CANARY_TREE_V2", "true")
+    monkeypatch.setenv("LEITIR_CANARY_STREAM_V2", "false")
+    monkeypatch.setenv("LEITIR_CANARY_INDEX_V2", "false")
+    with pytest.raises(
+        ValueError,
+        match="required test is missing: tests/test_tree_recovery_e2e_live.py",
+    ):
+        module.evaluate(tmp_path)
+
+
+def test_enabled_gate_resolves_true_now_that_every_named_test_exists() -> None:
+    # The #197 fail→pass counterpart: with all three surface test files
+    # present, enabling every gate must resolve cleanly instead of failing
+    # closed on a missing test.
     result = subprocess.run(
         (sys.executable, str(_GATE)),
         cwd=_ROOT,
         env={
             **os.environ,
             "LEITIR_CANARY_TREE_V2": "true",
-            "LEITIR_CANARY_STREAM_V2": "false",
-            "LEITIR_CANARY_INDEX_V2": "false",
+            "LEITIR_CANARY_STREAM_V2": "true",
+            "LEITIR_CANARY_INDEX_V2": "true",
         },
         check=False,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 1
-    assert "tree_v2=true" in result.stdout
-    assert "required test is missing: tests/test_tree_recovery_e2e_live.py" in result.stderr
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        "index_v2=true",
+        "stream_v2=true",
+        "tree_v2=true",
+    ]
 
 
 def test_absent_feature_gates_are_explicitly_false() -> None:
@@ -395,6 +467,33 @@ def test_absent_feature_gates_are_explicitly_false() -> None:
     )
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["index_v2=false", "stream_v2=false", "tree_v2=false"]
+
+
+def test_malformed_gate_variable_fails_closed_through_the_cli() -> None:
+    # Keeps CLI-level coverage of the gate's exit-1 path (fallback outputs +
+    # typed stderr) after #197 made the enabled-but-missing-file variant
+    # unreachable in-repo: a non-boolean variable must fail closed the same
+    # way, and the malformed gate must not be silently reported as enabled.
+    result = subprocess.run(
+        (sys.executable, str(_GATE)),
+        cwd=_ROOT,
+        env={
+            **os.environ,
+            "LEITIR_CANARY_TREE_V2": "maybe",
+            "LEITIR_CANARY_STREAM_V2": "false",
+            "LEITIR_CANARY_INDEX_V2": "false",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout.splitlines() == [
+        "index_v2=false",
+        "stream_v2=false",
+        "tree_v2=false",
+    ]
+    assert "LEITIR_CANARY_TREE_V2 must be an explicit boolean" in result.stderr
 
 
 def test_secret_probe_emits_only_boolean_presence(tmp_path: Path) -> None:

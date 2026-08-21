@@ -39,9 +39,11 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - state Codeberg symlink re-read verification as response self-consistency (`resolver`)
 - state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
+- verify the recursive-listing sha echo live, disclose recovery-walk status, and route the canary fetch through the retry seam (`tests`)
 
 ### Security
 - cover objects/raw/uploads GitHub hosts in github provider (`credentials`)
+- create the three missing live canary surfaces, assert workflow references, and harden read_blob_stream (`tests`)
 - guard host payload shapes, split platform-capability errors from tamper, drop redundant except subtypes (`taxonomy`)
 - honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - re-read symlink-path blobs on Codeberg with digest verification (`resolver`)

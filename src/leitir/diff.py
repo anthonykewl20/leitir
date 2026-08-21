@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -206,6 +207,40 @@ def _manifest(target: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+_SHA1_HEX = re.compile(r"[0-9a-f]{40}")
+
+
+def _usable_pin(value: object) -> str | None:
+    """Return ``value`` only when it is an exact lowercase 40-hex commit SHA."""
+    if isinstance(value, str) and _SHA1_HEX.fullmatch(value) is not None:
+        return value
+    return None
+
+
+def _shelf_pin(
+    entry: Mapping[str, Any] | None, manifest: Mapping[str, object], fallback: str
+) -> str:
+    """Return the commit SHA bound to the bytes materialized for this shelf.
+
+    The corpus index entry and the shelf manifest are written by the same
+    materializer call that produced the shelf bytes, so they record the pin
+    the diffed tree was materialized at even when the spec re-resolved to a
+    moved SHA afterwards. When the shelf carries no usable pin (embedding
+    path, shelf without a readable manifest, malformed pin fields) the scope
+    that fed the materializer in the same ``_prepare`` call is the honest
+    identity for the bytes actually diffed; a non-conforming recorded value
+    is never normalized or guessed into a pin.
+    """
+    if entry is not None:
+        pinned = _usable_pin(entry.get("commit_sha"))
+        if pinned is not None:
+            return pinned
+    pinned = _usable_pin(manifest.get("commit_sha"))
+    if pinned is not None:
+        return pinned
+    return fallback
+
+
 def _prepare(
     raw: str,
     *,
@@ -263,7 +298,9 @@ def _prepare(
         name=parsed.name,
         version=resolved_version,
         repository=scope.slug,
-        commit_sha=scope.commit_sha,
+        # Report the pin bound to the materialized bytes, not this call's
+        # independent re-resolution (which may have moved mid-run).
+        commit_sha=_shelf_pin(entry, manifest, scope.commit_sha),
     )
     return _PreparedSource(identity, tree, index, getattr(resolved, "tag", None) or tag)
 

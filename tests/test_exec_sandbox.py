@@ -1069,3 +1069,54 @@ print(sandbox._canonical_json({{'config_text': sandbox._render_config(p), 'polic
 )
 def test_live_nsjail_network_and_tmpfs_controls_require_release_policy() -> None:
     pytest.skip("release-pinned nsjail/rootfs policy artifact is not available in the source tree")
+
+
+def test_debug_mount_manifests_are_bounded_and_cleared_per_run(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_nsjail: tuple[Path, str, str],
+    tmp_path: Path,
+) -> None:
+    """Issue #205 C-2/AC-2: debug manifests never accumulate unboundedly.
+
+    Each recording run starts from an empty dict (entries from previous runs
+    are dead weight), and a run whose policy carries more distinct mount
+    sources than the fixed cap keeps only the most recent ``cap`` entries —
+    insertion-order FIFO, deterministic.
+    """
+
+    monkeypatch.setenv(sandbox.NSJAIL_DEBUG_ENV, "1")
+    policy, donor, donor_digest = _policy_with_donor_mount(fake_nsjail, tmp_path)
+
+    overflow = tmp_path / "overflow"
+    overflow.mkdir()
+    overflow_count = sandbox._DEBUG_MOUNT_MANIFEST_CAP + 5
+    overflow_mounts = tuple(
+        ReadOnlyMount(
+            f"/overflow/{index}",
+            str(overflow),
+            f"sha256:{index:064x}",
+        )
+        for index in range(overflow_count)
+    )
+    crowded = replace(policy, readonly_mounts=(*policy.readonly_mounts, *overflow_mounts))
+
+    sandbox.record_debug_mount_source_manifests(crowded)
+
+    assert len(sandbox._DEBUG_MOUNT_ENTRY_MANIFESTS) == sandbox._DEBUG_MOUNT_MANIFEST_CAP
+    # The oldest entries (the policy's own rootfs/donor mounts recorded first)
+    # were evicted; the newest overflow digests survive.
+    retained_digests = {
+        digest for _source, digest in sandbox._DEBUG_MOUNT_ENTRY_MANIFESTS
+    }
+    assert retained_digests == {
+        f"sha256:{index:064x}" for index in range(5, overflow_count)
+    }
+
+    # Cleared per run: a later recording run starts fresh, so the earlier
+    # overflow entries do not outlive their run.
+    sandbox.record_debug_mount_source_manifests(policy)
+    expected_keys = {
+        (mount.source, mount.source_digest) for mount in policy.readonly_mounts
+    }
+    assert set(sandbox._DEBUG_MOUNT_ENTRY_MANIFESTS) == expected_keys
+    assert (str(donor), donor_digest) in expected_keys

@@ -42,7 +42,13 @@ _MAX_POLICY_TEXT = 64 * 1024
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
 STARTUP_ATTESTATION_SCHEMA = "leitir-contained-startup-attestation-v1"
 _ATTESTED_NAMESPACES = ("net", "user", "mnt", "pid", "ipc", "uts")
+# Debug-only source inventories keyed by (source, digest). They exist solely
+# for controller-side mismatch diffs inside one policy's lifetime, so each
+# recording run starts from an empty dict and the dict is bounded: a long-lived
+# process constructing many policies must not accumulate manifests forever
+# (issue #205 C-2).
 _DEBUG_MOUNT_ENTRY_MANIFESTS: dict[tuple[str, str], tuple[dict[str, object], ...]] = {}
+_DEBUG_MOUNT_MANIFEST_CAP = 64
 _FORBIDDEN_SYSCALLS = frozenset(
     {
         "accept",
@@ -880,10 +886,16 @@ def record_debug_mount_source_manifests(policy: ContainmentPolicy) -> None:
 
     if os.environ.get(NSJAIL_DEBUG_ENV) != "1":
         return
+    # Per-run reset: a recording run only ever consults manifests recorded for
+    # the same policy, so entries from previous runs are dead weight (C-2).
+    _DEBUG_MOUNT_ENTRY_MANIFESTS.clear()
     for mount in policy.readonly_mounts:
         try:
             entries = _mount_source_entry_manifest(Path(mount.source))
             _DEBUG_MOUNT_ENTRY_MANIFESTS[(mount.source, mount.source_digest)] = entries
+            while len(_DEBUG_MOUNT_ENTRY_MANIFESTS) > _DEBUG_MOUNT_MANIFEST_CAP:
+                oldest = next(iter(_DEBUG_MOUNT_ENTRY_MANIFESTS))
+                _DEBUG_MOUNT_ENTRY_MANIFESTS.pop(oldest)
             # Emit one canonical entry-level line per mount so a drifting or
             # tampered source is diagnosable from controller logs alone.  The
             # rootfs keeps aggregate fields only: its entry list is the log

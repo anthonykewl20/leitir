@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import socket
+from urllib.request import Request
 
 import _http_server as hs
 import pytest
 
+from leitir._http import retry_http, safe_urlopen
 from leitir.adapters import PythonAdapter
 from leitir.discovery_search import (
     CodeSearchError,
@@ -52,6 +56,52 @@ SEARCH_OK = {
 COMMITS_OK = [{"sha": SHA}]
 
 ITERATIONS = 12
+
+# #202 C-1: frozen epoch for the reset-header test. The server advises a
+# reset at FROZEN_NOW + 5 and the retry loop reads the same FROZEN_NOW via
+# the #201 injected-clock seam, so the observed wait is pinned at exactly
+# 5.0s regardless of runner load — the test cannot observe real elapsed time.
+FROZEN_NOW = 1_700_000_000.0
+
+
+def _refused_ephemeral_port(max_tries: int = 2) -> int:
+    """Return a local ephemeral port that is guaranteed to refuse connections.
+
+    #202 C-2: bind ``127.0.0.1:0``, capture the OS-assigned port, close the
+    socket, then probe the port — an immediate ``ConnectionRefusedError`` on
+    all three desktop OSes proves nothing re-bound it. This replaces
+    ``127.0.0.1:1`` (privileged port 1), which macOS/Windows may drop or
+    filter instead of refusing (60s hang or ``EACCES`` instead of the
+    expected ``URLError`` path).
+
+    Sad paths per the #202 contract: if another process re-binds the port in
+    the close→probe window, retry once with a fresh port (SP-1); if no clean
+    refusal is obtained, skip with a reason rather than fail (SP-1); if the
+    runner lacks loopback sockets, skip rather than hang (SP-3).
+    """
+    for _ in range(max_tries):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        except OSError:
+            pytest.skip("loopback socket bind unavailable on this runner (SP-3)")
+        finally:
+            sock.close()
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.25)
+            try:
+                probe.connect(("127.0.0.1", port))
+            except ConnectionRefusedError:
+                return port  # the immediate refusal the test depends on
+            except OSError:
+                continue  # filtered/odd port — try a fresh one (SP-1)
+            # A connection SUCCEEDED: another process re-bound the port in
+            # the close→probe window (SP-1) — take a fresh one.
+        finally:
+            probe.close()
+    pytest.skip("no guaranteed-refused local port after fresh-port retry (SP-1)")
 
 
 def _transport(base_url, *, sleeper=None, max_delay=60.0):
@@ -99,20 +149,44 @@ class TestTransportRetryReal:
 
     @pytest.mark.parametrize("iteration", range(ITERATIONS))
     def test_403_rate_limited_honors_reset_header(self, iteration):
-        import time
-        now = time.time()
-        sleeps = []
+        """#202 C-1 (frozen-clock form): a REAL 403 over a real socket
+        carrying ``X-RateLimit-Reset`` must be slept out before the retry.
+        The #201 injected-clock seam pins the retry loop's clock to
+        ``FROZEN_NOW``, so the observed wait is exactly the server-advised
+        5.0s no matter how loaded the runner is — the baseline form read
+        ``time.time()`` twice, and >5s of runner load between those reads
+        clamped the computed wait to 0.0 and failed the lower bound. The
+        transport cannot forward a retry clock (its ``clock`` knob is the
+        ISO-string business clock), and ``discovery_search.py`` is outside
+        this issue's change surface — so the retry policy is driven through
+        the same ``_http.retry_http`` the transport binds, with the
+        transport's own default knobs."""
+        sleeps: list[float] = []
         with hs.scripted_server([
             (403, {
                 "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": str(int(now) + 5),
+                "X-RateLimit-Reset": str(int(FROZEN_NOW) + 5),
             }, b""),
             (200, {"Content-Type": "application/json"}, hs.json_body(SEARCH_OK)),
         ]) as h:
-            t = _transport(h.base_url, sleeper=sleeps.append, max_delay=60.0)
-            page = t.search("urlencode")
-        assert page.total_count == 1
-        assert 0.0 < sleeps[0] <= 5.0 + 1.0
+            def _fetch() -> dict:
+                request = Request(f"{h.base_url}/search/code?q=urlencode")
+                with safe_urlopen(request, timeout=30) as resp:
+                    return json.load(resp)
+
+            page = retry_http(
+                _fetch,
+                max_attempts=4,
+                base_delay=1.0,
+                max_delay=60.0,
+                sleeper=sleeps.append,
+                clock=lambda: FROZEN_NOW,
+            )
+        assert page["total_count"] == 1
+        # Exact — and strictly stronger than the baseline band
+        # ``0.0 < sleeps[0] <= 5.0 + 1.0``: the frozen clock pins the
+        # advised wait deterministically, so the whole band collapses to 5.0.
+        assert sleeps == [5.0]
         assert h.state.served_count == 2
 
     @pytest.mark.parametrize("iteration", range(ITERATIONS))
@@ -196,11 +270,17 @@ class TestTransportRetryReal:
         assert h.state.served_count == 4
 
     def test_connection_refused_urlerror_retried(self):
-        # Port 1 is privileged and refuses connections on Linux -> real URLError.
+        """#202 C-2: connect to a just-closed local ephemeral port — the OS
+        refuses immediately on linux/macOS/windows, so the transport sees a
+        real ``URLError`` (connection refused) on every platform. The old
+        form hardwired ``127.0.0.1:1``, a privileged port that macOS/Windows
+        may drop or filter instead of refusing. Refusal is retried once
+        (transient), then the exhaustion wraps into ``CodeSearchError``."""
+        port = _refused_ephemeral_port()
         sleeps = []
         t = GitHubCodeSearchTransport(
-            base_url="http://127.0.0.1:1",
-            raw_base_url="http://127.0.0.1:1",
+            base_url=f"http://127.0.0.1:{port}",
+            raw_base_url=f"http://127.0.0.1:{port}",
             sleeper=sleeps.append,
             max_attempts=2,
             base_delay=0.1,

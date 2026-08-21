@@ -9,6 +9,7 @@ digest").
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -406,3 +407,25 @@ def test_sequential_searches_keep_bounds_per_invocation() -> None:
     # Coherence: bounds agree with their own report, never the other's.
     assert first_bounds.matches_returned == len(first.matches)
     assert second_bounds.matches_returned == len(second.matches)
+
+
+def test_global_help_bound_examples_are_marked_non_exhaustive() -> None:
+    """C-2 (P3 remediation): the help's bound-reason list is exemplary.
+
+    The prose names three of the seven bound reasons (``BOUND_*`` in
+    discovery_search); ``e.g.`` keeps the list from reading as exhaustive.
+    """
+
+    from leitir.cli import build_parser
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        with pytest.raises(SystemExit) as raised:
+            build_parser().parse_args(["search", "--help"])
+    assert raised.value.code == 0
+    # argparse reflows the prose; compare on whitespace-normalized text.
+    rendered = " ".join(buffer.getvalue().split())
+    assert (
+        "an incomplete flag with the bound that fired (e.g. page cap, "
+        "server-side truncation, or a result budget)" in rendered
+    )

@@ -600,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "global discovery via GitHub Code Search; coverage is bounded, "
             "not total: output reports pages fetched, matches returned, and "
-            "an incomplete flag with the bound that fired (page cap, "
+            "an incomplete flag with the bound that fired (e.g. page cap, "
             "server-side truncation, or a result budget)"
         ),
     )

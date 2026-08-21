@@ -187,3 +187,126 @@ def test_each_documented_env_name_authenticates_its_provider_hosts():
             for host in provider.hosts:
                 auth = credentials.auth_for_url(f"https://{host}/x")
                 assert auth is not None, f"{env_name} failed to authenticate {host} ({name})"
+
+
+# --- Issue #220: github provider host coverage (api/codeload/objects/raw/uploads) ---
+
+_GITHUB_HOST_SET = frozenset(
+    {
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "uploads.github.com",
+    }
+)
+
+_COVERED_GITHUB_URLS = [
+    f"https://{host}/x" for host in sorted(_GITHUB_HOST_SET)
+]
+
+
+@pytest.mark.parametrize("url", _COVERED_GITHUB_URLS)
+@pytest.mark.parametrize("env_name", ["GH_TOKEN", "GITHUB_TOKEN"])
+def test_github_token_authenticates_every_covered_github_host(url, env_name):
+    """G-0 re-creation (issue #220): bearer auth on all five GitHub hosts."""
+    auth = Credentials({env_name: "secret"}).auth_for_url(url)
+    assert auth is not None
+    assert auth.scheme == "bearer"
+    assert auth.header == "Authorization"
+    assert auth.value == "secret"
+    headers = Credentials({env_name: "secret"}).headers(url)
+    assert headers["Authorization"] == "Bearer secret"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.github.com.evil.example/x",
+        "https://evil.example/github",
+        "https://example.com/x",
+        "https://api.github.com.evil.example/x/y/releases/assets/1",
+        "https://objects.githubusercontent.com.evil.example/releases/x",
+        "https://evil-objects.githubusercontent.com/x",
+        "https://raw.githubusercontent.com.evil.example/o/r/main/f",
+        "https://notraw.githubusercontent.com/o/r/main/f",
+        "https://uploads.github.com.evil.example/repos/o/r/releases/1",
+        "https://evil.example/codeload.github.com/o/r/tar.gz/a",
+        "https://github.com/o/r",
+        "https://gist.github.com/o/1",
+        # A GitHub token must not authenticate another provider's hosts.
+        "https://gitlab.com/api/v4/x",
+        "https://registry.npmjs.org/demo",
+    ],
+)
+def test_github_token_is_not_attached_to_unapproved_hosts(url):
+    credentials = Credentials({"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret"})
+    assert credentials.auth_for_url(url) is None
+    assert "Authorization" not in credentials.headers(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://objects.githubusercontent.com/releases/x",
+        "http://raw.githubusercontent.com/o/r/main/f",
+        "http://uploads.github.com/repos/o/r/releases/1",
+        "https://objects.githubusercontent.com:8443/releases/x",
+        "https://raw.githubusercontent.com:80/o/r/main/f",
+        "https://uploads.github.com:8443/repos/o/r/releases/1",
+    ],
+)
+def test_github_hosts_refuse_downgraded_channels(url):
+    assert Credentials({"GITHUB_TOKEN": "secret"}).auth_for_url(url) is None
+    assert "Authorization" not in Credentials({"GITHUB_TOKEN": "secret"}).headers(url)
+
+
+@pytest.mark.parametrize(
+    "host", sorted(_GITHUB_HOST_SET - {"api.github.com", "codeload.github.com"})
+)
+def test_control_character_token_rejected_on_newly_covered_hosts(host):
+    token = "gh\rleak"
+    with pytest.raises(ValueError) as exc_info:
+        Credentials({"GITHUB_TOKEN": token}).auth_for_url(f"https://{host}/x")
+    assert token not in str(exc_info.value)
+    assert "leak" not in str(exc_info.value)
+    assert "gh" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("url", _COVERED_GITHUB_URLS)
+def test_empty_github_token_falls_back_to_github_token_on_all_hosts(url):
+    fallback = Credentials({"GH_TOKEN": "", "GITHUB_TOKEN": "g"})
+    assert fallback.headers(url)["Authorization"] == "Bearer g"
+    only_empty = Credentials({"GITHUB_TOKEN": ""})
+    assert only_empty.auth_for_url(url) is None
+    assert "Authorization" not in only_empty.headers(url)
+
+
+@pytest.mark.parametrize("url", _COVERED_GITHUB_URLS)
+def test_credential_lookup_is_stateless_across_repeated_calls(url):
+    """SP-4: interleaved lookups across hosts are pure — identical every round."""
+    credentials = Credentials({"GITHUB_TOKEN": "secret"})
+    urls = _COVERED_GITHUB_URLS + ["https://example.com/x", "https://gitlab.com/api/v4/x"]
+    first_round = [credentials.auth_for_url(candidate) for candidate in urls]
+    second_round = [credentials.auth_for_url(candidate) for candidate in urls]
+    third_round = [credentials.auth_for_url(candidate) for candidate in urls]
+    assert first_round == second_round == third_round
+    assert first_round[urls.index(url)] is not None
+    assert all(auth is None for host_url, auth in zip(urls, first_round) if host_url not in _COVERED_GITHUB_URLS)
+
+
+def test_github_provider_host_set_is_pinned_to_five_hosts():
+    """C-5: single shared five-host tuple; no host duplicated across providers."""
+    from leitir.credentials import _GITHUB_HOSTS
+
+    assert _PROVIDERS["github"].hosts == _GITHUB_HOSTS
+    assert len(_PROVIDERS["github"].hosts) == len(set(_PROVIDERS["github"].hosts))
+    assert frozenset(_PROVIDERS["github"].hosts) == _GITHUB_HOST_SET
+    seen_hosts: dict[str, str] = {}
+    for name in sorted(_PROVIDERS):
+        for host in _PROVIDERS[name].hosts:
+            assert host not in seen_hosts, (
+                f"host {host!r} duplicated across providers {seen_hosts[host]!r} and {name!r}"
+            )
+            seen_hosts[host] = name
+    assert set(seen_hosts) >= _GITHUB_HOST_SET

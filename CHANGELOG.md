@@ -21,6 +21,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
+- bound archive-channel divergence and harden enumeration parsing (`resolver`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
 - de-flake the two environment-sensitive retry tests (#202) (`tests`)
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
@@ -37,6 +38,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
 
 ### Security
+- cover objects/raw/uploads GitHub hosts in github provider (`credentials`)
 - honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - re-read symlink-path blobs on Codeberg with digest verification (`resolver`)
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

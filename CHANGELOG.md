@@ -20,6 +20,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
+- consolidate atomic writes with fd sentinel + parent-dir fsync; manifest double-close fixed, durability hardened (`safeio`)
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - harden import-purity child report channel and import-path isolation (`tests`)

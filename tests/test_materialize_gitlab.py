@@ -131,7 +131,6 @@ def test_cli_materializes_verified_gitlab_subgroup_repository(tmp_path):
     assert manifest["verified"] is True
     assert server.state.request_paths[1:] == [
         f"/projects/group%2Fsubgroup%2Fdemo/repository/tree?ref={SHA}&recursive=true&per_page=100&page=1",
-        f"/projects/group%2Fsubgroup%2Fdemo/repository/blobs/{GitHubTreeSource.git_blob_sha(CONTENT)}",
     ]
 
 
@@ -157,6 +156,10 @@ def test_gitlab_verification_mismatch_fails_closed(tmp_path):
         (200, {}, expected),
     ]
     with hs.scripted_server(responses) as server:
+        # CCR 1 (issue #195 remediation): a single-path tamper passes
+        # enumeration via the bounded baseline fallback and is caught again
+        # by materialization's per-file digest verification — the pre-#195
+        # layer and message.
         with pytest.raises(MaterializationError, match="VerificationError"):
             materialize_repo(
                 tmp_path,

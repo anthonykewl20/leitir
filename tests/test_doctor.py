@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 from contextlib import nullcontext
 from io import BytesIO, StringIO
@@ -245,13 +246,28 @@ def test_doctor_selftest_catches_integrity_regression(monkeypatch: pytest.Monkey
 
 
 def test_doctor_network_check_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    def timeout(*args: object, **kwargs: object) -> object:
+    def timeout(request: object, *, timeout: float) -> object:
         raise TimeoutError("too slow")
 
-    monkeypatch.setattr(doctor.urllib.request, "urlopen", timeout)
+    monkeypatch.setattr(doctor._http, "safe_urlopen", timeout)
     result = doctor.check_network_endpoint("npm", "https://registry.npmjs.org/", "0.1.0")
     assert result.status == "warn"
-    assert "timed out" in result.summary
+    assert "unreachable" in result.summary
+    assert "5s" in result.summary
+    assert "timed out" not in result.summary
+
+
+def test_doctor_network_check_urlerror_timeout_reason_warns_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(request: object, *, timeout: float) -> object:
+        raise urllib.error.URLError(TimeoutError("socket timeout"))
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", timeout)
+    result = doctor.check_network_endpoint("npm", "https://registry.npmjs.org/", "0.1.0")
+    assert result.status == "warn"
+    assert "unreachable" in result.summary
+    assert "timed out" not in result.summary
 
 
 def test_doctor_update_check_handles_404_for_github_releases(
@@ -261,13 +277,13 @@ def test_doctor_update_check_handles_404_for_github_releases(
         def getcode(self) -> int:
             return 200
 
-    def open_url(request: object, timeout: float) -> object:
+    def open_url(request: object, *, timeout: float) -> object:
         url = request.full_url  # type: ignore[attr-defined]
         if url == doctor._GITHUB_RELEASES_URL:
             raise urllib.error.HTTPError(url, 404, "not found", {}, None)
         return nullcontext(Response(b"{}"))
 
-    monkeypatch.setattr(doctor.urllib.request, "urlopen", open_url)
+    monkeypatch.setattr(doctor._http, "safe_urlopen", open_url)
     checks, _version = doctor.collect_checks(root=tmp_path)
     update = next(check for check in checks if check.name == "update.available")
     assert update.status == "skip"
@@ -276,19 +292,21 @@ def test_doctor_update_check_handles_404_for_github_releases(
 
 def test_doctor_update_check_strips_release_tag_v(monkeypatch: pytest.MonkeyPatch) -> None:
     response = BytesIO(b'{"tag_name":"v0.1.1"}')
-    monkeypatch.setattr(
-        doctor.urllib.request, "urlopen", lambda *args, **kwargs: nullcontext(response)
-    )
+
+    def open_url(request: object, *, timeout: float) -> object:
+        return nullcontext(response)
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", open_url)
     result = doctor.check_update_availability("0.1.0")
     assert result.status == "warn"
     assert result.json_data == {"installed": "0.1.0", "latest": "0.1.1"}
 
 
 def test_doctor_update_check_network_error_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unavailable(*args: object, **kwargs: object) -> object:
+    def unavailable(request: object, *, timeout: float) -> object:
         raise urllib.error.URLError("offline")
 
-    monkeypatch.setattr(doctor.urllib.request, "urlopen", unavailable)
+    monkeypatch.setattr(doctor._http, "safe_urlopen", unavailable)
     result = doctor.check_update_availability("0.1.0")
     assert result.status == "warn"
     assert "GitHub Releases" in result.summary
@@ -297,15 +315,210 @@ def test_doctor_update_check_network_error_warns(monkeypatch: pytest.MonkeyPatch
 def test_doctor_no_network_flag_skips_all_network_checks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unexpected(*args: object, **kwargs: object) -> object:
+    def unexpected(request: object, *, timeout: float) -> object:
         raise AssertionError("network probe ran")
 
-    monkeypatch.setattr(doctor.urllib.request, "urlopen", unexpected)
+    monkeypatch.setattr(doctor._http, "safe_urlopen", unexpected)
     checks, _version = doctor.collect_checks(no_network=True, root=tmp_path)
     network = [check for check in checks if check.name.startswith("network.")]
     assert len(network) == 8
     assert all(check.status == "skip" for check in network)
     assert next(check for check in checks if check.name == "update.available").status == "skip"
+
+
+# --- Issue #203: realistic timeout, bounded reads, shared HTTP seam ---
+
+
+class _SlowServer:
+    """Scripted loopback HTTP server that delays every response."""
+
+    def __init__(self, delay: float) -> None:
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+                time.sleep(delay)
+                body = b"{}"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_port}/"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+def test_doctor_network_check_slow_endpoint_within_budget_is_ok() -> None:
+    """G-0 (issue #203): a healthy-but-slow (1.2s) endpoint reports ok, not a timeout."""
+    server = _SlowServer(delay=1.2)
+    try:
+        result = doctor.check_network_endpoint("npm", server.url, "0.1.0")
+    finally:
+        server.close()
+    assert result.status == "pass"
+    assert result.summary == f"{server.url} reachable"
+
+
+def test_doctor_network_check_beyond_budget_warns_unreachable() -> None:
+    """C-3/AC-2: responses beyond the 5s budget warn with slow/unreachable wording."""
+    server = _SlowServer(delay=8.0)
+    try:
+        result = doctor.check_network_endpoint("npm", server.url, "0.1.0")
+    finally:
+        server.close()
+    assert result.status == "warn"
+    assert "unreachable" in result.summary
+    assert "5s" in result.summary
+    assert "timed out" not in result.summary
+
+
+class _RecordingResponse:
+    """Response double that records the size of every bounded read."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.read_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        return self._body[:size] if size >= 0 else self._body
+
+    def __enter__(self) -> _RecordingResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+def test_doctor_update_check_body_read_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-4/AC-3: the body is read with the bounded pattern, never json.load-ed unbounded."""
+    oversized = b"x" * (doctor._MAX_RESPONSE_BYTES + 1)
+    response = _RecordingResponse(oversized)
+
+    def open_url(request: object, *, timeout: float) -> object:
+        return response
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", open_url)
+    result = doctor.check_update_availability("0.1.0")
+    assert result.status == "warn"
+    assert "could not check GitHub Releases" in result.summary
+    assert response.read_sizes == [doctor._MAX_RESPONSE_BYTES + 1]
+    assert str(doctor._MAX_RESPONSE_BYTES) in (result.detail or "")
+
+
+def test_doctor_update_check_oversized_body_never_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An oversized body is refused before parsing; a bounded one parses normally."""
+
+    def open_factory(body: bytes):
+        def open_url(request: object, *, timeout: float) -> object:
+            return _RecordingResponse(body)
+
+        return open_url
+
+    exact = b'{"tag_name":"v0.2.0"}' + b" " * (
+        doctor._MAX_RESPONSE_BYTES - len('{"tag_name":"v0.2.0"}')
+    )
+    assert len(exact) == doctor._MAX_RESPONSE_BYTES
+    monkeypatch.setattr(doctor._http, "safe_urlopen", open_factory(exact))
+    result = doctor.check_update_availability("0.1.0")
+    assert result.status == "warn"  # update available, parsed fine
+    assert result.json_data == {"installed": "0.1.0", "latest": "0.2.0"}
+
+
+def test_doctor_network_check_dns_failure_warns_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SP-1: DNS failures degrade to a warn, never a crash."""
+    import socket
+
+    def dns_failure(request: object, *, timeout: float) -> object:
+        raise urllib.error.URLError(socket.gaierror("name resolution failed"))
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", dns_failure)
+    result = doctor.check_network_endpoint("npm", "https://registry.npmjs.org/", "0.1.0")
+    assert result.status == "warn"
+    assert "network error" in result.summary
+
+
+def test_doctor_update_check_malformed_json_warns_and_doctor_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SP-2: malformed JSON warns with typed detail; the doctor run continues."""
+
+    def open_url(request: object, *, timeout: float) -> object:
+        return _RecordingResponse(b"not-json{")
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", open_url)
+    result = doctor.check_update_availability("0.1.0")
+    assert result.status == "warn"
+    assert "could not check GitHub Releases" in result.summary
+    monkeypatch.setattr(
+        doctor,
+        "check_installed_version",
+        lambda: doctor.Check("install.version", "pass", "0.1.0",
+                             json_data={"version": "0.1.0"}),
+    )
+    checks, _version = doctor.collect_checks(root=tmp_path)
+    update = next(check for check in checks if check.name == "update.available")
+    assert update.status == "warn"
+
+
+def test_doctor_network_check_http_error_statuses_classified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SP-3: HTTP error statuses keep their existing classification via the seam."""
+
+    def raise_status(code: int):
+        def open_url(request: object, *, timeout: float) -> object:
+            raise urllib.error.HTTPError(
+                "https://registry.npmjs.org/", code, "boom", {}, None
+            )
+
+        return open_url
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", raise_status(503))
+    server_error = doctor.check_network_endpoint("npm", "https://registry.npmjs.org/", "0.1.0")
+    assert server_error.status == "warn"
+    assert "5xx" in server_error.summary
+    monkeypatch.setattr(doctor._http, "safe_urlopen", raise_status(404))
+    client_error = doctor.check_network_endpoint("npm", "https://registry.npmjs.org/", "0.1.0")
+    assert client_error.status == "warn"
+    assert "4xx" in client_error.summary
+
+
+def test_doctor_offline_machine_warns_every_network_check_and_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SP-4: with the network unreachable every network check warns; doctor never crashes."""
+
+    def offline(request: object, *, timeout: float) -> object:
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(doctor._http, "safe_urlopen", offline)
+    monkeypatch.setattr(
+        doctor,
+        "check_installed_version",
+        lambda: doctor.Check("install.version", "pass", "0.1.0",
+                             json_data={"version": "0.1.0"}),
+    )
+    checks, _version = doctor.collect_checks(root=tmp_path)
+    network = [check for check in checks if check.name.startswith("network.")]
+    assert len(network) == 8
+    assert all(check.status == "warn" for check in network)
+    update = next(check for check in checks if check.name == "update.available")
+    assert update.status == "warn"
+    stream = StringIO()
+    assert doctor.run_doctor(as_json=True, stdout=stream, root=tmp_path) == 1
 
 
 def test_doctor_quiet_suppresses_passing_checks(tmp_path: Path) -> None:

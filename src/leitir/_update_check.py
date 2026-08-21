@@ -25,7 +25,7 @@ import os
 import re
 import sys
 import threading
-import urllib.error
+import time
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -40,6 +40,11 @@ _CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 _NETWORK_TIMEOUT_SECONDS = 1.0
 _CACHE_SCHEMA = 2
 _MAX_RESPONSE_BYTES = 64 * 1024
+# A live cache write holds its temp file for milliseconds; one older than
+# this bound is an orphan from an interrupted exit and is swept by the next
+# run (issue #205 C-4). Fresh temps — possibly a concurrent live run's — are
+# never touched (SP-2).
+_STALE_TMP_MAX_AGE_SECONDS = 300.0
 _NUMERIC_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 _TRUE_DISABLE_VALUES = frozenset({"1", "true", "yes", "on"})
 _TRUE_CI_VALUES = frozenset({"1", "true", "yes"})
@@ -142,6 +147,31 @@ def _read_cache(path: Path) -> dict[str, object] | None:
     return payload
 
 
+def _sweep_stale_cache_temps(directory: Path) -> None:
+    """Remove crash-orphaned cache temps, never a live run's file.
+
+    The sweep mirrors materialization's stale-``.tmp-`` cleanup pattern: a
+    temp file older than the age bound cannot belong to a live write (writes
+    complete in milliseconds), so it is debris from an interrupted exit;
+    anything fresher is left untouched for a concurrent run to finish
+    (issue #205 C-4/SP-2). Failures are silently ignored — sweeping is
+    hygiene, never a behavioral gate.
+    """
+
+    try:
+        candidates = sorted(directory.glob(".update-check.json.tmp-*"))
+    except OSError:
+        return
+    now = time.time()
+    for candidate in candidates:
+        try:
+            if now - candidate.stat().st_mtime <= _STALE_TMP_MAX_AGE_SECONDS:
+                continue
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def _write_cache(path: Path, payload: Mapping[str, object]) -> bool:
     """Atomically write the cache, returning False for every filesystem failure."""
 
@@ -179,16 +209,11 @@ def _fetch_latest_release(installed_version: str) -> tuple[str, str] | None:
         if not isinstance(release_url, str):
             release_url = _GITHUB_RELEASES_PAGE
         return latest, release_url
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        OSError,
-        ValueError,
-        KeyError,
-        TypeError,
-        json.JSONDecodeError,
-    ):
+    except (OSError, ValueError, KeyError, TypeError):
+        # Redundancy-free equivalent of the former 8-type tuple: HTTPError,
+        # URLError, and TimeoutError are OSError subtypes, and
+        # json.JSONDecodeError is a ValueError subtype, so naming them
+        # alongside their supertypes could never change the match.
         return None
     except Exception:
         # Third-party response wrappers and platform URL handlers may raise
@@ -228,6 +253,7 @@ def _run_update_check(installed: str) -> None:
         path = _cache_path()
         if path is None:
             return
+        _sweep_stale_cache_temps(path.parent)
         now = _utc_now()
         cache = _read_cache(path)
         if cache is None or cache.get("installed_version") != installed:

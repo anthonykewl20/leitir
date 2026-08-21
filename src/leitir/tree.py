@@ -28,6 +28,13 @@ MAX_TREE_DEPTH = 64
 MAX_TREE_REQUESTS = 10_000
 MAX_TREE_ENTRIES = 600_000
 STREAM_CHUNK_SIZE = 64 * 1024
+# Hard upper bound on the total bytes a single read_blob_stream call may
+# yield.  GitHub blobs served through the git blobs API are at most 100 MiB;
+# the tighter 64 MiB constant bounds runaway streams fail-closed while
+# leaving headroom above the largest pinned canary fixture (2.4 MiB,
+# OBSERVED 2026-08-20).  Chosen per #197's non-functional requirement
+# ("bounded total bytes (constant value … recorded in PR)").
+STREAM_MAX_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,20 +324,97 @@ class GitHubTreeSource:
                 f"cannot read blob {slug}/{blob_sha}: {_http.describe_failure(exc)}"
             ) from exc
 
-    def read_blob_stream(self, slug: str, blob_sha: str) -> Iterator[bytes]:
+    def read_blob_stream(
+        self, slug: str, blob_sha: str, *, max_bytes: int = STREAM_MAX_BYTES
+    ) -> Iterator[bytes]:
+        """Stream one blob's raw bytes with *part* of read_blob's discipline.
+
+        What IS inherited from read_blob: the requested SHA is validated
+        (``_require_hex_sha``) before any URL is built — a malformed or
+        hostile ``blob_sha`` raises a typed :class:`TreeReadError` eagerly,
+        never a raw ``HTTPError``/``AttributeError`` escape — connection
+        setup goes through the shared categorized retry policy, transport
+        failures surface as typed ``TreeReadError`` instead of escaping the
+        taxonomy, and the response is closed promptly even when the consumer
+        abandons the generator mid-iteration. The total streamed size is
+        bounded by ``max_bytes`` (a stream crossing the bound fails closed
+        with a typed error).
+
+        What is NOT inherited: read_blob's response-envelope verification
+        (response SHA == requested, declared size == decoded length,
+        git-blob digest of decoded content == requested SHA). A raw stream
+        has no JSON envelope to check, so the caller MUST verify the
+        streamed bytes' digest and length itself — as
+        ``streaming.score_blob_stream`` does (git-blob sha1 over the chunks
+        plus a declared-size check).
+
+        Mid-stream read failures are not retried here: bytes were already
+        yielded, so a replay would duplicate them; they fail typed instead.
+        The prior consumer-replay behavior is preserved at the consumer
+        level: ``streaming.score_blob_stream`` wraps the entire consumption
+        in its own retry seam, and each replay starts a fresh generator, so
+        whole-attempt replay remains safe.
+        """
+        if (
+            isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int)
+            or max_bytes <= 0
+        ):
+            raise TreeReadError("cannot stream blob: max_bytes must be a positive integer")
+        try:
+            canonical_blob_sha = _require_hex_sha(blob_sha)
+        except TreeEnumerationError as exc:
+            raise TreeReadError("cannot stream blob: malformed requested blob SHA") from exc
+        return self._stream_blob(slug, canonical_blob_sha, max_bytes)
+
+    def _stream_blob(
+        self, slug: str, canonical_blob_sha: str, max_bytes: int
+    ) -> Iterator[bytes]:
         from urllib.request import Request
 
-        url = f"{self._base_url}/repos/{slug}/git/blobs/{blob_sha}"
+        url = f"{self._base_url}/repos/{slug}/git/blobs/{canonical_blob_sha}"
         headers = self._headers()
         headers["Accept"] = "application/vnd.github.raw"
-        with _http.safe_urlopen(
-            Request(url, headers=headers), timeout=self._timeout
-        ) as response:
+
+        def _open():
+            return _http.safe_urlopen(
+                Request(url, headers=headers), timeout=self._timeout
+            )
+
+        try:
+            response = self._retry(_open)
+        except _http.RETRIABLE_EXCEPTIONS as exc:
+            raise TreeReadError(
+                f"cannot stream blob {slug}/{canonical_blob_sha}: "
+                f"{_http.describe_failure(exc)}"
+            ) from exc
+
+        received = 0
+        try:
             while True:
-                chunk = response.read(STREAM_CHUNK_SIZE)
+                try:
+                    chunk = response.read(STREAM_CHUNK_SIZE)
+                except _http.RETRIABLE_EXCEPTIONS as exc:
+                    raise TreeReadError(
+                        f"cannot stream blob {slug}/{canonical_blob_sha}: "
+                        f"{_http.describe_failure(exc)}"
+                    ) from exc
                 if not chunk:
                     break
+                received += len(chunk)
+                if received > max_bytes:
+                    raise TreeReadError(
+                        f"cannot stream blob {slug}/{canonical_blob_sha}: "
+                        f"streamed {received} bytes exceeds max_bytes={max_bytes}"
+                    )
                 yield chunk
+        finally:
+            # Context-manager discipline: an abandoned generator must not
+            # leave the response open.  Closing through the attribute keeps
+            # test doubles without ``close()`` working (they hold no fd).
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
 
     def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
         """Read a path's exact bytes through the contents API at a commit."""

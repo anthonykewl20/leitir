@@ -285,6 +285,47 @@ def test_atomic_text_writer_streams_json_like_the_legacy_sites(tmp_path: Path) -
     ).encode("utf-8")
 
 
+def test_written_artifact_digests_pinned_in_repo(tmp_path: Path) -> None:
+    """Pin the sha256 of exact bytes persisted through the helper (C-4/AC-3).
+
+    Review remediation (P2): the written-byte compatibility contract is
+    anchored in-repo by constant digests, not only by reconstruction. A
+    deterministic sources.json-style document streams through
+    ``atomic_text_writer`` exactly like the real sources-index site, and a
+    deterministic binary blob goes through ``atomic_write_bytes``; any drift
+    in what the helper lands on disk (truncation, newline translation,
+    encoding change, torn write) breaks the pinned digests.
+    """
+    import hashlib
+    import json
+
+    document = {
+        "digest": "a" * 64,
+        "sources": [{"kind": "git", "url": "https://example.invalid/repo.git"}],
+    }
+    sources = tmp_path / "sources.json"
+    with atomic_text_writer(sources, encoding="utf-8", newline="\n") as handle:
+        json.dump(document, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    payload = bytes(range(256)) * 4 + b"\n"
+    blob = tmp_path / "manifest.bin"
+    atomic_write_bytes(blob, payload)
+
+    assert sources.read_bytes() == (
+        json.dumps(document, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    assert (
+        hashlib.sha256(sources.read_bytes()).hexdigest()
+        == "d7e6eee55d2437591c2f011062060e2c58749cdffe157b77ede7531a114d5a93"
+    )
+    assert blob.read_bytes() == payload
+    assert (
+        hashlib.sha256(blob.read_bytes()).hexdigest()
+        == "402be1ab04705ce1a13d29c878e698c0c0f611dfb94bc5782d319354c4bcfa2b"
+    )
+
+
 @pytest.mark.skipif(
     os.name == "nt",
     reason="Windows denies concurrent replaces of one shared destination "

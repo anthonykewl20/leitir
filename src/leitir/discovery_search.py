@@ -700,6 +700,61 @@ def build_query(spec: SearchSpec) -> str:
     return _compile_query(spec)[0]
 
 
+# Provenance reasons for an incomplete coverage bound (issue #191).  Each names
+# the mechanism that fired; rendering joins them deterministically (sorted).
+BOUND_INCOMPLETE_RESULTS = "incomplete-results"
+BOUND_PAGE_CAP = "page-cap"
+BOUND_CANDIDATE_BUDGET = "candidate-budget"
+BOUND_RESULT_BUDGET = "result-budget"
+BOUND_TRANSPORT_ERROR = "transport-error"
+BOUND_PARSER_UNAVAILABLE = "parser-unavailable"
+BOUND_VERIFICATION_FAILED = "verification-failed"
+_BOUND_REASONS = frozenset(
+    {
+        BOUND_INCOMPLETE_RESULTS,
+        BOUND_PAGE_CAP,
+        BOUND_CANDIDATE_BUDGET,
+        BOUND_RESULT_BUDGET,
+        BOUND_TRANSPORT_ERROR,
+        BOUND_PARSER_UNAVAILABLE,
+        BOUND_VERIFICATION_FAILED,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageBounds:
+    """The honest lower-bound coverage statement of one global search.
+
+    A characterization of what was actually searched — pages fetched and
+    matches returned — plus an incomplete flag with provenance for which
+    bound fired.  Never a total-coverage claim: the statement describes the
+    observation, not the size of the candidate space (issue #191 C-1/SP-3).
+    """
+
+    pages_fetched: int
+    matches_returned: int
+    incomplete: bool
+    bounds: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("pages_fetched", "matches_returned"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if not isinstance(self.incomplete, bool):
+            raise TypeError("incomplete must be a bool")
+        if not isinstance(self.bounds, tuple):
+            raise TypeError("bounds must be a tuple")
+        for reason in self.bounds:
+            if reason not in _BOUND_REASONS:
+                raise ValueError(f"unknown bound reason: {reason}")
+        if len(set(self.bounds)) != len(self.bounds):
+            raise ValueError("bound reasons must be unique")
+        if not self.incomplete and self.bounds:
+            raise ValueError("bound reasons require incomplete=True")
+
+
 class GlobalSearcher:
     """Executes a global-discovery search via GitHub Code Search."""
 
@@ -736,6 +791,11 @@ class GlobalSearcher:
         self._max_results = max_results
         self._max_pages = max_pages
         self._clock = clock or _utc_now
+        # Bounds of the most recent successful search() on this instance.
+        # Per-invocation by convention: the caller reads it immediately after
+        # its own search() call, before issuing the next one (issue #191
+        # SP-4).  ``None`` until the first search completes.
+        self.last_coverage_bounds: CoverageBounds | None = None
 
     def search(self, spec: SearchSpec) -> SearchReport:
         if spec.mode is not SearchMode.GLOBAL_DISCOVERY:
@@ -758,6 +818,8 @@ class GlobalSearcher:
         files_indexed = 0
         files_eligible = 0
         incomplete_results = False
+        pages_fetched = 0
+        bound_reasons: set[str] = set()
         collected: list[CodeSearchHit] = []
         phase_a_stopped_for_candidate_budget = False
         per_page = min(self._max_results, 100)
@@ -776,9 +838,13 @@ class GlobalSearcher:
                 if page_number == 1:
                     raise
                 incomplete_results = True
+                bound_reasons.add(BOUND_TRANSPORT_ERROR)
                 break
+            pages_fetched += 1
             if page_number == 1:
                 files_eligible = page.total_count
+            if page.incomplete_results:
+                bound_reasons.add(BOUND_INCOMPLETE_RESULTS)
             incomplete_results = incomplete_results or page.incomplete_results
             collected.extend(page.hits)
             provisional = dedup_hits(collected)
@@ -790,6 +856,7 @@ class GlobalSearcher:
                 phase_a_stopped_for_candidate_budget = True
                 if page.total_count > len(collected):
                     incomplete_results = True
+                    bound_reasons.add(BOUND_CANDIDATE_BUDGET)
                 break
             if page.incomplete_results:
                 break
@@ -797,12 +864,14 @@ class GlobalSearcher:
                 break
             if page_number == self._max_pages:
                 incomplete_results = True
+                bound_reasons.add(BOUND_PAGE_CAP)
 
         # Preserve the reason independently of the coverage flag: reaching the
         # candidate boundary is complete only when the remote count proves that
         # every result was collected on the pages consumed above.
         if phase_a_stopped_for_candidate_budget and files_eligible > len(collected):
             incomplete_results = True
+            bound_reasons.add(BOUND_CANDIDATE_BUDGET)
 
         # Phase B: collapse only index claims. Collapsed members are not read.
         outcome = dedup_hits(collected)
@@ -825,10 +894,12 @@ class GlobalSearcher:
         for group in eligible_groups:
             if attempts >= self._max_results:
                 incomplete_results = True
+                bound_reasons.add(BOUND_RESULT_BUDGET)
                 break
             for group_index, hit in enumerate(group):
                 if attempts >= self._max_results:
                     incomplete_results = True
+                    bound_reasons.add(BOUND_RESULT_BUDGET)
                     break
                 if group_index >= 1:
                     promoted_attempted += 1
@@ -891,6 +962,7 @@ class GlobalSearcher:
                 matches.extend(blob_matches)
                 if parser_unavailable:
                     incomplete_results = True
+                    bound_reasons.add(BOUND_PARSER_UNAVAILABLE)
                     exclusions["parser_unavailable"] = (
                         exclusions.get("parser_unavailable", 0) + 1
                     )
@@ -899,6 +971,7 @@ class GlobalSearcher:
 
         if verification_failed and files_indexed < self._max_results:
             incomplete_results = True
+            bound_reasons.add(BOUND_VERIFICATION_FAILED)
 
         deduplicated = outcome.collapsed - promoted_attempted
         if deduplicated > 0:
@@ -926,6 +999,17 @@ class GlobalSearcher:
             report,
             tuple(verified),
             line_counts=verified_line_counts,
+        )
+        # Honest lower-bound coverage statement for this invocation (issue
+        # #191): pages actually fetched, matches actually returned, and which
+        # bound fired when the observation is incomplete.  Stored on the
+        # instance for the caller to read before the next search() call; the
+        # report itself keeps its closed schema unchanged.
+        self.last_coverage_bounds = CoverageBounds(
+            pages_fetched=pages_fetched,
+            matches_returned=len(matches),
+            incomplete=incomplete_results,
+            bounds=tuple(sorted(bound_reasons)),
         )
         return report
 

@@ -983,6 +983,7 @@ def _write_diff_human(report: DiffReport, out: TextIO) -> None:
 
 def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
     from .corpus import load_sources
+    from .info import source_routing
     from .materialize import read_valid_manifest
 
     entries = load_sources(root)
@@ -1014,7 +1015,9 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
             or not 0 <= trust_score <= 100
         ):
             trust_score = None
-        rendered.append((entry, version, verification, trust_score))
+        # Advisory transplant-vs-study license routing (issue #190).
+        routing = source_routing(root / entry["path"], manifest.get("license_identifier"))
+        rendered.append((entry, version, verification, trust_score, routing))
     if filtered:
         logger.warning(
             "%d corpus entries were excluded because they failed manifest validation. "
@@ -1024,19 +1027,20 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
         )
     if as_json:
         payload = []
-        for entry, _, verification, trust_score in rendered:
-            item = dict(entry, verification=verification)
+        for entry, _, verification, trust_score, routing in rendered:
+            item = dict(entry, verification=verification, routing=routing)
             if trust_score is not None:
                 item["trust_score"] = trust_score
             payload.append(item)
         print(json.dumps(payload, indent=2, sort_keys=True), file=out)
         return
-    for entry, version, verification, trust_score in rendered:
+    for entry, version, verification, trust_score, routing in rendered:
         version_text = f" {version}" if version else ""
         path = (root / entry["path"]).absolute()
         print(
             f"{entry['name']}{version_text} {entry['owner']}/{entry['repo']}@{entry['commit_sha']} "
             f"{verification} trust={trust_score if trust_score is not None else 'unknown'} "
+            f"routing={routing['verdict']}/{routing['reason']} "
             f"{path} {entry['fetched_at']}",
             file=out,
         )
@@ -1875,6 +1879,7 @@ def _run_corpus_command(
                         examples = cast(dict[str, Any], document["examples"])
                         trust = cast(dict[str, Any], document["trust"])
                         license_info = cast(dict[str, Any], document["license"])
+                        license_routing = cast(dict[str, Any], document["routing"])
                         parity = cast(dict[str, Any], document["parity"])
                         document_paths = cast(dict[str, Any], document["paths"])
                         print(
@@ -1891,6 +1896,11 @@ def _run_corpus_command(
                         print(
                             f"license: {license_info['identifier'] or 'unknown'} "
                             f"({license_info['method']}, {license_info['confidence']})",
+                            file=out,
+                        )
+                        print(
+                            f"routing: {license_routing['verdict']} "
+                            f"({license_routing['reason']})",
                             file=out,
                         )
                         print(f"parity: {parity['parity']}", file=out)
@@ -2112,12 +2122,44 @@ def _resolve_scope_via_package(
     return resolved.scope
 
 
+def _corpus_routings(root: Path) -> dict[tuple[str, str], dict[str, str]]:
+    """Routing guidance for every materialized corpus source (issue #190).
+
+    Keyed by ``(owner/repo, commit_sha)`` — the identity a search match
+    carries — so the search rendering can attach corpus-derived license
+    routing instead of the fail-closed undetermined default.
+    """
+
+    from .corpus import load_sources
+    from .info import source_routing
+    from .materialize import read_valid_manifest
+
+    routings: dict[tuple[str, str], dict[str, str]] = {}
+    for entry in load_sources(root):
+        manifest = read_valid_manifest(
+            root / entry["path"],
+            entry["owner"],
+            entry["repo"],
+            entry["commit_sha"],
+            host=entry["host"],
+        )
+        if manifest is None:
+            continue
+        routings[
+            (f"{entry['owner']}/{entry['repo']}", str(entry["commit_sha"]))
+        ] = source_routing(root / entry["path"], manifest.get("license_identifier"))
+    return routings
+
+
 def _write_summary(
     report: SearchReport,
     *,
     file: TextIO,
+    routings: dict[tuple[str, str], dict[str, str]] | None = None,
     bounds: CoverageBounds | None = None,
 ) -> None:
+    from .license_policy import undetermined_routing
+
     cov = report.coverage
     if bounds is not None:
         # Global discovery (issue #191): a lower-bound coverage statement —
@@ -2152,10 +2194,15 @@ def _write_summary(
     for match in report.matches[:10]:
         src = match.source
         kinds = ",".join(k.value for k in match.matched_kinds)
+        # Search-time license detection does not run (no extra network calls),
+        # so routing is corpus-derived when known and fail-closed undetermined
+        # otherwise (issue #190: every surfaced source carries the field).
+        routing = (routings or {}).get((src.slug, src.commit_sha)) or undetermined_routing().as_field()
         print(
             f"  {src.path}:{src.start_line}-{src.end_line} "
             f"score={match.score:.1f} [{kinds}] "
-            f"{src.slug}@{src.commit_sha[:12]}",
+            f"{src.slug}@{src.commit_sha[:12]} "
+            f"routing={routing['verdict']}/{routing['reason']}",
             file=file,
         )
     if len(report.matches) > 10:
@@ -2528,6 +2575,7 @@ def main(
         return int(ExitCode.MALFORMED_USAGE)
 
     token = _github_token()
+    corpus_root: Path | None = None
 
     coverage_bounds: CoverageBounds | None = None
     try:
@@ -2628,8 +2676,14 @@ def main(
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.INFRASTRUCTURE_FAILURE)
 
+    corpus_routings = _corpus_routings(corpus_root) if corpus_root is not None else None
     print(report.to_json(), file=out)
-    _write_summary(report, file=err, bounds=coverage_bounds)
+    _write_summary(
+        report,
+        file=err,
+        routings=corpus_routings,
+        bounds=coverage_bounds,
+    )
     return successful()
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import logging
 import re
 import tomllib
 from dataclasses import dataclass
@@ -1217,13 +1218,217 @@ def license_payloads(policy: LicensePolicy = DEFAULT_LICENSE_POLICY) -> tuple[tu
     return tuple((f"licenses/{_sha(data).removeprefix('sha256:')}.license", data) for _, data in sorted(_LICENSE_TEXTS.items()))
 
 
+# ---------------------------------------------------------------------------
+# License routing guidance (issue #190): transplant-ok | study-only.
+#
+# Routing is advisory output only: it never gates materialization, never
+# claims legal clearance, and never invents a license.  It is a pure function
+# of caller-supplied detected license expressions plus boolean tree markers
+# (proprietary text marker, enterprise carve-out segment).  All detection
+# I/O happens in the caller, so this module keeps its no-filesystem-API
+# contract.  Inconclusive detection routes fail-closed to ``study-only`` with
+# reason ``license-undetermined`` — there is no neutral routing value.
+
+ROUTING_SCHEMA_VERSION = "leitir-license-routing-v1"
+TRANSPLANT_OK = "transplant-ok"
+STUDY_ONLY = "study-only"
+REASON_LICENSE_UNDETERMINED = "license-undetermined"
+REASON_PROPRIETARY = "proprietary"
+REASON_ENTERPRISE_CARVE_OUT = "enterprise-tree-carve-out"
+
+logger = logging.getLogger(__name__)
+
+# Maintained routing policy table: the maintainer-reviewed permissive catalog
+# routes transplant-ok; copyleft-family IDs (strong and weak) route
+# study-only; anything detected but unclassified routes fail-closed
+# study-only/license-undetermined.
+_ROUTING_PERMISSIVE_IDS: frozenset[str] = frozenset(_REVIEWED)
+_ROUTING_COPYLEFT_IDS: frozenset[str] = frozenset(
+    {
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "EPL-1.0",
+        "EPL-2.0",
+        "GPL-2.0",
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "LGPL-2.1-only",
+        "LGPL-2.1-or-later",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "MPL-2.0",
+    }
+)
+
+# Narrow, deliberate declaration markers only: copyleft license texts
+# legitimately *mention* proprietary works (e.g. GPLv3 §10), so a bare word
+# match would misroute.  A hit requires an explicit proprietary declaration
+# phrase, which standard permissive and copyleft texts never contain.
+_PROPRIETARY_MARKERS: tuple[re.Pattern[bytes], ...] = (
+    re.compile(rb"(?i)\bproprietary\s+and\s+confidential\b"),
+    re.compile(rb"(?i)\bproprietary\s+software\b"),
+    re.compile(rb"(?i)\bproprietary\s+licen[cs]e\b"),
+    re.compile(rb"(?im)^[^\r\n]{0,120}\b(?:is|are|remains)\s+proprietary\b"),
+    re.compile(rb"(?im)^[^\r\n]{0,120}\bproprietary\b[^\r\n]{0,100}\ball\s+rights\s+reserved\b"),
+)
+
+# GPL-family license headers are matched case-sensitively against their
+# canonical FSF publication wording (title + exact release date) so mentions
+# of the GPL inside permissive appendices do not misroute.
+_GPL_FAMILY_HEADERS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
+    (
+        "GPL-3.0",
+        re.compile(rb"GNU\s+GENERAL\s+PUBLIC\s+LICENSE\s+.{0,400}?Version\s+3(?:\.0)?,\s*29\s+June\s+2007", re.DOTALL),
+    ),
+    (
+        "GPL-2.0",
+        re.compile(rb"GNU\s+GENERAL\s+PUBLIC\s+LICENSE\s+.{0,400}?Version\s+2(?:\.0)?,\s*June\s+1991", re.DOTALL),
+    ),
+    (
+        "AGPL-3.0-only",
+        re.compile(rb"GNU\s+AFFERO\s+GENERAL\s+PUBLIC\s+LICENSE\s+.{0,400}?Version\s+3(?:\.0)?,\s*19\s+November\s+2007", re.DOTALL),
+    ),
+    (
+        "LGPL-3.0-only",
+        re.compile(rb"GNU\s+LESSER\s+GENERAL\s+PUBLIC\s+LICENSE\s+.{0,400}?Version\s+3(?:\.0)?,\s*29\s+June\s+2007", re.DOTALL),
+    ),
+    (
+        "LGPL-2.1-only",
+        re.compile(rb"GNU\s+LESSER\s+GENERAL\s+PUBLIC\s+LICENSE\s+.{0,400}?Version\s+2\.1,\s*February\s+1999", re.DOTALL),
+    ),
+)
+
+_EXPRESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
+
+
+@dataclass(frozen=True, slots=True)
+class LicenseRouting:
+    """Advisory transplant-vs-study routing for one surfaced source."""
+
+    verdict: str
+    reason: str
+
+    def as_field(self) -> dict[str, str]:
+        return {"verdict": self.verdict, "reason": self.reason}
+
+
+def validate_routing_policy_table(permissive: frozenset[str], copyleft: frozenset[str]) -> None:
+    """Fail closed when the maintained routing policy table is malformed."""
+
+    overlap = sorted(permissive & copyleft)
+    if overlap:
+        raise ValueError(f"license routing policy table is malformed: IDs in both routing classes: {', '.join(overlap)}")
+    unknown = sorted((permissive | copyleft) - set(_LICENSE_IDS))
+    if unknown:
+        raise ValueError(f"license routing policy table is malformed: IDs outside the pinned SPDX catalog: {', '.join(unknown)}")
+
+
+validate_routing_policy_table(_ROUTING_PERMISSIVE_IDS, _ROUTING_COPYLEFT_IDS)
+
+
+def _expression_license_ids(value: object) -> tuple[str, ...]:
+    """Extract pinned SPDX license IDs (and LicenseRef markers) from one value."""
+
+    if not isinstance(value, str):
+        return ()
+    return tuple(
+        token
+        for token in _EXPRESSION_TOKEN.findall(value)
+        if token in _LICENSE_IDS or token.startswith("LicenseRef-")
+    )
+
+
+def detect_routing_evidence(texts: tuple[bytes, ...]) -> tuple[tuple[str, ...], bool]:
+    """Detect routing evidence from caller-supplied license-file bytes.
+
+    Returns ``(spdx_ids, proprietary_marker)`` where ``spdx_ids`` is the
+    sorted, deduplicated union of SPDX-License-Identifier markers and
+    GPL-family canonical header matches.  Pure; no I/O.
+    """
+
+    identifiers: set[str] = set()
+    proprietary = False
+    for view in texts:
+        for match in _HEADER.finditer(view):
+            try:
+                expression = match.group(1).decode("ascii").strip()
+            except UnicodeDecodeError:
+                continue
+            identifiers.update(token for token in _EXPRESSION_TOKEN.findall(expression) if token in _LICENSE_IDS)
+        for identifier, pattern in _GPL_FAMILY_HEADERS:
+            if pattern.search(view) is not None:
+                identifiers.add(identifier)
+        if any(pattern.search(view) is not None for pattern in _PROPRIETARY_MARKERS):
+            proprietary = True
+    return tuple(sorted(identifiers)), proprietary
+
+
+def routing_for_source(
+    expressions: tuple[object, ...],
+    *,
+    proprietary_marker: bool = False,
+    enterprise_carve_out: bool = False,
+) -> LicenseRouting:
+    """Route one surfaced source: pure function of detections plus policy table.
+
+    Precedence (most restrictive segment wins): a proprietary marker, an
+    enterprise carve-out segment, then per-expression classification.  The
+    reason lists every license contributor in a fixed severity order
+    (``copyleft:*`` sorted, ``license-undetermined``, ``permissive:*``
+    sorted).  Empty, non-text, unclassifiable, or LicenseRef-only expressions
+    are undetermined contributors: they can only push toward ``study-only``.
+    """
+
+    if proprietary_marker:
+        return LicenseRouting(STUDY_ONLY, REASON_PROPRIETARY)
+    if enterprise_carve_out:
+        return LicenseRouting(STUDY_ONLY, REASON_ENTERPRISE_CARVE_OUT)
+    copyleft: set[str] = set()
+    permissive: set[str] = set()
+    undetermined = not expressions
+    for value in expressions:
+        tokens = _expression_license_ids(value)
+        classified = tuple(token for token in tokens if token in _ROUTING_PERMISSIVE_IDS or token in _ROUTING_COPYLEFT_IDS)
+        # A LicenseRef marker is a non-standard license term: even when the
+        # expression also names classified IDs, the whole expression stays an
+        # undetermined contributor (fail-closed under AND semantics).
+        if not classified or any(token.startswith("LicenseRef-") for token in tokens):
+            undetermined = True
+        for token in classified:
+            (copyleft if token in _ROUTING_COPYLEFT_IDS else permissive).add(token)
+    if not copyleft and not permissive:
+        return LicenseRouting(STUDY_ONLY, REASON_LICENSE_UNDETERMINED)
+    if copyleft or undetermined:
+        components = [f"copyleft:{identifier}" for identifier in sorted(copyleft)]
+        if undetermined:
+            components.append(REASON_LICENSE_UNDETERMINED)
+        components.extend(f"permissive:{identifier}" for identifier in sorted(permissive))
+        return LicenseRouting(STUDY_ONLY, ",".join(components))
+    return LicenseRouting(TRANSPLANT_OK, ",".join(f"permissive:{identifier}" for identifier in sorted(permissive)))
+
+
+def undetermined_routing() -> LicenseRouting:
+    """The fail-closed degrade routing used when evaluation cannot proceed."""
+
+    return LicenseRouting(STUDY_ONLY, REASON_LICENSE_UNDETERMINED)
+
+
 __all__ = [
     "DEFAULT_LICENSE_POLICY",
     "LICENSE_POLICY_AUTHORITY",
     "LICENSE_POLICY_ID",
     "OBLIGATIONS_SCHEMA_VERSION",
     "PINNED_LICENSE_POLICY",
+    "REASON_ENTERPRISE_CARVE_OUT",
+    "REASON_LICENSE_UNDETERMINED",
+    "REASON_PROPRIETARY",
+    "ROUTING_SCHEMA_VERSION",
     "SPDX_GRAMMAR_ID",
+    "STUDY_ONLY",
+    "TRANSPLANT_OK",
     "BundledSource",
     "CompatibilityDecision",
     "CopyleftBoundary",
@@ -1237,6 +1442,7 @@ __all__ = [
     "LicenseEvidence",
     "LicensePolicy",
     "LicenseResolution",
+    "LicenseRouting",
     "LicenseTextObligation",
     "ModificationMarkingObligation",
     "ObligationKind",
@@ -1252,8 +1458,12 @@ __all__ = [
     "VerifiedBytes",
     "VerifiedSource",
     "canonicalize_spdx_expression",
+    "detect_routing_evidence",
     "evaluate_license_policy",
     "license_payloads",
     "render_attribution",
     "resolve_source_license",
+    "routing_for_source",
+    "undetermined_routing",
+    "validate_routing_policy_table",
 ]

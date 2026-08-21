@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, TypeGuard
 
@@ -18,6 +19,13 @@ from .corpus import (
     write_examples_index,
 )
 from .examples import EXAMPLES_SCHEMA_VERSION, extract_examples, valid_serialized_classification
+from .license_policy import (
+    REASON_LICENSE_UNDETERMINED,
+    STUDY_ONLY,
+    LicenseRouting,
+    detect_routing_evidence,
+    routing_for_source,
+)
 from .materialize import _refresh_license_manifest, _target_lock, update_manifest
 from .sbom import infer_license
 from .trust import compute_trust
@@ -25,6 +33,68 @@ from .trust import compute_trust
 TOP_SYMBOLS_LIMIT = 50
 _KIND_PRIORITY = {"class": 0, "function": 1, "method": 2, "constant": 3}
 logger = logging.getLogger(__name__)
+
+# License routing guidance (issue #190).  Advisory only; detection inputs are
+# the source root's top-level license files and directory markers.
+_LICENSE_TEXT_READ_LIMIT = 1 << 20
+_TOP_LEVEL_LICENSE_NAMES = re.compile(r"^(?:LICENSE|LICENCE|COPYING)(?:[._-].*)?$|^(?:copyright)$", re.IGNORECASE)
+_ENTERPRISE_CARVE_OUT_DIRS = frozenset({"ee", "enterprise"})
+_PROPRIETARY_LICENSE_REF = re.compile(r"(?i)^LicenseRef-[A-Za-z0-9.-]*proprietary[A-Za-z0-9.-]*$")
+
+
+def _routing_signal_bytes(target: Path) -> tuple[tuple[str, ...], bool, bool]:
+    """Collect (spdx ids, proprietary marker, carve-out marker) at the source root."""
+
+    try:
+        entries = sorted(target.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return (), False, False
+    texts: list[bytes] = []
+    carve_out = False
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                if entry.name.lower() in _ENTERPRISE_CARVE_OUT_DIRS and any(entry.iterdir()):
+                    carve_out = True
+            elif entry.is_file() and _TOP_LEVEL_LICENSE_NAMES.fullmatch(entry.name):
+                texts.append(entry.read_bytes()[:_LICENSE_TEXT_READ_LIMIT])
+        except OSError:
+            continue
+    identifiers, proprietary_text = detect_routing_evidence(tuple(texts))
+    return identifiers, proprietary_text, carve_out
+
+
+def source_routing(target: Path, identifier: object) -> dict[str, str]:
+    """Advisory transplant-vs-study routing for one materialized source.
+
+    Pure policy evaluation over locally detected evidence; never raises and
+    never gates corpus operations (issue #190 C-5): an evaluation failure
+    degrades fail-closed to ``study-only`` / ``license-undetermined`` with a
+    WARN log.
+    """
+
+    try:
+        text_ids, proprietary_text, carve_out = _routing_signal_bytes(target)
+        proprietary = proprietary_text or (
+            isinstance(identifier, str) and _PROPRIETARY_LICENSE_REF.fullmatch(identifier.strip()) is not None
+        )
+        expressions: tuple[object, ...]
+        if isinstance(identifier, str) and identifier.strip():
+            expressions = (identifier, *text_ids)
+        else:
+            expressions = text_ids or (None,)
+        routing = routing_for_source(
+            expressions,
+            proprietary_marker=proprietary,
+            enterprise_carve_out=carve_out,
+        )
+    except Exception:
+        logger.warning(
+            "license routing evaluation failed for %s; degrading to study-only/license-undetermined",
+            target,
+        )
+        routing = LicenseRouting(STUDY_ONLY, REASON_LICENSE_UNDETERMINED)
+    return {"verdict": routing.verdict, "reason": routing.reason}
 
 
 def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, object], Path]:
@@ -302,6 +372,10 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
             "method": license_result.method,
             "confidence": license_result.confidence,
         },
+        # Advisory transplant-vs-study license routing (issue #190).  A
+        # sibling of "license" (not nested inside it) so the license evidence
+        # document shape stays byte-identical for downstream consumers.
+        "routing": source_routing(target, license_result.identifier),
         "api": api,
         "examples": {
             "count": len(snippets),
@@ -317,4 +391,4 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
     }
 
 
-__all__ = ["build_info"]
+__all__ = ["build_info", "source_routing"]

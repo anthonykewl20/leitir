@@ -200,6 +200,41 @@ def test_malformed_json_silently_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     assert update._fetch_latest_version("0.1.0") is None
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        urllib.error.HTTPError(update._GITHUB_RELEASES_URL, 500, "boom", {}, None),
+        urllib.error.URLError("connection refused"),
+        TimeoutError("timed out"),
+        OSError("socket hiccup"),
+        ValueError("bad value"),
+        KeyError("tag_name"),
+        TypeError("wrong type"),
+        json.JSONDecodeError("bad", "doc", 0),
+    ],
+    ids=["HTTPError", "URLError", "TimeoutError", "OSError", "ValueError", "KeyError", "TypeError", "JSONDecodeError"],
+)
+def test_fetch_latest_release_failure_matrix_is_fail_silent(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    # Issue #204 C-3/AC-5, SP-3: after the redundant except-tuple cleanup the
+    # observable fail-silent contract is identical for every failure class.
+    def broken(*args: object, **kwargs: object) -> _Response:
+        raise failure
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", broken)
+    assert update._fetch_latest_release("0.1.0") is None
+
+
+def test_mid_stream_read_failure_is_fail_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _BrokenResponse(_Response):
+        def read(self, size: int = -1) -> bytes:
+            raise OSError("connection reset mid-stream")
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **k: _BrokenResponse(b"{}"))
+    assert update._fetch_latest_release("0.1.0") is None
+
+
 def test_strips_leading_v_from_tag_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         update.urllib.request,

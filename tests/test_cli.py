@@ -346,6 +346,19 @@ def test_search_help_lists_both_input_modes(capsys):
     assert "--must" in output
 
 
+def test_coverage_help_documents_coverage_semantics(capsys):
+    """AC-3/G-0-ii: the help states the coverage bound mechanism, not a dead end."""
+
+    code = main(["search", "--help"])
+    assert code == ExitCode.SUCCESS
+    output = capsys.readouterr().out
+    assert "indeterminate" not in output
+    assert "--global" in output
+    assert "pages fetched" in output
+    assert "matches returned" in output
+    assert "incomplete flag" in output
+
+
 @pytest.mark.parametrize(
     "argv",
     [

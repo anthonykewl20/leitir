@@ -885,7 +885,7 @@ def test_codeberg_symlink_enumeration_glitch_cleared_by_digest_verified_reread(t
 def test_codeberg_symlink_tamper_rejected_naming_path(tmp_path):
     # AC-3 / C-3 (issue #219): a genuinely tampered Codeberg symlink. The
     # listing digest is honest, the extracted bytes are not; the re-read
-    # returns the digest-verified pinned bytes, which differ from the
+    # returns digest-verified bytes, which differ from the
     # extracted ones, so verification rejects with the path-naming
     # VerificationError instead of surfacing a ResolutionError.
     (tmp_path / "realfile").write_bytes(b"proof")

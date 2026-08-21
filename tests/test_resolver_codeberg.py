@@ -14,7 +14,7 @@ SHA = "a" * 40
 # Scripted Gitea symlink fixtures pinned to the live-probed codeberg.org
 # shape (issue #219): for a symlink entry the contents API returns
 # ``content``/``encoding`` null and carries the link target in ``target``
-# with the pinned blob SHA in ``sha``. The digest below is the real Git
+# with the entry's own blob SHA in ``sha``. The digest below is the real Git
 # blob SHA of b".tmux/.tmux.conf" (observed at
 # codeberg.org/xoo/.dotfiles @ acec3647d251e7581f5e5f07120810c5a8aaf1e8).
 SYMLINK_PATH = "tmux/.tmux.conf"
@@ -107,7 +107,7 @@ def test_live_pinned_commit_resolves():
 def test_read_blob_at_commit_symlink_returns_verified_target_bytes():
     # G-0 recreated per the issue #219 contract: an honest symlink re-read
     # must return the blob's exact bytes (the link target), digest-verified
-    # against the pinned blob SHA carried by the contents response — never a
+    # against the blob SHA the contents response itself carries — never a
     # ResolutionError. The verified target arm needs no extra round-trip.
     with hs.scripted_server(
         [(200, {}, hs.json_body(_symlink_contents_payload()))]
@@ -123,7 +123,7 @@ def test_read_blob_at_commit_symlink_returns_verified_target_bytes():
 
 def test_read_blob_at_commit_symlink_without_target_uses_verified_git_blob_fallback():
     # AC-1 fallback arm: a Gitea version that omits ``target`` still serves
-    # the pinned blob through the git-blob API; the returned bytes must pass
+    # the blob through the git-blob API; the returned bytes must pass
     # response-identity, size, and recomputed-digest verification.
     with hs.scripted_server(
         [
@@ -143,9 +143,10 @@ def test_read_blob_at_commit_symlink_without_target_uses_verified_git_blob_fallb
 
 def test_read_blob_at_commit_symlink_target_lies_falls_back_to_verified_channel():
     # Fail-closed fast path: a contents payload whose declared target is
-    # byte-consistent on size but does not digest-match its pinned blob SHA
-    # is never trusted — the re-read falls through to the digest-verified
-    # git-blob channel instead (the digest check is the sole trigger here).
+    # byte-consistent on size but does not digest-match the blob SHA its
+    # own response declares is never trusted — the re-read falls through
+    # to the digest-verified git-blob channel instead (the digest check is
+    # the sole trigger here).
     with hs.scripted_server(
         [
             (
@@ -189,9 +190,9 @@ def test_read_blob_at_commit_symlink_surrogate_target_falls_back_to_verified_cha
 
 def test_read_blob_at_commit_symlink_target_size_lies_falls_back_to_verified_channel():
     # A declared size that disagrees with the target bytes is the same
-    # self-inconsistency: never accept the target on its own — the pinned
-    # request sequence proves the verified git-blob channel produced the
-    # bytes.
+    # self-inconsistency: never accept the target on its own — the
+    # asserted request sequence proves the verified git-blob channel
+    # produced the bytes.
     with hs.scripted_server(
         [
             (200, {}, hs.json_body(_symlink_contents_payload(size=4))),
@@ -227,8 +228,8 @@ def test_read_blob_at_commit_symlink_fallback_channel_failure_fails_closed(statu
 
 def test_read_blob_at_commit_symlink_fallback_digest_disagreement_rejects():
     # SP-2: the fallback channel serves bytes whose recomputed Git blob SHA
-    # disagrees with the pinned blob SHA — typed rejection naming the
-    # mismatch; the disagreement is never treated as a clearance.
+    # disagrees with the SHA the response echoes — typed rejection naming
+    # the mismatch; the disagreement is never treated as a clearance.
     lying = _git_blob_payload(data=b"tampered link target")
     with hs.scripted_server(
         [
@@ -237,7 +238,7 @@ def test_read_blob_at_commit_symlink_fallback_digest_disagreement_rejects():
         ]
     ) as server:
         with pytest.raises(
-            ResolutionError, match="content does not match pinned blob SHA"
+            ResolutionError, match="content does not match the declared blob SHA"
         ):
             _resolver(server.base_url).read_blob_at_commit(
                 "owner/repo", SHA, SYMLINK_PATH

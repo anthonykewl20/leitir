@@ -914,7 +914,11 @@ class CodebergResolver(_HostedRepoResolver):
         Mirrors ``GitHubTreeSource.read_blob`` (tree.py): the response must
         echo the requested blob SHA, its declared size must match the decoded
         content, and the recomputed Git blob SHA of the decoded bytes must
-        equal the pinned SHA. Any disagreement raises a typed
+        equal that same SHA. The SHA originates from the contents-API
+        response itself, so these checks establish response
+        self-consistency, not agreement with any externally pinned digest —
+        the real arbitration is materialize's extracted-vs-reread byte
+        comparison. Any disagreement raises a typed
         :class:`ResolutionError` — bytes are never accepted unverified.
         """
         import base64
@@ -955,7 +959,7 @@ class CodebergResolver(_HostedRepoResolver):
             )
         if _git_blob_sha(data) != sha:
             raise ResolutionError(
-                "codeberg.org blob content does not match pinned blob SHA"
+                "codeberg.org blob content does not match the declared blob SHA"
             )
         return data
 
@@ -983,9 +987,11 @@ class CodebergResolver(_HostedRepoResolver):
             # the blob bytes are the link target, carried as ``target``
             # (``content``/``encoding`` are null). Symlink re-reads back the
             # materialize mismatch arm (issue #219), so the returned bytes
-            # must be digest-verified against the pinned blob SHA before the
-            # caller may clear or confirm a mismatch — the declared target
-            # string is never trusted on its own.
+            # must be digest-verified against the blob SHA this same
+            # response declares before the caller may clear or confirm a
+            # mismatch — the declared target string is never trusted on its
+            # own, and the real arbitration is materialize's
+            # extracted-vs-reread byte comparison.
             blob_sha = self._sha(payload, "sha", self._HOST)
             target = payload.get("target")
             if isinstance(target, str):

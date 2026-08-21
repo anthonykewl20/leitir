@@ -12,7 +12,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import pytest
-from _http_server import scripted_server
+from _http_server import json_body, scripted_server
 
 import leitir.materialize as materialize_module
 from leitir.materialize import (
@@ -24,6 +24,7 @@ from leitir.materialize import (
     materialize_github_repo,
     read_valid_manifest,
 )
+from leitir.resolver import CodebergResolver, ResolutionError
 from leitir.tree import BlobEntry, GitHubTreeSource, TreeReadError
 from leitir.trust import compute_trust
 
@@ -802,6 +803,160 @@ def test_symlink_mismatch_without_any_reread_method_fails_closed(tmp_path):
         _verify_staging(tmp_path, source)
 
 
+def _gitea_trees_payload(rows: list[dict]) -> dict:
+    return {"tree": rows}
+
+
+def _gitea_symlink_contents_payload(
+    target: str, blob_sha: str, *, with_target: bool = True
+) -> dict:
+    payload = {
+        "name": "link",
+        "path": "link",
+        "sha": blob_sha,
+        "type": "symlink",
+        "size": len(target),
+        "encoding": None,
+        "content": None,
+    }
+    if with_target:
+        payload["target"] = target
+    return payload
+
+
+def _codeberg_shelf_responses(
+    link_blob_sha: str,
+    contents_response: tuple,
+    fallback_response: tuple | None = None,
+) -> list[tuple]:
+    target = "realfile"
+    trees = _gitea_trees_payload(
+        [
+            {
+                "type": "blob",
+                "path": "realfile",
+                "sha": GitHubTreeSource.git_blob_sha(b"proof"),
+                "size": 5,
+                "mode": "100644",
+            },
+            {
+                "type": "blob",
+                "path": "link",
+                "sha": link_blob_sha,
+                "size": len(target),
+                "mode": "120000",
+            },
+        ]
+    )
+    responses = [
+        (200, {}, json.dumps(trees).encode("utf-8")),
+        contents_response,
+    ]
+    if fallback_response is not None:
+        responses.append(fallback_response)
+    return responses
+
+
+def test_codeberg_symlink_enumeration_glitch_cleared_by_digest_verified_reread(tmp_path):
+    # AC-2 / C-2 (issue #219): a Codeberg shelf whose tree listing vouches a
+    # stale digest for an intact on-disk symlink (an enumeration glitch).
+    # The commit-pinned re-read now succeeds for symlink paths and returns
+    # digest-verified bytes equal to the extracted ones, so the mismatch is
+    # cleared and the outcome is identical to the no-glitch run — full
+    # verification, never a downgrade to "sampled".
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload("realfile", honest_sha)
+    responses = _codeberg_shelf_responses(glitched_sha, (200, {}, json_body(contents)))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        assert _verify_staging(tmp_path, resolver) is True
+    assert server.state.request_paths == [
+        f"/repos/acme/demo/git/trees/{SHA}?recursive=true",
+        f"/repos/acme/demo/contents/link?ref={SHA}",
+    ]
+
+
+def test_codeberg_symlink_tamper_rejected_naming_path(tmp_path):
+    # AC-3 / C-3 (issue #219): a genuinely tampered Codeberg symlink. The
+    # listing digest is honest, the extracted bytes are not; the re-read
+    # returns digest-verified bytes, which differ from the
+    # extracted ones, so verification rejects with the path-naming
+    # VerificationError instead of surfacing a ResolutionError.
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("other")  # tampered target
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload("realfile", honest_sha)
+    responses = _codeberg_shelf_responses(honest_sha, (200, {}, json_body(contents)))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        with pytest.raises(
+            VerificationError, match="Git symbolic-link blob digest mismatch: link"
+        ):
+            _verify_staging(tmp_path, resolver)
+
+
+def test_codeberg_symlink_glitch_cleared_via_git_blob_fallback_channel(tmp_path):
+    # AC-2 via the no-``target`` contents shape (older Gitea): the re-read
+    # takes the digest-verified git-blob fallback channel and still clears
+    # the enumeration glitch — full verification, never a downgrade.
+    import base64
+
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    honest_sha = GitHubTreeSource.git_blob_sha(b"realfile")
+    contents = _gitea_symlink_contents_payload(
+        "realfile", honest_sha, with_target=False
+    )
+    git_blob = {
+        "content": base64.b64encode(b"realfile").decode("ascii"),
+        "encoding": "base64",
+        "sha": honest_sha,
+        "size": len(b"realfile"),
+    }
+    responses = _codeberg_shelf_responses(
+        glitched_sha,
+        (200, {}, json.dumps(contents).encode("utf-8")),
+        (200, {}, json.dumps(git_blob).encode("utf-8")),
+    )
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(base_url=server.base_url, sleeper=lambda _: None)
+        assert _verify_staging(tmp_path, resolver) is True
+    assert server.state.request_paths == [
+        f"/repos/acme/demo/git/trees/{SHA}?recursive=true",
+        f"/repos/acme/demo/contents/link?ref={SHA}",
+        f"/repos/acme/demo/git/blobs/{honest_sha}",
+    ]
+
+
+def test_codeberg_symlink_glitch_reread_channel_failure_fails_closed(tmp_path):
+    # SP-1 at the materialize boundary (issue #219): a glitch listing whose
+    # re-read channel fails can neither clear nor confirm the mismatch — the
+    # typed ResolutionError propagates and verification fails closed (no
+    # clearance, no "sampled" downgrade).
+    (tmp_path / "realfile").write_bytes(b"proof")
+    (tmp_path / "link").symlink_to("realfile")
+    glitched_sha = GitHubTreeSource.git_blob_sha(b"stale listing digest")
+    responses = _codeberg_shelf_responses(glitched_sha, (500, {}, b""))
+
+    with scripted_server(responses) as server:
+        resolver = CodebergResolver(
+            base_url=server.base_url, sleeper=lambda _: None
+        )
+        with pytest.raises(ResolutionError, match="HTTP 500"):
+            _verify_staging(tmp_path, resolver)
+
+
 def test_oversized_archive_member_is_rejected(tmp_path, monkeypatch):
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
@@ -1399,3 +1554,101 @@ def _extract_tree(root: Path, files: dict[str, bytes]) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return root
+
+
+def test_stale_old_backup_dirs_are_swept_under_target_lock(tmp_path: Path) -> None:
+    """Issue #205 C-5/AC-5/SP-2: crash-orphaned ``.old-`` backups are GC'd.
+
+    A crash between the two ``os.replace`` calls orphans a ``.{sha}.old-``
+    backup next to the shelf. While the verified target still exists, the
+    target-lock sweep removes both staging temps and stale backups for THIS
+    commit sha only — another source's debris is never ours to delete (hy3
+    P1 remediation: backup staleness is target-relative).
+    """
+
+    sha = "a" * 40
+    foreign_sha = "b" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The verified generation is present, so the leftover backup is stale.
+    target.mkdir()
+    stale_tmp = target.parent / f".{sha}.tmp-1"
+    stale_old = target.parent / f".{sha}.old-2"
+    foreign_old = target.parent / f".{foreign_sha}.old-3"
+    for directory in (stale_tmp, stale_old, foreign_old):
+        directory.mkdir()
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert not stale_tmp.exists()
+    assert not stale_old.exists()
+    assert foreign_old.exists()
+
+
+def test_target_lock_sweep_preserves_sole_survivor_backup(tmp_path: Path) -> None:
+    """hy3 P1: the sweep never deletes the sole surviving generation.
+
+    After ``os.replace(target, backup)`` succeeded but the process died
+    before ``os.replace(staging, target)`` and before any rollback, the
+    ``.{sha}.old-*`` backup is the only remaining verified shelf — the
+    state ``cli.py``'s gc documents as "the only valid cache generation"
+    and restores under this same per-target lock. The sweep must leave it
+    in place; only the always-removable ``.{sha}.tmp-*`` staging debris
+    (and never another sha's files) is swept.
+    """
+
+    sha = "d" * 40
+    foreign_sha = "e" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The target was moved away by the interrupted swap: it does not exist.
+    survivor_backup = target.parent / f".{sha}.old-1"
+    crash_staging = target.parent / f".{sha}.tmp-2"
+    foreign_old = target.parent / f".{foreign_sha}.old-3"
+    for directory in (survivor_backup, crash_staging, foreign_old):
+        directory.mkdir()
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert survivor_backup.exists()
+    assert not crash_staging.exists()
+    assert foreign_old.exists()
+
+
+def test_target_lock_sweep_skips_cleanly_when_shelf_parent_is_absent(
+    tmp_path: Path,
+) -> None:
+    """Issue #205 SP-4: a sweep that cannot run skips, never blocks or crashes."""
+
+    sha = "c" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+
+    with materialize_module._target_lock(root, target, sha):
+        pass
+
+    assert not target.parent.exists()
+
+
+def test_http_server_harness_threads_join_cleanly() -> None:
+    """Issue #205 C-3/AC-3: test-server joins are asserted, not discarded.
+
+    Every harness server thread must be confirmed dead before its context
+    manager returns; the started/joined counters must stay in lockstep, so a
+    lingering server thread fails the suite instead of accruing sockets.
+    """
+
+    from _http_server import routed_server, server_thread_stats
+
+    before = server_thread_stats()
+    with scripted_server([(200, {}, b"ok")]):
+        pass
+    with routed_server({"/ping": (200, {}, b"pong")}):
+        pass
+    after = server_thread_stats()
+    assert after["started"] - before["started"] == 2
+    assert after["joined"] - before["joined"] == 2

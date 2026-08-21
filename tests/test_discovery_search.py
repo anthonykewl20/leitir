@@ -385,3 +385,78 @@ class TestExplicitBranchStillHonored:
             assert transport.resolve_head_sha(SLUG, "develop") == branch_sha
             paths = server.state.request_paths
         assert paths == [f"/repos/{SLUG}/commits"]
+
+
+class TestHostPayloadShapeGuards:
+    """Issue #204 C-1/AC-1..AC-3, SP-1: hostile host payloads fail typed.
+
+    A buggy or hostile host can serve any JSON shape. Every payload access is
+    guarded with a typed ``CodeSearchError`` rejection (the tree.py guarded
+    model), so a bare ``AttributeError``/``TypeError`` can never escape the
+    module's error taxonomy.
+    """
+
+    def _search_routes(self, payload: object) -> dict[str, tuple[int, dict[str, str], bytes]]:
+        return {
+            "/search/code": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(payload),
+            )
+        }
+
+    def test_non_object_code_search_payload_is_a_typed_error(self):
+        with routed_server(self._search_routes([])) as server:
+            transport = _transport(server.base_url)
+            with pytest.raises(
+                CodeSearchError,
+                match="malformed code search response: expected a JSON object",
+            ):
+                transport.search("q")
+
+    def test_non_array_items_is_a_typed_error(self):
+        payload = {"total_count": 0, "items": {"unexpected": "object"}}
+        with routed_server(self._search_routes(payload)) as server:
+            transport = _transport(server.base_url)
+            with pytest.raises(
+                CodeSearchError,
+                match="malformed code search response: items must be a JSON array",
+            ):
+                transport.search("q")
+
+    def test_non_int_total_count_is_a_typed_error(self):
+        payload = {"total_count": "12", "items": []}
+        with routed_server(self._search_routes(payload)) as server:
+            transport = _transport(server.base_url)
+            with pytest.raises(
+                CodeSearchError,
+                match="malformed code search response: total_count must be an integer",
+            ):
+                transport.search("q")
+
+    def test_boolean_total_count_is_a_typed_error(self):
+        # bool is an int subclass in Python but is never an honest total.
+        payload = {"total_count": True, "items": []}
+        with routed_server(self._search_routes(payload)) as server:
+            transport = _transport(server.base_url)
+            with pytest.raises(
+                CodeSearchError,
+                match="total_count must be an integer",
+            ):
+                transport.search("q")
+
+    def test_non_dict_commit_entry_is_a_typed_error(self):
+        routes = {
+            f"/repos/{SLUG}/commits": (
+                200,
+                {"Content-Type": "application/json"},
+                json_body(["not-a-dict"]),
+            )
+        }
+        with routed_server(routes) as server:
+            transport = _transport(server.base_url)
+            with pytest.raises(
+                CodeSearchError,
+                match=f"malformed commit entry for {SLUG} at HEAD",
+            ):
+                transport.resolve_head_sha(SLUG)

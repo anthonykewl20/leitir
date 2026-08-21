@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import sys
+import time
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -198,6 +200,41 @@ def test_malformed_json_silently_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     assert update._fetch_latest_version("0.1.0") is None
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        urllib.error.HTTPError(update._GITHUB_RELEASES_URL, 500, "boom", {}, None),
+        urllib.error.URLError("connection refused"),
+        TimeoutError("timed out"),
+        OSError("socket hiccup"),
+        ValueError("bad value"),
+        KeyError("tag_name"),
+        TypeError("wrong type"),
+        json.JSONDecodeError("bad", "doc", 0),
+    ],
+    ids=["HTTPError", "URLError", "TimeoutError", "OSError", "ValueError", "KeyError", "TypeError", "JSONDecodeError"],
+)
+def test_fetch_latest_release_failure_matrix_is_fail_silent(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    # Issue #204 C-3/AC-5, SP-3: after the redundant except-tuple cleanup the
+    # observable fail-silent contract is identical for every failure class.
+    def broken(*args: object, **kwargs: object) -> _Response:
+        raise failure
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", broken)
+    assert update._fetch_latest_release("0.1.0") is None
+
+
+def test_mid_stream_read_failure_is_fail_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _BrokenResponse(_Response):
+        def read(self, size: int = -1) -> bytes:
+            raise OSError("connection reset mid-stream")
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **k: _BrokenResponse(b"{}"))
+    assert update._fetch_latest_release("0.1.0") is None
+
+
 def test_strips_leading_v_from_tag_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         update.urllib.request,
@@ -333,3 +370,58 @@ def test_credentials_not_in_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update.urllib.request, "urlopen", urlopen)
     assert update._fetch_latest_version("0.1.0") == "0.1.1"
     assert seen == "leitir/0.1.0 update-check"
+
+
+def test_stale_cache_temp_is_swept_on_next_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #205 C-4/AC-4/SP-2: crash-orphaned cache temps are swept.
+
+    A temp older than the age bound cannot belong to a live write and is
+    removed by the next run; a fresh temp — possibly a concurrent live run's
+    file — is never touched.
+    """
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    path = update._cache_path()
+    assert path is not None
+    # XDG_CACHE_HOME only redirects the cache on non-darwin/non-win32 hosts;
+    # on macOS/Windows the platform cache directory may already exist from
+    # earlier tests in the same run.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stale = path.parent / ".update-check.json.tmp-orphaned"
+    stale.write_text("{}", encoding="utf-8")
+    ancient = time.time() - update._STALE_TMP_MAX_AGE_SECONDS - 3600.0
+    os.utime(stale, (ancient, ancient))
+    fresh = path.parent / ".update-check.json.tmp-live-run"
+    fresh.write_text("{}", encoding="utf-8")
+
+    try:
+        update._run_update_check("0.1.0")
+
+        assert not stale.exists()
+        assert fresh.exists()
+    finally:
+        fresh.unlink(missing_ok=True)
+        stale.unlink(missing_ok=True)
+
+
+def test_cache_write_cleans_its_own_temp_on_base_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #205 C-4/AC-4: cleanup runs in ``finally``, not ``except``.
+
+    A BaseException (here KeyboardInterrupt) between mkstemp and replace is
+    outside the ordinary except tuple; the finally-based cleanup must still
+    remove the write's own temp file.
+    """
+
+    path = tmp_path / "cache" / "leitir" / "update-check.json"
+
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(update.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        update._write_cache(path, {"schema": 2})
+    assert list(path.parent.glob(".update-check.json.tmp-*")) == []

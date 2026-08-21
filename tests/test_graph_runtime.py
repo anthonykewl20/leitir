@@ -261,3 +261,29 @@ def test_observation_rendering_is_pythonhashseed_independent(seed: str) -> None:
         capture_output=True,
     )
     assert run.stdout == baseline.stdout
+
+
+def test_recorder_lock_is_released_when_the_inventory_digest_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #205 C-1/AC-1/SP-1: no stranded process-global recorder lock.
+
+    An exception between the lock acquire and the try whose finally releases
+    it used to strand ``_ACTIVE_LOCK`` process-globally, turning one transient
+    failure into ``runtime_recorder_concurrency_v1`` for every later recorder.
+    The acquire now sits adjacent to its try, so any failure in between —
+    here, the initial module-inventory digest — still releases the lock.
+    """
+
+    from leitir.graph import runtime as runtime_module
+
+    def failing_digest() -> str:
+        raise OSError("inventory digest failed")
+
+    monkeypatch.setattr(runtime_module, "_module_inventory_digest", failing_digest)
+    with pytest.raises(OSError, match="inventory digest failed"):
+        record_imports(lambda: None, _policy())
+
+    monkeypatch.undo()
+    report = record_imports(lambda: __import__("errno"), _policy())
+    assert report.initial_module_inventory_digest

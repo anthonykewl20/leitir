@@ -22,7 +22,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TextIO
 
-from ._update_check import _GITHUB_RELEASES_URL
+from . import _http
+from ._update_check import _GITHUB_RELEASES_URL, _MAX_RESPONSE_BYTES
 from .corpus import resolve_root
 from .materialize import MANIFEST_NAME, read_valid_manifest
 from .treehash import (
@@ -305,20 +306,31 @@ def _user_agent(version: str | None) -> str:
     return f"leitir/{version or 'unknown'} doctor"
 
 
+# Budget for a single network probe: cold DNS + TLS on a healthy link routinely
+# exceeds 1s, so a 1s timeout misclassifies slow-but-healthy endpoints as
+# unreachable (#203). 5s distinguishes "slow but answering" from "unreachable"
+# while bounding the network section's wall time.
+_NETWORK_TIMEOUT_SECONDS = 5.0
+
+
 def check_network_endpoint(name: str, url: str, version: str | None) -> Check:
     request = urllib.request.Request(url, headers={"User-Agent": _user_agent(version)})
     try:
-        with urllib.request.urlopen(request, timeout=1.0) as response:
+        with _http.safe_urlopen(request, timeout=_NETWORK_TIMEOUT_SECONDS) as response:
             code = response.getcode()
     except urllib.error.HTTPError as exc:
         category = "4xx" if 400 <= exc.code < 500 else "5xx" if exc.code >= 500 else "HTTP error"
         return Check(f"network.{name}", "warn", f"{url} returned {category} ({exc.code})",
                      json_data={"url": url, "http_status": exc.code})
     except TimeoutError as exc:
-        return Check(f"network.{name}", "warn", f"{url} timed out", str(exc), {"url": url})
+        return Check(f"network.{name}", "warn",
+                     f"{url} unreachable (no response within {_NETWORK_TIMEOUT_SECONDS:.0f}s)",
+                     str(exc), {"url": url})
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError):
-            return Check(f"network.{name}", "warn", f"{url} timed out", str(exc), {"url": url})
+            return Check(f"network.{name}", "warn",
+                         f"{url} unreachable (no response within {_NETWORK_TIMEOUT_SECONDS:.0f}s)",
+                         str(exc), {"url": url})
         return Check(f"network.{name}", "warn", f"{url} network error", str(exc), {"url": url})
     except Exception as exc:
         return Check(f"network.{name}", "warn", f"{url} network error", str(exc), {"url": url})
@@ -383,8 +395,16 @@ def check_update_availability(installed_version: str | None) -> Check:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=1.0) as response:
-            payload = json.load(response)
+        with _http.safe_urlopen(request, timeout=_NETWORK_TIMEOUT_SECONDS) as response:
+            # Bounded read (reuse of the _update_check pattern/constants, #203):
+            # ask for one byte past the cap so an oversized body is detected
+            # without ever buffering it in full.
+            raw = response.read(_MAX_RESPONSE_BYTES + 1)
+        if len(raw) > _MAX_RESPONSE_BYTES:
+            return Check("update.available", "warn",
+                         "could not check GitHub Releases for updates",
+                         f"response exceeded {_MAX_RESPONSE_BYTES} bytes")
+        payload = json.loads(raw)
         tag = payload["tag_name"]
         if not isinstance(tag, str):
             raise TypeError("GitHub release tag_name is not a string")

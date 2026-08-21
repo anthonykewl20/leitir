@@ -21,6 +21,34 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import NamedTuple
 
+# Server-thread hygiene counters (issue #205 C-3): every started server
+# thread must be confirmed dead before its context manager returns, and the
+# started/joined pair lets tests assert no server thread lingers.
+_SERVER_THREAD_STATS = {"started": 0, "joined": 0}
+_JOIN_TIMEOUT_SECONDS = 5.0
+
+
+def server_thread_stats() -> dict[str, int]:
+    """Snapshot of started vs confirmed-dead server threads."""
+
+    return dict(_SERVER_THREAD_STATS)
+
+
+def _record_started_thread(thread: threading.Thread) -> None:
+    _SERVER_THREAD_STATS["started"] += 1
+
+
+def _join_server_thread(thread: threading.Thread, port: int) -> None:
+    """Join the server thread and fail loudly if it lingers (issue #205 SP-3)."""
+
+    thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
+    if thread.is_alive():
+        raise AssertionError(
+            f"test HTTP server thread {thread.name} on port {port} did not "
+            f"terminate within {_JOIN_TIMEOUT_SECONDS}s — lingering server"
+        )
+    _SERVER_THREAD_STATS["joined"] += 1
+
 # A scripted response: HTTP status code, header dict, bytes body, optional
 # pre-response delay in seconds (to force client read timeouts).
 Response = tuple[int, dict[str, str], bytes] | tuple[int, dict[str, str], bytes, float]
@@ -85,7 +113,9 @@ def scripted_server(responses: list[Response]) -> Iterator[ServerHandle]:
     """Start a real local HTTP server serving ``responses`` in order.
 
     Yields a :class:`ServerHandle` whose ``base_url`` points at the live
-    server (e.g. ``http://127.0.0.1:54321``). The server is shut down on exit.
+    server (e.g. ``http://127.0.0.1:54321``). The server is shut down on
+    exit and its thread must join within the timeout, or the test fails
+    loudly (issue #205 C-3) — a discarded join result is prohibited.
     """
     state = ServerState(responses)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ScriptedHandler)
@@ -95,13 +125,14 @@ def scripted_server(responses: list[Response]) -> Iterator[ServerHandle]:
     thread = threading.Thread(
         target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
     )
+    _record_started_thread(thread)
     thread.start()
     try:
         yield ServerHandle(base_url=f"http://127.0.0.1:{port}", state=state)
     finally:
         httpd.shutdown()
         httpd.server_close()
-        thread.join(timeout=5)
+        _join_server_thread(thread, port)
 
 
 class _RoutedHandler(BaseHTTPRequestHandler):
@@ -149,10 +180,11 @@ def routed_server(routes: dict[str, Response]) -> Iterator[ServerHandle]:
     thread = threading.Thread(
         target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
     )
+    _record_started_thread(thread)
     thread.start()
     try:
         yield ServerHandle(base_url=f"http://127.0.0.1:{port}", state=state)
     finally:
         httpd.shutdown()
         httpd.server_close()
-        thread.join(timeout=5)
+        _join_server_thread(thread, port)

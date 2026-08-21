@@ -27,6 +27,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - harden import-purity child report channel and import-path isolation (`tests`)
 - mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
+- realistic timeout, bounded reads, shared HTTP seam (`doctor`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
 - retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)

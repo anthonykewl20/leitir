@@ -57,8 +57,19 @@ class _Provider:
     username_env: str | None = None
 
 
+# Single source of truth for GitHub-backed hosts (issue #220): the API and
+# codeload archive endpoints plus the release-asset CDN, raw-content, and
+# uploads hosts. Exact-hostname matching only — never a suffix match.
+_GITHUB_HOSTS = (
+    "api.github.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "uploads.github.com",
+)
+
 _PROVIDERS = {
-    "github": _Provider(("api.github.com", "codeload.github.com"), ("GH_TOKEN", "GITHUB_TOKEN")),
+    "github": _Provider(_GITHUB_HOSTS, ("GH_TOKEN", "GITHUB_TOKEN")),
     "gitlab": _Provider(("gitlab.com",), ("GITLAB_TOKEN",), "PRIVATE-TOKEN"),
     "bitbucket": _Provider(
         ("api.bitbucket.org", "bitbucket.org"),

@@ -26,6 +26,7 @@ please use [`template.md`](template.md) as the basis.
 | [0019](0019-integration-cost-evidence.md) | Integration-cost evidence | Accepted | 2026-08-13 |
 | [0020](0020-go-module-authenticity-via-sumdb.md) | Go module authenticity via SumDB | Accepted | 2026-08-14 |
 | [0021](0021-deterministic-donor-mount-projection.md) | Deterministic donor mount projection for runtime-digest stability | Accepted | 2026-08-17 |
+| [0022](0022-trusted-key-lifecycle.md) | Trusted-key lifecycle: expiry and revocation in a versioned trusted-keys schema | Accepted | 2026-08-20 |
 
 ## Status vocabulary
 

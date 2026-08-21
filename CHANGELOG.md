@@ -13,6 +13,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ## [Unreleased]
 
 ### Added
+- enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)
@@ -29,6 +30,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - realistic timeout, bounded reads, shared HTTP seam (`doctor`)
+- report the materialized pin as identity.commit_sha (`diff`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
 - retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
@@ -37,6 +39,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
 
 ### Security
+- cover objects/raw/uploads GitHub hosts in github provider (`credentials`)
 - guard host payload shapes, split platform-capability errors from tamper, drop redundant except subtypes (`taxonomy`)
 - honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - re-read symlink-path blobs on Codeberg with digest verification (`resolver`)

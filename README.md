@@ -344,6 +344,13 @@ Removed symbols (0):
 Changed signatures (0):
 ```
 
+Diff report identities describe the bytes actually diffed, not the state of a
+moving ref. `identity.commit_sha` reports the commit SHA pinned to the
+materialized shelf — the corpus sources index entry pin first, then the shelf
+manifest pin, else the scope that fed the materializer in the same call — and
+a re-resolved moving head (a branch or tag that advanced mid-run) never
+overwrites the reported pin.
+
 ```bash
 $ leitir api pypi:markdown-it-py@3.0.0
 ~/.leitir/api/pypi/markdown-it-py/3.0.0/index.json

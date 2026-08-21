@@ -453,6 +453,11 @@ class GitHubTagResolver:
         return obj["sha"]
 
 
+def _git_blob_sha(data: bytes) -> str:
+    """Return the canonical Git blob SHA-1 of ``data`` (``blob <len>\\0`` framing)."""
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+
 class _HostedRepoResolver:
     _HOST = ""
     _CREDENTIAL_PROVIDER = ""
@@ -903,6 +908,61 @@ class CodebergResolver(_HostedRepoResolver):
         except ValueError as exc:
             raise ResolutionError("codeberg.org returned malformed blob metadata") from exc
 
+    def _read_git_blob_verified(self, slug: str, blob_sha: str) -> bytes:
+        """Read a blob through Gitea's git-blob API with full digest verification.
+
+        Mirrors ``GitHubTreeSource.read_blob`` (tree.py): the response must
+        echo the requested blob SHA, its declared size must match the decoded
+        content, and the recomputed Git blob SHA of the decoded bytes must
+        equal that same SHA. The SHA originates from the contents-API
+        response itself, so these checks establish response
+        self-consistency, not agreement with any externally pinned digest —
+        the real arbitration is materialize's extracted-vs-reread byte
+        comparison. Any disagreement raises a typed
+        :class:`ResolutionError` — bytes are never accepted unverified.
+        """
+        import base64
+
+        sha = self._sha({"sha": blob_sha}, "sha", self._HOST)
+        payload = self._get_json(
+            f"{self._base_url}/repos/{self._slug(slug)}/git/blobs/{sha}"
+        )
+        if not isinstance(payload, dict):
+            raise ResolutionError("codeberg.org returned malformed blob metadata")
+        response_sha = payload.get("sha")
+        if (
+            not isinstance(response_sha, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", response_sha) is None
+            or response_sha.lower() != sha
+        ):
+            raise ResolutionError(
+                "codeberg.org blob response SHA does not match requested blob"
+            )
+        content = payload.get("content")
+        size = payload.get("size")
+        if (
+            not isinstance(content, str)
+            or payload.get("encoding") not in (None, "base64")
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+        ):
+            raise ResolutionError("codeberg.org returned malformed blob metadata")
+        try:
+            data = base64.b64decode(content, validate=True)
+        except ValueError as exc:
+            raise ResolutionError(
+                "codeberg.org returned malformed blob metadata"
+            ) from exc
+        if size != len(data):
+            raise ResolutionError(
+                "codeberg.org blob size does not match decoded content"
+            )
+        if _git_blob_sha(data) != sha:
+            raise ResolutionError(
+                "codeberg.org blob content does not match the declared blob SHA"
+            )
+        return data
+
     def read_blob_at_commit(self, slug: str, commit_sha: str, path: str) -> bytes:
         import base64
         from urllib.parse import quote, urlencode
@@ -915,12 +975,51 @@ class CodebergResolver(_HostedRepoResolver):
         if not isinstance(payload, dict):
             raise ResolutionError("codeberg.org returned malformed content metadata")
         content = payload.get("content")
-        if not isinstance(content, str) or payload.get("encoding") != "base64":
-            raise ResolutionError("codeberg.org returned malformed content metadata")
-        try:
-            return base64.b64decode(content, validate=True)
-        except ValueError as exc:
-            raise ResolutionError("codeberg.org returned malformed content metadata") from exc
+        if isinstance(content, str) and payload.get("encoding") == "base64":
+            try:
+                return base64.b64decode(content, validate=True)
+            except ValueError as exc:
+                raise ResolutionError(
+                    "codeberg.org returned malformed content metadata"
+                ) from exc
+        if payload.get("type") == "symlink":
+            # Gitea's contents API omits base64 content for symlink entries:
+            # the blob bytes are the link target, carried as ``target``
+            # (``content``/``encoding`` are null). Symlink re-reads back the
+            # materialize mismatch arm (issue #219), so the returned bytes
+            # must be digest-verified against the blob SHA this same
+            # response declares before the caller may clear or confirm a
+            # mismatch — the declared target string is never trusted on its
+            # own, and the real arbitration is materialize's
+            # extracted-vs-reread byte comparison.
+            blob_sha = self._sha(payload, "sha", self._HOST)
+            target = payload.get("target")
+            if isinstance(target, str):
+                try:
+                    candidate = target.encode("utf-8")
+                except UnicodeEncodeError:
+                    # A JSON-decoded target may carry lone surrogates that
+                    # cannot round-trip to the blob's raw bytes; the fast
+                    # path cannot verify it, so defer to the git-blob
+                    # channel below instead of crashing untyped.
+                    candidate = b""
+                if candidate:
+                    size = payload.get("size")
+                    if (
+                        not isinstance(size, bool)
+                        and isinstance(size, int)
+                        and size == len(candidate)
+                        and _git_blob_sha(candidate) == blob_sha
+                    ):
+                        return candidate
+                # Self-inconsistent metadata (or a target whose bytes cannot
+                # round-trip through JSON): the declared target cannot be
+                # trusted — consult the digest-verified git-blob channel
+                # rather than accepting or rejecting on the contents payload
+                # alone. Both channels are same-host; trust model matches the
+                # materialize re-read arm's documented assumption.
+            return self._read_git_blob_verified(slug, blob_sha)
+        raise ResolutionError("codeberg.org returned malformed content metadata")
 
 
 class SourcehutResolver(_HostedRepoResolver):

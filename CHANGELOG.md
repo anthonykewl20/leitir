@@ -16,13 +16,16 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)
+- report honest coverage bounds in search output and help (`discovery`)
 
 ### Fixed
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
+- de-flake the two environment-sensitive retry tests (#202) (`tests`)
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - harden import-purity child report channel and import-path isolation (`tests`)
+- mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - realistic timeout, bounded reads, shared HTTP seam (`doctor`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)

@@ -159,7 +159,7 @@ class TestGlobalHappyPath:
             "search", "--global",
             "--must", "identifier:urlencode:python",
         ])
-        assert "coverage=indeterminate_global" in err
+        assert "coverage=bounded-discovery pages=1 matches=1 incomplete=false" in err
         assert "matches=" in err
 
     def test_query_translated_correctly(self):

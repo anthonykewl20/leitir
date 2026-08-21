@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from leitir.safeio import read_regular_file
+from leitir.safeio import NoFollowUnavailableError, read_regular_file
 
 AUTH_SCHEMA_VERSION = "leitir-manifest-auth-v1"
 AUTH_RECORD_NAME = "leitir-manifest-auth.json"
@@ -89,6 +89,18 @@ class ManifestAuthProjectionMismatchError(ManifestAuthError):
 
 class ManifestAuthBadSignatureError(ManifestAuthError):
     code = "manifest_auth_bad_signature_v1"
+
+
+class ManifestAuthPlatformCapabilityError(ManifestAuthError):
+    """The host platform cannot enforce a required reading guarantee.
+
+    Distinct from :class:`ManifestAuthMalformedError` on purpose: a platform
+    that lacks ``O_NOFOLLOW`` (or another reading capability) is an
+    environment limitation, not evidence of tampering. Raising the malformed
+    class here would be a false integrity accusation.
+    """
+
+    code = "manifest_auth_platform_capability_v1"
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -332,6 +344,10 @@ def load_trusted_keys(
         raw = read_regular_file(config_path, maximum_bytes=_MAX_AUTH_INPUT_BYTES).decode("utf-8", "strict")
     except FileNotFoundError as exc:
         raise ManifestAuthNoKeysError(f"no trusted keys configured at {config_path}") from exc
+    except NoFollowUnavailableError as exc:
+        raise ManifestAuthPlatformCapabilityError(
+            f"platform cannot enforce O_NOFOLLOW for trusted keys at {config_path}"
+        ) from exc
     except (OSError, UnicodeError, ValueError) as exc:
         raise ManifestAuthMalformedError(f"cannot read trusted keys at {config_path}") from exc
     payload = _parse_json(raw, subject="trusted-key configuration")
@@ -428,6 +444,10 @@ def _read_record(shelf_context: str | Path) -> dict[str, object]:
     try:
         data = read_regular_file(record_path, maximum_bytes=_MAX_AUTH_INPUT_BYTES)
         raw = data.decode("utf-8", "strict")
+    except NoFollowUnavailableError as exc:
+        raise ManifestAuthPlatformCapabilityError(
+            f"platform cannot enforce O_NOFOLLOW for the manifest authorization record: {record_path}"
+        ) from exc
     except (OSError, UnicodeError, ValueError) as exc:
         raise ManifestAuthMalformedError(f"cannot read manifest authorization record: {record_path}") from exc
     payload = _parse_json(raw, subject="manifest authorization record")
@@ -486,6 +506,10 @@ def require_detached_projection_auth(
         canonical = canonical_json(dict(projection))
         data = read_regular_file(Path(record_path), maximum_bytes=_MAX_AUTH_INPUT_BYTES)
         record = _parse_json(data.decode("utf-8", "strict"), subject="detached authorization record")
+    except NoFollowUnavailableError as exc:
+        raise ManifestAuthPlatformCapabilityError(
+            f"platform cannot enforce O_NOFOLLOW for the detached authorization record: {record_path}"
+        ) from exc
     except (OSError, UnicodeError, ValueError) as exc:
         raise ManifestAuthMalformedError(f"cannot read detached authorization record: {record_path}") from exc
     if not isinstance(record, dict) or set(record) != _RECORD_FIELDS or data != canonical_json(record):

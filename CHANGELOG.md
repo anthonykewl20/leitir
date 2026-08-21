@@ -40,6 +40,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Security
 - cover objects/raw/uploads GitHub hosts in github provider (`credentials`)
+- guard host payload shapes, split platform-capability errors from tamper, drop redundant except subtypes (`taxonomy`)
 - honor GH_TOKEN in the provider table and doctor credential vars (`credentials`)
 - re-read symlink-path blobs on Codeberg with digest verification (`resolver`)
 - reject symlink universe and content mismatches on mode-capable hosts (`materialize`)

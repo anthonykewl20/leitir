@@ -261,7 +261,24 @@ class GitHubCodeSearchTransport:
                 f"GitHub code search failed: {_http.describe_failure(exc)}"
             ) from exc
 
+        # Host payloads are attacker-controlled bytes: every access below is
+        # guarded with a typed rejection (the tree.py payload-guard model), so
+        # a hostile or buggy host can never surface a bare
+        # AttributeError/TypeError outside the module's error taxonomy.
+        if not isinstance(payload, dict):
+            raise CodeSearchError(
+                "malformed code search response: expected a JSON object"
+            )
         items = payload.get("items", [])
+        if not isinstance(items, list):
+            raise CodeSearchError(
+                "malformed code search response: items must be a JSON array"
+            )
+        total_count = payload.get("total_count", 0)
+        if isinstance(total_count, bool) or not isinstance(total_count, int):
+            raise CodeSearchError(
+                "malformed code search response: total_count must be an integer"
+            )
         hits: list[CodeSearchHit] = []
         for item in items:
             if not isinstance(item, dict):
@@ -296,10 +313,10 @@ class GitHubCodeSearchTransport:
                 )
             )
 
-        logger.debug("code search total_count=%s hits=%d", payload.get("total_count", 0), len(hits))
+        logger.debug("code search total_count=%s hits=%d", total_count, len(hits))
         return CodeSearchPage(
             hits=tuple(hits),
-            total_count=payload.get("total_count", 0),
+            total_count=total_count,
             incomplete_results=bool(payload.get("incomplete_results", False)),
         )
 
@@ -327,7 +344,13 @@ class GitHubCodeSearchTransport:
             ) from exc
         if not payload or not isinstance(payload, list):
             raise CodeSearchError(f"empty commit list for {slug} at {branch or 'HEAD'}")
-        sha = payload[0].get("sha")
+        first = payload[0]
+        if not isinstance(first, dict):
+            raise CodeSearchError(
+                f"malformed commit entry for {slug} at {branch or 'HEAD'}: "
+                "expected a JSON object"
+            )
+        sha = first.get("sha")
         if not isinstance(sha, str) or not _SHA1.fullmatch(sha):
             raise CodeSearchError(f"invalid commit returned for {slug} at {branch or 'HEAD'}")
         return sha

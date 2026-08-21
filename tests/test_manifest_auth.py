@@ -27,6 +27,7 @@ from leitir.manifest_auth import (
     ManifestAuthKeysInShelfError,
     ManifestAuthMalformedError,
     ManifestAuthNoKeysError,
+    ManifestAuthPlatformCapabilityError,
     ManifestAuthProjectionMismatchError,
     ManifestAuthUnknownKeyError,
     canonical_json,
@@ -37,6 +38,7 @@ from leitir.manifest_auth import (
     sign_projection,
 )
 from leitir.materialize import manifest_digest_fields, target_path
+from leitir.safeio import NoFollowUnavailableError
 from leitir.treehash import compute_materialized_tree_hash
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "manifest_auth"
@@ -122,7 +124,98 @@ def test_trusted_keys_are_a_no_follow_trust_anchor(tmp_path: Path, monkeypatch: 
     )
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 
-    with pytest.raises(ManifestAuthMalformedError, match="cannot read trusted keys"):
+    # A platform lacking O_NOFOLLOW is a capability gap, not tamper evidence
+    # (issue #204 C-2/AC-4): the typed capability error must be distinct from
+    # the malformed/tamper classification and must name the platform gap.
+    with pytest.raises(ManifestAuthPlatformCapabilityError, match="O_NOFOLLOW") as caught:
+        load_trusted_keys(keys)
+    assert caught.value.code == "manifest_auth_platform_capability_v1"
+    assert not isinstance(caught.value, ManifestAuthMalformedError)
+
+
+def _provider_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the fake Ed25519 provider used by the seam test (no extra)."""
+
+    class FakeInvalidSignature(Exception):
+        pass
+
+    class FakePublicKey:
+        @classmethod
+        def from_public_bytes(cls, value: bytes) -> FakePublicKey:
+            return cls()
+
+        def verify(self, signature: bytes, canonical: bytes) -> None:
+            raise FakeInvalidSignature()
+
+        def public_bytes(self, *, encoding: object, format: object) -> bytes:
+            return bytes(range(32))
+
+    class FakePrivateKey:
+        def public_key(self) -> FakePublicKey:
+            return FakePublicKey()
+
+        def sign(self, canonical: bytes) -> bytes:
+            return b"s" * 64
+
+    class FakeSerialization:
+        class Encoding:
+            Raw = object()
+
+        class PublicFormat:
+            Raw = object()
+
+    monkeypatch.setattr(
+        "leitir.manifest_auth._provider",
+        lambda: (FakePrivateKey, FakePublicKey, FakeInvalidSignature, FakeSerialization),
+    )
+
+
+def _patched_record_read(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    def _unavailable(path: Path, *, maximum_bytes: int, no_follow: bool = True) -> bytes:
+        raise exc
+
+    monkeypatch.setattr("leitir.manifest_auth.read_regular_file", _unavailable)
+
+
+def test_record_reads_on_a_no_follow_platform_are_capability_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _provider_seam(monkeypatch)
+    _patched_record_read(
+        monkeypatch, NoFollowUnavailableError("platform does not support O_NOFOLLOW")
+    )
+    vectors = _vectors()
+    manifest = vectors["manifest"]
+    record = vectors["valid"]
+    assert isinstance(manifest, dict) and isinstance(record, dict)
+    trusted = {str(vectors["key_id"]): bytes(range(32))}
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+
+    with pytest.raises(ManifestAuthPlatformCapabilityError, match="O_NOFOLLOW") as caught:
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    assert caught.value.code == "manifest_auth_platform_capability_v1"
+    assert not isinstance(caught.value, ManifestAuthMalformedError)
+
+    detached = tmp_path / "detached.json"
+    with pytest.raises(ManifestAuthPlatformCapabilityError, match="O_NOFOLLOW"):
+        require_detached_projection_auth(record["projection"], detached, trusted_keys=trusted)  # type: ignore[arg-type]
+
+
+def test_genuine_read_failures_remain_malformed_not_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SP-4: real integrity-relevant read failures keep the existing
+    # malformed classification; only the O_NOFOLLOW capability gap is distinct.
+    keys = tmp_path / "trusted-keys.json"
+    keys.write_text('{"keys": []}', encoding="utf-8")
+    _patched_record_read(monkeypatch, OSError("not a regular file"))
+    with pytest.raises(ManifestAuthMalformedError) as caught:
+        load_trusted_keys(keys)
+    assert not isinstance(caught.value, ManifestAuthPlatformCapabilityError)
+
+    _patched_record_read(monkeypatch, UnicodeError("undecodable"))
+    with pytest.raises(ManifestAuthMalformedError):
         load_trusted_keys(keys)
 
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import base64
 import builtins
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,8 +19,11 @@ import pytest
 from leitir.cli import ExitCode, main
 from leitir.manifest_auth import (
     AUTH_RECORD_NAME,
+    TRUSTED_KEYS_SCHEMA_VERSION,
     ManifestAuthBadSignatureError,
     ManifestAuthExtraMissingError,
+    ManifestAuthKeyExpiredError,
+    ManifestAuthKeyRevokedError,
     ManifestAuthKeysInShelfError,
     ManifestAuthMalformedError,
     ManifestAuthNoKeysError,
@@ -313,3 +318,369 @@ def test_get_require_manifest_auth_accepts_signed_cache_and_rejects_tamper(
     assert code == ExitCode.CORPUS_FAILURE
     assert out == ""
     assert json.loads(err.splitlines()[-1].removeprefix("leitir: error: "))["error"] == "manifest_auth_bad_signature_v1"
+
+
+# --- Issue #207: trusted-key lifecycle (expiry + revocation), ADR-0022 ---
+
+_LIFECYCLE_NOW = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
+
+
+def _fixed_clock(moment: datetime = _LIFECYCLE_NOW):
+    def clock() -> datetime:
+        return moment
+
+    return clock
+
+
+def _lifecycle_row(key_id: str, seed: int = 0, **lifecycle: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "key_id": key_id,
+        "public_key_b64": base64.b64encode(bytes(range(seed, seed + 32))).decode("ascii"),
+        "note": f"lifecycle fixture {key_id}",
+    }
+    row.update(lifecycle)
+    return row
+
+
+def _write_trusted_keys(tmp_path: Path, payload: object, name: str = "trusted-keys.json") -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v2_schema_loads_and_filters_expired_and_revoked_keys(tmp_path: Path) -> None:
+    """AC-2/AC-3 load side: lifecycle keys stay in the file, leave the active mapping, and keep distinct states."""
+    keys = _write_trusted_keys(
+        tmp_path,
+        {
+            "schema_version": TRUSTED_KEYS_SCHEMA_VERSION,
+            "keys": [
+                _lifecycle_row("expired-key", 0, expires_at="2020-01-01T00:00:00Z"),
+                _lifecycle_row("revoked-key", 32, revoked_at="2021-06-01T00:00:00Z", revocation_reason="key-compromise"),
+                _lifecycle_row("valid-key", 64, expires_at="2030-01-01T00:00:00Z"),
+                _lifecycle_row("undated-key", 96),
+            ],
+        },
+    )
+
+    loaded = load_trusted_keys(keys, clock=_fixed_clock())
+
+    assert loaded == {"valid-key": bytes(range(64, 96)), "undated-key": bytes(range(96, 128))}
+    assert list(loaded) == sorted(loaded)
+    assert loaded.lifecycle_for("expired-key") is not None and loaded.lifecycle_for("expired-key").state == "expired"
+    assert loaded.lifecycle_for("revoked-key") is not None and loaded.lifecycle_for("revoked-key").state == "revoked"
+    assert loaded.lifecycle_for("valid-key") is not None and loaded.lifecycle_for("valid-key").state == "active"
+    assert loaded.lifecycle_for("undated-key") is None
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_lifecycle_row("only-key", 0, expires_at="2020-01-01T00:00:00Z")],
+        [_lifecycle_row("only-key", 0, revoked_at="2020-01-01T00:00:00Z", revocation_reason="key-compromise")],
+    ],
+    ids=["all-expired", "all-revoked"],
+)
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v2_all_keys_expired_or_revoked_fails_closed(tmp_path: Path, rows: list[dict[str, object]]) -> None:
+    """SP-1: a trust root with no active keys fails closed instead of degrading."""
+    keys = _write_trusted_keys(tmp_path, {"schema_version": TRUSTED_KEYS_SCHEMA_VERSION, "keys": rows})
+
+    with pytest.raises(ManifestAuthNoKeysError, match="no active trusted keys configured"):
+        load_trusted_keys(keys, clock=_fixed_clock())
+
+
+@pytest.mark.parametrize(
+    ("moment", "active"),
+    [
+        (datetime(2026, 8, 20, 11, 59, 59, tzinfo=UTC), True),
+        (datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC), False),
+        (datetime(2026, 8, 20, 12, 0, 1, tzinfo=UTC), False),
+    ],
+    ids=["one-second-before", "boundary-instant", "one-second-after"],
+)
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v2_expiry_boundary_is_documented_and_deterministic(tmp_path: Path, moment: datetime, active: bool) -> None:
+    """SP-2: validity is strictly ``now < expires_at``; the boundary instant is already expired; injected clock only."""
+    keys = _write_trusted_keys(
+        tmp_path,
+        {"schema_version": TRUSTED_KEYS_SCHEMA_VERSION, "keys": [_lifecycle_row("boundary-key", 0, expires_at="2026-08-20T12:00:00Z")]},
+    )
+
+    if active:
+        assert set(load_trusted_keys(keys, clock=_fixed_clock(moment))) == {"boundary-key"}
+    else:
+        with pytest.raises(ManifestAuthNoKeysError):
+            load_trusted_keys(keys, clock=_fixed_clock(moment))
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        dict(_lifecycle_row("bad", 0), expires_at="2026-08-01 00:00:00Z"),
+        dict(_lifecycle_row("bad", 0), expires_at="2026-08-01T00:00:00+02:00"),
+        dict(_lifecycle_row("bad", 0), expires_at="1750000000"),
+        dict(_lifecycle_row("bad", 0), expires_at=1750000000),
+        dict(_lifecycle_row("bad", 0), expires_at="2026-02-30T00:00:00Z"),
+        dict(_lifecycle_row("bad", 0), expires_at="2026-08-01T25:00:00Z"),
+        dict(_lifecycle_row("bad", 0), expires_at="2026-08-01T00:00:00"),
+        dict(_lifecycle_row("bad", 0), expires_at=""),
+        dict(_lifecycle_row("bad", 0), expires_at=None),
+        dict(_lifecycle_row("bad", 0), revoked_at="2020-01-01T00:00:00Z"),
+        dict(_lifecycle_row("bad", 0), revocation_reason="key-compromise"),
+        dict(_lifecycle_row("bad", 0), revoked_at="2020-01-01T00:00:00Z", revocation_reason=""),
+        dict(_lifecycle_row("bad", 0), revoked_at="2020-01-01T00:00:00Z", revocation_reason="ok", created_at="2020-01-01T00:00:00Z"),
+    ],
+    ids=[
+        "space-separator",
+        "non-utc-offset",
+        "epoch-string",
+        "epoch-integer",
+        "impossible-date",
+        "impossible-hour",
+        "missing-zulu",
+        "empty-timestamp",
+        "null-timestamp",
+        "revoked-without-reason",
+        "reason-without-revoked",
+        "empty-reason",
+        "unknown-lifecycle-field",
+    ],
+)
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v2_malformed_lifecycle_fields_fail_closed(tmp_path: Path, row: dict[str, object]) -> None:
+    """AC-5/C-5 + SP-4: malformed lifecycle data rejects as typed malformed, never best-effort parses."""
+    keys = _write_trusted_keys(tmp_path, {"schema_version": TRUSTED_KEYS_SCHEMA_VERSION, "keys": [row, _lifecycle_row("witness", 32)]})
+
+    with pytest.raises(ManifestAuthMalformedError):
+        load_trusted_keys(keys, clock=_fixed_clock())
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [3, 1, 0, "2", 2.0, True, None],
+    ids=["future-int", "v1-as-int", "zero", "string", "float", "bool", "null"],
+)
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v2_unknown_schema_version_fails_closed(tmp_path: Path, declared: object) -> None:
+    """Unknown schema versions reject: only v1 files (no marker) and integer ``schema_version: 2`` load."""
+    keys = _write_trusted_keys(tmp_path, {"schema_version": declared, "keys": [_lifecycle_row("k", 0)]})
+
+    with pytest.raises(ManifestAuthMalformedError, match="schema_version"):
+        load_trusted_keys(keys, clock=_fixed_clock())
+
+
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v1_strictness_is_unchanged_and_mixed_rows_reject(tmp_path: Path) -> None:
+    """SP-3: one schema per file — v1 files stay strictly v1; v2 files accept v1-shaped rows."""
+    v1_with_lifecycle_field = _write_trusted_keys(tmp_path, {"keys": [dict(_lifecycle_row("k", 0), expires_at="2030-01-01T00:00:00Z")]}, "v1-lifecycle.json")
+    with pytest.raises(ManifestAuthMalformedError):
+        load_trusted_keys(v1_with_lifecycle_field, clock=_fixed_clock())
+
+    v2_without_lifecycle_fields = _write_trusted_keys(tmp_path, {"schema_version": 2, "keys": [_lifecycle_row("k", 0)]}, "v2-plain.json")
+    assert set(load_trusted_keys(v2_without_lifecycle_fields, clock=_fixed_clock())) == {"k"}
+
+
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_v1_files_load_without_reading_the_clock(tmp_path: Path) -> None:
+    """C-1 + no hidden wall-clock reads: the v1 path never consults a clock."""
+
+    def forbidden_clock() -> datetime:
+        raise AssertionError("v1 loads must not read a clock")
+
+    keys = _write_trusted_keys(tmp_path, {"keys": [_lifecycle_row("k", 0)]})
+    assert set(load_trusted_keys(keys, clock=forbidden_clock)) == {"k"}
+
+
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_naive_injected_clock_fails_closed(tmp_path: Path) -> None:
+    """A clock returning naive datetimes is an integrity failure, not a silent local-time comparison."""
+    keys = _write_trusted_keys(
+        tmp_path,
+        {"schema_version": TRUSTED_KEYS_SCHEMA_VERSION, "keys": [_lifecycle_row("k", 0, expires_at="2030-01-01T00:00:00Z")]},
+    )
+
+    with pytest.raises(ManifestAuthMalformedError, match="timezone-aware"):
+        load_trusted_keys(keys, clock=lambda: datetime(2026, 8, 20, 12, 0, 0))
+
+
+@pytest.mark.skipif(not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require O_NOFOLLOW")
+def test_expired_revoked_and_unknown_keys_refuse_with_distinct_typed_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-2/AC-3 verify side: expired, revoked (reason surfaced), and unknown keys are distinct refusals."""
+    class FakeInvalidSignature(Exception):
+        pass
+
+    class FakePublicKey:
+        @classmethod
+        def from_public_bytes(cls, value: bytes) -> FakePublicKey:
+            assert len(value) == 32
+            return cls()
+
+        def verify(self, signature: bytes, canonical: bytes) -> None:
+            assert len(signature) == 64 and canonical.endswith(b"\n")
+
+    class FakePrivateKey:
+        def public_key(self) -> FakePublicKey:
+            return FakePublicKey()
+
+        def sign(self, canonical: bytes) -> bytes:
+            return b"s" * 64
+
+    class FakeSerialization:
+        class Encoding:
+            Raw = object()
+
+        class PublicFormat:
+            Raw = object()
+
+    monkeypatch.setattr("leitir.manifest_auth._provider", lambda: (FakePrivateKey, FakePublicKey, FakeInvalidSignature, FakeSerialization))
+    keys = _write_trusted_keys(
+        tmp_path,
+        {
+            "schema_version": TRUSTED_KEYS_SCHEMA_VERSION,
+            "keys": [
+                _lifecycle_row("expired-key", 0, expires_at="2020-01-01T00:00:00Z"),
+                _lifecycle_row("revoked-key", 32, revoked_at="2020-01-01T00:00:00Z", revocation_reason="key-compromise"),
+                _lifecycle_row("both-key", 128, expires_at="2020-01-01T00:00:00Z", revoked_at="2020-02-01T00:00:00Z", revocation_reason="later-compromise"),
+                _lifecycle_row("valid-key", 64),
+            ],
+        },
+    )
+    trusted = load_trusted_keys(keys, clock=_fixed_clock())
+    vectors = _vectors()
+    manifest = vectors["manifest"]
+    assert isinstance(manifest, dict)
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+
+    def record_for(key_id: str) -> None:
+        _sidecar_path(shelf).write_bytes(canonical_json(dict(vectors["valid"], key_id=key_id)))
+
+    record_for("valid-key")
+    require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+
+    record_for("expired-key")
+    with pytest.raises(ManifestAuthKeyExpiredError) as expired:
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    assert expired.value.code == "manifest_auth_key_expired_v1"
+    assert not isinstance(expired.value, (ManifestAuthKeyRevokedError, ManifestAuthUnknownKeyError))
+
+    record_for("revoked-key")
+    with pytest.raises(ManifestAuthKeyRevokedError) as revoked:
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    assert revoked.value.code == "manifest_auth_key_revoked_v1"
+    assert "key-compromise" in str(revoked.value)
+    assert not isinstance(revoked.value, (ManifestAuthKeyExpiredError, ManifestAuthUnknownKeyError))
+
+    record_for("both-key")
+    with pytest.raises(ManifestAuthKeyRevokedError) as both:
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+    assert "later-compromise" in str(both.value)
+    assert not isinstance(both.value, ManifestAuthKeyExpiredError), "revocation must outrank expiry when both apply"
+
+    record_for("never-configured-key")
+    with pytest.raises(ManifestAuthUnknownKeyError):
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+
+    detached = tmp_path / "detached.json"
+    detached.write_bytes(canonical_json(dict(vectors["valid"], key_id="expired-key")))
+    with pytest.raises(ManifestAuthKeyExpiredError):
+        require_detached_projection_auth(vectors["valid"]["projection"], detached, trusted_keys=trusted)
+    detached.write_bytes(canonical_json(dict(vectors["valid"], key_id="revoked-key")))
+    with pytest.raises(ManifestAuthKeyRevokedError):
+        require_detached_projection_auth(vectors["valid"]["projection"], detached, trusted_keys=trusted)
+
+
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
+def test_v2_full_lifecycle_ceremony_with_real_provider(tmp_path: Path) -> None:
+    """C-2/C-3/C-4 end to end: sign, expire, revoke, and observe distinct fail-closed refusals."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from leitir.manifest_auth import key_id_for_public_key
+
+    def public_bytes_of(seed: int) -> bytes:
+        private = Ed25519PrivateKey.from_private_bytes(bytes(range(seed, seed + 32)))
+        return private.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+
+    def row_for(seed: int, **lifecycle: object) -> dict[str, object]:
+        return {
+            "key_id": key_id_for_public_key(public_bytes_of(seed)),
+            "public_key_b64": base64.b64encode(public_bytes_of(seed)).decode("ascii"),
+            "note": f"ceremony key {seed}",
+            **lifecycle,
+        }
+
+    retiring = row_for(0, expires_at="2026-08-20T12:00:00Z")
+    current = row_for(32)
+    manifest = _vectors()["manifest"]
+    assert isinstance(manifest, dict)
+    shelf = tmp_path / "shelf"
+    shelf.mkdir()
+    retiring_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    record = sign_projection(derive_projection(manifest), retiring_key)
+
+    before_expiry = _write_trusted_keys(tmp_path, {"schema_version": 2, "keys": [retiring, current]}, "before.json")
+    trusted = load_trusted_keys(before_expiry, clock=_fixed_clock(_LIFECYCLE_NOW - timedelta(seconds=1)))
+    _sidecar_path(shelf).write_bytes(canonical_json(record))
+    require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+
+    after_expiry = _write_trusted_keys(tmp_path, {"schema_version": 2, "keys": [retiring, current]}, "after.json")
+    trusted = load_trusted_keys(after_expiry, clock=_fixed_clock(_LIFECYCLE_NOW))
+    assert set(trusted) == {current["key_id"]}
+    with pytest.raises(ManifestAuthKeyExpiredError):
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+
+    revoked = dict(retiring, revoked_at="2026-08-20T11:00:00Z", revocation_reason="key-compromise")
+    del revoked["expires_at"]
+    after_revocation = _write_trusted_keys(tmp_path, {"schema_version": 2, "keys": [revoked, current]}, "revoked.json")
+    trusted = load_trusted_keys(after_revocation, clock=_fixed_clock(_LIFECYCLE_NOW))
+    with pytest.raises(ManifestAuthKeyRevokedError, match="key-compromise"):
+        require_manifest_auth(manifest, shelf, trusted_keys=trusted)
+
+    detached = tmp_path / "detached.json"
+    detached.write_bytes(canonical_json(record))
+    with pytest.raises(ManifestAuthKeyRevokedError):
+        require_detached_projection_auth(record["projection"], detached, trusted_keys=trusted)
+
+
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
+def test_lifecycle_fixture_files_are_pinned_by_digest(tmp_path: Path) -> None:
+    """Contract pin: the four canonical fixture files are regenerated deterministically and pinned by SHA-256."""
+
+    def serialized(payload: object) -> bytes:
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from leitir.manifest_auth import key_id_for_public_key
+
+    private = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    public = private.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+    key_id = key_id_for_public_key(public)
+    base_row = {"key_id": key_id, "public_key_b64": base64.b64encode(public).decode("ascii"), "note": "pinned fixture"}
+    fixtures = {
+        "v1": {"keys": [base_row]},
+        "v2-valid": {"schema_version": 2, "keys": [dict(base_row, expires_at="2030-01-01T00:00:00Z")]},
+        "v2-expired": {"schema_version": 2, "keys": [dict(base_row, expires_at="2020-01-01T00:00:00Z")]},
+        "v2-revoked": {"schema_version": 2, "keys": [dict(base_row, revoked_at="2020-01-01T00:00:00Z", revocation_reason="key-compromise")]},
+    }
+    digests = {name: hashlib.sha256(serialized(payload)).hexdigest() for name, payload in fixtures.items()}
+    assert digests == {
+        "v1": "0291a9c5168fed666b365fe82c7f88f8404117490c6a02266284bea64c58dbef",
+        "v2-valid": "3ea8299cda386de9f2f6821b6163800b92ed125d7e8333a948af1d020954b995",
+        "v2-expired": "769fc64ac3a9759e9fb876131486fdb1762d8968dde76c23008949a6b6e5314b",
+        "v2-revoked": "f343398c48ddc0c9fc86d741e2ad4eb27adf7bef891db83d3a22553c38b1c4f6",
+    }
+
+    for name, payload in fixtures.items():
+        path = _write_trusted_keys(tmp_path, payload, f"{name}.json")
+        if name == "v2-expired" or name == "v2-revoked":
+            with pytest.raises(ManifestAuthNoKeysError):
+                load_trusted_keys(path, clock=_fixed_clock())
+        else:
+            assert set(load_trusted_keys(path, clock=_fixed_clock())) == {key_id}

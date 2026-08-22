@@ -157,7 +157,8 @@ donor shelf (`$RUNNER_TEMP/leitir-corpus-root`). The delegated session key
 was rotated to the owner-controlled long-term key above on 2026-08-17; any
 future re-ratification re-signs with that owner key (or a successor recorded
 the same way: rotate `trusted-keys-v1.json`, re-sign, and append the ceremony
-history here).
+history here). Future rotations should follow ADR-0022's retire or compromise
+ceremony and migrate the file to the v2 schema as part of the rotation.
 
 A digest computed by this repository only binds content and cannot ratify it.
 

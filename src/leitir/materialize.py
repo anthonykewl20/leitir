@@ -11,6 +11,7 @@ recorded distinctly so partial verification is never represented as complete.
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import io
 import json
@@ -134,7 +135,7 @@ def _assert_target_confinement(root: Path, target: Path) -> None:
 
 
 @contextmanager
-def _file_lock(path: Path) -> Iterator[None]:
+def _file_lock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
     """Hold an interprocess exclusive lock without following a lock symlink."""
     path = Path(os.path.normcase(str(path.absolute())))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,31 +148,49 @@ def _file_lock(path: Path) -> Iterator[None]:
         raise MaterializationError(
             f"cannot safely open materialization lock: {path}"
         ) from exc
+    acquired = False
     try:
-        if os.name == "nt":
-            import msvcrt
-
-            if os.fstat(fd).st_size == 0:
-                os.write(fd, b"\0")
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
-        else:
-            import fcntl
-
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
         try:
             if os.name == "nt":
                 import msvcrt
 
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
+                lock_mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.LK_*
+                msvcrt.locking(fd, lock_mode, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
             else:
                 import fcntl
 
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
+                flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(fd, flags)
+        except OSError as exc:
+            contention = {errno.EWOULDBLOCK, errno.EAGAIN}
+            if os.name == "nt":
+                contention.add(errno.EACCES)
+            if not isinstance(exc, BlockingIOError) and exc.errno not in contention:
+                raise
+            if blocking:
+                raise
+            yield False
+            return
+        acquired = True
+        yield True
+    finally:
+        if acquired:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+        else:
             os.close(fd)
 
 
@@ -180,6 +199,18 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     else:
         path.unlink(missing_ok=True)
+
+
+def _sweep_target_debris(lock_path: Path, target: Path, commit_sha: str) -> None:
+    """Sweep target debris only when its lock is immediately available."""
+    with _file_lock(lock_path, blocking=False) as acquired:
+        if not acquired or not target.parent.exists():
+            return
+        for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
+            _remove_path(stale)
+        if target.exists():
+            for stale in sorted(target.parent.glob(f".{commit_sha}.old-*")):
+                _remove_path(stale)
 
 
 @contextmanager
@@ -202,27 +233,14 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     if lock_identity in held:
         yield
         return
+    # Cleanup is opportunistic; the normal blocking lock below still
+    # preserves writer serialization for the materialization itself.
+    _assert_target_confinement(root, target)
+    _sweep_target_debris(lock_path, target, commit_sha)
     with _file_lock(lock_path):
         held.add(lock_identity)
         try:
             _assert_target_confinement(root, target)
-            if target.parent.exists():
-                # Sweep crash debris for THIS target only: staging temps and
-                # backup dirs orphaned by a crash between the two os.replace
-                # calls both carry the owning commit sha, so a concurrent run
-                # for any other source is never touched (issue #205 C-5/SP-2).
-                # Staging temps are always removable debris. A backup dir is
-                # stale only while the verified target still exists: after a
-                # crash between the two os.replace calls it is the sole
-                # surviving verified generation — the state the corpus gc
-                # (cli.py) documents as the only valid cache generation and
-                # restores under this same lock — so it is never swept here
-                # (hy3 P1 remediation).
-                for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
-                    _remove_path(stale)
-                if target.exists():
-                    for stale in sorted(target.parent.glob(f".{commit_sha}.old-*")):
-                        _remove_path(stale)
             yield
         finally:
             held.remove(lock_identity)

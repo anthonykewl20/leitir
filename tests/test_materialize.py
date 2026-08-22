@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import multiprocessing
@@ -9,6 +10,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import threading
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -376,6 +378,35 @@ def test_deep_parent_symlink_chain_is_rejected(tmp_path):
         with pytest.raises(MaterializationError, match="symbolic link"):
             _materialize(corpus, server.base_url)
     assert list(outside.iterdir()) == []
+
+
+def test_target_lock_rejects_symlinked_parent_before_sweeping_debris(
+    tmp_path: Path,
+) -> None:
+    """Issue #205 SP: confinement protects the sweep from an escaping parent."""
+    sha = "9" * 40
+    root = (tmp_path / "corpus").absolute()
+    outside = (tmp_path / "outside").absolute()
+    outside_shelf = outside / "github.com/example/demo"
+    outside_shelf.mkdir(parents=True)
+    debris = outside_shelf / f".{sha}.tmp-escape"
+    original = b"must not be removed"
+    debris.write_bytes(original)
+    corpus_repos = root / "repos"
+    root.mkdir()
+    try:
+        corpus_repos.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    target = materialize_module.target_path(root, "example", "demo", sha)
+    before = sorted(path.relative_to(outside) for path in outside.rglob("*"))
+    with pytest.raises(MaterializationError, match="symbolic link"):
+        with materialize_module._target_lock(root, target, sha):
+            pass
+
+    assert debris.read_bytes() == original
+    assert sorted(path.relative_to(outside) for path in outside.rglob("*")) == before
 
 
 def test_abandoned_staging_is_cleaned_under_target_lock(tmp_path):
@@ -1706,6 +1737,92 @@ def test_target_lock_sweep_skips_cleanly_when_shelf_parent_is_absent(
         pass
 
     assert not target.parent.exists()
+
+
+def test_target_lock_sweep_skips_when_shelf_lock_is_contended(
+    tmp_path: Path,
+) -> None:
+    """Issue #205 SP-4: contention skips cleanup without waiting or deleting."""
+    sha = "f" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    stale_tmp = target.parent / f".{sha}.tmp-contended"
+    stale_old = target.parent / f".{sha}.old-contended"
+    stale_tmp.mkdir()
+    stale_old.mkdir()
+
+    relative_target = target.relative_to(root)
+    identity = os.path.normcase(str(relative_target)).encode("utf-8")
+    lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    completed = threading.Event()
+    errors: list[BaseException] = []
+
+    def sweep() -> None:
+        try:
+            materialize_module._sweep_target_debris(lock_path, target, sha)
+        except BaseException as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=sweep)
+    with materialize_module._file_lock(lock_path):
+        worker.start()
+        worker.join(timeout=10.0)
+        assert completed.is_set(), "contended stale sweep waited for the shelf lock"
+    worker.join(timeout=10.0)
+    assert not worker.is_alive()
+    assert errors == []
+    assert stale_tmp.exists()
+    assert stale_old.exists()
+
+
+def test_target_lock_composes_with_contended_sweep_lock(tmp_path: Path) -> None:
+    """Issue #205 SP: a contended sweep does not prevent the body from running."""
+    sha = "8" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    stale_tmp = target.parent / f".{sha}.tmp-composed"
+    stale_tmp.write_bytes(b"survive contention")
+
+    relative_target = target.relative_to(root)
+    identity = os.path.normcase(str(relative_target)).encode("utf-8")
+    lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    held = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def holder() -> None:
+        try:
+            with materialize_module._file_lock(lock_path):
+                held.set()
+                if not release.wait(10):
+                    raise TimeoutError("timed out waiting to release composed lock")
+        except BaseException as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+
+    worker = threading.Thread(target=holder)
+    worker.start()
+    assert held.wait(10), "worker did not acquire the shelf lock"
+    timer = threading.Timer(0.1, release.set)
+    timer.start()
+    body_ran = False
+    try:
+        with materialize_module._target_lock(root, target, sha):
+            body_ran = True
+    finally:
+        release.set()
+        timer.cancel()
+        worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert body_ran
+    assert stale_tmp.read_bytes() == b"survive contention"
 
 
 def test_http_server_harness_threads_join_cleanly() -> None:

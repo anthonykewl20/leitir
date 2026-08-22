@@ -5,6 +5,7 @@
 - Deciders: leitir maintainers (schema shape per the #207 Decision field: objective-level shape ratified 2026-08-18; exact serialization proposed here, frozen by the owner's merge of #207's PR)
 - Date: 2026-08-20
 - Technical Story: [#207 — Trusted-key lifecycle: expiry + revocation in a versioned trusted-keys schema, with rotation ceremony doc](https://github.com/anthonykewl20/leitir/issues/207)
+- Amendment: review-driven completion of the compromise ceremony (independent security review P2, 2026-08-22)
 
 ## Context and Problem Statement
 
@@ -111,15 +112,26 @@ artifacts are owner-ceremony-gated and never touched by implementers.
      `note`) as the evidence trail of when it was retired; it is never
      valid again regardless of file edits short of removing the timestamp.
 - **Compromise (incident, the `revoked_at` path):**
-  1. Immediately set `revoked_at` to the incident instant (UTC) and a
+  1. Generate and add the successor key in the same reviewed change before or
+     alongside the revocation when operationally possible. If that is not
+     possible, sequence the successor-key addition immediately after the
+     revocation; use the retire ceremony's successor-first overlap pattern to
+     re-sign any outstanding material.
+  2. Immediately set `revoked_at` to the incident instant (UTC) and a
      `revocation_reason` that names the incident class (e.g.
      `key-compromise`).
-  2. From that instant the key refuses with
+  3. Destroy the compromised private-key material and record its custody and
+     destruction in the ceremony history, as in the 2026-08-17 session-key
+     rotation precedent.
+  4. From that instant the key refuses with
      `ManifestAuthKeyRevokedError` and the reason; material signed by it
      fails closed everywhere.
-  3. The revoked row stays in the file permanently as incident evidence;
+  5. The revoked row stays in the file permanently as incident evidence;
      never delete it to "clean up" — deletion is exactly the
      indistinguishable-from-never-existed failure this schema removes.
+     Revoking the last active key intentionally bricks verification and fails
+     closed until a successor is trusted. This is by design; recovery is the
+     successor-key addition followed by the re-sign sequence above.
 - Evidence trail per ceremony: the trusted-keys file history (reviewed like
   code) is the ledger of who was trusted, from when, until when, and why a
   key left. Ad-hoc manual deletions are not a documented path.

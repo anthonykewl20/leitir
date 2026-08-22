@@ -42,10 +42,13 @@ import pytest
 from leitir import _http
 from leitir.tree import GitHubTreeSource
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    ),
+]
 
 # Workflow-pinned truncation precondition fixture (live-canary.yml
 # truncated-tree-recovery job).  Pinned by commit; re-verified live.

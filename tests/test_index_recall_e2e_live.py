@@ -34,10 +34,13 @@ from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, Searc
 from leitir.tree import BlobEntry, GitHubTreeSource
 from leitir.treehash import TREE_HASH_ALGORITHM, compute_materialized_tree_hash
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    ),
+]
 
 FIXTURE_REPO = os.environ.get("LIVE_CANARY_FIXTURE_REPO", "python/cpython")
 FIXTURE_COMMIT = os.environ.get(

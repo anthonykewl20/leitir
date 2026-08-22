@@ -23,10 +23,13 @@ import pytest
 
 from leitir.tree import STREAM_CHUNK_SIZE, STREAM_MAX_BYTES, GitHubTreeSource
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    ),
+]
 
 FIXTURE_REPO = os.environ.get("LIVE_CANARY_FIXTURE_REPO", "torvalds/linux")
 FIXTURE_COMMIT = os.environ.get(

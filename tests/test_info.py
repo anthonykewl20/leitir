@@ -274,6 +274,7 @@ TINODE_V0_25_3 = "22a7c18e9cd695e9a061bf1b8c84175196ef5a15"
 REQUESTS_V2_34_2 = "6e83187b8feb273ed4c6cdab5efd8d54901dfab3"
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live license-routing verification",

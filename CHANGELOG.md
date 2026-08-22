@@ -16,6 +16,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
+- include global coverage in JSON reports (`cli`)
 - pin donors to latest stable release tags by default (`discovery`)
 - register the live pytest marker and make the live inventory authoritative (`tests`)
 - report honest coverage bounds in search output and help (`discovery`)

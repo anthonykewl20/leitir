@@ -62,18 +62,23 @@ def _artifact(
     )
 
 
-def _global_artifact(exclusions: object) -> EvidenceArtifact:
+def _global_artifact(
+    exclusions: object, *, bounds: dict[str, object] | None = None
+) -> EvidenceArtifact:
+    coverage = {
+        "status": "indeterminate_global",
+        "files_eligible": 2,
+        "files_indexed": 1,
+        "files_excluded": 1,
+        "incomplete_results": False,
+        "exclusions": exclusions,
+    }
+    if bounds is not None:
+        coverage.update(bounds)
     content = json.dumps(
         {
             "spec_digest": "c" * 64,
-            "coverage": {
-                "status": "indeterminate_global",
-                "files_eligible": 2,
-                "files_indexed": 1,
-                "files_excluded": 1,
-                "incomplete_results": False,
-                "exclusions": exclusions,
-            },
+            "coverage": coverage,
             "matches": [],
             "resolution": {
                 "strategy": "indexed_commit",
@@ -378,6 +383,39 @@ def test_global_coverage_accepts_exclusion_breakdown():
 
     assert result.status is CheckStatus.PASS
     assert result.reason_code == "INDETERMINATE_GLOBAL_PRESERVED"
+
+
+def test_global_coverage_accepts_additive_discovery_bounds():
+    result = evaluate_global_no_exhaustiveness(
+        _global_artifact(
+            {"decode_failed": 1},
+            bounds={"pages_fetched": 2, "matches_returned": 5, "bounds": ["page-cap"]},
+        )
+    )
+
+    assert result.status is CheckStatus.PASS
+    assert result.reason_code == "INDETERMINATE_GLOBAL_PRESERVED"
+
+
+def test_global_coverage_rejects_partial_discovery_bounds():
+    result = evaluate_global_no_exhaustiveness(
+        _global_artifact({"decode_failed": 1}, bounds={"pages_fetched": 2})
+    )
+
+    assert result.status is CheckStatus.ERROR
+    assert result.reason_code == "GLOBAL_COVERAGE_MALFORMED"
+
+
+def test_global_coverage_rejects_unknown_discovery_bound_key():
+    result = evaluate_global_no_exhaustiveness(
+        _global_artifact(
+            {"decode_failed": 1},
+            bounds={"pages_fetched": 2, "matches_returned": 5, "bounds": [], "extra": 1},
+        )
+    )
+
+    assert result.status is CheckStatus.ERROR
+    assert result.reason_code == "GLOBAL_COVERAGE_MALFORMED"
 
 
 @pytest.mark.parametrize("exclusions", [{"decode_failed": "1"}, {"decode_failed": -1}])

@@ -252,25 +252,41 @@ def test_build_info_renders_missing_analysis_honestly(tmp_path):
 
 
 def test_source_routing_warns_on_normal_and_error_inconclusive_paths(
-    tmp_path, monkeypatch, caplog
+    tmp_path, monkeypatch
 ):
-    caplog.set_level(logging.WARNING, logger="leitir.info")
+    records: list[logging.LogRecord] = []
 
-    normal = source_routing(tmp_path / "missing", None)
+    class RecordHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
 
-    assert normal == {"verdict": "study-only", "reason": "license-undetermined"}
-    assert "license routing inconclusive" in caplog.text
+    logger = logging.getLogger("leitir")
+    handler = RecordHandler()
+    logger.addHandler(handler)
+    try:
+        normal = source_routing(tmp_path / "missing", None)
 
-    caplog.clear()
+        assert normal == {"verdict": "study-only", "reason": "license-undetermined"}
+        assert any(
+            "license routing inconclusive" in record.getMessage()
+            for record in records
+        )
 
-    def fail(_target):
-        raise RuntimeError("scripted routing failure")
+        records.clear()
 
-    monkeypatch.setattr("leitir.info._routing_signal_bytes", fail)
-    error = source_routing(tmp_path, None)
+        def fail(_target):
+            raise RuntimeError("scripted routing failure")
 
-    assert error == {"verdict": "study-only", "reason": "license-undetermined"}
-    assert "license routing evaluation failed" in caplog.text
+        monkeypatch.setattr("leitir.info._routing_signal_bytes", fail)
+        error = source_routing(tmp_path, None)
+
+        assert error == {"verdict": "study-only", "reason": "license-undetermined"}
+        assert any(
+            "license routing evaluation failed" in record.getMessage()
+            for record in records
+        )
+    finally:
+        logger.removeHandler(handler)
 
 
 def test_build_info_locks_license_and_trust_manifest_updates(tmp_path, monkeypatch):

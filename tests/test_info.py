@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +16,7 @@ from leitir.info import (
     _valid_api,
     _valid_examples,
     build_info,
+    source_routing,
 )
 from leitir.materialize import MANIFEST_NAME
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
@@ -247,6 +249,28 @@ def test_build_info_renders_missing_analysis_honestly(tmp_path):
     assert document["api"]["top_symbols"] == []
     assert document["examples"]["count"] == 0
     assert document["examples"]["top"] == []
+
+
+def test_source_routing_warns_on_normal_and_error_inconclusive_paths(
+    tmp_path, monkeypatch, caplog
+):
+    caplog.set_level(logging.WARNING, logger="leitir.info")
+
+    normal = source_routing(tmp_path / "missing", None)
+
+    assert normal == {"verdict": "study-only", "reason": "license-undetermined"}
+    assert "license routing inconclusive" in caplog.text
+
+    caplog.clear()
+
+    def fail(_target):
+        raise RuntimeError("scripted routing failure")
+
+    monkeypatch.setattr("leitir.info._routing_signal_bytes", fail)
+    error = source_routing(tmp_path, None)
+
+    assert error == {"verdict": "study-only", "reason": "license-undetermined"}
+    assert "license routing evaluation failed" in caplog.text
 
 
 def test_build_info_locks_license_and_trust_manifest_updates(tmp_path, monkeypatch):

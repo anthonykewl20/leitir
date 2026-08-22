@@ -19,7 +19,7 @@ from leitir.diff import (
     diff_file_trees,
     diff_packages,
 )
-from leitir.resolver import ResolvedPackage
+from leitir.resolver import ResolutionError, ResolvedPackage
 from leitir.search import RepoScope
 
 
@@ -379,6 +379,23 @@ def test_cli_diff_pinned_sha_spec_reports_pinned_identity(tmp_path, monkeypatch)
     report = json.loads(out)
     assert report["before"]["commit_sha"] == _PIN_SHA_SPEC
     assert report["after"]["commit_sha"] == _PIN_SHA_SPEC
+
+
+def test_diff_prepare_surfaces_heads_resolution_error(tmp_path):
+    """SP-2: a heads failure during ``_prepare`` keeps its typed error."""
+
+    class FailingHeads:
+        def resolve_head_sha(self, slug, ref=None):
+            raise ResolutionError("scripted heads failure")
+
+    with pytest.raises(ResolutionError, match="scripted heads failure"):
+        diff_packages(
+            "acme/one",
+            "acme/two",
+            corpus_root=tmp_path,
+            resolver=object(),
+            heads=FailingHeads(),
+        )
 
 
 def _pin_recording_materializer(entry_pin=None, manifest_pin=None):

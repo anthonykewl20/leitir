@@ -94,6 +94,11 @@ def source_routing(target: Path, identifier: object) -> dict[str, str]:
             target,
         )
         routing = LicenseRouting(STUDY_ONLY, REASON_LICENSE_UNDETERMINED)
+    if routing.reason == REASON_LICENSE_UNDETERMINED:
+        logger.warning(
+            "license routing inconclusive for %s; routing study-only/license-undetermined",
+            target,
+        )
     return {"verdict": routing.verdict, "reason": routing.reason}
 
 

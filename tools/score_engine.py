@@ -2178,17 +2178,32 @@ def evaluate_result_provenance(artifact: EvidenceArtifact) -> CheckResult:
     )
 
 
-def _coverage(raw: object) -> tuple[str, int, int, int, bool]:
+def _coverage(
+    raw: object, *, allow_global_bounds: bool = False
+) -> tuple[str, int, int, int, bool]:
+    base_keys = {
+        "status",
+        "files_eligible",
+        "files_indexed",
+        "files_excluded",
+        "incomplete_results",
+        "exclusions",
+    }
+    expected_keys = (
+        {
+            frozenset(base_keys),
+            frozenset((*base_keys, "pages_fetched", "matches_returned", "bounds")),
+        }
+        if allow_global_bounds
+        else {frozenset(base_keys)}
+    )
+    if not isinstance(raw, Mapping):
+        raise ValueError("coverage must be an object")
+    if frozenset(raw) not in expected_keys:
+        raise ValueError("coverage has an invalid field set")
     coverage = _object_keys(
         raw,
-        {
-            "status",
-            "files_eligible",
-            "files_indexed",
-            "files_excluded",
-            "incomplete_results",
-            "exclusions",
-        },
+        set(raw),
         "coverage",
     )
     status = coverage["status"]
@@ -2276,7 +2291,7 @@ def evaluate_global_no_exhaustiveness(artifact: EvidenceArtifact) -> CheckResult
         ):
             raise ValueError("global search resolution is invalid")
         status, _eligible, _indexed, _excluded, _incomplete = _coverage(
-            raw["coverage"]
+            raw["coverage"], allow_global_bounds=True
         )
     except ValueError:
         return _error_result(

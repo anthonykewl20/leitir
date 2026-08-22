@@ -754,6 +754,14 @@ class CoverageBounds:
         if not self.incomplete and self.bounds:
             raise ValueError("bound reasons require incomplete=True")
 
+    def to_dict(self) -> dict[str, object]:
+        """Serialize this invocation's bounds for the machine report."""
+        return {
+            "pages_fetched": self.pages_fetched,
+            "matches_returned": self.matches_returned,
+            "bounds": list(self.bounds),
+        }
+
 
 class GlobalSearcher:
     """Executes a global-discovery search via GitHub Code Search."""

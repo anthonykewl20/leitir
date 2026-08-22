@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import threading
 
 import pytest
 
@@ -27,7 +28,7 @@ from leitir.discovery_search import (
     CoverageBounds,
     GlobalSearcher,
 )
-from leitir.search import Predicate, PredicateKind, SearchMode, SearchSpec
+from leitir.search import Predicate, PredicateKind, SearchMode, SearchReport, SearchSpec
 from leitir.tree import BlobEntry
 
 SHA = "a" * 40
@@ -242,6 +243,9 @@ def test_provider_coverage_reported() -> None:
     payload = json.loads(out)
     matches = len(payload["matches"])
     assert matches >= 1
+    assert payload["coverage"]["pages_fetched"] == 1
+    assert payload["coverage"]["matches_returned"] == matches
+    assert payload["coverage"]["bounds"] == []
     assert (
         f"coverage=bounded-discovery pages=1 matches={matches} incomplete=false"
         in err
@@ -300,6 +304,9 @@ def test_partial_results_flagged_incomplete() -> None:
     assert code == ExitCode.SUCCESS
     payload = json.loads(out)
     matches = len(payload["matches"])
+    assert payload["coverage"]["pages_fetched"] == 1
+    assert payload["coverage"]["matches_returned"] == matches
+    assert payload["coverage"]["bounds"] == ["incomplete-results"]
     assert (
         f"coverage=bounded-discovery pages=1 matches={matches} incomplete=true"
         in err
@@ -387,8 +394,66 @@ def test_transport_failure_mid_search_marks_incomplete() -> None:
     assert "transport-error" in bounds.bounds
 
 
+def test_concurrent_search_sessions_keep_bounds_per_invocation() -> None:
+    """SP-4: interleaved sessions retain their own invocation bounds."""
+
+    first_barrier = threading.Barrier(2)
+
+    class InterleavedCodeSearch(ScriptedCodeSearch):
+        def __init__(self, pages: dict[int, CodeSearchPage]) -> None:
+            super().__init__(pages)
+            self._first_call = True
+
+        def search(self, query: str, *, per_page: int = 10, page: int = 1) -> CodeSearchPage:
+            if self._first_call:
+                self._first_call = False
+                first_barrier.wait(timeout=10)
+            return super().search(query, per_page=per_page, page=page)
+
+    def make_searcher(pages: dict[int, CodeSearchPage], max_pages: int) -> GlobalSearcher:
+        return GlobalSearcher(
+            code_search=InterleavedCodeSearch(pages),
+            tree_source=FakeTree(),
+            adapters=(PythonAdapter(),),
+            blob_reader=lambda slug, sha, path: _content_for(path),
+            max_results=30,
+            max_pages=max_pages,
+            clock=lambda: "2026-08-21T00:00:00Z",
+        )
+
+    sessions = {
+        "complete": make_searcher(FIXTURES["complete-single-page"], 10),
+        "capped": make_searcher({1: _mixed_page(1, 29, total=1000), 2: _mixed_page(1, 29, total=1000)}, 2),
+    }
+    reports: dict[str, SearchReport] = {}
+    errors: list[BaseException] = []
+
+    def run(name: str) -> None:
+        try:
+            reports[name] = sessions[name].search(_spec())
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(name,)) for name in sessions]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert set(reports) == set(sessions)
+    complete_bounds = sessions["complete"].last_coverage_bounds
+    capped_bounds = sessions["capped"].last_coverage_bounds
+    assert complete_bounds == CoverageBounds(1, len(reports["complete"].matches), False)
+    assert capped_bounds == CoverageBounds(
+        2, len(reports["capped"].matches), True, ("page-cap",)
+    )
+    assert complete_bounds is not capped_bounds
+
+
 def test_sequential_searches_keep_bounds_per_invocation() -> None:
-    """SP-4: each rendering reflects its own invocation's bounds."""
+    """Each rendering reflects its own sequential invocation's bounds."""
 
     searcher, cs = _searcher(FIXTURES["complete-single-page"])
     first = searcher.search(_spec())

@@ -44,6 +44,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - restore helpers dropped by #230 merge resolution (`tests`)
 - retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)
+- skip stale sweep when shelf lock is contended (`materialize`)
 - state Codeberg symlink re-read verification as response self-consistency (`resolver`)
 - state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from leitir import safeio
+from leitir import materialize, safeio
 from leitir.safeio import (
     NoFollowUnavailableError,
     atomic_text_writer,
@@ -363,6 +363,71 @@ def test_concurrent_writers_are_atomic_last_writer_wins(tmp_path: Path) -> None:
     assert failures == []
     assert target.read_bytes() in payloads
     assert list(tmp_path.glob(".shared.bin.tmp-*")) == []
+
+
+def test_concurrent_writers_serialized_by_target_lock_are_atomic_last_writer_wins(
+    tmp_path: Path,
+) -> None:
+    """SP-4: the supported same-target write seam never exposes torn bytes."""
+    target = tmp_path / "shared-serialized.bin"
+    payloads = [bytes([65 + index]) * (64 * 1024) for index in range(8)]
+    commit_sha = "b" * 40
+    start = threading.Barrier(len(payloads) + 2)
+    stop_reader = threading.Event()
+    failures: list[BaseException] = []
+    completed_payloads: list[bytes] = []
+
+    atomic_write_bytes(target, payloads[0])
+
+    def read_under_target_lock() -> None:
+        try:
+            start.wait(timeout=30)
+            while not stop_reader.is_set():
+                with materialize._target_lock(tmp_path, target, commit_sha):
+                    observed = target.read_bytes()
+                if observed not in payloads:
+                    raise AssertionError(
+                        f"torn content observed: {observed[:32]!r}"
+                    )
+        except BaseException as exc:  # noqa: BLE001 - propagated to the main thread
+            failures.append(exc)
+
+    def write_under_target_lock(payload: bytes) -> None:
+        try:
+            start.wait(timeout=30)
+            with materialize._target_lock(tmp_path, target, commit_sha):
+                atomic_write_bytes(target, payload)
+                observed = target.read_bytes()
+                if observed != payload:
+                    raise AssertionError("writer observed bytes from another writer")
+                completed_payloads.append(payload)
+        except BaseException as exc:  # noqa: BLE001 - propagated to the main thread
+            failures.append(exc)
+
+    reader = threading.Thread(target=read_under_target_lock)
+    writers = [
+        threading.Thread(target=write_under_target_lock, args=(payload,))
+        for payload in payloads
+    ]
+    reader.start()
+    for writer in writers:
+        writer.start()
+    start.wait(timeout=30)
+    for writer in writers:
+        writer.join(timeout=60)
+        assert not writer.is_alive(), "serialized concurrent writer hung"
+    stop_reader.set()
+    reader.join(timeout=60)
+    assert not reader.is_alive(), "serialized concurrent reader hung"
+
+    assert failures == []
+    assert len(completed_payloads) == len(payloads)
+    assert sorted(completed_payloads) == sorted(payloads)
+    with materialize._target_lock(tmp_path, target, commit_sha):
+        final = target.read_bytes()
+    assert final == completed_payloads[-1]
+    assert final in payloads
+    assert list(tmp_path.glob(".shared-serialized.bin.tmp-*")) == []
 
 
 def test_retry_after_failure_persists_identical_bytes(

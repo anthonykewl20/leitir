@@ -47,6 +47,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - state the tag-crawl window bound in the head-fallback pin announcement (`discovery`)
 - type over-bound reads and reject duplicate keys in update_manifest (`materialize`)
 - verify the recursive-listing sha echo live, disclose recovery-walk status, and route the canary fetch through the retry seam (`tests`)
+- warn on normal inconclusive license routing; cover _prepare heads failure (#190 SP-1, #218 SP-2) (`info,diff`)
 
 ### Security
 - cover objects/raw/uploads GitHub hosts in github provider (`credentials`)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import sys
 import tempfile
@@ -374,33 +375,81 @@ def test_concurrent_writers_serialized_by_target_lock_are_atomic_last_writer_win
     commit_sha = "b" * 40
     start = threading.Barrier(len(payloads) + 2)
     stop_reader = threading.Event()
+    reader_attempt_cap = 20_000
+    writer_attempt_cap = 20_000
+    retry_wait = threading.Event()
+    contention_errnos = {errno.EACCES, errno.EWOULDBLOCK, errno.EAGAIN}
     failures: list[BaseException] = []
     completed_payloads: list[bytes] = []
 
     atomic_write_bytes(target, payloads[0])
 
     def read_under_target_lock() -> None:
+        attempts = 0
+        contention_failures = 0
+        last_contention: OSError | None = None
         try:
             start.wait(timeout=30)
-            while not stop_reader.is_set():
-                with materialize._target_lock(tmp_path, target, commit_sha):
+            while attempts < reader_attempt_cap and not stop_reader.is_set():
+                attempts += 1
+                lock_context = materialize._target_lock(tmp_path, target, commit_sha)
+                try:
+                    lock_context.__enter__()
+                except OSError as exc:
+                    # msvcrt.LK_LOCK can exhaust its internal retry budget while
+                    # another writer holds the lock; treat that acquisition-only
+                    # failure as transient and yield before trying again.
+                    if os.name != "nt" or exc.errno not in contention_errnos:
+                        raise
+                    contention_failures += 1
+                    last_contention = exc
+                    stop_reader.wait(timeout=0.001)
+                    continue
+                try:
                     observed = target.read_bytes()
+                finally:
+                    lock_context.__exit__(None, None, None)
                 if observed not in payloads:
                     raise AssertionError(
                         f"torn content observed: {observed[:32]!r}"
                     )
+                stop_reader.wait(timeout=0.001)
+            if not stop_reader.is_set() and attempts == reader_attempt_cap:
+                raise AssertionError(
+                    "reader lock retry cap exhausted while writers were still "
+                    f"running ({contention_failures} contention failures)"
+                ) from last_contention
         except BaseException as exc:  # noqa: BLE001 - propagated to the main thread
             failures.append(exc)
 
     def write_under_target_lock(payload: bytes) -> None:
+        last_contention: OSError | None = None
         try:
             start.wait(timeout=30)
-            with materialize._target_lock(tmp_path, target, commit_sha):
-                atomic_write_bytes(target, payload)
-                observed = target.read_bytes()
-                if observed != payload:
-                    raise AssertionError("writer observed bytes from another writer")
-                completed_payloads.append(payload)
+            for _ in range(writer_attempt_cap):
+                lock_context = materialize._target_lock(tmp_path, target, commit_sha)
+                try:
+                    lock_context.__enter__()
+                except OSError as exc:
+                    # Retry only lock acquisition. Any error from the write or
+                    # read below remains a writer failure.
+                    if os.name != "nt" or exc.errno not in contention_errnos:
+                        raise
+                    last_contention = exc
+                    retry_wait.wait(timeout=0.001)
+                    continue
+                try:
+                    atomic_write_bytes(target, payload)
+                    observed = target.read_bytes()
+                    if observed != payload:
+                        raise AssertionError("writer observed bytes from another writer")
+                    completed_payloads.append(payload)
+                finally:
+                    lock_context.__exit__(None, None, None)
+                return
+            raise AssertionError(
+                "serialized concurrent writer lock retry cap exhausted"
+            ) from last_contention
         except BaseException as exc:  # noqa: BLE001 - propagated to the main thread
             failures.append(exc)
 

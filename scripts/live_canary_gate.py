@@ -56,9 +56,11 @@ def _parse_extra_tests() -> str:
     requested = [item.strip() for item in raw.split(",")]
     if any(not item for item in requested):
         raise ValueError("DISPATCH_EXTRA_TESTS contains an empty test node ID")
-    configured_allowlist = os.environ.get("DISPATCH_EXTRA_TEST_ALLOWLIST", "")
-    allowlist = frozenset(configured_allowlist.split()) if configured_allowlist else frozenset(EXTRA_TEST_ALLOWLIST)
-    unknown = sorted(set(requested).difference(allowlist))
+    configured_allowlist = os.environ.get("DISPATCH_EXTRA_TEST_ALLOWLIST")
+    canonical_allowlist = " ".join(EXTRA_TEST_ALLOWLIST)
+    if configured_allowlist is not None and configured_allowlist != canonical_allowlist:
+        raise ValueError("DISPATCH_EXTRA_TEST_ALLOWLIST diverges from the script allowlist")
+    unknown = sorted(set(requested).difference(EXTRA_TEST_ALLOWLIST))
     if unknown:
         raise ValueError(f"DISPATCH_EXTRA_TESTS contains unknown test node ID(s): {unknown}")
     if len(set(requested)) != len(requested):
@@ -115,19 +117,11 @@ def main() -> int:
         decisions = evaluate(root)
         extra_tests = _parse_extra_tests() if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else ""
     except ValueError as exc:
-        # Emit deterministic false outputs for malformed configuration. For an
-        # enabled-but-missing test, preserve the enabled output so the final
-        # summary cannot mistake the surface for skipped coverage.
-        fallback_decisions: list[tuple[str, bool]] = []
-        for output_name, variable_name, _test_path in _GATES:
-            try:
-                enabled = _parse_gate(variable_name)
-            except ValueError:
-                enabled = False
-            fallback_decisions.append((output_name, enabled))
-        decisions = tuple(fallback_decisions)
+        # Emit deterministic false outputs for every malformed configuration.
+        decisions = tuple((output_name, False) for output_name, _variable_name, _test_path in _GATES)
         lines = [f"{name}={str(enabled).lower()}" for name, enabled in decisions]
         lines.append("extra_tests=")
+        lines.append("extra_tests_requested=false")
         _append_output(lines)
         print("\n".join(lines))
         print(f"live canary gate configuration failure: {exc}", file=sys.stderr)
@@ -135,6 +129,7 @@ def main() -> int:
 
     lines = [f"{name}={str(enabled).lower()}" for name, enabled in decisions]
     lines.append(f"extra_tests={extra_tests}")
+    lines.append(f"extra_tests_requested={str(bool(extra_tests)).lower()}")
     _append_output(lines)
     print("\n".join(lines))
     return 0

@@ -60,23 +60,13 @@ jobs:
       DISPATCH_ENABLE_STREAM_V2: ${{ inputs.enable_stream_v2 }}
       DISPATCH_ENABLE_INDEX_V2: ${{ inputs.enable_index_v2 }}
       DISPATCH_EXTRA_TESTS: ${{ inputs.extra_tests }}
-      # Fixed, reviewed node IDs only; never derive this list from dispatch input.
-      DISPATCH_EXTRA_TEST_ALLOWLIST: |
-        tests/test_info.py::test_live_tinode_routes_study_only
-        tests/test_diff_e2e.py::test_live_two_public_pypi_versions
-        tests/test_diff_e2e.py::test_live_cli_tag_diff_identity_matches_manifest_pins
-        tests/test_resolver_codeberg.py::test_live_pinned_commit_resolves
-        tests/test_resolver_codeberg.py::test_live_symlink_reread_returns_digest_verified_target
-        tests/test_discovery_coverage.py::test_provider_coverage_reported
-        tests/test_resolver_gitlab.py::test_live_ref_resolves_to_pinned_commit
-        tests/test_resolver_gitlab.py::test_live_subgroup_ref_resolves_to_pinned_commit
-        tests/test_resolver_bitbucket.py::test_live_ref_resolves_to_pinned_commit
     outputs:
       enabled: ${{ steps.opt-in.outputs.enabled }}
       tree_v2: ${{ steps.surfaces.outputs.tree_v2 }}
       stream_v2: ${{ steps.surfaces.outputs.stream_v2 }}
       index_v2: ${{ steps.surfaces.outputs.index_v2 }}
       extra_tests: ${{ steps.surfaces.outputs.extra_tests }}
+      extra_tests_requested: ${{ steps.surfaces.outputs.extra_tests_requested }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -255,8 +245,8 @@ jobs:
         env:
           PYTEST_OUTCOME: ${{ steps.probe.outcome }}
         run: >-
-           PYTHONPATH=src python scripts/classify_live_canary.py events.json
-           --surface index-vs-scan-recall --pytest-outcome "$PYTEST_OUTCOME"
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface index-vs-scan-recall --pytest-outcome "$PYTEST_OUTCOME"
 
   extra-live:
     name: Additional allowlisted live tests
@@ -322,6 +312,7 @@ jobs:
       TREE_RESULT: ${{ needs.truncated-tree-recovery.outputs.classification }}
       STREAM_RESULT: ${{ needs.streamed-large-blob.outputs.classification }}
       INDEX_RESULT: ${{ needs.index-vs-scan-recall.outputs.classification }}
+      EXTRA_TESTS_REQUESTED: ${{ needs.gate.outputs.extra_tests_requested }}
       EXTRA_RESULT: ${{ needs.extra-live.outputs.classification }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

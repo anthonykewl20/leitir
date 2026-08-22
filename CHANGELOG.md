@@ -13,6 +13,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ## [Unreleased]
 
 ### Added
+- add dispatch inputs and allowlisted extra live tests to live canary (`ci`)
 - enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)

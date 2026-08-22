@@ -447,6 +447,7 @@ def test_enabled_gate_resolves_true_now_that_every_named_test_exists() -> None:
         "stream_v2=true",
         "tree_v2=true",
         "extra_tests=",
+        "extra_tests_requested=false",
     ]
 
 
@@ -468,7 +469,8 @@ def test_absent_feature_gates_are_explicitly_false() -> None:
     )
     assert result.returncode == 0
     assert result.stdout.splitlines() == [
-        "index_v2=false", "stream_v2=false", "tree_v2=false", "extra_tests="
+        "index_v2=false", "stream_v2=false", "tree_v2=false", "extra_tests=",
+        "extra_tests_requested=false",
     ]
 
 
@@ -496,6 +498,7 @@ def test_malformed_gate_variable_fails_closed_through_the_cli() -> None:
         "stream_v2=false",
         "tree_v2=false",
         "extra_tests=",
+        "extra_tests_requested=false",
     ]
     assert "LEITIR_CANARY_TREE_V2 must be an explicit boolean" in result.stderr
 
@@ -565,6 +568,38 @@ def test_unknown_extra_test_id_fails_closed() -> None:
     assert "unknown test node ID" in result.stderr
 
 
+def test_allowlist_environment_divergence_fails_closed() -> None:
+    result = _run_dispatch_gate(
+        DISPATCH_EXTRA_TESTS="tests/test_info.py::test_live_tinode_routes_study_only",
+        DISPATCH_EXTRA_TEST_ALLOWLIST="tests/test_info.py::test_live_tinode_routes_study_only",
+    )
+    assert result.returncode == 1
+    assert "DISPATCH_EXTRA_TEST_ALLOWLIST diverges" in result.stderr
+    assert result.stdout.splitlines() == [
+        "index_v2=false",
+        "stream_v2=false",
+        "tree_v2=false",
+        "extra_tests=",
+        "extra_tests_requested=false",
+    ]
+
+
+def test_dispatch_configuration_error_ignores_repository_feature_variables() -> None:
+    result = _run_dispatch_gate(
+        DISPATCH_ENABLE_TREE_V2="false",
+        LEITIR_CANARY_TREE_V2="true",
+        DISPATCH_EXTRA_TESTS="tests/test_info.py::test_not_allowlisted",
+    )
+    assert result.returncode == 1
+    assert result.stdout.splitlines() == [
+        "index_v2=false",
+        "stream_v2=false",
+        "tree_v2=false",
+        "extra_tests=",
+        "extra_tests_requested=false",
+    ]
+
+
 def test_allowlisted_extra_test_id_passes_validation() -> None:
     result = _run_dispatch_gate(
         DISPATCH_EXTRA_TESTS="tests/test_info.py::test_live_tinode_routes_study_only"
@@ -610,6 +645,8 @@ def test_final_summary_distinguishes_skipped_and_configuration_failure() -> None
             "TREE_RESULT": "",
             "STREAM_RESULT": "",
             "INDEX_RESULT": "",
+            "EXTRA_TESTS_REQUESTED": "false",
+            "EXTRA_RESULT": "",
         },
         check=False,
         capture_output=True,
@@ -620,3 +657,36 @@ def test_final_summary_distinguishes_skipped_and_configuration_failure() -> None
     assert "| truncated-tree-recovery | `skipped-not-landed` |" in result.stdout
     assert "| streamed-large-blob | `skipped-not-landed` |" in result.stdout
     assert "| index-vs-scan-recall | `configuration-failure` |" in result.stdout
+    assert "| extra-live |" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("extra_result", "expected_class", "expected_returncode"),
+    [
+        ("", "configuration-failure", 1),
+        ("product-failure", "product-failure", 1),
+    ],
+)
+def test_requested_extra_live_is_rendered_and_fails_closed(
+    extra_result: str, expected_class: str, expected_returncode: int
+) -> None:
+    result = subprocess.run(
+        (sys.executable, str(_CLASSIFIER), "--summary-from-env"),
+        cwd=_ROOT,
+        env={
+            **os.environ,
+            "GATE_RESULT": "success",
+            "LIVE_CANARY_ENABLED": "true",
+            "TREE_V2": "false",
+            "STREAM_V2": "false",
+            "INDEX_V2": "false",
+            "BASELINE_RESULT": "pass",
+            "EXTRA_TESTS_REQUESTED": "true",
+            "EXTRA_RESULT": extra_result,
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_returncode
+    assert f"| extra-live | `{expected_class}` |" in result.stdout

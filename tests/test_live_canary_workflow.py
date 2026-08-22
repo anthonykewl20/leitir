@@ -46,7 +46,8 @@ def test_dispatch_inputs_are_typed_and_extra_job_is_manual_only() -> None:
     gate = _job(text, "gate")
     assert "GITHUB_EVENT_NAME: ${{ github.event_name }}" in gate
     assert "DISPATCH_EXTRA_TESTS: ${{ inputs.extra_tests }}" in gate
-    assert "tests/test_info.py::test_live_tinode_routes_study_only" in gate
+    assert "extra_tests_requested:" in gate
+    assert "DISPATCH_EXTRA_TEST_ALLOWLIST" not in gate
     extra = _job(text, "extra-live")
     assert "needs.gate.outputs.extra_tests != ''" in extra
     assert "python -m pytest -v" in extra
@@ -124,6 +125,8 @@ def test_final_summary_is_always_run_and_carries_every_classification() -> None:
     body = _job(text, "summarize")
     assert "if: ${{ always() }}" in body
     assert "scripts/classify_live_canary.py --summary-from-env" in body
+    assert "EXTRA_TESTS_REQUESTED" in body
+    assert "EXTRA_RESULT" in body
     classifier = (_ROOT / "scripts/classify_live_canary.py").read_text(encoding="utf-8")
     for classification in (
         "pass",

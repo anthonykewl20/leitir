@@ -10,10 +10,13 @@ import pytest
 from leitir.corpus import materialize_source
 from leitir.resolver import Ecosystem, GitHubTagResolver, NpmResolver, PackageRef
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live npm materialization",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live npm materialization",
+    )
+]
 
 NAME = "@sveltejs/kit"
 VERSION = "2.70.2"

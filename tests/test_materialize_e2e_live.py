@@ -18,10 +18,13 @@ from leitir.materialize import _go_zip_h1, materialize_github_repo, materialize_
 from leitir.resolver import BitbucketResolver, GitLabResolver
 from leitir.search import RepoScope
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization",
+    )
+]
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 GO_MODULE = "github.com/BurntSushi/toml"

@@ -8,10 +8,13 @@ from leitir.bench import load_manifest
 from leitir.cli import _build_default_code_search, _build_default_resolver
 from leitir.corpus_bench import CorpusBenchmarkRunner
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live corpus verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live corpus verification",
+    )
+]
 
 
 def test_corpus_v1_resolves_and_materializes_in_isolated_root():

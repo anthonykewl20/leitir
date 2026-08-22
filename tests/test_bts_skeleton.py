@@ -442,6 +442,7 @@ with tempfile.TemporaryDirectory() as value:
     assert outputs[0] == outputs[1] == outputs[2]
 
 
+@pytest.mark.live
 @pytest.mark.skipif(os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1", reason="set LEITIR_ENABLE_LIVE_E2E=1 for pinned external donor acquisition")
 def test_live_pinned_external_donor_is_rematerialized(tmp_path: Path) -> None:
     from leitir.materialize import materialize_github_repo
@@ -451,6 +452,7 @@ def test_live_pinned_external_donor_is_rematerialized(tmp_path: Path) -> None:
     assert (target / "requests" / "utils.py").is_file()
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1"
     or os.environ.get("LEITIR_ENABLE_DONOR_EXECUTION") != "1"

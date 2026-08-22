@@ -32,6 +32,16 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "mock_principal: CLI/wiring test that replaces the principal domain operation",
     )
+    config.addinivalue_line(
+        "markers",
+        "live: opt-in live-gated test (skips without LEITIR_ENABLE_LIVE_E2E=1; "
+        "authoritative inventory: pytest -m live --collect-only -q — see docs/testing.md)",
+    )
+    # Strict-marker discipline (#198 SP-3): an unregistered (e.g. typo'd)
+    # marker name is a collection error, not a silent no-op decoration.
+    config.addinivalue_line(
+        "filterwarnings", "error::pytest.PytestUnknownMarkWarning"
+    )
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

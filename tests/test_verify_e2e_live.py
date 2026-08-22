@@ -10,10 +10,13 @@ import pytest
 from leitir.materialize import materialize_github_repo
 from leitir.tree import GitHubTreeSource
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
-    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+        reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification",
+    )
+]
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 VITEST_SHA = "c9e59a089d94642eea29a43f2ee1986a5afb99c6"

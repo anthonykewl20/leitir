@@ -101,6 +101,7 @@ def test_unavailable_release_notes_never_fail_diff(tmp_path):
     assert "release_notes" not in report.as_dict()
 
 
+@pytest.mark.live
 @pytest.mark.skipif(
     os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
     reason="set LEITIR_ENABLE_LIVE_E2E=1 to enable live diff coverage",

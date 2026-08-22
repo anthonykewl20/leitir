@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import multiprocessing
@@ -9,6 +10,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import threading
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -1706,6 +1708,46 @@ def test_target_lock_sweep_skips_cleanly_when_shelf_parent_is_absent(
         pass
 
     assert not target.parent.exists()
+
+
+def test_target_lock_sweep_skips_when_shelf_lock_is_contended(
+    tmp_path: Path,
+) -> None:
+    """Issue #205 SP-4: contention skips cleanup without waiting or deleting."""
+    sha = "f" * 40
+    root = (tmp_path / "corpus").absolute()
+    target = materialize_module.target_path(root, "acme", "widget", sha)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    stale_tmp = target.parent / f".{sha}.tmp-contended"
+    stale_old = target.parent / f".{sha}.old-contended"
+    stale_tmp.mkdir()
+    stale_old.mkdir()
+
+    relative_target = target.relative_to(root)
+    identity = os.path.normcase(str(relative_target)).encode("utf-8")
+    lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    completed = threading.Event()
+    errors: list[BaseException] = []
+
+    def sweep() -> None:
+        try:
+            materialize_module._sweep_target_debris(lock_path, target, sha)
+        except BaseException as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=sweep)
+    with materialize_module._file_lock(lock_path):
+        worker.start()
+        worker.join(timeout=1.0)
+        assert completed.is_set(), "contended stale sweep waited for the shelf lock"
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+    assert errors == []
+    assert stale_tmp.exists()
+    assert stale_old.exists()
 
 
 def test_http_server_harness_threads_join_cleanly() -> None:

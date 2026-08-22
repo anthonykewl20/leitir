@@ -6,6 +6,36 @@ name: Live provider canary
 
 on:
   workflow_dispatch:
+    inputs:
+      run_surfaces:
+        description: Surface selection for this manual run
+        type: choice
+        options:
+          - default
+          - all
+          - baseline-only
+        default: default
+        required: true
+      enable_tree_v2:
+        description: Enable the tree recovery surface for this manual run
+        type: boolean
+        default: false
+        required: true
+      enable_stream_v2:
+        description: Enable the streamed blob surface for this manual run
+        type: boolean
+        default: false
+        required: true
+      enable_index_v2:
+        description: Enable the index recall surface for this manual run
+        type: boolean
+        default: false
+        required: true
+      extra_tests:
+        description: Comma-separated node IDs from the fixed allowlist
+        type: string
+        default: ''
+        required: false
   schedule:
     - cron: '0 3 * * *'
 
@@ -24,11 +54,19 @@ jobs:
       LEITIR_CANARY_TREE_V2: ${{ vars.LEITIR_CANARY_TREE_V2 }}
       LEITIR_CANARY_STREAM_V2: ${{ vars.LEITIR_CANARY_STREAM_V2 }}
       LEITIR_CANARY_INDEX_V2: ${{ vars.LEITIR_CANARY_INDEX_V2 }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      DISPATCH_RUN_SURFACES: ${{ inputs.run_surfaces }}
+      DISPATCH_ENABLE_TREE_V2: ${{ inputs.enable_tree_v2 }}
+      DISPATCH_ENABLE_STREAM_V2: ${{ inputs.enable_stream_v2 }}
+      DISPATCH_ENABLE_INDEX_V2: ${{ inputs.enable_index_v2 }}
+      DISPATCH_EXTRA_TESTS: ${{ inputs.extra_tests }}
     outputs:
       enabled: ${{ steps.opt-in.outputs.enabled }}
       tree_v2: ${{ steps.surfaces.outputs.tree_v2 }}
       stream_v2: ${{ steps.surfaces.outputs.stream_v2 }}
       index_v2: ${{ steps.surfaces.outputs.index_v2 }}
+      extra_tests: ${{ steps.surfaces.outputs.extra_tests }}
+      extra_tests_requested: ${{ steps.surfaces.outputs.extra_tests_requested }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -210,6 +248,49 @@ jobs:
           PYTHONPATH=src python scripts/classify_live_canary.py events.json
           --surface index-vs-scan-recall --pytest-outcome "$PYTEST_OUTCOME"
 
+  extra-live:
+    name: Additional allowlisted live tests
+    needs: gate
+    if: ${{ needs.gate.outputs.enabled == 'true' && needs.gate.outputs.extra_tests != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      EXTRA_TESTS: ${{ needs.gate.outputs.extra_tests }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+      - name: Probe allowlisted extra live tests
+        id: probe
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          read -r -a extra_nodes <<< "$EXTRA_TESTS"
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt \
+            python -m pytest -v --tb=short -p tests.live_canary_plugin \
+            --live-canary-events=events.json --live-canary-surface=extra-live \
+            "${extra_nodes[@]}"
+      - name: Classify extra live result
+        id: classify
+        if: ${{ always() }}
+        env:
+          PYTEST_OUTCOME: ${{ steps.probe.outcome }}
+        run: >-
+          PYTHONPATH=src python scripts/classify_live_canary.py events.json
+          --surface extra-live --pytest-outcome "$PYTEST_OUTCOME"
+
   summarize:
     name: Summarize all live canary surfaces
     needs:
@@ -218,6 +299,7 @@ jobs:
       - truncated-tree-recovery
       - streamed-large-blob
       - index-vs-scan-recall
+      - extra-live
     if: ${{ always() }}
     runs-on: ubuntu-latest
     env:
@@ -230,6 +312,8 @@ jobs:
       TREE_RESULT: ${{ needs.truncated-tree-recovery.outputs.classification }}
       STREAM_RESULT: ${{ needs.streamed-large-blob.outputs.classification }}
       INDEX_RESULT: ${{ needs.index-vs-scan-recall.outputs.classification }}
+      EXTRA_TESTS_REQUESTED: ${{ needs.gate.outputs.extra_tests_requested }}
+      EXTRA_RESULT: ${{ needs.extra-live.outputs.classification }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

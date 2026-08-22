@@ -13,6 +13,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ## [Unreleased]
 
 ### Added
+- add dispatch inputs and allowlisted extra live tests to live canary (`ci`)
 - enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
 - enumerate truncated trees via paginated walk fallback (`tree`)
 - full-coverage load-time verification via per-file digest map (`materialize`)
@@ -40,6 +41,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - realistic timeout, bounded reads, shared HTTP seam (`doctor`)
 - register live marker on four env-gated files per inventory invariant (`tests`)
 - release recorder lock adjacent to its try, bound debug manifests, assert server joins, sweep update-check temps, GC stale .old-* backups (`hygiene`)
+- render extra-live summary fail-closed; single-source allowlist (`ci`)
 - report the materialized pin as identity.commit_sha (`diff`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
 - restore 34 resolver gate tests deleted by #230 merge resolution (`tests`)

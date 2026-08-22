@@ -156,6 +156,23 @@ def _summary_rows() -> list[tuple[str, str, str]]:
             rows.append((surface, "configuration-failure", f"{result_name} did not contain a valid job result"))
         else:
             rows.append((surface, result, "classified by the surface job"))
+    try:
+        extra_requested = _parse_bool("EXTRA_TESTS_REQUESTED")
+    except ValueError as exc:
+        rows.append(("extra-live", "configuration-failure", str(exc)))
+    else:
+        if extra_requested:
+            result = os.environ.get("EXTRA_RESULT", "")
+            if result not in _PRIORITY:
+                rows.append(
+                    (
+                        "extra-live",
+                        "configuration-failure",
+                        "EXTRA_RESULT did not contain a valid job result",
+                    )
+                )
+            else:
+                rows.append(("extra-live", result, "classified by the surface job"))
     return rows
 
 

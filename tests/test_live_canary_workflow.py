@@ -35,6 +35,25 @@ def test_canary_is_nightly_manual_only_and_product_failures_are_not_hidden() -> 
     assert "continue-on-error: true" in text, "probe steps must leave classification to the fail-closed classifier"
 
 
+def test_dispatch_inputs_are_typed_and_extra_job_is_manual_only() -> None:
+    text = _text()
+    trigger = text[text.index("on:\n") : text.index("\npermissions:")]
+    assert "run_surfaces:" in trigger and "type: choice" in trigger
+    assert "enable_tree_v2:" in trigger and "type: boolean" in trigger
+    assert "enable_stream_v2:" in trigger and "type: boolean" in trigger
+    assert "enable_index_v2:" in trigger and "type: boolean" in trigger
+    assert "extra_tests:" in trigger and "type: string" in trigger
+    gate = _job(text, "gate")
+    assert "GITHUB_EVENT_NAME: ${{ github.event_name }}" in gate
+    assert "DISPATCH_EXTRA_TESTS: ${{ inputs.extra_tests }}" in gate
+    assert "tests/test_info.py::test_live_tinode_routes_study_only" in gate
+    extra = _job(text, "extra-live")
+    assert "needs.gate.outputs.extra_tests != ''" in extra
+    assert "python -m pytest -v" in extra
+    assert "--live-canary-events=events.json" in extra
+    assert "scripts/classify_live_canary.py" in extra
+
+
 def test_baseline_runs_only_selected_opt_in_live_tests() -> None:
     body = _job(_text(), "baseline-live")
     assert "LEITIR_ENABLE_LIVE_E2E: '1'" in body

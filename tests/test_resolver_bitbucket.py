@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import io
+import json
 import os
 import tarfile
 
@@ -132,30 +134,6 @@ def test_archive_url_uses_download_endpoint_and_pinned_sha():
     assert url == f"https://bitbucket.org/owner/repo/get/{SHA}.tar.gz"
 
 
-def _fixture_archive(root, contents, symlinks=frozenset()):
-    """Deterministic tar.gz fixture: sorted members, mtimes zeroed."""
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
-        for path in sorted(contents):
-            content = contents[path]
-            info = tarfile.TarInfo(f"{root}/{path}")
-            info.mtime = 0
-            info.uid = 0
-            info.gid = 0
-            info.uname = ""
-            info.gname = ""
-            if path in symlinks:
-                info.type = tarfile.SYMTYPE
-                info.linkname = content.decode()
-                info.mode = 0o777
-                tar.addfile(info)
-                continue
-            info.size = len(content)
-            info.mode = 0o644
-            tar.addfile(info, io.BytesIO(content))
-    return gzip.compress(raw.getvalue(), mtime=0)
-
-
 def test_tree_listing_hashes_host_native_file_content():
     payload = {
         "values": [
@@ -215,6 +193,430 @@ def test_token_is_never_rendered_on_failure(monkeypatch, capsys):
             _resolver(server.base_url).resolve_tag_to_sha("owner/repo", "main")
     assert "never-print-this" not in str(caught.value)
     assert "never-print-this" not in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Issue #195: page-bounded enumeration with archive-derived digests. Fixtures
+# are deterministic and pinned by digest; expected entry tuples were captured
+# from BASELINE list_blobs (commit 8aa08e2c) against the same fixtures.
+
+_BB_FIXTURE_ROOT = "bb-fixture-root"
+_BB_ROOT_PAYLOAD_SHA256 = "17f96416d15b761699777f89ed6fbe05e9bdb0c16f5c365399eb6bffb1d08594"
+_BB_PKG_PAYLOAD_SHA256 = "d6fd3e22a2c7cb8ef1230ba9d7e950712cf3ac194131e4e25fe2af12d5a551c9"
+# Pin the UNCOMPRESSED tar stream: gzip.compress output bytes vary with the
+# platform zlib (Python 3.11/3.12 and Windows emit different, equally valid
+# deflate streams), while the tar member bytes/order are identical everywhere.
+_BB_ARCHIVE_TAR_SHA256 = "d25612df6396b8c100b35bf3024ca2b3e89efa215e060c84944976d3aea93e1b"
+
+
+def _bb_blob_sha(content: bytes) -> str:
+    from leitir.tree import GitHubTreeSource
+
+    return GitHubTreeSource.git_blob_sha(content)
+
+
+def _fixture_archive(root, contents, symlinks=frozenset()):
+    """Deterministic tar.gz fixture: sorted members, mtimes zeroed."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted(contents):
+            content = contents[path]
+            info = tarfile.TarInfo(f"{root}/{path}")
+            info.mtime = 0
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            if path in symlinks:
+                info.type = tarfile.SYMTYPE
+                info.linkname = content.decode()
+                info.mode = 0o777
+                tar.addfile(info)
+                continue
+            info.size = len(content)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(content))
+    return gzip.compress(raw.getvalue(), mtime=0)
+
+
+def _bb_fixture_paths():
+    return [
+        *[f"file_{i:03d}.txt" for i in range(30)],
+        *[f"pkg/file_{i:03d}.txt" for i in range(29)],
+        "pkg/link.txt",
+    ]
+
+
+def _bb_fixture_content(path):
+    if path == "pkg/link.txt":
+        return b"file_000.txt"
+    return f"leitir bitbucket fixture {path}\n".encode()
+
+
+def _bb_fixture_repo():
+    """Deterministic 60-file repo across two directories plus one symlink."""
+    contents = {path: _bb_fixture_content(path) for path in _bb_fixture_paths()}
+    root_values = [
+        {
+            "type": "commit_file",
+            "path": path,
+            "size": len(contents[path]),
+            "attributes": [],
+        }
+        for path in _bb_fixture_paths()
+        if "/" not in path
+    ]
+    root_values.append({"type": "commit_directory", "path": "pkg"})
+    pkg_values = [
+        {
+            "type": "commit_file",
+            "path": path,
+            "size": len(contents[path]),
+            "attributes": ["link"] if path == "pkg/link.txt" else [],
+        }
+        for path in _bb_fixture_paths()
+        if path.startswith("pkg/")
+    ]
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (
+            200,
+            {},
+            hs.json_body({"values": root_values}),
+        ),
+        f"/repositories/owner/repo/src/{SHA}/pkg/": (
+            200,
+            {},
+            hs.json_body({"values": pkg_values}),
+        ),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive(_BB_FIXTURE_ROOT, contents, frozenset({"pkg/link.txt"})),
+        ),
+    }
+    # Per-file raw routes: consumed by the K=3 deterministic spot check and
+    # the bounded divergence fallback only — never as a per-file fetch
+    # pattern (issue #195 remediation, CCR-amended AC-2).
+    for path, content in contents.items():
+        routes[f"/repositories/owner/repo/src/{SHA}/{path}"] = (200, {}, content)
+    return routes, contents
+
+
+def test_bitbucket_enumeration_has_no_per_file_fetch_pattern():
+    routes, _ = _bb_fixture_repo()
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    # The only raw reads are the fixed K=3 spot check: the first three
+    # entries in sorted order (fewer if the repo were smaller).
+    assert server.state.request_paths == [
+        f"/repositories/owner/repo/src/{SHA}/",
+        f"/repositories/owner/repo/src/{SHA}/pkg/",
+        f"/repositories/owner/repo/get/{SHA}.tar.gz",
+        f"/repositories/owner/repo/src/{SHA}/file_000.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_002.txt",
+    ]
+    assert server.state.served_count == 6  # 2 pages + 1 archive + K=3 spot check
+    assert len(entries) == 60
+
+
+def test_bitbucket_entries_are_byte_identical_to_baseline_capture():
+    routes, _ = _bb_fixture_repo()
+    assert (
+        hashlib.sha256(routes[f"/repositories/owner/repo/src/{SHA}/"][2]).hexdigest()
+        == _BB_ROOT_PAYLOAD_SHA256
+    )
+    assert (
+        hashlib.sha256(routes[f"/repositories/owner/repo/src/{SHA}/pkg/"][2]).hexdigest()
+        == _BB_PKG_PAYLOAD_SHA256
+    )
+    assert (
+        hashlib.sha256(
+            gzip.decompress(routes[f"/repositories/owner/repo/get/{SHA}.tar.gz"][2])
+        ).hexdigest()
+        == _BB_ARCHIVE_TAR_SHA256
+    )
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == _BITBUCKET_BASELINE_ENTRIES
+
+
+def test_bitbucket_repeated_enumeration_is_cached_and_identical():
+    routes, _ = _bb_fixture_repo()
+    with hs.routed_server(routes) as server:
+        resolver = _resolver(server.base_url)
+        first = resolver.list_blobs("owner/repo", SHA)
+        second = resolver.list_blobs("owner/repo", SHA)
+    assert second == first
+    # 2 pages + 1 archive (cached across calls) + K=3 spot-check raw reads
+    # per enumeration (the spot check is deliberately re-run, bounded at K).
+    assert server.state.served_count == 9
+
+
+def test_bitbucket_size_mismatch_falls_back_to_baseline_read():
+    # CCR-amended SP-2 (issue #195 remediation): one listing-vs-archive size
+    # divergence (export-subst shape) re-verifies THAT path on the baseline
+    # raw channel — digest and size from the raw content at the pinned
+    # commit — leaving the entry byte-identical to the baseline capture.
+    routes, _ = _bb_fixture_repo()
+    root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
+    root["values"][0]["size"] = 999
+    routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == _BITBUCKET_BASELINE_ENTRIES
+    raw_reads = [
+        path
+        for path in server.state.request_paths
+        if path == f"/repositories/owner/repo/src/{SHA}/file_000.txt"
+    ]
+    # Exactly one baseline-channel read for the divergent path; the spot
+    # check skips it (already raw-verified) and covers the next three.
+    assert raw_reads == [f"/repositories/owner/repo/src/{SHA}/file_000.txt"]
+    assert server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt"
+    ) + server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_002.txt"
+    ) + server.state.request_paths.count(
+        f"/repositories/owner/repo/src/{SHA}/file_003.txt"
+    ) == 3
+
+
+def test_bitbucket_missing_size_field_is_typed_error():
+    routes, _ = _bb_fixture_repo()
+    root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
+    del root["values"][0]["size"]
+    routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="lacks integer size field"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_bitbucket_link_attribute_disagreement_fails_closed():
+    routes, _ = _bb_fixture_repo()
+    root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
+    root["values"][0]["attributes"] = ["link"]  # regular archive member, claimed link
+    routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="attributes disagree with archive entry kind"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_bitbucket_archive_missing_blob_fails_closed():
+    # The ghost path is divergent (export-ignore shape) but the baseline
+    # channel refuses it too: no raw route exists, so the fallback's raw
+    # read fails closed with a typed error (CCR-amended SP-2).
+    routes, _ = _bb_fixture_repo()
+    root = json.loads(routes[f"/repositories/owner/repo/src/{SHA}/"][2])
+    root["values"].append(
+        {"type": "commit_file", "path": "ghost.txt", "size": 3, "attributes": []}
+    )
+    routes[f"/repositories/owner/repo/src/{SHA}/"] = (200, {}, hs.json_body(root))
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="HTTP 404"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert f"/repositories/owner/repo/src/{SHA}/ghost.txt" in server.state.request_paths
+
+
+def test_bitbucket_archive_unlisted_blob_fails_closed():
+    contents = {"a.txt": b"hello\n", "extra.txt": b"ghost\n"}
+    root_values = [
+        {"type": "commit_file", "path": "a.txt", "size": 6, "attributes": []}
+    ]
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (
+            200,
+            {},
+            hs.json_body({"values": root_values}),
+        ),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("extra-root", contents),
+        ),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="unlisted blob: extra.txt"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_bitbucket_malformed_values_is_typed_error():
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body({"values": {}})),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(ResolutionError, match="malformed tree metadata"):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+
+
+def test_bitbucket_spot_check_detects_raw_archive_digest_discrepancy():
+    # The K=3 spot check is the raw↔archive second channel: a raw route that
+    # serves different bytes than the archive member must fail closed with a
+    # typed error naming the path (issue #195 remediation, glm P2-2).
+    routes, _ = _bb_fixture_repo()
+    routes[f"/repositories/owner/repo/src/{SHA}/file_001.txt"] = (
+        200,
+        {},
+        b"silently different bytes\n",
+    )
+    with hs.routed_server(routes) as server:
+        with pytest.raises(
+            ResolutionError,
+            match=r"digest mismatch between raw content and archive: file_001.txt",
+        ):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    spot_reads = [
+        path
+        for path in server.state.request_paths
+        if path.startswith(f"/repositories/owner/repo/src/{SHA}/")
+        and not path.endswith("/")
+    ]
+    assert spot_reads == [
+        f"/repositories/owner/repo/src/{SHA}/file_000.txt",
+        f"/repositories/owner/repo/src/{SHA}/file_001.txt",
+    ]
+
+
+def test_bitbucket_symlink_entry_is_byte_identical_to_baseline_read():
+    # Symlink parity: the archive's linkname bytes and the baseline raw read
+    # must agree — same digest, same size — yielding a byte-identical entry
+    # (kind cross-checked against the listing's "link" attribute, and the
+    # K=1 spot check re-proves the link target bytes through the raw route).
+    linkname = b"target.txt"
+    payload = {
+        "values": [
+            {
+                "type": "commit_file",
+                "path": "link.txt",
+                "size": len(linkname),
+                "attributes": ["link"],
+            }
+        ]
+    }
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body(payload)),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("symlink-root", {"link.txt": linkname}, frozenset({"link.txt"})),
+        ),
+        f"/repositories/owner/repo/src/{SHA}/link.txt": (200, {}, linkname),
+    }
+    with hs.routed_server(routes) as server:
+        entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    assert [
+        (entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries
+    ] == [("link.txt", _bb_blob_sha(linkname), len(linkname), "120000")]
+    assert server.state.request_paths[-1] == f"/repositories/owner/repo/src/{SHA}/link.txt"
+
+
+def test_bitbucket_fallback_cap_thirty_three_divergent_paths_fails_closed():
+    # 34 listed files, 1 archived → 33 divergent > cap 32 → the archive
+    # channel is judged inconsistent: typed error BEFORE any per-path fetch
+    # (fail-closed, no request storm).
+    total, archived = 34, 1
+    contents = {
+        f"file_{i:04d}.txt": f"divergence fixture {i}\n".encode() for i in range(total)
+    }
+    values = [
+        {
+            "type": "commit_file",
+            "path": path,
+            "size": len(content),
+            "attributes": [],
+        }
+        for path, content in sorted(contents.items())
+    ]
+    archived_contents = dict(list(sorted(contents.items()))[:archived])
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body({"values": values})),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("divergence-root", archived_contents),
+        ),
+    }
+    with hs.routed_server(routes) as server:
+        with pytest.raises(
+            ResolutionError, match=r"diverges from tree listing on 33 paths \(limit 32\)"
+        ):
+            _resolver(server.base_url).list_blobs("owner/repo", SHA)
+    raw_reads = [
+        path
+        for path in server.state.request_paths
+        if path.startswith(f"/repositories/owner/repo/src/{SHA}/")
+        and not path.endswith("/")
+    ]
+    assert raw_reads == []  # the cap fires before any fallback fetch
+    assert server.state.served_count == 2  # one listing page + one archive
+
+
+_BITBUCKET_BASELINE_ENTRIES = [
+    ('file_000.txt', '8b6dba364d1329fb8bb52745871c6f870693a545', 38, '100644'),
+    ('file_001.txt', '7c4fe32fe1c936bcd718d09314c61918ac73a819', 38, '100644'),
+    ('file_002.txt', '7c746363e1b6c705a4036f3f3fd3f4b48c8bb8b7', 38, '100644'),
+    ('file_003.txt', '655270f694870a5a294f858e3f390a17bf900e44', 38, '100644'),
+    ('file_004.txt', '9cc0ebe822f438ddba570357283e2a5407f66ef9', 38, '100644'),
+    ('file_005.txt', '73be424e2b8edf048a798f4fee87852044f53bc0', 38, '100644'),
+    ('file_006.txt', '093262c940836cd931e39c3ecf3d7bd10db2f877', 38, '100644'),
+    ('file_007.txt', '14bac5a0225b9d8d13b7850d459190b48364b50b', 38, '100644'),
+    ('file_008.txt', '93b3f02baf31c3b3fc49db529424bd3370167b2b', 38, '100644'),
+    ('file_009.txt', '1115522a33623f7a4a0f5d142a574aca518b37c9', 38, '100644'),
+    ('file_010.txt', '9d0cfd7a78a2664f65508c1a0fbc9303197047c3', 38, '100644'),
+    ('file_011.txt', 'bdd257d68411527cf41fb40b798ec6331b4a4687', 38, '100644'),
+    ('file_012.txt', '06fcc702cc9e226e3983917e6a35e68117215b9c', 38, '100644'),
+    ('file_013.txt', '2c9c1aaf9893d9c8603477948480536e2dbcffa1', 38, '100644'),
+    ('file_014.txt', '82cf6dacc2899a221e1c8eebb2b1fa56a8a2056e', 38, '100644'),
+    ('file_015.txt', 'b85c93c04da2fee31c4095a61fa95c092c6d18a7', 38, '100644'),
+    ('file_016.txt', '7466f999144282a46a65c6a2c7f87bc6d095e232', 38, '100644'),
+    ('file_017.txt', 'b6316562e52742e32cf62c32d14669ed3ed0f59e', 38, '100644'),
+    ('file_018.txt', '9e639ec9e4fcd548d959f81c911cd9cc8419b5a4', 38, '100644'),
+    ('file_019.txt', 'd3a42eeda172326f338b6e521ccfa06f1e1abaa4', 38, '100644'),
+    ('file_020.txt', '2e31a8f669a5318355d800b5456df81cf5d9d8f7', 38, '100644'),
+    ('file_021.txt', '3ba2eb2c6284992bb1815caffe2b313232f6a118', 38, '100644'),
+    ('file_022.txt', '8c50a87bbe9e08ad7086e5f130847fbdd87bb211', 38, '100644'),
+    ('file_023.txt', '9ba49d5f738a81e35979e42028d1960f362fb097', 38, '100644'),
+    ('file_024.txt', 'd661a84832b0c5080ea69e10dd1a07fe5498423f', 38, '100644'),
+    ('file_025.txt', '964ec665923974ed2bcce73370dade7abfcbe0d2', 38, '100644'),
+    ('file_026.txt', '8cb347dbc53018c4c600c9d695e863af868e4821', 38, '100644'),
+    ('file_027.txt', '3d6ef467fcb69b4f1d6aad44dcfe0a75abf86208', 38, '100644'),
+    ('file_028.txt', '68072764d1a6f04d6e3febd5e4cc1bdf00bc2108', 38, '100644'),
+    ('file_029.txt', '7cdc887f038c9f917ae001d3f35c34795602d7af', 38, '100644'),
+    ('pkg/file_000.txt', '36bea12d94b664436ee22aed4da904976ec3fdfb', 42, '100644'),
+    ('pkg/file_001.txt', '39f51ebfb2ffd1428fbce840a36a15b8f58b77f4', 42, '100644'),
+    ('pkg/file_002.txt', '35d091403885bab0c524f362ab53ba2199b387f3', 42, '100644'),
+    ('pkg/file_003.txt', 'e4c4888fb462f600eecce79c69a7ff97b6419e7d', 42, '100644'),
+    ('pkg/file_004.txt', '7f87e2e1c15c5b356a5e26f9a8e8373de413b0d3', 42, '100644'),
+    ('pkg/file_005.txt', '7d70832d4c293ed22a8fc80df3f2179643be7d8d', 42, '100644'),
+    ('pkg/file_006.txt', 'ce58d7dcc718a862c06156772a6203f641dc3bfe', 42, '100644'),
+    ('pkg/file_007.txt', 'd36854aa3996e8b8077a610d3e90a406bd9029fc', 42, '100644'),
+    ('pkg/file_008.txt', '2345e8578a59ae53d4f91dbe9b0b39d796bfa696', 42, '100644'),
+    ('pkg/file_009.txt', '2640f72eb394cb5e77ef36a538aa7f3f80df3787', 42, '100644'),
+    ('pkg/file_010.txt', '15f579f9a0b1195c36eaabb7b409f865d070a419', 42, '100644'),
+    ('pkg/file_011.txt', '859852e45b0534c2c6eed0c72c85102292ff8b26', 42, '100644'),
+    ('pkg/file_012.txt', '6c3f2185af8acd6032ee8cecad0fd1bde492a24c', 42, '100644'),
+    ('pkg/file_013.txt', '50199ed53be1f57e2937c1fa96223682ce3cbf8d', 42, '100644'),
+    ('pkg/file_014.txt', '48c91200297aeaea83fe9af0b5826635323dc947', 42, '100644'),
+    ('pkg/file_015.txt', '3744a9db19511522e4ba47d1e3a64fc83fc1a9fa', 42, '100644'),
+    ('pkg/file_016.txt', 'd6d24c3fe87f5970369c26f3f5ae6b82cc1528bb', 42, '100644'),
+    ('pkg/file_017.txt', '24663ac7366bb7518e1c4b2b6faed65829c3aba4', 42, '100644'),
+    ('pkg/file_018.txt', '4ce5efe87d41e0f16832e1e9fe308e2cc637a1d2', 42, '100644'),
+    ('pkg/file_019.txt', '02e4784619af586d602e353b4216ce3f997a85e5', 42, '100644'),
+    ('pkg/file_020.txt', 'e37593c22e0a7dbc5e511698a0e398d9915755cb', 42, '100644'),
+    ('pkg/file_021.txt', 'f871a16e172f27decf064148ece87bd177bc88c6', 42, '100644'),
+    ('pkg/file_022.txt', 'f76ece8ccb192039696c7b28fe69b011a40cdb13', 42, '100644'),
+    ('pkg/file_023.txt', '4710db456c3d5ebf93c122b6d9748ebc366a1abf', 42, '100644'),
+    ('pkg/file_024.txt', 'e917ee29ceeb21e01d3832e6dc570289c8f29380', 42, '100644'),
+    ('pkg/file_025.txt', '3a0d189c75e8ac85e6438d5f9686d9583ebf4ae4', 42, '100644'),
+    ('pkg/file_026.txt', '94efa54bdee32759214263fabee40ad920ece766', 42, '100644'),
+    ('pkg/file_027.txt', '88fd12a6cf29509212025f3f795090d949faa68c', 42, '100644'),
+    ('pkg/file_028.txt', '8d06c1c2f1e1b05930ee8b117e53a262547a3b6e', 42, '100644'),
+    ('pkg/link.txt', '67a39b521f3455b2572fc82699c32d2f0537ff5e', 12, '120000'),
+]
 
 
 @pytest.mark.live

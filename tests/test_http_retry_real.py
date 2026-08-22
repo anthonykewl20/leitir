@@ -13,6 +13,11 @@ import base64
 import hashlib
 import json
 import socket
+import struct
+import sys
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from urllib.request import Request
 
 import _http_server as hs
@@ -64,44 +69,126 @@ ITERATIONS = 12
 FROZEN_NOW = 1_700_000_000.0
 
 
-def _refused_ephemeral_port(max_tries: int = 2) -> int:
-    """Return a local ephemeral port that is guaranteed to refuse connections.
+class _ResetListenerStats:
+    def __init__(self) -> None:
+        self.exceptions: list[BaseException] = []
+        self.accepted = 0
+        self.reset = 0
 
-    #202 C-2: bind ``127.0.0.1:0``, capture the OS-assigned port, close the
-    socket, then probe the port — an immediate ``ConnectionRefusedError`` on
-    all three desktop OSes proves nothing re-bound it. This replaces
-    ``127.0.0.1:1`` (privileged port 1), which macOS/Windows may drop or
-    filter instead of refusing (60s hang or ``EACCES`` instead of the
-    expected ``URLError`` path).
 
-    Sad paths per the #202 contract: if another process re-binds the port in
-    the close→probe window, retry once with a fresh port (SP-1); if no clean
-    refusal is obtained, skip with a reason rather than fail (SP-1); if the
-    runner lacks loopback sockets, skip rather than hang (SP-3).
-    """
-    for _ in range(max_tries):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+class _ResetListenerSetupError(OSError):
+    """A fresh-listener setup failure eligible for the SP-1 retry."""
+
+
+@contextmanager
+def _reset_listener(
+    *, expected_attempts: int,
+) -> Iterator[tuple[int, _ResetListenerStats]]:
+    """Yield one reset listener, retaining all worker outcomes for its caller."""
+    try:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except OSError as exc:
+        raise _ResetListenerSetupError("could not create reset listener") from exc
+    stop = threading.Event()
+    stats = _ResetListenerStats()
+    try:
         try:
-            sock.bind(("127.0.0.1", 0))
-            port = int(sock.getsockname()[1])
+            listener.bind(("127.0.0.1", 0))
         except OSError:
             pytest.skip("loopback socket bind unavailable on this runner (SP-3)")
-        finally:
-            sock.close()
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            probe.settimeout(0.25)
-            try:
-                probe.connect(("127.0.0.1", port))
-            except ConnectionRefusedError:
-                return port  # the immediate refusal the test depends on
-            except OSError:
-                continue  # filtered/odd port — try a fresh one (SP-1)
-            # A connection SUCCEEDED: another process re-bound the port in
-            # the close→probe window (SP-1) — take a fresh one.
+            listener.listen(2)
+            listener.settimeout(0.1)
+            port = int(listener.getsockname()[1])
+        except OSError as exc:
+            # Bind failure is the frozen SP-3 escape above. Other setup
+            # failures are mechanism failures handled by the outer retry.
+            raise _ResetListenerSetupError("could not configure reset listener") from exc
+
+        def _reset_connections() -> None:
+            while not stop.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                except OSError as exc:
+                    if stop.is_set():
+                        return
+                    stats.exceptions.append(exc)
+                    return
+                stats.accepted += 1
+                try:
+                    connection.setsockopt(
+                        socket.SOL_SOCKET,
+                        socket.SO_LINGER,
+                        struct.pack("ii", 1, 0),
+                    )
+                    stats.reset += 1
+                except BaseException as exc:
+                    stats.exceptions.append(exc)
+                finally:
+                    try:
+                        connection.close()
+                    except BaseException as exc:
+                        stats.exceptions.append(exc)
+
+        thread = threading.Thread(
+            target=_reset_connections,
+            name="leitir-reset-listener",
+            daemon=True,
+        )
+        thread.start()
+        try:
+            yield port, stats
         finally:
-            probe.close()
-    pytest.skip("no guaranteed-refused local port after fresh-port retry (SP-1)")
+            stop.set()
+            listener.close()
+            thread.join(timeout=5)
+            if thread.is_alive():
+                raise AssertionError(
+                    f"reset listener thread on port {port} did not terminate"
+                )
+            assert not stats.exceptions, (
+                f"reset listener worker failed: {stats.exceptions!r}"
+            )
+            assert stats.reset == expected_attempts
+            assert stats.accepted == expected_attempts
+    finally:
+        listener.close()
+
+
+def _with_refused_ephemeral_port(
+    operation: Callable[[int, _ResetListenerStats], None],
+    *,
+    expected_attempts: int = 2,
+) -> None:
+    """Provide a local listener that deterministically resets each connection.
+
+    #202 C-2: the listener owns an ephemeral loopback port and accepts the
+    transport's connections.  ``SO_LINGER`` with ``{onoff: 1, linger: 0}``
+    makes closing each accepted socket send an immediate TCP RST, so urllib
+    receives a genuine transport failure without depending on a just-closed
+    port remaining refused.  This also avoids ``127.0.0.1:1`` (privileged
+    port 1), which macOS/Windows may drop or filter instead of refusing.
+
+    The listener thread is joined on every path.  The reset-listener's open
+    listening socket makes the old close→probe rebind race unreachable in the
+    primary mechanism.  SP-3 remains the bind-unavailable skip.
+    """
+    for attempt in range(2):
+        listener_context = _reset_listener(expected_attempts=expected_attempts)
+        try:
+            port, stats = listener_context.__enter__()
+        except _ResetListenerSetupError:
+            if attempt == 0:
+                continue
+            pytest.skip("no guaranteed-refused local port after fresh-port retry (SP-1)")
+        try:
+            operation(port, stats)
+        finally:
+            listener_context.__exit__(*sys.exc_info())
+        return
+    raise AssertionError("unreachable reset-listener retry state")
 
 
 def _transport(base_url, *, sleeper=None, max_delay=60.0):
@@ -270,24 +357,28 @@ class TestTransportRetryReal:
         assert h.state.served_count == 4
 
     def test_connection_refused_urlerror_retried(self):
-        """#202 C-2: connect to a just-closed local ephemeral port — the OS
-        refuses immediately on linux/macOS/windows, so the transport sees a
-        real ``URLError`` (connection refused) on every platform. The old
-        form hardwired ``127.0.0.1:1``, a privileged port that macOS/Windows
-        may drop or filter instead of refusing. Refusal is retried once
-        (transient), then the exhaustion wraps into ``CodeSearchError``."""
-        port = _refused_ephemeral_port()
+        """#202 C-2: connect to a local reset-listener on an ephemeral port.
+        Each accepted connection is closed with SO_LINGER set to reset
+        immediately, so the transport sees a real transient urllib failure on
+        linux/macOS/windows. The old form hardwired ``127.0.0.1:1``, a
+        privileged port that macOS/Windows may drop or filter instead. The
+        failure is retried once, then exhaustion wraps into
+        ``CodeSearchError``."""
         sleeps = []
-        t = GitHubCodeSearchTransport(
-            base_url=f"http://127.0.0.1:{port}",
-            raw_base_url=f"http://127.0.0.1:{port}",
-            sleeper=sleeps.append,
-            max_attempts=2,
-            base_delay=0.1,
-        )
-        with pytest.raises(CodeSearchError):
-            t.search("urlencode")
-        assert len(sleeps) == 1
+        def _drive(port: int, stats: _ResetListenerStats) -> None:
+            sleeps.clear()
+            t = GitHubCodeSearchTransport(
+                base_url=f"http://127.0.0.1:{port}",
+                raw_base_url=f"http://127.0.0.1:{port}",
+                sleeper=sleeps.append,
+                max_attempts=2,
+                base_delay=0.1,
+            )
+            with pytest.raises(CodeSearchError):
+                t.search("urlencode")
+            assert len(sleeps) == 1
+
+        _with_refused_ephemeral_port(_drive)
 
     @pytest.mark.parametrize("iteration", range(ITERATIONS))
     def test_resolve_head_sha_retries_502(self, iteration):

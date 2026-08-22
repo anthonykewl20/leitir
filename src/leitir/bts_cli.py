@@ -25,7 +25,6 @@ import importlib
 import json
 import os
 import stat
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -86,6 +85,7 @@ from leitir.graph.ts_kernel import (
     DEFAULT_MAX_WORK_UNITS,
 )
 from leitir.materialize import _target_lock, read_valid_manifest, target_path
+from leitir.safeio import atomic_write_bytes
 from leitir.treehash import FULL, SAMPLED, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
 CLI_SCHEMA_VERSION = "leitir-bts-cli-compute-v1"
@@ -725,24 +725,12 @@ def list_bts_seeds(
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
-    temporary = Path(temporary_name)
+    # The atomic-write mechanics live in leitir.safeio (issue #200); this
+    # wrapper preserves the site's typed rejection mapping on write failures.
     try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        atomic_write_bytes(path, data)
     except OSError as exc:
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "cannot atomically write BTS artifact", "bts_cli_artifact_write_v1", cause=exc)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def write_artifacts(result: BTSComputeArtifacts, out_dir: Path) -> None:

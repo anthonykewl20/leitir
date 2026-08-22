@@ -22,6 +22,7 @@ from leitir.corpus import (
 )
 from leitir.docpointers import POINTERS_NAME
 from leitir.materialize import _extract_tarball, read_valid_manifest
+from leitir.safeio import atomic_text_writer, atomic_writer
 from leitir.tree import GitHubTreeSource
 
 FORMAT_VERSION = 2
@@ -104,38 +105,30 @@ def _write_tarball(
     pointers: bytes,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.tmp-", dir=output.parent)
-    os.close(fd)
-    temporary = Path(temporary_name)
-    try:
-        with temporary.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as compressed, tarfile.open(fileobj=compressed, mode="w") as archive:
-            archive.addfile(_tar_info(ARCHIVE_ROOT, 0o755, kind=tarfile.DIRTYPE))
-            for relative, path in _archive_paths(sources):
-                name = f"{ARCHIVE_ROOT}/{relative.as_posix()}"
-                metadata = path.lstat()
-                if stat.S_ISDIR(metadata.st_mode):
-                    archive.addfile(_tar_info(name, metadata.st_mode, kind=tarfile.DIRTYPE))
-                elif stat.S_ISREG(metadata.st_mode):
-                    info = _tar_info(name, metadata.st_mode, kind=tarfile.REGTYPE, size=metadata.st_size)
-                    with path.open("rb") as handle:
-                        archive.addfile(info, handle)
-                elif stat.S_ISLNK(metadata.st_mode):
-                    archive.addfile(_tar_info(name, metadata.st_mode, kind=tarfile.SYMTYPE, linkname=os.readlink(path)))
-                else:
-                    raise SnapshotError(f"source contains a special file: {relative}")
-            pointer_info = _tar_info(
-                f"{ARCHIVE_ROOT}/{POINTERS_NAME}",
-                0o644,
-                kind=tarfile.REGTYPE,
-                size=len(pointers),
-            )
-            import io
+    with atomic_writer(output) as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as compressed, tarfile.open(fileobj=compressed, mode="w") as archive:
+        archive.addfile(_tar_info(ARCHIVE_ROOT, 0o755, kind=tarfile.DIRTYPE))
+        for relative, path in _archive_paths(sources):
+            name = f"{ARCHIVE_ROOT}/{relative.as_posix()}"
+            metadata = path.lstat()
+            if stat.S_ISDIR(metadata.st_mode):
+                archive.addfile(_tar_info(name, metadata.st_mode, kind=tarfile.DIRTYPE))
+            elif stat.S_ISREG(metadata.st_mode):
+                info = _tar_info(name, metadata.st_mode, kind=tarfile.REGTYPE, size=metadata.st_size)
+                with path.open("rb") as handle:
+                    archive.addfile(info, handle)
+            elif stat.S_ISLNK(metadata.st_mode):
+                archive.addfile(_tar_info(name, metadata.st_mode, kind=tarfile.SYMTYPE, linkname=os.readlink(path)))
+            else:
+                raise SnapshotError(f"source contains a special file: {relative}")
+        pointer_info = _tar_info(
+            f"{ARCHIVE_ROOT}/{POINTERS_NAME}",
+            0o644,
+            kind=tarfile.REGTYPE,
+            size=len(pointers),
+        )
+        import io
 
-            archive.addfile(pointer_info, io.BytesIO(pointers))
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+        archive.addfile(pointer_info, io.BytesIO(pointers))
 
 
 def export_corpus(
@@ -180,18 +173,9 @@ def export_corpus(
         "sources": records,
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{lock_path.name}.tmp-", dir=lock_path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, lock_path)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    with atomic_text_writer(lock_path, encoding="utf-8", newline=None) as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     return lock_path, tarball_path
 
 

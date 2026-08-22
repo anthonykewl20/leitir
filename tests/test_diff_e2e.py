@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from leitir.corpus import write_sources
+from leitir.corpus import load_sources, write_sources
 from leitir.diff import diff_packages
 from leitir.resolver import ResolvedPackage
 from leitir.search import RepoScope
@@ -120,3 +120,54 @@ def test_live_two_public_pypi_versions(tmp_path):
     )
     assert report.before.commit_sha != report.after.commit_sha
     assert report.before.name == report.after.name == "tomli"
+
+
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to enable live diff coverage",
+)
+def test_live_cli_tag_diff_identity_matches_manifest_pins(tmp_path):
+    """G-3/G-4 live journey (issue #218): run the real CLI diff journey
+    against stable public tag specs, then read each materialized shelf's
+    manifest and require both report identities to equal the manifest
+    pins. Persistence is TMP-only; the remote is read-only."""
+    import io
+
+    from leitir.cli import ExitCode, main
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = main(
+        [
+            "diff",
+            "hukkin/tomli@2.0.1",
+            "hukkin/tomli@2.0.2",
+            "--json",
+            "--root",
+            str(tmp_path),
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+    assert code == ExitCode.SUCCESS
+    report = json.loads(stdout.getvalue())
+
+    shelves = [
+        entry
+        for entry in load_sources(tmp_path)
+        if (entry["owner"], entry["repo"]) == ("hukkin", "tomli")
+    ]
+    assert len(shelves) == 2
+    pins = set()
+    for entry in shelves:
+        manifest = json.loads(
+            (tmp_path / str(entry["path"]) / "leitir-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["commit_sha"] == entry["commit_sha"]
+        pins.add(str(manifest["commit_sha"]))
+
+    assert report["before"]["commit_sha"] in pins
+    assert report["after"]["commit_sha"] in pins
+    assert report["before"]["commit_sha"] != report["after"]["commit_sha"]

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import io
+import json
 import os
+import tarfile
 
 import _http_server as hs
 import fixtures_resolver as fx
@@ -125,16 +129,29 @@ def test_archive_url_uses_project_api_and_pinned_sha():
 
 
 def test_tree_listing_maps_gitlab_blobs():
-    payload = [{"id": "b" * 40, "path": "src/a.py", "type": "blob", "mode": "100644"}]
-    responses = [
-        (200, {}, hs.json_body(payload)),
-        (200, {}, hs.json_body({"size": 7})),
+    content = b"content"
+    payload = [
+        {
+            "id": _gitlab_blob_sha(content),
+            "path": "src/a.py",
+            "type": "blob",
+            "mode": "100644",
+        }
     ]
-    with hs.scripted_server(responses) as server:
+    routes = {
+        "/projects/owner%2Frepo/repository/tree": (200, {}, hs.json_body(payload)),
+        "/projects/owner%2Frepo/repository/archive.tar.gz": (
+            200,
+            {},
+            _fixture_archive("single-root", {"src/a.py": content}),
+        ),
+    }
+    with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
     assert [(entry.path, entry.blob_sha, entry.size, entry.mode) for entry in entries] == [
-        ("src/a.py", "b" * 40, 7, "100644")
+        ("src/a.py", _gitlab_blob_sha(content), 7, "100644")
     ]
+    assert server.state.served_count == 2  # one tree page + one archive download
 
 
 def test_environment_token_uses_private_token_only_for_https_host(monkeypatch):

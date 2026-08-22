@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
-import tempfile
 from pathlib import Path
 
 from leitir.index.postings import build_postings
@@ -25,30 +23,18 @@ from leitir.index.verify import (
 from leitir.materialize import (
     VerificationError,
     _file_lock,
-    _fsync_directory,
     _target_lock,
     read_valid_manifest,
     target_path,
 )
+from leitir.safeio import atomic_write_bytes
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
+    # The atomic-write mechanics live in leitir.safeio (issue #200); this
+    # wrapper preserves the site's parent-directory provisioning contract.
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
-    temporary = Path(name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            fd = -1
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
-    except Exception:
-        if fd >= 0:
-            os.close(fd)
-        temporary.unlink(missing_ok=True)
-        raise
+    atomic_write_bytes(path, data)
 
 
 def _source_documents(target: Path, shelf: ShelfRef) -> tuple[tuple[IndexDocument, bytes], ...]:

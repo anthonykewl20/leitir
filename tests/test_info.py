@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
 
 from leitir.corpus import write_sources
 from leitir.info import (
@@ -190,14 +194,15 @@ def test_build_info_fills_all_sections_and_is_deterministic(tmp_path):
 
     assert first == second
     assert list(first) == [
-        "schema_version", "spec", "provenance", "parity", "license", "api",
-        "examples", "trust", "paths",
+        "schema_version", "spec", "provenance", "parity", "license", "routing",
+        "api", "examples", "trust", "paths",
     ]
     assert first["schema_version"] == 1
     assert first["provenance"]["commit_sha"] == SHA
     assert first["license"] == {
         "identifier": "MIT", "method": "license-file", "confidence": "high"
     }
+    assert first["routing"] == {"verdict": "transplant-ok", "reason": "permissive:MIT"}
     assert first["api"]["symbols"] == 1
     assert first["api"]["by_kind"]["function"] == 1
     assert first["api"]["method"] == "ast"
@@ -236,6 +241,7 @@ def test_build_info_renders_missing_analysis_honestly(tmp_path):
     assert document["license"] == {
         "identifier": None, "method": "unknown", "confidence": "low"
     }
+    assert document["routing"] == {"verdict": "study-only", "reason": "license-undetermined"}
     assert document["api"]["symbols"] == 0
     assert document["api"]["method"] is None
     assert document["api"]["top_symbols"] == []
@@ -259,3 +265,103 @@ def test_build_info_locks_license_and_trust_manifest_updates(tmp_path, monkeypat
     build_info(SPEC, corpus_root=tmp_path)
 
     assert calls == [(tmp_path, target, SHA)]
+
+
+# Live corpus-maintainer journey (issue #190 G-3/G-4): read-only public repos,
+# no host-side mutation. tinode/chat is GPL-3.0 (canonical FSF GPLv3 header in
+# the root LICENSE); psf/requests is Apache-2.0 (permissive control donor).
+TINODE_V0_25_3 = "22a7c18e9cd695e9a061bf1b8c84175196ef5a15"
+REQUESTS_V2_34_2 = "6e83187b8feb273ed4c6cdab5efd8d54901dfab3"
+
+
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live license-routing verification",
+)
+def test_live_tinode_routes_study_only(tmp_path):
+    from leitir.cli import _corpus_list, _corpus_routings, _write_summary
+    from leitir.materialize import materialize_github_repo
+    from leitir.search import (
+        Coverage,
+        CoverageStatus,
+        PredicateKind,
+        Resolution,
+        ResolutionStrategy,
+        SearchReport,
+        SourceMatch,
+        SourceRef,
+    )
+
+    entries = []
+    for owner, repo, sha in (
+        ("tinode", "chat", TINODE_V0_25_3),
+        ("psf", "requests", REQUESTS_V2_34_2),
+    ):
+        target = materialize_github_repo(
+            tmp_path, f"{owner}/{repo}@{sha}", owner, repo, sha, verify=False
+        )
+        manifest = json.loads(
+            (target / MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        entries.append(
+            {
+                "name": f"{owner}/{repo}",
+                "host": "github.com",
+                "owner": owner,
+                "repo": repo,
+                "commit_sha": sha,
+                "path": target.relative_to(tmp_path).as_posix(),
+                "fetched_at": manifest["fetched_at"],
+            }
+        )
+    write_sources(tmp_path, entries)
+
+    # Journey 1: corpus list — every surfaced source carries routing.
+    out = io.StringIO()
+    _corpus_list(tmp_path, as_json=False, out=out)
+    rendered = out.getvalue()
+    assert "routing=study-only/copyleft:GPL-3.0" in rendered
+    assert "routing=transplant-ok/permissive:Apache-2.0" in rendered
+    json_out = io.StringIO()
+    _corpus_list(tmp_path, as_json=True, out=json_out)
+    payload = json.loads(json_out.getvalue())
+    assert len(payload) == 2
+    assert {item["repo"]: item["routing"]["verdict"] for item in payload} == {
+        "chat": "study-only",
+        "requests": "transplant-ok",
+    }
+
+    # Journey 2: info — the routing key routes tinode study-only/copyleft.
+    document = build_info(f"tinode/chat@{TINODE_V0_25_3}", corpus_root=tmp_path)
+    assert document["routing"] == {"verdict": "study-only", "reason": "copyleft:GPL-3.0"}
+
+    # Journey 3: search rendering — corpus-derived routing on the match.
+    report = SearchReport(
+        spec_digest="b" * 64,
+        coverage=Coverage(
+            status=CoverageStatus.INDETERMINATE_GLOBAL,
+            files_eligible=1,
+            files_indexed=1,
+            files_excluded=0,
+        ),
+        matches=(
+            SourceMatch(
+                source=SourceRef(
+                    slug="tinode/chat",
+                    commit_sha=TINODE_V0_25_3,
+                    path="server/db/db.go",
+                    blob_sha="0" * 40,
+                    start_line=1,
+                    end_line=1,
+                ),
+                score=1.0,
+                matched_kinds=(PredicateKind.EXACT_TEXT,),
+            ),
+        ),
+        resolution=Resolution(
+            strategy=ResolutionStrategy.INDEXED_COMMIT, as_of="2026-08-20T00:00:00Z"
+        ),
+    )
+    summary = io.StringIO()
+    _write_summary(report, file=summary, routings=_corpus_routings(tmp_path))
+    assert "routing=study-only/copyleft:GPL-3.0" in summary.getvalue()

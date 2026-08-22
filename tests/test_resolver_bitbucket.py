@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import base64
+import gzip
+import hashlib
 import io
+import json
 import os
+import tarfile
 
 import _http_server as hs
 import fixtures_resolver as fx
@@ -33,7 +37,9 @@ def _anonymous_rate_limit(exc):
 
 
 def _resolver(base_url, **kwargs):
-    return BitbucketResolver(base_url=base_url, sleeper=lambda _: None, **kwargs)
+    resolver = BitbucketResolver(base_url=base_url, sleeper=lambda _: None, **kwargs)
+    resolver.archive_url = lambda _slug, _sha: f"{base_url}/repositories/owner/repo/get/{SHA}.tar.gz"  # type: ignore[method-assign]
+    return resolver
 
 
 def test_resolves_ref_to_lowercase_commit_sha():
@@ -129,15 +135,26 @@ def test_archive_url_uses_download_endpoint_and_pinned_sha():
 
 
 def test_tree_listing_hashes_host_native_file_content():
-    payload = {"values": [{"type": "commit_file", "path": "a.py", "size": 5}]}
-    responses = [
-        (200, {}, hs.json_body(payload)),
-        (200, {}, b"hello"),
-    ]
-    with hs.scripted_server(responses) as server:
+    payload = {
+        "values": [
+            {"type": "commit_file", "path": "a.py", "size": 5, "attributes": []}
+        ]
+    }
+    routes = {
+        f"/repositories/owner/repo/src/{SHA}/": (200, {}, hs.json_body(payload)),
+        f"/repositories/owner/repo/get/{SHA}.tar.gz": (
+            200,
+            {},
+            _fixture_archive("single-root", {"a.py": b"hello"}),
+        ),
+        # K=3 spot check raw read (K collapses to 1 for a one-file repo).
+        f"/repositories/owner/repo/src/{SHA}/a.py": (200, {}, b"hello"),
+    }
+    with hs.routed_server(routes) as server:
         entries = _resolver(server.base_url).list_blobs("owner/repo", SHA)
     assert [(entry.path, entry.size, entry.mode) for entry in entries] == [("a.py", 5, "100644")]
     assert entries[0].blob_sha == "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
+    assert server.state.served_count == 3  # listing + archive + 1 spot-check read
 
 
 def test_environment_token_uses_bearer_only_for_https_api_host(monkeypatch):

@@ -34,6 +34,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make routing-warning test independent of cli logger propagation (`tests`)
 - mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - preserve the sole-survivor .old-* backup during the stale sweep; update-check cache writes report success again (`materialize`)
+- prove concurrent-writer atomicity via serialized seam on Windows (`tests`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)
 - realistic timeout, bounded reads, shared HTTP seam (`doctor`)
 - register live marker on four env-gated files per inventory invariant (`tests`)

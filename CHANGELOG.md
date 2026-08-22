@@ -39,6 +39,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - release recorder lock adjacent to its try, bound debug manifests, assert server joins, sweep update-check temps, GC stale .old-* backups (`hygiene`)
 - report the materialized pin as identity.commit_sha (`diff`)
 - require both privilege controls, reap the aborted child, bound the nsjail probe (`containment`)
+- restore 34 resolver gate tests deleted by #230 merge resolution (`tests`)
 - restore helpers dropped by #230 merge resolution (`tests`)
 - retry the group kill before the direct-pid fallback, escalate unconfirmed kills (`containment`)
 - run Ed25519/auth tests in CI via hash-locked auth provider job (`ci`)

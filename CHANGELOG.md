@@ -31,6 +31,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)
 - fail fast past the rate-limit cap, add max_total_wait budget and per-provider rate-limit notices (`http`)
 - harden import-purity child report channel and import-path isolation (`tests`)
+- make routing-warning test independent of cli logger propagation (`tests`)
 - mark the --global help's bound-reason examples as non-exhaustive (`cli`)
 - preserve the sole-survivor .old-* backup during the stale sweep; update-check cache writes report success again (`materialize`)
 - qualify re-read clearance trust comment, add glitch-clearance and no-reread tests (`materialize`)

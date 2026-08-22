@@ -28,6 +28,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
 - assert target confinement before stale sweep; consolidate lock helper (`materialize`)
 - bound archive-channel divergence and harden enumeration parsing (`resolver`)
+- bound concurrent-writer reader loop to dodge msvcrt contention cap (`tests`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
 - consolidate atomic writes with fd sentinel + parent-dir fsync; manifest double-close fixed, durability hardened (`safeio`)
 - de-flake the two environment-sensitive retry tests (#202) (`tests`)

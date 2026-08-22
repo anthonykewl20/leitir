@@ -135,57 +135,8 @@ def _assert_target_confinement(root: Path, target: Path) -> None:
 
 
 @contextmanager
-def _file_lock(path: Path) -> Iterator[None]:
+def _file_lock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
     """Hold an interprocess exclusive lock without following a lock symlink."""
-    path = Path(os.path.normcase(str(path.absolute())))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_CREAT | os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        fd = os.open(path, flags, 0o600)
-    except OSError as exc:
-        raise MaterializationError(
-            f"cannot safely open materialization lock: {path}"
-        ) from exc
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            if os.fstat(fd).st_size == 0:
-                os.write(fd, b"\0")
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
-        else:
-            import fcntl
-
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
-            else:
-                import fcntl
-
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path, ignore_errors=True)
-    else:
-        path.unlink(missing_ok=True)
-
-
-@contextmanager
-def _try_file_lock(path: Path) -> Iterator[bool]:
-    """Try an exclusive lock without waiting for its current owner."""
     path = Path(os.path.normcase(str(path.absolute())))
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_CREAT | os.O_RDWR
@@ -199,29 +150,32 @@ def _try_file_lock(path: Path) -> Iterator[bool]:
         ) from exc
     acquired = False
     try:
-        if os.name == "nt":
-            import msvcrt
-
-            if os.fstat(fd).st_size == 0:
-                os.write(fd, b"\0")
-            os.lseek(fd, 0, os.SEEK_SET)
-        else:
-            import fcntl
-
         try:
             if os.name == "nt":
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
+                import msvcrt
+
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                lock_mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.LK_*
+                msvcrt.locking(fd, lock_mode, 1)  # type: ignore[attr-defined]  # Windows-only; typeshed lacks msvcrt.locking/LK_*
             else:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
+                import fcntl
+
+                flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(fd, flags)
         except OSError as exc:
-            if not isinstance(exc, BlockingIOError) and exc.errno not in {
-                errno.EWOULDBLOCK,
-                errno.EACCES,
-                errno.EAGAIN,
-            }:
+            contention = {errno.EWOULDBLOCK, errno.EAGAIN}
+            if os.name == "nt":
+                contention.add(errno.EACCES)
+            if not isinstance(exc, BlockingIOError) and exc.errno not in contention:
                 raise
-        yield acquired
+            if blocking:
+                raise
+            yield False
+            return
+        acquired = True
+        yield True
     finally:
         if acquired:
             try:
@@ -240,9 +194,16 @@ def _try_file_lock(path: Path) -> Iterator[bool]:
             os.close(fd)
 
 
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+
+
 def _sweep_target_debris(lock_path: Path, target: Path, commit_sha: str) -> None:
     """Sweep target debris only when its lock is immediately available."""
-    with _try_file_lock(lock_path) as acquired:
+    with _file_lock(lock_path, blocking=False) as acquired:
         if not acquired or not target.parent.exists():
             return
         for stale in sorted(target.parent.glob(f".{commit_sha}.tmp-*")):
@@ -274,6 +235,7 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
         return
     # Cleanup is opportunistic; the normal blocking lock below still
     # preserves writer serialization for the materialization itself.
+    _assert_target_confinement(root, target)
     _sweep_target_debris(lock_path, target, commit_sha)
     with _file_lock(lock_path):
         held.add(lock_identity)

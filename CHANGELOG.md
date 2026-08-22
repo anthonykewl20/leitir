@@ -24,6 +24,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - accept os-native separators in live inventory skip lines (`tests`)
 - apply rate-limit cap fail-fast on the final attempt too (`http`)
+- assert target confinement before stale sweep; consolidate lock helper (`materialize`)
 - bound archive-channel divergence and harden enumeration parsing (`resolver`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
 - consolidate atomic writes with fd sentinel + parent-dir fsync; manifest double-close fixed, durability hardened (`safeio`)

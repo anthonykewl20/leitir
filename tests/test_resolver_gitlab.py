@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
-import json
 import os
 import tarfile
 
@@ -126,6 +124,36 @@ def test_malformed_commit_metadata_is_honest(payload):
 def test_archive_url_uses_project_api_and_pinned_sha():
     url = GitLabResolver().archive_url("owner/repo", SHA)
     assert url == "https://gitlab.com/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha=" + SHA
+
+
+def _gitlab_blob_sha(content: bytes) -> str:
+    from leitir.tree import GitHubTreeSource
+
+    return GitHubTreeSource.git_blob_sha(content)
+
+
+def _fixture_archive(root, contents, symlinks=frozenset()):
+    """Deterministic tar.gz fixture: sorted members, mtimes zeroed."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted(contents):
+            content = contents[path]
+            info = tarfile.TarInfo(f"{root}/{path}")
+            info.mtime = 0
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            if path in symlinks:
+                info.type = tarfile.SYMTYPE
+                info.linkname = content.decode()
+                info.mode = 0o777
+                tar.addfile(info)
+                continue
+            info.size = len(content)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(content))
+    return gzip.compress(raw.getvalue(), mtime=0)
 
 
 def test_tree_listing_maps_gitlab_blobs():

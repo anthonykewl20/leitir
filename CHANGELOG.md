@@ -18,6 +18,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - full-coverage load-time verification via per-file digest map (`materialize`)
 - pin donors to latest stable release tags by default (`discovery`)
 - register the live pytest marker and make the live inventory authoritative (`tests`)
+- report honest coverage bounds in search output and help (`discovery`)
+- route every corpus/info/search source transplant-ok or study-only (`license`)
 
 ### Fixed
 - accept os-native separators in live inventory skip lines (`tests`)

@@ -852,3 +852,55 @@ def test_live_subgroup_ref_resolves_to_pinned_commit():
     assert resolver.resolve_tag_to_sha(
         fx.GITLAB_SUBGROUP_SLUG, fx.GITLAB_SUBGROUP_REF
     ) == fx.GITLAB_SUBGROUP_COMMIT_SHA
+
+
+_LIVE_GITLAB_SLUG = "gitlab-org/gitlab-runner"
+_LIVE_GITLAB_COMMIT = "d79f3e7b89abceace75e2425bfe92b84ea059933"
+_LIVE_GITLAB_FILE_COUNT = 1417
+_LIVE_GITLAB_TREE_PAGES = 18
+_LIVE_GITLAB_ENTRIES_SHA256 = (
+    "68a5e0162c241f7447ebea73712e80291d558ebec5816ad8c24b70389ac2719b"
+)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
+)
+def test_live_midsize_enumeration_is_page_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Measure the pinned mid-size GitLab walk through the real transport."""
+    import leitir._http as http
+
+    calls: list[str] = []
+    original = http.safe_urlopen
+
+    def counted(request, *, timeout):
+        calls.append(request.full_url)
+        return original(request, timeout=timeout)
+
+    monkeypatch.setattr(http, "safe_urlopen", counted)
+    resolver = GitLabResolver(max_attempts=1, sleeper=lambda _: None)
+    try:
+        entries = resolver.list_blobs(_LIVE_GITLAB_SLUG, _LIVE_GITLAB_COMMIT)
+    except Exception as exc:
+        if not os.environ.get("GITLAB_TOKEN") and "429" in str(exc):
+            pytest.skip("anonymous GitLab rate limit (set GITLAB_TOKEN)")
+        raise
+
+    tree_pages = [url for url in calls if "/repository/tree?" in url]
+    archives = [url for url in calls if "/repository/archive.tar.gz?" in url]
+    blob_probes = [url for url in calls if "/repository/blobs/" in url]
+    digest = hashlib.sha256(
+        json.dumps([[entry.path, entry.blob_sha, entry.size, entry.mode] for entry in entries]).encode()
+    ).hexdigest()
+
+    assert len(entries) == _LIVE_GITLAB_FILE_COUNT
+    assert entries
+    assert len(tree_pages) == _LIVE_GITLAB_TREE_PAGES
+    assert len(archives) == 1
+    assert blob_probes == []
+    assert len(calls) <= len(tree_pages) + 2  # one archive plus fixed retry slack
+    assert digest == _LIVE_GITLAB_ENTRIES_SHA256

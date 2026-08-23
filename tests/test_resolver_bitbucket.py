@@ -633,3 +633,55 @@ def test_live_ref_resolves_to_pinned_commit():
             pytest.skip("anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)")
         raise
     assert actual == fx.BITBUCKET_COMMIT_SHA
+
+
+_LIVE_BITBUCKET_SLUG = "snakeyaml/snakeyaml"
+_LIVE_BITBUCKET_COMMIT = "9a8327992a77782079f5fa2340d3e99812dd3197"
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
+    reason="set LEITIR_ENABLE_LIVE_E2E=1 to run live verification",
+)
+def test_live_midsize_enumeration_is_page_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Measure the pinned mid-size Bitbucket walk through the real transport."""
+    import leitir._http as http
+
+    calls: list[str] = []
+    original = http.safe_urlopen
+
+    def counted(request, *, timeout):
+        calls.append(request.full_url)
+        return original(request, timeout=timeout)
+
+    monkeypatch.setattr(http, "safe_urlopen", counted)
+    resolver = BitbucketResolver(max_attempts=1, sleeper=lambda _: None)
+    try:
+        entries = resolver.list_blobs(_LIVE_BITBUCKET_SLUG, _LIVE_BITBUCKET_COMMIT)
+    except Exception as exc:
+        if not os.environ.get("BITBUCKET_TOKEN") and _anonymous_rate_limit(exc):
+            pytest.skip("anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)")
+        raise
+
+    tree_pages = [url for url in calls if "/src/" in url and "pagelen=100" in url]
+    expected_archive = resolver.archive_url(
+        _LIVE_BITBUCKET_SLUG, _LIVE_BITBUCKET_COMMIT
+    )
+    archives = [url for url in calls if url == expected_archive]
+    raw_reads = [
+        url for url in calls if "/src/" in url and "pagelen=100" not in url
+    ]
+    assert len(entries) >= 1000
+    assert len(tree_pages) > 1
+    assert len(archives) == 1
+    assert len(raw_reads) == 3  # fixed K=3 second-channel spot check
+    assert len(calls) <= len(tree_pages) + 5  # archive, K=3, and retry slack
+    assert len({entry.path for entry in entries}) == len(entries)
+    assert all(
+        len(entry.blob_sha) == 40
+        and all(character in "0123456789abcdef" for character in entry.blob_sha)
+        for entry in entries
+    )

@@ -480,7 +480,8 @@ def require_manifest_auth(manifest: Mapping[str, object], shelf_context: str | P
         raise ManifestAuthProjectionMismatchError("authorization record projection_digest does not match projection")
     signature = _b64decode(record["signature"], "signature", expected_length=64)
     try:
-        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
+        # EVIDENCE-ONLY tamper for #196 AC-4: deliberate verification break; never merge
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical + b"\x00")
     except InvalidSignature as exc:
         raise ManifestAuthBadSignatureError("authorization record signature is invalid") from exc
     except ValueError as exc:

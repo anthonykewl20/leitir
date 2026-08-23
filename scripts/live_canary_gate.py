@@ -29,7 +29,9 @@ EXTRA_TEST_ALLOWLIST = (
     "tests/test_discovery_coverage.py::test_provider_coverage_reported",
     "tests/test_resolver_gitlab.py::test_live_ref_resolves_to_pinned_commit",
     "tests/test_resolver_gitlab.py::test_live_subgroup_ref_resolves_to_pinned_commit",
+    "tests/test_resolver_gitlab.py::test_live_midsize_enumeration_is_page_bounded",
     "tests/test_resolver_bitbucket.py::test_live_ref_resolves_to_pinned_commit",
+    "tests/test_resolver_bitbucket.py::test_live_midsize_enumeration_is_page_bounded",
 )
 
 

@@ -2209,6 +2209,24 @@ def _write_summary(
         print(f"  ... and {len(report.matches) - 10} more", file=file)
 
 
+def _report_json_with_coverage_bounds(
+    report: SearchReport, bounds: CoverageBounds | None
+) -> str:
+    """Add global discovery bounds without changing the closed report model."""
+    if bounds is None:
+        return report.to_json()
+
+    from .discovery_search import CoverageBounds as RuntimeCoverageBounds
+
+    if not isinstance(bounds, RuntimeCoverageBounds):
+        raise ValueError("global search returned malformed coverage bounds")
+    payload = json.loads(report.to_json())
+    if not isinstance(payload, dict) or not isinstance(payload.get("coverage"), dict):
+        raise ValueError("search report has malformed coverage")
+    payload["coverage"].update(bounds.to_dict())
+    return json.dumps(payload, indent=2, sort_keys=False)
+
+
 def _write_cli_payload(payload: dict[str, object], *, as_json: bool, out: TextIO) -> None:
     if as_json:
         print(json.dumps(payload, sort_keys=True), file=out)
@@ -2677,7 +2695,12 @@ def main(
         return int(ExitCode.INFRASTRUCTURE_FAILURE)
 
     corpus_routings = _corpus_routings(corpus_root) if corpus_root is not None else None
-    print(report.to_json(), file=out)
+    try:
+        machine_report = _report_json_with_coverage_bounds(report, coverage_bounds)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"leitir: error: {redact(str(exc))}", file=err)
+        return int(ExitCode.INFRASTRUCTURE_FAILURE)
+    print(machine_report, file=out)
     _write_summary(
         report,
         file=err,

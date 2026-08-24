@@ -21,6 +21,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - pin donors to latest stable release tags by default (`discovery`)
 - register the live pytest marker and make the live inventory authoritative (`tests`)
 - report honest coverage bounds in search output and help (`discovery`)
+- resolve exact ecosystem pins local-first from verified shelves (`cli`)
 - route every corpus/info/search source transplant-ok or study-only (`license`)
 
 ### Fixed
@@ -30,6 +31,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bound archive-channel divergence and harden enumeration parsing (`resolver`)
 - bound concurrent-writer reader loop to dodge msvcrt contention cap (`tests`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
+- close all 12 production-readiness audit findings
 - consolidate atomic writes with fd sentinel + parent-dir fsync; manifest double-close fixed, durability hardened (`safeio`)
 - de-flake the two environment-sensitive retry tests (#202) (`tests`)
 - enumerate import-purity gate over all submodules behind a reviewed allowlist (`tests`)

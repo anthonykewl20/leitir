@@ -12,6 +12,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+## [0.1.5]
+
 ### Added
 - add dispatch inputs and allowlisted extra live tests to live canary (`ci`)
 - enforce trusted-key expiry and revocation in versioned trusted-keys schema v2 (`auth`)
@@ -274,5 +276,6 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
-[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/anthonykewl20/leitir/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4

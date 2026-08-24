@@ -149,6 +149,159 @@ def test_info_answers_exact_pin_offline(tmp_path):
     assert "resolved offline from the corpus index" in err
 
 
+def test_lock_answers_exact_pins_offline_from_cached_shelves(tmp_path):
+    """ADR-0024 follow-up: ``leitir lock`` is local-first for exact
+    lockfile pins — a fully cached project closure locks during a total
+    registry outage, with no live lookup attempted."""
+    _source, entry = _shelve_package(tmp_path, sha=SHA_A, version="1.0.0", payload="v1")
+    write_sources(tmp_path, [entry])
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+
+    code, out, err = _invoke(
+        ["lock", "--cwd", str(project), "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    assert "resolved offline from the corpus index" in err
+    payload = json.loads(out)
+    assert [item["spec"] for item in payload["dependencies"]] == [
+        "pypi:demo@1.0.0"
+    ]
+
+
+def test_lock_strict_mode_fails_closed_on_uncached_pin_offline(tmp_path):
+    """A closure with an uncached pin cannot be completed offline; the
+    default (strict) lock fails closed instead of serving a partial
+    closure silently."""
+    _source, entry = _shelve_package(tmp_path, sha=SHA_A, version="1.0.0", payload="v1")
+    write_sources(tmp_path, [entry])
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text(
+        "demo==1.0.0\nother==2.0.0\n", encoding="utf-8"
+    )
+
+    code, _out, err = _invoke(
+        ["lock", "--cwd", str(project), "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code != ExitCode.SUCCESS
+    # Strict mode surfaces the uncached pin's live failure as a hard
+    # error (fail-closed), never a silent partial closure.
+    assert "leitir: error:" in err
+    assert "other@2.0.0" in err
+
+
+def test_lock_best_effort_records_uncached_pin_offline(tmp_path):
+    """With --best-effort during an outage: cached pins lock from their
+    verified shelves and the outage failure is recorded, not hidden."""
+    _source, entry = _shelve_package(tmp_path, sha=SHA_A, version="1.0.0", payload="v1")
+    write_sources(tmp_path, [entry])
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text(
+        "demo==1.0.0\nother==2.0.0\n", encoding="utf-8"
+    )
+
+    code, out, err = _invoke(
+        [
+            "lock",
+            "--cwd",
+            str(project),
+            "--root",
+            str(tmp_path),
+            "--best-effort",
+        ],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    payload = json.loads(out)
+    assert [item["spec"] for item in payload["dependencies"]] == [
+        "pypi:demo@1.0.0"
+    ]
+    assert [item["spec"] for item in payload["failures"]] == ["pypi:other@2.0.0"]
+
+
+def test_lock_never_serves_tampered_cached_shelf(tmp_path):
+    """Security: a tampered shelf is skipped by the local-first path and
+    the outage failure surfaces — the corrupted bytes are never served."""
+    source, entry = _shelve_package(tmp_path, sha=SHA_A, version="1.0.0", payload="v1")
+    write_sources(tmp_path, [entry])
+    (source / "payload.txt").write_text("tampered", encoding="utf-8")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+
+    code, _out, err = _invoke(
+        ["lock", "--cwd", str(project), "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code != ExitCode.SUCCESS
+    assert "resolved offline from the corpus index" not in err
+    # The tampered shelf is skipped and the live fallback's failure is
+    # the hard error — the corrupted bytes are never served.
+    assert "leitir: error:" in err
+    assert "demo@1.0.0" in err
+
+
+def test_diff_facade_resolves_repo_tag_specs_mixed_with_pins(tmp_path):
+    """Regression (ADR-0024 review, P1): a mixed diff pair — an ecosystem
+    pin answered by the facade's pinned map plus a repository-tag spec —
+    must resolve, not crash: the facade delegates ``resolve_tag_to_sha``
+    to the inner resolver for github.com and non-github hosts alike."""
+    from leitir.cli import _CachedFirstResolverFacade
+    from leitir.resolver import RepoScope, resolve_corpus_spec
+    from leitir.spec import parse_corpus_spec
+
+    class _TagRecorder:
+        def __init__(self) -> None:
+            self.tag_calls: list[tuple[str, str, str | None]] = []
+
+        def resolve(self, ref):  # pragma: no cover - pin is pre-cached
+            raise AssertionError(f"live resolve reached for {ref.name}")
+
+        def latest_version(self, ecosystem, name):  # pragma: no cover
+            raise AssertionError("latest_version reached")
+
+        def resolve_tag_to_sha(self, slug, tag, host=None):
+            self.tag_calls.append((slug, tag, host))
+            return SHA_A
+
+    inner = _TagRecorder()
+    pinned = {
+        ("pypi", "demo", "1.0.0"): RepoScope("acme/demo", SHA_A),
+    }
+    facade = _CachedFirstResolverFacade(inner, pinned)
+    heads = object()  # head specs are not exercised by tag specs
+
+    pin_parsed = parse_corpus_spec("pypi:demo@1.0.0")
+    resolved, _tag, _vsrc, _dsrc = resolve_corpus_spec(
+        pin_parsed, facade, heads, tmp_path
+    )
+    assert resolved == RepoScope("acme/demo", SHA_A)
+
+    for raw, expected_host in (
+        ("github:acme/demo@v1.0.0", None),
+        ("codeberg:acme/demo@v1.0.0", "codeberg.org"),
+    ):
+        parsed = parse_corpus_spec(raw)
+        resolved, _tag, _vsrc, _dsrc = resolve_corpus_spec(
+            parsed, facade, heads, tmp_path
+        )
+        assert resolved == RepoScope("acme/demo", SHA_A)
+
+    assert inner.tag_calls == [
+        ("acme/demo", "v1.0.0", None),
+        ("acme/demo", "v1.0.0", "codeberg.org"),
+    ]
+
+
 def test_tampered_cached_shelf_is_never_served_offline(tmp_path):
     """Security: local-first must fail closed on a corrupted shelf —
     the tampered bytes are neither trusted nor silently re-verified away

@@ -107,6 +107,13 @@ the cache is never silent.
 - Name matching is exact: pypi:Flask@3.0.2 does not match a shelf
   shelved as flask (registry-side normalization is not applied
   offline); such pins fall back to live resolution.
-- leitir lock still resolves lockfile pins through the live resolver;
-  extending local-first to lock_project is a follow-up (tracked in
-  #245).
+- ~~leitir lock still resolves lockfile pins through the live resolver~~
+  Implemented (2026-08-24): ``leitir lock`` wraps its resolver in
+  ``_LocalFirstLockResolver`` (cli.py), so every exact lockfile pin —
+  the only kind lockfiles produce — is local-first eligible exactly as
+  the spec commands are: a verified cached shelf answers the pin
+  offline, and any miss, ambiguity, or unverifiable shelf falls back to
+  the live resolver. A fully cached closure therefore locks during a
+  total registry outage; an uncached pin fails closed in strict mode
+  and is recorded under ``--best-effort``. Pinned by the offline lock
+  tests in ``tests/test_offline_cached_resolution.py``.

@@ -1311,6 +1311,54 @@ class _CachedFirstResolverFacade:
         return getattr(self._inner, name)
 
 
+class _LocalFirstLockResolver:
+    """Answer ``lock_project`` pins from verified cached shelves (ADR-0024).
+
+    ``leitir lock`` resolves exact lockfile pins; every edge carries a
+    concrete version, so each pin is local-first eligible exactly like
+    the spec commands (issue #245): when the corpus already holds the
+    verified shelf for the pin, resolution is reconstructed from the
+    cached manifest instead of contacting the registry, keeping an
+    entire project lock usable during a registry outage. Any miss,
+    ambiguity, or unverifiable shelf falls back to the live resolver —
+    the lock never serves a shelf the cached path would reject.
+    """
+
+    def __init__(self, inner: object, root: Path, announce: TextIO | None) -> None:
+        self._inner = inner
+        self._root = root
+        self._announce = announce
+
+    def resolve(self, ref: object) -> object:
+        ecosystem = getattr(getattr(ref, "ecosystem", None), "value", None)
+        name = getattr(ref, "name", None)
+        version = getattr(ref, "version", None)
+        if (
+            isinstance(ecosystem, str)
+            and ecosystem in _LOCAL_FIRST_ECOSYSTEMS
+            and isinstance(name, str)
+            and isinstance(version, str)
+        ):
+            parsed = CorpusSpec(
+                raw=f"{ecosystem}:{name}@{version}",
+                ecosystem=ecosystem,
+                name=name,
+                version=version,
+            )
+            cached = _resolve_from_cached_shelf(parsed, self._root, self._announce)
+            if cached is not None:
+                return cached[0]
+        return cast(Any, self._inner).resolve(ref)
+
+    def resolve_tag_to_sha(self, slug: str, tag: str, host: str | None = None) -> str:
+        if host is None:
+            return cast(Any, self._inner).resolve_tag_to_sha(slug, tag)
+        return cast(Any, self._inner).resolve_tag_to_sha(slug, tag, host=host)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
 def _resolve_corpus_spec(
     parsed: CorpusSpec,
     resolver: object,
@@ -2238,7 +2286,7 @@ def _run_corpus_command(
             failures: list[dict[str, str]] = []
             summary = lock_project(
                 cwd,
-                resolver,
+                _LocalFirstLockResolver(resolver, root, err),
                 root=root,
                 on_resolve=lambda spec: print(f"leitir: resolving {spec}", file=err),
                 on_fetch=lambda spec: print(f"leitir: materializing {spec}", file=err),

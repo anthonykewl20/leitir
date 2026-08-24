@@ -726,6 +726,92 @@ class TestDegradedClassificationRealTransport:
                 resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
             assert server.state.served_count == 1
 
+    def test_crates_resolution_degrades_over_real_transport(self):
+        # ADR-0023 extended to crates (2026-08-24): crates.io metadata 200
+        # from a real server, then a throttled tag lookup through the REAL
+        # transport -> registry-only degrade, mirroring pypi/npm.
+        sleeps: list[float] = []
+        crates_payload = {
+            "version": {
+                "num": "1.0.0",
+                "repository": "https://github.com/acme/demo",
+                "checksum": "c" * 64,
+                "created_at": "2024-01-01T00:00:00.000+00:00",
+                "updated_at": "2024-01-01T00:00:00.000+00:00",
+            }
+        }
+        script = [
+            (
+                200,
+                {"Content-Type": "application/json"},
+                _hs.json_body(crates_payload),
+            ),
+            (403, {"X-RateLimit-Remaining": "0", "Retry-After": "0"}, b""),
+        ]
+        with _hs.scripted_server(script) as server:
+            tags = GitHubTagResolver(
+                base_url=server.base_url,
+                sleeper=sleeps.append,
+                base_delay=1.0,
+                max_attempts=1,
+                allow_insecure_http_for_tests=True,
+            )
+            resolver = CratesResolver(
+                tag_resolver=tags,
+                base_url=server.base_url,
+                sleeper=sleeps.append,
+                base_delay=1.0,
+                allow_insecure_http_for_tests=True,
+            )
+            result = resolver.resolve(
+                PackageRef(Ecosystem.CRATES, "demo", "1.0.0")
+            )
+
+        assert result.degraded_provenance is not None
+        assert "unavailable" in result.degraded_provenance
+        assert result.tag is None
+        assert result.scope.slug == "registry/demo"
+        assert result.artifact is not None
+        assert result.artifact.digest == "c" * 64
+        with pytest.raises(DegradedProvenanceError, match="registry-only"):
+            result.require_full_provenance()
+
+    def test_crates_absent_tag_still_fails_closed(self):
+        # Absence is a provenance fact, never degradable — pinned for crates
+        # over the REAL transport (reviewer-qwen P3: no classification-path
+        # fakes in regression tests, the #248 root-cause class) so the
+        # ADR-0023 extension cannot silently widen to 404s.
+        payload = {
+            "version": {
+                "num": "1.0.0",
+                "repository": "https://github.com/acme/demo",
+                "checksum": "c" * 64,
+            }
+        }
+        not_found = {"message": "Not Found"}
+        script = [
+            (
+                200,
+                {"Content-Type": "application/json"},
+                _hs.json_body(payload),
+            ),
+            *[(404, {"Content-Type": "application/json"}, _hs.json_body(not_found)) for _ in range(3)],
+        ]
+        with _hs.scripted_server(script) as server:
+            tags = GitHubTagResolver(
+                base_url=server.base_url,
+                allow_insecure_http_for_tests=True,
+            )
+            resolver = CratesResolver(
+                tag_resolver=tags,
+                base_url=server.base_url,
+                allow_insecure_http_for_tests=True,
+            )
+            with pytest.raises(TagAbsentError):
+                resolver.resolve(PackageRef(Ecosystem.CRATES, "demo", "1.0.0"))
+            # All three candidate tags were probed before failing closed.
+            assert server.state.served_count == 4
+
     def test_pypi_resolution_degrades_over_real_transport(self):
         # Both sides drive the REAL transport through a real local server:
         # request 1 serves PyPI metadata, request 2 is the tag lookup and

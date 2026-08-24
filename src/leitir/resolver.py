@@ -2141,17 +2141,46 @@ class CratesResolver:
         slug = m.group(1).rstrip("/")
         slug = slug.removesuffix(".git")
 
-        tag, commit_sha = self._resolve_first_tag(slug, ref.name, ref.version)
-        scope = RepoScope(slug=slug, commit_sha=commit_sha)
+        artifact = self._artifact(ref, payload)
         from leitir.docpointers import extract_docs_urls
 
+        docs_urls = tuple(extract_docs_urls(ref.ecosystem, payload))
+        registry_url = f"https://crates.io/crates/{ref.name}/{ref.version}"
+
+        try:
+            tag, commit_sha = self._resolve_first_tag(slug, ref.name, ref.version)
+        except ResolutionError as exc:
+            # ADR-0023, extended to crates (2026-08-24, owner-approved): a
+            # transport-level tag-lookup failure degrades to registry-only
+            # when the crate's checksummed artifact is available, exactly as
+            # pypi/npm. Absence and fatal client errors keep failing closed.
+            degraded = _degraded_reason(exc)
+            if degraded is None or artifact is None:
+                raise
+            logger.warning(
+                "crates resolution degraded to registry-only for %s==%s: %s",
+                ref.name,
+                ref.version,
+                exc,
+            )
+            return ResolvedPackage(
+                ref=ref,
+                scope=_registry_only_scope(ref, artifact, degraded),
+                tag=None,
+                registry_url=registry_url,
+                docs_urls=docs_urls,
+                artifact=artifact,
+                published_at=self._published_at(payload, ref.version),
+                degraded_provenance=degraded,
+            )
+        scope = RepoScope(slug=slug, commit_sha=commit_sha)
         return ResolvedPackage(
             ref=ref,
             scope=scope,
             tag=tag,
-            registry_url=f"https://crates.io/crates/{ref.name}/{ref.version}",
-            docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
-            artifact=self._artifact(ref, payload),
+            registry_url=registry_url,
+            docs_urls=docs_urls,
+            artifact=artifact,
             published_at=self._published_at(payload, ref.version),
         )
 

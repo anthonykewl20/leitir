@@ -37,12 +37,13 @@ from .search import (
     SearchSpec,
     SearchSpecError,
 )
-from .spec import CorpusSpec, parse_corpus_spec
+from .spec import CorpusSpec, SpecParseError, parse_corpus_spec
 
 if TYPE_CHECKING:
     from .diff import DiffReport
     from .discovery_search import CoverageBounds
-    from .resolver import ResolvedPackage, _CorpusResolver, _HeadResolver
+    from .parity import ArtifactInfo as ArtifactInfoLike
+    from .resolver import Ecosystem, ResolvedPackage, _CorpusResolver, _HeadResolver
     from .trust import TrustScore
 
 logger = logging.getLogger(__name__)
@@ -1024,12 +1025,299 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
     return resolve_root(getattr(args, "root", None))
 
 
+_LOCAL_FIRST_ECOSYSTEMS = frozenset({"pypi", "npm", "crates"})
+
+
+def _announce_degraded_resolution(
+    parsed: CorpusSpec, resolved: object, announce: TextIO | None
+) -> None:
+    """Announce a registry-only (degraded) resolution (ADR-0023).
+
+    Shared by the live path and the cached-shelf path (issue #245) so
+    both surfaces disclose the missing repository tag binding.
+    """
+    degraded = getattr(resolved, "degraded_provenance", None)
+    if degraded is not None and announce is not None:
+        package = cast(Any, resolved)
+        print(
+            f"leitir: warning: {parsed.raw} resolved registry-only "
+            f"({degraded}); materialization uses the checksum-verified "
+            f"{package.ref.ecosystem.value} artifact, but the immutable "
+            "repository tag binding is unavailable — the shelf identity is "
+            "registry-derived, not a git commit",
+            file=announce,
+        )
+
+
+def _resolve_from_cached_shelf(
+    parsed: CorpusSpec, root: Path, announce: TextIO | None
+) -> tuple[ResolvedPackage, str | None, str | None, str | None] | None:
+    """Resolve an exact ecosystem pin from a verified cached shelf (issue #245).
+
+    Local-first: when the corpus already holds a shelf bound to exactly
+    this name+version and it passes full load-time verification
+    (``read_valid_manifest`` re-verifies the anchored per-file digests),
+    reconstruct the resolution from the cached manifest instead of
+    contacting the registry. Falls back to live resolution (returning
+    ``None``) on any miss, ambiguity that cannot verify, or an
+    unsupported shelf shape — never silently serving an unverifiable
+    shelf. Floating/``latest`` specs never enter this path.
+    """
+
+    from .corpus import load_sources
+    from .materialize import read_valid_manifest
+
+    candidates = [
+        entry
+        for entry in load_sources(root)
+        if entry.get("name") == parsed.name and entry.get("host") == "github.com"
+    ]
+    matches: list[tuple[bool, dict[str, object], dict[str, object]]] = []
+    for entry in sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("owner")),
+            str(item.get("repo")),
+            str(item.get("commit_sha")),
+        ),
+    ):
+        relative = Path(str(entry["path"]))
+        if relative.is_absolute() or ".." in relative.parts:
+            # Same confinement rule as every other index consumer
+            # (corpus.enumerate_shelved_sources): an index entry that
+            # escapes the corpus root is never read (issue #245 review).
+            continue
+        manifest = read_valid_manifest(
+            root / relative,
+            str(entry["owner"]),
+            str(entry["repo"]),
+            str(entry["commit_sha"]),
+            host="github.com",
+        )
+        if manifest is None:
+            continue
+        if manifest.get("ecosystem") != parsed.ecosystem:
+            continue
+        if manifest.get("version") != parsed.version:
+            continue
+        if manifest.get("source") not in {"registry-artifact", "git-commit"}:
+            continue
+        # Identity binding: the manifest — written at materialization
+        # from the verified resolution — must itself confirm the
+        # requested name (and ecosystem). The sources.json ``name`` is
+        # unanchored, so binding only to it would let a one-field index
+        # edit serve any shelved package as this pin (issue #245 review,
+        # P1). A ``name`` field, where recorded, must agree too.
+        if not _manifest_spec_binds_identity(manifest.get("spec"), parsed):
+            continue
+        name_value = manifest.get("name")
+        if isinstance(name_value, str) and name_value != parsed.name:
+            continue
+        matches.append(
+            (isinstance(manifest.get("degraded_provenance"), str), entry, manifest)
+        )
+    # Prefer full-provenance shelves: the ADR-0023 degraded owner is
+    # literally ``registry``, which sorts before most real owners, so
+    # pure lexicography would let a degraded shelf shadow a coexisting
+    # full-provenance shelf for the same pin (issue #245 review).
+    matches.sort(
+        key=lambda item: (
+            item[0],
+            str(item[1].get("owner")),
+            str(item[1].get("repo")),
+            str(item[1].get("commit_sha")),
+        )
+    )
+    for _degraded, entry, manifest in matches:
+        try:
+            resolved, tag = _reconstruct_cached_resolution(parsed, entry, manifest)
+        except ValueError:
+            # A tree-valid manifest whose recorded fields cannot
+            # reconstruct a valid ResolvedPackage (unsupported shape:
+            # non-HTTPS registry URL, non-HTTP docs URLs, unsafe
+            # subpath, tag/degraded invariants, unrecognized checksum
+            # format, malformed digest) is skipped — never served, and
+            # never allowed to break live fallback (issue #245 review).
+            continue
+        _announce_degraded_resolution(parsed, resolved, announce)
+        if announce is not None:
+            scope = resolved.scope
+            print(
+                f"leitir: pin {parsed.raw} -> cached shelf "
+                f"{scope.slug}@{scope.commit_sha} "
+                "(resolved offline from the corpus index)",
+                file=announce,
+            )
+        return resolved, tag, "cached-shelf", "corpus-index"
+    return None
+
+
+def _manifest_spec_binds_identity(spec_value: object, parsed: CorpusSpec) -> bool:
+    """Whether the manifest's recorded ``spec`` binds the requested identity.
+
+    The ``spec`` string is written at materialization time from the
+    verified resolution (for example ``pypi:flask@3.0.3``), so requiring
+    it to agree with the requested name/ecosystem closes the
+    index-substitution hole: editing only the unanchored ``sources.json``
+    ``name`` can no longer relabel a shelved package (issue #245 review).
+    A spec that does not parse, or disagrees, rejects the candidate.
+    """
+    if not isinstance(spec_value, str) or not spec_value:
+        return False
+    try:
+        shelved = parse_corpus_spec(spec_value)
+    except SpecParseError:
+        return False
+    if shelved.name != parsed.name:
+        return False
+    if shelved.ecosystem is not None and shelved.ecosystem != parsed.ecosystem:
+        return False
+    return True
+
+
+def _cached_artifact_info(
+    kind: str, url: str, checksum: str
+) -> ArtifactInfoLike:
+    """Reconstruct an artifact descriptor from the anchored checksum.
+
+    Mirrors the live registry conventions in ``parity`` exactly: PyPI
+    and crates publish ``sha256:<hex>`` (digest lowercased hex); npm
+    publishes ``sha512-<base64>`` whose digest is the base64-decoded
+    bytes as hex — never the raw base64 token (issue #245 review). An
+    empty or malformed digest raises ``ValueError`` so the candidate is
+    skipped (fail-closed) rather than served.
+    """
+    import base64
+    import binascii
+
+    from .parity import ArtifactInfo
+
+    if checksum.startswith("sha256:"):
+        token = checksum[len("sha256:"):]
+        if len(token) != 64:
+            raise ValueError("sha256 checksum must carry a 64-hex digest")
+        try:
+            int(token, 16)
+        except ValueError as exc:
+            raise ValueError("sha256 digest must be hexadecimal") from exc
+        return ArtifactInfo(kind, url, "sha256", token.lower(), checksum)
+    if checksum.startswith("sha512-"):
+        token = checksum[len("sha512-"):]
+        try:
+            raw = base64.b64decode(token, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("sha512 digest must be valid base64") from exc
+        if len(raw) != 64:
+            raise ValueError("sha512 digest must decode to 64 bytes")
+        return ArtifactInfo(kind, url, "sha512", raw.hex(), checksum)
+    raise ValueError(f"unrecognized checksum format: {checksum[:12]}")
+
+
+def _reconstruct_cached_resolution(
+    parsed: CorpusSpec,
+    entry: dict[str, object],
+    manifest: dict[str, object],
+) -> tuple[ResolvedPackage, str | None]:
+    """Rebuild the ``ResolvedPackage`` a shelf was materialized under.
+
+    Raises ``ValueError`` for any manifest shape that cannot produce a
+    valid package (caller skips the candidate and falls back to live
+    resolution — the shelf is never served and the error never escapes
+    as a hard failure).
+    """
+    from .resolver import PackageRef, ResolvedPackage
+
+    scope = RepoScope(
+        f"{entry['owner']}/{entry['repo']}", str(entry["commit_sha"])
+    )
+    registry_url = manifest.get("registry_url")
+    if not isinstance(registry_url, str) or not registry_url:
+        raise ValueError("cached manifest lacks a registry URL")
+    tag_value = manifest.get("tag")
+    tag = tag_value if isinstance(tag_value, str) and tag_value else None
+    artifact = None
+    if manifest.get("source") == "registry-artifact":
+        kind = manifest.get("artifact_kind")
+        checksum = manifest.get("artifact_checksum")
+        if not isinstance(kind, str) or not isinstance(checksum, str):
+            raise ValueError("registry-artifact manifest lacks artifact metadata")
+        artifact = _cached_artifact_info(kind, registry_url, checksum)
+    docs = manifest.get("docs_urls")
+    docs_urls = (
+        tuple(item for item in docs if isinstance(item, str))
+        if isinstance(docs, list)
+        else ()
+    )
+    subpath = manifest.get("subpath")
+    published_at = manifest.get("published_at")
+    degraded = manifest.get("degraded_provenance")
+    resolved = ResolvedPackage(
+        PackageRef(
+            _ecosystem_enum(cast(str, parsed.ecosystem)),
+            parsed.name,
+            cast(str, parsed.version),
+        ),
+        scope,
+        tag,
+        registry_url,
+        subpath=subpath if isinstance(subpath, str) else None,
+        docs_urls=docs_urls,
+        artifact=artifact,
+        published_at=published_at if isinstance(published_at, str) else None,
+        degraded_provenance=degraded if isinstance(degraded, str) else None,
+    )
+    return resolved, tag
+
+
+def _ecosystem_enum(name: str) -> Ecosystem:
+    from .resolver import Ecosystem
+
+    return Ecosystem(name)
+
+
+class _CachedFirstResolverFacade:
+    """Serve the CLI's just-computed resolutions to diff_packages (#245).
+
+    ``diff_packages`` re-resolves each spec internally for identity
+    metadata even though the CLI has already resolved and materialized
+    both sides. During a registry outage that internal re-resolution
+    would fail for exact pins whose verified shelves are already on
+    disk. This facade answers ``resolve`` from the resolutions captured
+    during the CLI's materialization loop (identical binding — it also
+    removes mid-run resolution drift) and delegates everything else to
+    the live resolver.
+    """
+
+    def __init__(self, inner: object, pinned: dict[tuple[str, str, str], object]) -> None:
+        self._inner = inner
+        self._pinned = pinned
+
+    def resolve(self, ref: object) -> object:
+        ecosystem = getattr(getattr(ref, "ecosystem", None), "value", None)
+        key = (ecosystem, getattr(ref, "name", None), getattr(ref, "version", None))
+        if key in self._pinned:
+            return cast(Any, self._pinned[key])
+        return cast(Any, self._inner).resolve(ref)
+
+    def latest_version(self, ecosystem: object, name: str) -> str:
+        return cast(Any, self._inner).latest_version(ecosystem, name)
+
+    def resolve_tag_to_sha(self, slug: str, tag: str, host: str | None = None) -> str:
+        if host is None:
+            return cast(Any, self._inner).resolve_tag_to_sha(slug, tag)
+        return cast(Any, self._inner).resolve_tag_to_sha(slug, tag, host=host)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
 def _resolve_corpus_spec(
     parsed: CorpusSpec,
     resolver: object,
     heads: object,
     cwd: Path,
     announce: TextIO | None = None,
+    root: Path | None = None,
 ) -> tuple[RepoScope | ResolvedPackage, str | None, str | None, str | None]:
     """Resolve a parsed corpus spec, pinning donors to immutable tags by default.
 
@@ -1048,6 +1336,18 @@ def _resolve_corpus_spec(
     """
     from .resolver import resolve_corpus_spec
 
+    # Issue #245: exact ecosystem pins resolve local-first when the
+    # corpus already holds the verified shelf, so cached pins stay
+    # usable during a registry outage. Floating/latest specs keep the
+    # live path.
+    if (
+        root is not None
+        and parsed.ecosystem in _LOCAL_FIRST_ECOSYSTEMS
+        and parsed.version is not None
+    ):
+        cached = _resolve_from_cached_shelf(parsed, root, announce)
+        if cached is not None:
+            return cached
     if (
         parsed.ecosystem is None
         and parsed.ref_kind == "head"
@@ -1070,17 +1370,7 @@ def _resolve_corpus_spec(
         cast("_HeadResolver", heads),
         cwd,
     )
-    degraded = getattr(resolved, "degraded_provenance", None)
-    if degraded is not None and announce is not None:
-        package = cast(Any, resolved)
-        print(
-            f"leitir: warning: {parsed.raw} resolved registry-only "
-            f"({degraded}); materialization uses the checksum-verified "
-            f"{package.ref.ecosystem.value} artifact, but the immutable "
-            "repository tag binding is unavailable — the shelf identity is "
-            "registry-derived, not a git commit",
-            file=announce,
-        )
+    _announce_degraded_resolution(parsed, resolved, announce)
     if announce is not None and parsed.ecosystem is None and parsed.ref_kind == "branch":
         scope = cast(RepoScope, getattr(resolved, "scope", resolved))
         from .materialize import _utc_now
@@ -1696,10 +1986,11 @@ def _run_corpus_command(
                     _write_diff_human(report, out)
                 return int(ExitCode.SUCCESS)
             prepared: dict[str, tuple[Path, RepoScope, str]] = {}
+            pinned_resolutions: dict[tuple[str, str, str], object] = {}
             for raw in (args.spec_a, args.spec_b):
                 parsed = parse_corpus_spec(raw)
                 resolved, tag, version_source, _detection = _resolve_corpus_spec(
-                    parsed, resolver, heads, cwd, err
+                    parsed, resolver, heads, cwd, err, root
                 )
                 scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 materialize_host = (
@@ -1729,6 +2020,15 @@ def _run_corpus_command(
                     **fetch_options,
                 )
                 prepared[raw] = (path, scope, materialize_host)
+                pinned_ref = getattr(resolved, "ref", None)
+                pinned_version = getattr(pinned_ref, "version", None)
+                if (
+                    parsed.ecosystem is not None
+                    and isinstance(pinned_version, str)
+                ):
+                    pinned_resolutions[
+                        (parsed.ecosystem, parsed.name, pinned_version)
+                    ] = resolved
 
             with ExitStack() as diff_locks:
                 unique = {
@@ -1779,7 +2079,11 @@ def _run_corpus_command(
                     args.spec_a,
                     args.spec_b,
                     corpus_root=root,
-                    resolver=resolver,
+                    resolver=(
+                        _CachedFirstResolverFacade(resolver, pinned_resolutions)
+                        if pinned_resolutions
+                        else resolver
+                    ),
                     heads=heads,
                     cwd=cwd,
                     materializer=locked_materializer,
@@ -1805,7 +2109,7 @@ def _run_corpus_command(
                 resolver = resolver_factory(token)
                 heads = code_search_factory(token)
                 resolved, _, _, _ = _resolve_corpus_spec(
-                    parsed, resolver, heads, Path.cwd(), err
+                    parsed, resolver, heads, Path.cwd(), err, root
                 )
                 typed_scope = cast(RepoScope, getattr(resolved, "scope", resolved))
                 owner, repo = typed_scope.slug.split("/", 1)
@@ -1985,7 +2289,7 @@ def _run_corpus_command(
             print(f"leitir: resolving {raw} (cwd={cwd})", file=err)
             parsed = parse_corpus_spec(raw)
             resolved, tag, version_source, detection_source = _resolve_corpus_spec(
-                parsed, resolver, heads, cwd, err
+                parsed, resolver, heads, cwd, err, root
             )
             if version_source == "lockfile":
                 resolved_package = cast(Any, resolved)

@@ -412,6 +412,13 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
   before materializing (ADR-0023). A provably absent repository or tag
   (`TagAbsentError`) still fails closed, as does a package without a
   checksummed artifact.
+- Offline exact pins (#245, ADR-0024): once a `pypi`/`npm`/`crates`
+  name+version pin is shelved, `get`/`info`/`api`/`examples`/`diff`
+  resolve it local-first from the load-time-verified shelf — no
+  registry contact. The cached resolution is announced (`resolved
+  offline from the corpus index`), degraded shelves still warn, a
+  tampered shelf is skipped (fail-closed offline, self-heals online),
+  and floating/`latest` specs still require the live registry.
 - Provenance-bound corpus outputs resolve to immutable provenance and source-specific manifests. Verified corpus shelves are re-hashed against `materialized_tree_hash` on every load; unverified shelves may omit the digest. Global search results are not necessarily materialized shelves.
 - Full-coverage load-time verification (since #194): every newly materialized manifest carries `materialized_file_digests`, a flat per-file SHA-256 map (Cargo-checksum style). At load, every file's digest is verified in one streaming pass and the map is checked against the anchored full-scope `materialized_tree_hash`, so corruption of *any* file — including files outside the legacy sampled window on shelves above the verification caps — is detected and rejected with a typed error naming the path. The caps now bound only ingest-time sampling heuristics, never the load-time trust level; `sampled` survives solely as an ingest-time cross-check label.
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry. Archive symlink chains are resolved lexically before extraction, so confinement does not depend on host symlink behavior.
@@ -452,7 +459,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-23 audit round): **3144 passed, 142 skipped** without extras; **3191 passed, 92 skipped** with the tree-sitter extra active; combined line+branch coverage **83.31%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%).
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-23 audit round): **3164 passed, 142 skipped** without extras; **3191 passed, 92 skipped** with the tree-sitter extra active; combined line+branch coverage **83.31%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%).
 
 ## Current state
 

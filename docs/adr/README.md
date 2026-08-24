@@ -27,6 +27,7 @@ please use [`template.md`](template.md) as the basis.
 | [0020](0020-go-module-authenticity-via-sumdb.md) | Go module authenticity via SumDB | Accepted | 2026-08-14 |
 | [0021](0021-deterministic-donor-mount-projection.md) | Deterministic donor mount projection for runtime-digest stability | Accepted | 2026-08-17 |
 | [0022](0022-trusted-key-lifecycle.md) | Trusted-key lifecycle: expiry and revocation in a versioned trusted-keys schema | Accepted | 2026-08-20 |
+| [0023](0023-registry-only-degraded-resolution.md) | Registry-only degraded resolution when the repository tag lookup is unavailable | Accepted | 2026-08-23 |
 
 ## Status vocabulary
 

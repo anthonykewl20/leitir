@@ -448,6 +448,24 @@ category; and prospective/retained byte and event counters. A record lacking any
 applicable field rejects. Name coincidence and free-form traces have no
 authority.
 
+*Amendment (2026-08-23, production-readiness audit P1(a)):* one bounded class of
+nested imports is classified as interpreter infrastructure instead of an
+undeclared environment import: the platform path-shim modules (`genericpath`,
+`ntpath`, `posixpath`). CPython may import these lazily from inside import
+machinery — `pathlib` on 3.12.3-era builds imports `ntpath` on POSIX from
+`PurePath.__init__`, and import hooks such as pytest's assertion rewriting do
+the same — at arbitrary points during any in-flight import. Authorization
+requires all of: the import is nested inside another in-flight import (a
+top-level shim import by observed code stays terminal), the module is a member
+of `sys.stdlib_module_names`, and the loader is the interpreter's own frozen
+finder (whose table is compiled into the binary and binds to the pinned
+interpreter build digest) or the plain source loader with bytes from the
+interpreter's own path-module directory. The event is recorded as a normal
+STDLIB observation with detail code `runtime_path_shim_v1` and a deterministic
+synthetic binding digest (`runtime-path-shim-v1:<module>`), so the evidence
+remains visible and byte-bound; a shim shadowed on `sys.path` never authorizes
+itself. CI pins a 3.12.3 leg so this interpreter behavior stays covered.
+
 ### 8. Required probes in a fresh child (E3)
 
 Every validation input contains an explicit `PinnedProbeSet`; `None` is not

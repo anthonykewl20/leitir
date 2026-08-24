@@ -39,6 +39,13 @@ jobs:
             python-version: '3.13'
           - os: windows-latest
             python-version: '3.12'
+          # Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
+          # builds lazily import ntpath from pathlib and import machinery,
+          # which the floating '3.12' leg never sees because setup-python
+          # resolves the newest patch. The runtime import recorder must stay
+          # correct on the oldest supported 3.12 patch, so pin it exactly.
+          - os: ubuntu-latest
+            python-version: '3.12.3'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

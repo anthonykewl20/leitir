@@ -263,6 +263,143 @@ def test_observation_rendering_is_pythonhashseed_independent(seed: str) -> None:
     assert run.stdout == baseline.stdout
 
 
+def test_nested_path_shim_import_is_interpreter_infrastructure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue audit 2026-08-23 P1(a): interpreter-internal path shims are not
+    environment imports.
+
+    On CPython 3.12.3-era builds ``pathlib`` (and import hooks such as pytest's
+    assertion rewriting) lazily imports ``ntpath`` on POSIX from inside import
+    machinery.  A shim imported by another module's import — the only shape the
+    interpreter itself produces — is classified STDLIB infrastructure instead
+    of false-rejecting as an undeclared environment import, even when the
+    policy manifest does not declare it.
+    """
+
+    module = "runtime_fixture_shim_trigger"
+    tmp_path.joinpath(f"{module}.py").write_text(
+        "import ntpath\nVALUE = ntpath.__name__\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    _forget(module)
+    # Load the shim before the window: the interpreter-internal shape is a
+    # nested cache-hit re-import (pathlib on 3.12.3-era builds re-fires
+    # ``import ntpath`` on every PurePath construction), not a fresh load.
+    import ntpath  # noqa: F401 - preload outside the recorded window
+
+    def imports() -> None:
+        __import__(module)
+
+    try:
+        report = record_imports(imports, _policy(module))
+    finally:
+        _forget(module)
+
+    shim_events = [
+        event
+        for event in report.events
+        if event.detail_code == "runtime_path_shim_v1"
+    ]
+    assert {event.classification for event in report.events} == {
+        RuntimeImportClassification.BTS_MEMBER,
+        RuntimeImportClassification.STDLIB,
+    }
+    # At least one shim event fires (the fixture module body import); builds
+    # whose import machinery lazily imports the shim again (CPython 3.12.3-era
+    # pathlib inside pytest's rewrite hook) may contribute more, each with its
+    # own source provenance digest.
+    assert shim_events
+    import leitir.graph.runtime as runtime_module
+
+    for shim in shim_events:
+        assert shim.classification is RuntimeImportClassification.STDLIB
+        assert shim.module_identity_digest == runtime_module._identity_digest("ntpath")
+        assert shim.manifest_binding_digest == runtime_module._identity_digest(
+            "runtime-path-shim-v1:ntpath"
+        )
+    # The evidence records the real interpreter shim bytes: the actual file
+    # digest on source-shim builds, or the pinned interpreter build digest on
+    # frozen-shim builds.
+    import ntpath as real_ntpath
+
+    if shim_events[0].loader_kind is runtime_module.RuntimeLoaderKind.SOURCE:
+        assert shim_events[0].loaded_bytes_digest == runtime_module._loaded_bytes_digest(
+            real_ntpath,
+            runtime_module.RuntimeLoaderKind.SOURCE,
+            "sha256:" + "0" * 64,
+        )
+    else:
+        assert shim_events[0].loader_kind is runtime_module.RuntimeLoaderKind.FROZEN
+        assert shim_events[0].loaded_bytes_digest == _digest("interpreter")
+
+
+def test_direct_path_shim_import_stays_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A top-level shim import by the observed code is still undeclared.
+
+    Only imports nested inside another in-flight import are infrastructure;
+    observed code importing ``ntpath`` directly still fails closed when the
+    policy does not declare it.
+    """
+
+    def imports() -> None:
+        __import__("ntpath")
+
+    with pytest.raises(BTSError) as raised:
+        record_imports(imports, _policy())
+    assert raised.value.reason is BTSRejectReason.REJECT_UNRESOLVED_EDGE
+    assert raised.value.evidence.detail_code == "runtime_unknown_import_v1"
+
+
+def test_shadowed_path_shim_stays_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path shim shadowed on ``sys.path`` never authorizes itself.
+
+    The infrastructure classification is origin-pinned to the running
+    interpreter's own path-module directory; an ``ntpath.py`` planted earlier
+    on ``sys.path`` keeps the fail-closed UNKNOWN verdict.  The shadow is
+    installed as a loaded module with a source spec pointing at the planted
+    file — exactly the ``sys.modules`` state a successful ``sys.path`` shadow
+    leaves behind — because driving the real import machinery through a
+    freshly-loading shadowed shim recurses inside pytest's assertion-rewrite
+    hook on 3.12.3-era builds (an environmental pathology independent of the
+    recorder).
+    """
+
+    import importlib.util
+
+    module = "runtime_fixture_shim_shadow_trigger"
+    fake_path = tmp_path / "ntpath.py"
+    fake_path.write_text("VALUE = 1\n", encoding="utf-8")
+    tmp_path.joinpath(f"{module}.py").write_text(
+        "import ntpath\nVALUE = ntpath.VALUE\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    _forget(module)
+    saved = sys.modules.get("ntpath")
+    spec = importlib.util.spec_from_file_location("ntpath", fake_path)
+    assert spec is not None and spec.loader is not None
+    fake = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fake)
+    sys.modules["ntpath"] = fake
+
+    def imports() -> None:
+        __import__(module)
+
+    try:
+        with pytest.raises(BTSError) as raised:
+            record_imports(imports, _policy(module))
+    finally:
+        _forget(module)
+        if saved is not None:
+            sys.modules["ntpath"] = saved
+        else:
+            sys.modules.pop("ntpath", None)
+    assert raised.value.reason is BTSRejectReason.REJECT_UNRESOLVED_EDGE
+    assert raised.value.evidence.detail_code == "runtime_unknown_import_v1"
+
+
 def test_recorder_lock_is_released_when_the_inventory_digest_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

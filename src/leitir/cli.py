@@ -20,7 +20,7 @@ import os
 import shutil
 import stat
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from enum import IntEnum
 from pathlib import Path
@@ -64,6 +64,11 @@ class ExitCode(IntEnum):
     CORPUS_FAILURE = 1
     MALFORMED_USAGE = 2
     INFRASTRUCTURE_FAILURE = 3
+    # Audit 2026-08-23 P3: a completed command whose entire input set was
+    # deterministically skipped (e.g. ``index`` over only-ineligible
+    # shelves) is a clean no-op, not a corpus failure — but it is not
+    # success either, so automation can still distinguish it from both.
+    NOTHING_INDEXED = 4
 
 
 def _is_broken_pipe_error(exc: OSError) -> bool:
@@ -265,6 +270,16 @@ def build_parser() -> argparse.ArgumentParser:
         "index", help="explicitly build or refresh local trigram index shelves"
     )
     index_command.add_argument("scopes", nargs="*", metavar="scope")
+    index_command.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on every shelved source before indexing",
+    )
+    index_command.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     index_roots = index_command.add_mutually_exclusive_group()
     index_roots.add_argument("--root", default=None, help="corpus root directory")
     index_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
@@ -303,22 +318,32 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "get":
             corpus_command.add_argument("--json", action="store_true", dest="as_json")
-            corpus_command.add_argument(
-                "--require-manifest-auth",
-                action="store_true",
-                help="require opt-in publisher authentication; never accepts unsigned shelves",
-            )
-            corpus_command.add_argument(
-                "--trusted-keys",
-                default=None,
-                help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
-            )
+        corpus_command.add_argument(
+            "--require-manifest-auth",
+            action="store_true",
+            help="require opt-in publisher authentication; never accepts unsigned shelves",
+        )
+        corpus_command.add_argument(
+            "--trusted-keys",
+            default=None,
+            help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+        )
 
     list_command = commands.add_parser("list", help="list materialized sources")
     list_command.add_argument("--json", action="store_true", dest="as_json")
     list_roots = list_command.add_mutually_exclusive_group()
     list_roots.add_argument("--root", default=None, help="corpus root directory")
     list_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    list_command.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on every listed shelf; never lists unsigned shelves",
+    )
+    list_command.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     upgrade = commands.add_parser(
         "upgrade-cache",
         help=_UPGRADE_CACHE_DESCRIPTION,
@@ -343,6 +368,16 @@ def build_parser() -> argparse.ArgumentParser:
     trust_roots = trust.add_mutually_exclusive_group()
     trust_roots.add_argument("--root", default=None, help="corpus root directory")
     trust_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    trust.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on every shelved source before scoring trust",
+    )
+    trust.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     remove = commands.add_parser("remove", help="remove a materialized source")
     remove.add_argument("spec")
     remove_roots = remove.add_mutually_exclusive_group()
@@ -378,12 +413,32 @@ def build_parser() -> argparse.ArgumentParser:
     sbom_roots = sbom.add_mutually_exclusive_group()
     sbom_roots.add_argument("--root", default=None, help="corpus root directory")
     sbom_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    sbom.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on every shelved source before generating the SBOM",
+    )
+    sbom.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     api = commands.add_parser("api", help="extract and cache a materialized source API")
     api.add_argument("spec")
     api.add_argument("--json", action="store_true", dest="as_json")
     api_roots = api.add_mutually_exclusive_group()
     api_roots.add_argument("--root", default=None, help="corpus root directory")
     api_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    api.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication; never accepts unsigned shelves",
+    )
+    api.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     api.set_defaults(cwd=None, no_verify=False)
     examples = commands.add_parser(
         "examples", help="extract and cache materialized source examples"
@@ -394,6 +449,16 @@ def build_parser() -> argparse.ArgumentParser:
     examples_roots.add_argument("--root", default=None, help="corpus root directory")
     examples_roots.add_argument(
         "--local", action="store_true", help="use ./.leitir-refs"
+    )
+    examples.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication; never accepts unsigned shelves",
+    )
+    examples.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
     )
     examples.set_defaults(cwd=None, no_verify=False)
     info = commands.add_parser("info", help="materialize and describe one dependency")
@@ -440,6 +505,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument("-o", "--output", default="corpus.lock")
+    export.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on every shelved source before exporting",
+    )
+    export.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     import_command = commands.add_parser(
         "import", help="import an immutable corpus snapshot"
     )
@@ -494,6 +569,16 @@ def build_parser() -> argparse.ArgumentParser:
     bts_compute.add_argument("--out", help="empty artifact output directory")
     bts_compute.add_argument("--list-seeds", action="store_true", help="list selectable donor definition seeds without computing a BTS")
     bts_compute.add_argument("--allow-reject", action="store_true", help="return success after writing a REJECT BTS result")
+    bts_compute.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on the donor shelf before computing",
+    )
+    bts_compute.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     bts_compute.add_argument("--json", action="store_true", dest="as_json")
 
     architecture = commands.add_parser(
@@ -552,6 +637,16 @@ def build_parser() -> argparse.ArgumentParser:
     bts_run.add_argument("--rootfs-source", required=True)
     bts_run.add_argument("--rootfs-digest", required=True)
     bts_run.add_argument("--emit-packets", default=None, metavar="PACKET_INPUTS.json")
+    bts_run.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require publisher authentication on the donor shelf before running the pipeline",
+    )
+    bts_run.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
     bts_run.add_argument("--json", action="store_true", dest="as_json")
 
     exit_run = commands.add_parser(
@@ -861,27 +956,59 @@ def _build_default_code_search(token: str | None) -> object:
     return GitHubCodeSearchTransport(token=token, **options)
 
 
-def _ensure_local_gitignore(cwd: Path) -> str:
+_GITIGNORE_LINE = ".leitir-refs/"
+_GITIGNORE_COVERAGE = frozenset(
+    {".leitir-refs/", ".leitir-refs", "/.leitir-refs/", "/.leitir-refs", ".leitir-refs/**"}
+)
+# Commands whose ``--local`` corpus access is strictly read-only: they never
+# create or write under ``./.leitir-refs``, so they must not modify the
+# user's ``.gitignore`` either (production-readiness audit 2026-08-23, P3:
+# read-only operations should not touch user files).
+_READ_ONLY_LOCAL_COMMANDS = frozenset(
+    {"bts-compute", "bts-run", "export", "list", "sbom", "search"}
+)
+
+
+def _gitignore_covered(cwd: Path) -> bool:
     gitignore = cwd / ".gitignore"
-    line = ".leitir-refs/"
     try:
         existing = gitignore.read_text(encoding="utf-8")
     except FileNotFoundError:
-        gitignore.write_text(line + "\n", encoding="utf-8")
-        return f"created {gitignore} with {line}"
+        return False
     rules = {
         item.strip()
         for item in existing.splitlines()
         if item.strip() and not item.lstrip().startswith("#")
     }
-    if rules.intersection(
-        {line, ".leitir-refs", "/.leitir-refs/", "/.leitir-refs", ".leitir-refs/**"}
-    ):
+    return bool(rules & _GITIGNORE_COVERAGE)
+
+
+def _ensure_local_gitignore(cwd: Path) -> str:
+    gitignore = cwd / ".gitignore"
+    line = _GITIGNORE_LINE
+    if _gitignore_covered(cwd):
         return f"{gitignore} already covers {line}"
+    try:
+        existing = gitignore.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        gitignore.write_text(line + "\n", encoding="utf-8")
+        return f"created {gitignore} with {line}"
     separator = "" if not existing or existing.endswith("\n") else "\n"
     with gitignore.open("a", encoding="utf-8") as handle:
         handle.write(separator + line + "\n")
     return f"appended {line} to {gitignore}"
+
+
+def _report_local_gitignore(cwd: Path) -> str:
+    """Describe ``.gitignore`` coverage without modifying anything."""
+
+    gitignore = cwd / ".gitignore"
+    if _gitignore_covered(cwd):
+        return f"{gitignore} already covers {_GITIGNORE_LINE}"
+    return (
+        f"note: {gitignore} does not cover {_GITIGNORE_LINE} "
+        "(read-only command; not modified)"
+    )
 
 
 def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
@@ -889,7 +1016,10 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
 
     if getattr(args, "local", False):
         cwd = Path.cwd()
-        print(f"leitir: {_ensure_local_gitignore(cwd)}", file=err)
+        if args.command in _READ_ONLY_LOCAL_COMMANDS:
+            print(f"leitir: {_report_local_gitignore(cwd)}", file=err)
+        else:
+            print(f"leitir: {_ensure_local_gitignore(cwd)}", file=err)
         return (cwd / ".leitir-refs").absolute()
     return resolve_root(getattr(args, "root", None))
 
@@ -940,6 +1070,17 @@ def _resolve_corpus_spec(
         cast("_HeadResolver", heads),
         cwd,
     )
+    degraded = getattr(resolved, "degraded_provenance", None)
+    if degraded is not None and announce is not None:
+        package = cast(Any, resolved)
+        print(
+            f"leitir: warning: {parsed.raw} resolved registry-only "
+            f"({degraded}); materialization uses the checksum-verified "
+            f"{package.ref.ecosystem.value} artifact, but the immutable "
+            "repository tag binding is unavailable — the shelf identity is "
+            "registry-derived, not a git commit",
+            file=announce,
+        )
     if announce is not None and parsed.ecosystem is None and parsed.ref_kind == "branch":
         scope = cast(RepoScope, getattr(resolved, "scope", resolved))
         from .materialize import _utc_now
@@ -981,7 +1122,111 @@ def _write_diff_human(report: DiffReport, out: TextIO) -> None:
             print(note.body, file=out)
 
 
-def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
+def root_for_bts(args: argparse.Namespace) -> Path:
+    """Resolve the corpus root for the BTS commands (no gitignore side talk)."""
+
+    from .corpus import resolve_root
+
+    if getattr(args, "local", False):
+        return (Path.cwd() / ".leitir-refs").absolute()
+    return resolve_root(getattr(args, "root", None))
+
+
+def _require_bts_shelf_authenticated(
+    root: Path,
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    args: argparse.Namespace,
+    *,
+    err: TextIO,
+) -> None:
+    """Fail closed unless the BTS donor shelf carries a valid signature."""
+
+    from .materialize import read_valid_manifest, target_path
+
+    target = target_path(root, owner, repo, commit_sha)
+    manifest = read_valid_manifest(target, owner, repo, commit_sha)
+    if manifest is None:
+        raise ValueError(
+            f"materialized source failed load-time verification: {target}"
+        )
+    _require_authenticated_manifest(
+        manifest,
+        target,
+        trusted_keys=getattr(args, "trusted_keys", None),
+        err=err,
+    )
+
+
+def _require_all_shelves_authenticated(
+    root: Path, args: argparse.Namespace, *, err: TextIO
+) -> None:
+    """Fail closed if any shelved source lacks a valid publisher signature.
+
+    Used by corpus-wide read commands (``export``, ``sbom``… ) so a
+    signed-shelves-only policy is enforceable over the whole corpus, not
+    just the shelves a spec-based command happens to touch.
+    """
+
+    from .corpus import load_sources
+    from .materialize import read_valid_manifest
+
+    for entry in load_sources(root):
+        target = root / entry["path"]
+        manifest = read_valid_manifest(
+            target,
+            entry["owner"],
+            entry["repo"],
+            entry["commit_sha"],
+            host=entry["host"],
+        )
+        if manifest is None:
+            raise ValueError(
+                "materialized source failed load-time verification: "
+                f"{target}"
+            )
+        _require_authenticated_manifest(
+            manifest,
+            target,
+            trusted_keys=getattr(args, "trusted_keys", None),
+            err=err,
+        )
+
+
+def _require_authenticated_manifest(
+    manifest: Mapping[str, object],
+    shelf: Path,
+    *,
+    trusted_keys: str | None,
+    err: TextIO | None,
+) -> None:
+    """Fail closed unless ``shelf`` carries a valid publisher signature.
+
+    Shared enforcement for every read-side command's
+    ``--require-manifest-auth`` (audit 2026-08-23 P2): before any signed-
+    shelves-only policy output is produced, the shelf's manifest must verify
+    against the configured trusted keys.
+    """
+
+    from .manifest_auth import load_trusted_keys, require_manifest_auth
+
+    require_manifest_auth(
+        manifest,
+        shelf,
+        trusted_keys=load_trusted_keys(trusted_keys, shelf_context=shelf),
+    )
+
+
+def _corpus_list(
+    root: Path,
+    *,
+    as_json: bool,
+    out: TextIO,
+    err: TextIO | None = None,
+    require_auth: bool = False,
+    trusted_keys: str | None = None,
+) -> None:
     from .corpus import load_sources
     from .info import source_routing
     from .materialize import read_valid_manifest
@@ -998,8 +1243,25 @@ def _corpus_list(root: Path, *, as_json: bool, out: TextIO) -> None:
             host=entry["host"],
         )
         if manifest is None:
+            if require_auth:
+                # Under a signed-shelves-only policy a shelf that fails
+                # load-time verification must fail the command, not be
+                # silently omitted — otherwise `list --require-manifest-auth`
+                # reports a false green on a tampered corpus (reviewer
+                # 2026-08-23).
+                raise ValueError(
+                    "materialized source failed load-time verification: "
+                    f"{root / entry['path']}"
+                )
             filtered += 1
             continue
+        if require_auth:
+            _require_authenticated_manifest(
+                manifest,
+                root / entry["path"],
+                trusted_keys=trusted_keys,
+                err=err,
+            )
         version = manifest.get("version")
         verification = "unverified"
         if manifest.get("verified") is True:
@@ -1264,7 +1526,14 @@ def _run_corpus_command(
             require_manifest_authentication = True
         root = _corpus_root(args, err)
         if args.command == "list":
-            _corpus_list(root, as_json=args.as_json, out=out)
+            _corpus_list(
+                root,
+                as_json=args.as_json,
+                out=out,
+                err=err,
+                require_auth=require_manifest_authentication,
+                trusted_keys=getattr(args, "trusted_keys", None),
+            )
             return int(ExitCode.SUCCESS)
         if args.command == "upgrade-cache":
             return _upgrade_cache(
@@ -1290,6 +1559,8 @@ def _run_corpus_command(
             shelves = shelves_from_corpus(root, tuple(args.scopes))
             if not shelves:
                 raise ValueError("the corpus has no materialized shelves to index")
+            if require_manifest_authentication:
+                _require_all_shelves_authenticated(root, args, err=err)
             built_paths: list[str] = []
             skipped_ineligible: list[dict[str, object]] = []
             hard_errors: list[dict[str, object]] = []
@@ -1345,12 +1616,27 @@ def _run_corpus_command(
                 ),
                 file=out,
             )
-            if built_paths and not hard_errors:
+            if hard_errors:
+                return int(ExitCode.CORPUS_FAILURE)
+            if built_paths:
                 return int(ExitCode.SUCCESS)
-            return int(ExitCode.CORPUS_FAILURE)
+            # Every shelf was deterministically skipped as ineligible: a
+            # clean no-op with named reasons, not a failure (audit
+            # 2026-08-23 P3 — previously exit 1 with no summary line, which
+            # read like an error).
+            print(
+                f"leitir: nothing to index: {len(skipped_ineligible)} shelf(s) "
+                "skipped as ineligible (see skipped_ineligible above); "
+                "no errors occurred — this is exit code 4 (NOTHING_INDEXED), "
+                "not a failure",
+                file=err,
+            )
+            return int(ExitCode.NOTHING_INDEXED)
         if args.command == "trust":
             from .corpus import record_trust
 
+            if require_manifest_authentication:
+                _require_all_shelves_authenticated(root, args, err=err)
             entry, untyped_result, target = record_trust(args.spec, root)
             result = cast("TrustScore", untyped_result)
             payload = dict(
@@ -1470,8 +1756,6 @@ def _run_corpus_command(
                             f"materialized source failed load-time verification: {path}"
                         )
                     if require_manifest_authentication:
-                        from .manifest_auth import load_trusted_keys, require_manifest_auth
-
                         checked_manifest = read_valid_manifest(
                             path, owner, repo, scope.commit_sha, host=materialize_host
                         )
@@ -1479,10 +1763,11 @@ def _run_corpus_command(
                             raise ValueError(
                                 f"materialized source failed load-time verification: {path}"
                             )
-                        require_manifest_auth(
+                        _require_authenticated_manifest(
                             checked_manifest,
                             path,
-                            trusted_keys=load_trusted_keys(args.trusted_keys, shelf_context=path),
+                            trusted_keys=args.trusted_keys,
+                            err=err,
                         )
 
                 def locked_materializer(
@@ -1545,6 +1830,8 @@ def _run_corpus_command(
         if args.command == "export":
             from .snapshot import export_corpus
 
+            if require_manifest_authentication:
+                _require_all_shelves_authenticated(root, args, err=err)
             lock_path, tarball_path = export_corpus(args.output, root=root)
             lock_sha256 = hashlib.sha256(lock_path.read_bytes()).hexdigest()
             print(
@@ -1594,6 +1881,26 @@ def _run_corpus_command(
                     raise ValueError(f"invalid shelved source path: {entry['path']!r}")
                 target = root / relative
                 _assert_target_confinement(root, target)
+                if require_manifest_authentication:
+                    from .materialize import read_valid_manifest
+
+                    auth_manifest = read_valid_manifest(
+                        target,
+                        entry["owner"],
+                        entry["repo"],
+                        entry["commit_sha"],
+                        host=entry["host"],
+                    )
+                    if auth_manifest is None:
+                        raise ValueError(
+                            f"materialized source failed load-time verification: {target}"
+                        )
+                    _require_authenticated_manifest(
+                        auth_manifest,
+                        target,
+                        trusted_keys=getattr(args, "trusted_keys", None),
+                        err=err,
+                    )
                 targets[target.absolute().as_posix()] = (
                     target,
                     str(entry["commit_sha"]),
@@ -1846,12 +2153,11 @@ def _run_corpus_command(
                     )
                 manifest = valid_manifest
                 if require_manifest_authentication:
-                    from .manifest_auth import load_trusted_keys, require_manifest_auth
-
-                    require_manifest_auth(
+                    _require_authenticated_manifest(
                         manifest,
                         path,
-                        trusted_keys=load_trusted_keys(args.trusted_keys, shelf_context=path),
+                        trusted_keys=args.trusted_keys,
+                        err=err,
                     )
                 recorded_subpath = manifest.get("subpath")
                 cached_subpath = (
@@ -2379,6 +2685,11 @@ def main(
         "occupied-validate",
     }:
         try:
+            if args.command in {"bts-compute", "bts-run"} and getattr(
+                args, "require_manifest_auth", False
+            ):
+                owner, repo, commit_sha = args.spec
+                _require_bts_shelf_authenticated(root_for_bts(args), owner, repo, commit_sha, args, err=err)
             if args.command == "bts-compute":
                 from .bts import BTSStatus
                 from .bts_cli import SeedSelector, list_bts_seeds, run_bts_compute, write_artifacts

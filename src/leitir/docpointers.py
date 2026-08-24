@@ -164,9 +164,21 @@ def _render_source(root: Path, entry: Mapping[str, Any]) -> list[str]:
     version = manifest.get("version")
     if version is not None:
         lines.append(f"- Version: `{version}`")
+    degraded = manifest.get("degraded_provenance")
+    if isinstance(degraded, str):
+        # A degraded (registry-only) shelf's digest is a deterministic
+        # registry identity, not a git commit (ADR-0023); label it
+        # honestly instead of rendering a fabricated Commit SHA
+        # (reviewer-qwen 2026-08-23).
+        identity_line = (
+            "- Registry digest (degraded provenance, no git commit): "
+            f"`{entry.get('commit_sha', '')}`"
+        )
+    else:
+        identity_line = f"- Commit SHA: `{entry.get('commit_sha', '')}`"
     lines.extend(
         (
-            f"- Commit SHA: `{entry.get('commit_sha', '')}`",
+            identity_line,
             f"- Local path: `{relative}`",
         )
     )

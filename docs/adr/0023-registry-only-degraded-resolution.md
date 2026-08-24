@@ -1,0 +1,126 @@
+# ADR-0023: Registry-only degraded resolution when the repository tag lookup is unavailable
+
+- Status: accepted
+- Date: 2026-08-23
+- Implementation: complete
+- Related: [ADR-0004](0004-local-source-materialization.md) local source materialization, [ADR-0003](0003-categorized-http-retry.md) categorized HTTP retry
+- Trigger: production-readiness audit 2026-08-23, finding P1(b)
+
+## Context and Problem Statement
+
+Resolving a PyPI or npm package to a materializable shelf required two
+independent network services to succeed: the registry (metadata plus a
+checksummed source artifact) **and** the GitHub REST API (tag-to-commit
+lookup). When GitHub throttled the request (403 primary or secondary rate
+limit) or was down, resolution hard-failed even though the registry artifact
+was reachable, checksum-verified, and fully sufficient to materialize the
+package bytes. The dependency was total and unbounded: GitHub availability
+gated registry availability. An existing test enforced exactly this
+fragility.
+
+## Decision Drivers
+
+- Registry artifacts are independently trustworthy for *bytes*: the
+  checksum is published by the registry itself and verified byte-for-byte
+  before extraction (ADR-0004, `materialize_artifact`).
+- What the registry cannot provide is the *provenance binding*: which git
+  commit the released version corresponds to. That binding is genuinely
+  unavailable during a GitHub outage or throttle.
+- Fail-closed discipline: a missing or degraded integrity signal must never
+  be silently accepted as full provenance.
+- Availability: a throttled third-party API should not make a reachable,
+  checksum-verified artifact unusable.
+
+## Considered Options
+
+1. **Keep the hard dependency and document it.** Rejected as the only
+   remedy: it leaves total availability coupling in place and the README
+   already framed resolution as registry-driven.
+2. **Opt-in flag for registry-only materialization.** Rejected: the
+   artifact channel is the default materialization path for registry
+   packages already (it is preferred over git archives whenever the registry
+   publishes a source artifact); the failure being fixed is in the identity
+   lookup, not the byte channel. An opt-in flag would preserve the outage
+   for every default invocation.
+3. **Automatic registry-only fallback with explicit degraded provenance.**
+   Chosen.
+
+## Decision
+
+When the hosted-forge tag lookup fails for a *transport-level* reason —
+throttling, secondary rate limits, outages, network errors — and the registry
+metadata provides a checksum-verified source artifact, resolution succeeds
+**registry-only** and records the degradation:
+
+- `ResolvedPackage.degraded_provenance` carries the human-readable reason.
+- `ResolvedPackage.require_full_provenance()` raises the new
+  `DegradedProvenanceError`; provenance-sensitive consumers call it (or check
+  the field) instead of trusting the shelf identity as a git commit.
+- The shelf identity is deterministic and registry-derived:
+  `registry/<package-name>` plus a 40-hex SHA-256 prefix over exactly
+  `leitir-registry-only-v1 | ecosystem | name | version | algorithm |
+  digest`. Two different artifacts can never share a shelf because the
+  artifact digest is an input. npm scoped names flatten to one
+  grammar-safe segment (`@scope/name` → `scope--name`); the shelf SHA
+  still hashes the original scoped name, so flattened collisions never
+  share a shelf.
+
+  The `registry/` prefix is **not** grammatically unreserved — a hosted
+  owner literally named "registry" can exist (reviewer-qwen 2026-08-23).
+  Safety rests on three structural facts, not on the slug grammar: the
+  degraded path never uses the hosted-repository channel; the shelf is
+  disambiguated by the registry digest SHA; and every consumer that
+  interprets a shelf as a git commit is gated on `source ==
+  "git-commit"` / parity (index eligibility, git-parity recomputation,
+  BTS, transplant), which degraded shelves structurally fail.
+- Materialization proceeds through the existing artifact channel
+  (checksum-verified before extraction); the hosted-repository fallback
+  channel and the git-parity comparison are skipped — there is no git commit
+  to bind — and the manifest records `degraded_provenance` plus
+  `parity: "unknown"`.
+- `TagAbsentError` is **not** fallback-eligible. A repository or tag that
+  provably does not exist is a provenance fact, not an outage: the artifact
+  exists but its binding provably does not, and resolution keeps failing
+  closed exactly as before (this is the behavior the pre-existing test
+  enforced, and it is retained).
+- A package whose registry metadata publishes no checksummed artifact also
+  keeps failing closed: there is nothing trustworthy to fall back to.
+
+The CLI announces the degradation on stderr before materialization
+(`leitir: warning: <spec> resolved registry-only (...)`) so operators see
+the weaker binding at the point of use.
+
+## Consequences
+
+- A GitHub outage or rate limit no longer blocks materialization of packages
+  whose registries publish checksummed artifacts.
+- **How full-provenance consumers are actually protected:** the production
+  enforcement is structural — every path that consumes a shelf as a git
+  commit is gated on `source == "git-commit"` and/or parity (index
+  eligibility, git-parity recomputation, BTS donor selection, transplant),
+  and degraded shelves record `source: registry-artifact` with
+  `parity: unknown`, so they fail those gates by construction.
+  `ResolvedPackage.require_full_provenance()` is the library-API guard
+  for future direct consumers of resolution results; the degradation is
+  additionally disclosed in every presentation surface: the CLI warning,
+  the shelf manifest (`degraded_provenance`, empty `repo_url` — no
+  fabricated github.com attribution), the corpus index entry, `info`
+  provenance JSON, SBOM (no fabricated SHA1 checksum; the verified
+  artifact checksum remains the anchor), and POINTERS.md ("registry
+  digest … no git commit" instead of "Commit SHA").
+- Shelves materialized degraded are distinct from any future fully-bound
+  shelf of the same package (different slug), so a later healthy resolution
+  produces a separate, fully provenance-bound shelf rather than overwriting.
+- The pre-existing hard-fail test (tag absent) continues to pass unchanged;
+  new tests cover the throttle, determinism, the no-artifact case, the
+  marker-scope invariant, and an end-to-end degraded materialization.
+
+## Compliance
+
+- Deterministic: the fallback scope is a pure function of pinned registry
+  inputs; no wall-clock or ordering dependence.
+- Fail-closed: absent tags and artifact-less packages still reject; the
+  degraded shelf never claims a git commit; `require_full_provenance()`
+  converts degradation into a typed rejection.
+- Atomicity and integrity channels unchanged (ADR-0004 `_write_manifest`
+  pattern; checksum verification before extraction).

@@ -29,6 +29,109 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _fallback_scope_sha(ref: PackageRef, artifact: ArtifactInfo | None) -> str:
+    """Deterministic registry-identity SHA for a degraded-resolution scope.
+
+    The shelf identity of a registry-only resolution is derived from exactly
+    the inputs the registry itself pins — ecosystem, package name, version,
+    and the checksum of the artifact that was materialized — hashed in a
+    fixed order. Only the first 40 hex characters are kept so the digest
+    round-trips the existing commit-SHA grammar (``_normalize_identity``);
+    collision resistance rests on the full registry checksum that is also
+    pinned in the manifest (``artifact_checksum``), which is verified byte
+    for byte at materialization time.
+    """
+
+    import hashlib
+
+    if artifact is None:
+        raise ResolutionError(
+            f"registry-only fallback requires a checksum-verified artifact; "
+            f"{ref.ecosystem.value}:{ref.name}@{ref.version} has none"
+        )
+    material = "|".join(
+        (
+            "leitir-registry-only-v1",
+            ref.ecosystem.value,
+            ref.name,
+            ref.version,
+            artifact.algorithm,
+            artifact.digest,
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
+
+
+# Reserved shelf-identity prefix for degraded (registry-only) resolutions.
+# NOTE (reviewer-qwen 2026-08-23): the prefix is NOT grammatically
+# unreserved — a hosted owner literally named "registry" can exist. Safety
+# rests on the degraded path never using the hosted-repository channel, on
+# the shelf being disambiguated by the registry digest SHA, and on
+# source/parity gating in consumers; see ADR-0023.
+REGISTRY_SCOPE_PREFIX = "registry/"
+
+
+def registry_only_scope_slug(name: str) -> str:
+    """Return the canonical degraded shelf slug for a package name.
+
+    npm scoped names (``@scope/name``) are flattened to a single
+    grammar-safe segment (``@scope/name`` → ``scope--name``) because the
+    repository-slug grammar admits neither ``@`` nor a third path segment.
+    Any residual name ambiguity (a literal ``scope--name`` package) is
+    disambiguated by the shelf SHA, which hashes the *original* package
+    name.
+    """
+
+    flat = name.removeprefix("@").replace("/", "--")
+    return REGISTRY_SCOPE_PREFIX + flat
+
+
+def _registry_only_scope(
+    ref: PackageRef, artifact: ArtifactInfo | None, reason: str
+) -> RepoScope:
+    """Build the degraded (registry-only) shelf scope for one package.
+
+    The slug is the registry's own package identity — ``registry/<name>`` —
+    which satisfies the repository-slug grammar while never colliding with
+    a real hosted ``owner/repo`` (hosted owners may not contain ``/`` in the
+    first segment). The commit SHA is the deterministic registry-identity
+    digest, so two different artifacts never share a shelf.
+    """
+
+    return RepoScope(
+        slug=registry_only_scope_slug(ref.name),
+        commit_sha=_fallback_scope_sha(ref, artifact),
+    )
+
+
+def _degraded_reason(exc: BaseException) -> str | None:
+    """Classify a tag-lookup failure as fallback-eligible or terminal.
+
+    Only transport-level failures of the hosted-forge API — throttling,
+    secondary rate limits, outages, and network errors (the message
+    envelope produced by ``_get_json``/``_retry`` for HTTP and network
+    failures) — are eligible for the registry-only fallback.
+    Data-integrity failures (malformed metadata, invalid URLs, absent
+    data) are *not*: a forge that answered with malformed data is a
+    provenance fact, not an outage, so resolution keeps failing closed
+    (reviewer-qwen 2026-08-23). A :class:`TagAbsentError` (the repository
+    or tag genuinely does not exist) is likewise not eligible: the
+    registry artifact exists but its provenance binding provably does
+    not (audit 2026-08-23 P1(b)).
+    """
+
+    if isinstance(exc, TagAbsentError):
+        return None
+    if isinstance(exc, ResolutionError):
+        message = str(exc)
+        if "API call failed:" in message:
+            return f"repository tag lookup unavailable: {message}"
+        return None
+    if isinstance(exc, OSError):
+        return f"repository tag lookup transport failure: {exc}"
+    return None
+
+
 def escape_go_module_path(module: str) -> str:
     """Return the Go wire form of a module path.
 
@@ -61,6 +164,12 @@ class PackageRef:
             raise ValueError("name must be non-empty")
         if not self.version or not self.version.strip():
             raise ValueError("version must be non-empty")
+        # Names and versions are request-URL material for every registry; a
+        # non-ASCII value would otherwise surface as a bare unicode codec
+        # error at request time. Reject it here, typed (audit 2026-08-23).
+        for field in (self.name, self.version):
+            if any(not 0x21 <= ord(character) <= 0x7E for character in field):
+                raise ValueError("package names and versions must be printable ASCII")
         if self.ecosystem is Ecosystem.GO and "/" not in self.name:
             raise ValueError("go package name must be a module path")
         if self.ecosystem is Ecosystem.NPM:
@@ -68,6 +177,14 @@ class PackageRef:
             unscoped = re.fullmatch(r"[^/@\s]+", self.name)
             if scoped is None and unscoped is None:
                 raise ValueError("npm package name must be unscoped or @scope/name")
+        if self.ecosystem is Ecosystem.PYPI and re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", self.name
+        ) is None:
+            raise ValueError("invalid pypi package name")
+        if self.ecosystem is Ecosystem.CRATES and re.fullmatch(
+            r"[A-Za-z0-9_][A-Za-z0-9_-]*", self.name
+        ) is None:
+            raise ValueError("invalid crates package name")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +193,9 @@ class ResolvedPackage:
 
     ref: PackageRef
     scope: RepoScope
-    tag: str
+    # ``None`` only for a degraded (registry-only) resolution, which has no
+    # resolved repository tag to bind.
+    tag: str | None
     registry_url: str
     subpath: str | None = None
     docs_urls: tuple[str, ...] = ()
@@ -85,14 +204,23 @@ class ResolvedPackage:
     published_at: str | None = None
     go_module_zip: bool = False
     go_proxy_url: str | None = None
+    # Audit 2026-08-23 P1(b): set when the repository tag lookup was
+    # unavailable (throttle/outage) and the package resolved from the
+    # checksum-verified registry artifact alone. ``scope`` then carries a
+    # ``registry/<name>`` identity whose SHA is a deterministic registry
+    # digest — never a git commit; consumers that require the immutable
+    # tag-to-commit binding must call :meth:`require_full_provenance`.
+    degraded_provenance: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, PackageRef):
             raise TypeError("ref must be a PackageRef")
         if not isinstance(self.scope, RepoScope):
             raise TypeError("scope must be a RepoScope")
-        if not self.tag or not self.tag.strip():
+        if self.degraded_provenance is None and (not self.tag or not self.tag.strip()):
             raise ValueError("tag must be non-empty")
+        if self.degraded_provenance is not None and self.tag is not None and not self.tag.strip():
+            raise ValueError("tag must be non-empty or None for a degraded resolution")
         if not self.registry_url.startswith("https://"):
             raise ValueError("registry_url must be https")
         if self.subpath is not None and (
@@ -121,6 +249,34 @@ class ResolvedPackage:
             self.published_at
         ):
             raise ValueError("published_at must be a timezone-aware ISO-8601 timestamp")
+        if self.degraded_provenance is not None:
+            if not self.degraded_provenance.strip():
+                raise ValueError("degraded_provenance must be a non-empty reason")
+            if not self.scope.slug.startswith(REGISTRY_SCOPE_PREFIX):
+                raise ValueError(
+                    "degraded provenance requires a registry/ shelf identity"
+                )
+            if self.tag is not None:
+                raise ValueError(
+                    "degraded provenance requires an unbound tag (None)"
+                )
+
+
+    def require_full_provenance(self) -> None:
+        """Fail closed when the resolution is registry-only (degraded).
+
+        Raises :class:`DegradedProvenanceError` so provenance-sensitive paths
+        (anything that consumes ``scope.commit_sha`` as a git commit) reject
+        explicitly instead of silently trusting a shelf identity that was
+        never bound to an immutable tag.
+        """
+
+        if self.degraded_provenance is not None:
+            raise DegradedProvenanceError(
+                f"{self.ref.ecosystem.value}:{self.ref.name}@{self.ref.version} "
+                f"resolved registry-only ({self.degraded_provenance}); the "
+                "immutable repository tag binding is unavailable"
+            )
 
 
 def _valid_published_at(value: object) -> bool:
@@ -177,6 +333,19 @@ class _EcosystemResolver(Protocol):
 
 class ResolutionError(Exception):
     """The package could not be resolved deterministically."""
+
+
+class DegradedProvenanceError(ResolutionError):
+    """A package resolved registry-only because the repository tag lookup
+    was throttled or otherwise unavailable (production-readiness audit
+    2026-08-23, P1(b)).
+
+    Raised by :meth:`ResolvedPackage.require_full_provenance` — the fallback
+    itself does not raise; the degraded binding is recorded on the result so
+    callers that never consume commit SHAs can proceed with the
+    checksum-verified registry artifact, while callers that need the
+    immutable tag-to-commit binding fail closed.
+    """
 
 
 class TagAbsentError(ResolutionError):
@@ -1708,22 +1877,46 @@ class PyPIResolver:
             ) from exc
 
         slug = self._extract_github_slug(payload)
+        artifact = self._artifact(ref, payload)
+        from leitir.docpointers import extract_docs_urls
+
+        docs_urls = tuple(extract_docs_urls(ref.ecosystem, payload))
+        registry_url = f"https://pypi.org/project/{ref.name}/{ref.version}/"
         if slug is None:
             raise ResolutionError(
                 f"no GitHub repository found for {ref.name}=={ref.version}"
             )
 
-        tag, commit_sha = self._resolve_first_tag(slug, ref.version)
+        try:
+            tag, commit_sha = self._resolve_first_tag(slug, ref.version)
+        except ResolutionError as exc:
+            degraded = _degraded_reason(exc)
+            if degraded is None or artifact is None:
+                raise
+            logger.warning(
+                "pypi resolution degraded to registry-only for %s==%s: %s",
+                ref.name,
+                ref.version,
+                exc,
+            )
+            return ResolvedPackage(
+                ref=ref,
+                scope=_registry_only_scope(ref, artifact, degraded),
+                tag=None,
+                registry_url=registry_url,
+                docs_urls=docs_urls,
+                artifact=artifact,
+                published_at=self._published_at(payload),
+                degraded_provenance=degraded,
+            )
         scope = RepoScope(slug=slug, commit_sha=commit_sha)
-        from leitir.docpointers import extract_docs_urls
-
         return ResolvedPackage(
             ref=ref,
             scope=scope,
             tag=tag,
-            registry_url=f"https://pypi.org/project/{ref.name}/{ref.version}/",
-            docs_urls=tuple(extract_docs_urls(ref.ecosystem, payload)),
-            artifact=self._artifact(ref, payload),
+            registry_url=registry_url,
+            docs_urls=docs_urls,
+            artifact=artifact,
             published_at=self._published_at(payload),
         )
 
@@ -2331,35 +2524,59 @@ class NpmResolver:
         ):
             raise ResolutionError("npm repository.directory must be a safe relative path")
         slug = self._github_slug(repo_url)
+        artifact = self._artifact(ref, payload)
 
         from leitir.docpointers import extract_docs_urls
 
         docs_urls = tuple(
             extract_docs_urls(ref.ecosystem, payload, version=ref.version)
         )
+        registry_url = f"https://www.npmjs.com/package/{encoded}/v/{ref.version}"
 
         candidates = (f"{ref.name}@{ref.version}", f"v{ref.version}", ref.version)
+        last_absent: TagAbsentError | None = None
         for tag in candidates:
             try:
                 sha = self._tag_resolver.resolve_tag_to_sha(slug, tag)
-                logger.debug("resolved package=%s@%s slug=%s tag=%s sha=%s artifact=%s", ref.name, ref.version, slug, tag, sha[:12], "registry-artifact" if self._artifact(ref, payload) is not None else "git-commit")
+                logger.debug("resolved package=%s@%s slug=%s tag=%s sha=%s artifact=%s", ref.name, ref.version, slug, tag, sha[:12], "registry-artifact" if artifact is not None else "git-commit")
                 return ResolvedPackage(
                     ref=ref,
                     scope=RepoScope(slug, sha),
                     tag=tag,
-                    registry_url=f"https://www.npmjs.com/package/{encoded}/v/{ref.version}",
+                    registry_url=registry_url,
                     subpath=directory,
                     docs_urls=docs_urls,
-                    artifact=self._artifact(ref, payload),
+                    artifact=artifact,
                     published_at=self._published_at(payload, ref.version),
                 )
-            except TagAbsentError:
-                pass
+            except TagAbsentError as exc:
+                last_absent = exc
+            except ResolutionError as exc:
+                degraded = _degraded_reason(exc)
+                if degraded is None or artifact is None:
+                    raise
+                logger.warning(
+                    "npm resolution degraded to registry-only for %s@%s: %s",
+                    ref.name,
+                    ref.version,
+                    exc,
+                )
+                return ResolvedPackage(
+                    ref=ref,
+                    scope=_registry_only_scope(ref, artifact, degraded),
+                    tag=None,
+                    registry_url=registry_url,
+                    subpath=directory,
+                    docs_urls=docs_urls,
+                    artifact=artifact,
+                    published_at=self._published_at(payload, ref.version),
+                    degraded_provenance=degraded,
+                )
         tried = ", ".join(repr(tag) for tag in candidates)
         raise ResolutionError(
             f"none of the npm tag candidates [{tried}] exists in {slug}; "
             "npm resolution has no default-branch fallback"
-        )
+        ) from last_absent
 
     @staticmethod
     def _artifact(ref: PackageRef, payload: object) -> ArtifactInfo | None:

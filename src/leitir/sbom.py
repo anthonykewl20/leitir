@@ -394,7 +394,18 @@ def _checksums(package: _Package) -> list[tuple[str, str]]:
     if artifact is not None:
         checksums.add(artifact)
     commit = package.entry.get("commit_sha")
-    if isinstance(commit, str) and re.fullmatch(r"(?i)[0-9a-f]{40}", commit):
+    degraded = package.manifest.get("degraded_provenance")
+    if (
+        isinstance(commit, str)
+        and re.fullmatch(r"(?i)[0-9a-f]{40}", commit)
+        and not isinstance(degraded, str)
+    ):
+        # A real git commit pin is safe to expose as an SHA1 checksum. A
+        # degraded (registry-only) shelf carries a deterministic
+        # registry-identity digest, NOT a git object hash; emitting it as
+        # SHA1 would misattribute provenance to auditors (reviewer-qwen
+        # 2026-08-23). The verified artifact checksum above remains the
+        # package's integrity anchor.
         checksums.add(("SHA1", commit.lower()))
     return sorted(checksums)
 

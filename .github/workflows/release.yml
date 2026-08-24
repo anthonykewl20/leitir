@@ -1,16 +1,92 @@
 name: Release
 
+# Audit fix (2026-08-23): a v* tag used to rebuild artifacts with floating
+# pip/build/twine and publish them unverified, with no CI gate. Publication is
+# now gated end-to-end:
+#   gate    - a CI workflow run for the EXACT tagged commit must have succeeded;
+#   package - the CI-tested wheel/sdist artifact is reused (never rebuilt),
+#             tag<->file-name<->METADATA version is verified, and twine comes
+#             from the hash-locked .github/workflows/requirements-release.lock;
+#   attest  - build provenance is attested for exactly those files;
+#   release - the recorded sha256 digests are re-verified before the GitHub
+#             release is created from the same CI-tested bytes.
+
 on:
   push:
     tags:
       - 'v*'
 
-permissions:
-  contents: write  # needed to create the release and upload assets
+permissions: {}  # each job below grants only what it needs
 
 jobs:
-  build:
+  gate:
+    # Gate 1 - green CI for the exact SHA. On an annotated-tag push GITHUB_SHA
+    # is the tag OBJECT, not the commit (this repo's tags are annotated, e.g.
+    # v0.1.4), so peel it with ^{commit} before matching CI runs.
+    # API-only job; 5 min matches the required-checks-pass budget in ci.yml.
+    timeout-minutes: 5
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read  # gh run list
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit }}
+      ci_run_id: ${{ steps.ci.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Resolve the tagged commit SHA
+        id: resolve
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "${GITHUB_REF_NAME} (GITHUB_SHA=${GITHUB_SHA}) -> commit ${commit}"
+      - name: Require a successful CI run for that exact commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.resolve.outputs.commit }}
+        run: |
+          set -euo pipefail
+          # NOTE: the workflow file is ci.yml - the GitHub API resolves
+          # workflow file names case-sensitively, so 'CI.yml' would 404.
+          runs="$(gh run list --workflow ci.yml --commit "$COMMIT_SHA" --json databaseId,headSha,conclusion,status)"
+          run_id="$(printf '%s' "$runs" | jq -r --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c) | select(.status == "completed" and .conclusion == "success")] | .[0].databaseId // empty')"
+          if [ -n "$run_id" ]; then
+            echo "Green CI run for commit ${COMMIT_SHA} (audit trail):"
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+            echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # No green run: fail closed with a precise reason.
+          pending="$(printf '%s' "$runs" | jq --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c and .status != "completed")] | length')"
+          if [ "${pending:-0}" -gt 0 ]; then
+            echo "::error::CI for commit ${COMMIT_SHA} is still in progress; re-run this workflow after it completes." >&2
+          elif [ -n "$runs" ] && [ "$runs" != "[]" ]; then
+            echo "::error::CI ran for commit ${COMMIT_SHA} but no run concluded 'success'; refusing to publish." >&2
+          else
+            echo "::error::No CI workflow run found for commit ${COMMIT_SHA}; publication requires a green CI run for the exact tagged commit." >&2
+          fi
+          exit 1
+
+  package:
+    # Gate 2 - reuse the tested artifact, never rebuild: download the
+    # wheel/sdist that the green CI run built and tested
+    # (python-package-distributions), verify tag<->file-name<->METADATA
+    # version, re-run twine check with the hash-locked twine, and republish
+    # the exact bytes as this run's 'dist' artifact (attest/release
+    # re-verify the recorded sha256 digests against it).
+    needs: gate
+    # Matches the CI package-job budget in ci.yml; install-dominated.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read  # gh run download
+    outputs:
+      dist_sha256: ${{ steps.digests.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -18,35 +94,151 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      - name: Build wheel and sdist
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: .github/workflows/requirements-release.lock
+      - name: Download the CI-tested distributions (no rebuild)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ needs.gate.outputs.ci_run_id }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-          python -m build --outdir dist/
-      - name: Verify package contents
+          set -euo pipefail
+          gh run download "$CI_RUN_ID" --name python-package-distributions --dir dist
+          test -d dist
+          ls -l dist
+      - name: Verify the artifact file names match the pushed tag
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          python -m pip install --quiet twine
-          python -m twine check dist/*
-      - name: Upload artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          set -euo pipefail
+          version="${TAG#v}"
+          case "$version" in
+            '' | *[!A-Za-z0-9._-]*)
+              echo "::error::cannot derive a package version from tag '${TAG}'" >&2
+              exit 1 ;;
+          esac
+          expected="leitir-${version}-py3-none-any.whl leitir-${version}.tar.gz"
+          actual="$(find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::dist artifact does not match tag '${TAG}':" >&2
+            echo "  expected: ${expected}" >&2
+            echo "  actual:   ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify the wheel METADATA version matches the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python - "${TAG#v}" <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          version = sys.argv[1]
+          wheels = sorted(glob.glob("dist/*.whl"))
+          assert len(wheels) == 1, f"expected exactly one wheel, found {wheels}"
+          with zipfile.ZipFile(wheels[0]) as archive:
+              metadata_paths = sorted(
+                  name for name in archive.namelist()
+                  if name.endswith(".dist-info/METADATA")
+              )
+              assert len(metadata_paths) == 1, (
+                  f"expected exactly one METADATA in {wheels[0]}, found {metadata_paths}"
+              )
+              expected_path = f"leitir-{version}.dist-info/METADATA"
+              assert metadata_paths[0] == expected_path, (
+                  f"{metadata_paths[0]} does not match tag version {version}"
+              )
+              versions = [
+                  line.split(":", 1)[1].strip()
+                  for line in archive.read(metadata_paths[0])
+                  .decode("utf-8")
+                  .splitlines()
+                  if line.startswith("Version:")
+              ]
+          assert len(versions) == 1, f"expected exactly one Version header, found {versions}"
+          assert versions[0] == version, (
+              f"wheel METADATA Version {versions[0]!r} != tag version {version!r}"
+          )
+          print(f"wheel METADATA Version {version} matches tag")
+          PY
+      - name: Install hash-locked twine
+        run: >-
+          uv pip install --system --require-hashes --only-binary :all:
+          -r .github/workflows/requirements-release.lock
+      - name: Twine-check the distributions
+        run: python -m twine check dist/*
+      - name: Record distribution digests
+        id: digests
+        env:
+          CI_RUN_ID: ${{ needs.gate.outputs.ci_run_id }}
+        run: |
+          set -euo pipefail
+          sha256sum dist/*
+          {
+            echo "### CI-tested distributions (from CI run ${CI_RUN_ID})"
+            echo '```'
+            sha256sum dist/*
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256=$(sha256sum dist/* | sort -k 2 | tr '\n' '|')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
 
-  release:
-    needs: build
+  attest:
+    # Gate 3 - provenance: attest build provenance for exactly the CI-tested
+    # files 'release' will publish (dist/* holds only the two verified
+    # archives; 'release' independently re-verifies the same digests).
+    needs: [gate, package]
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      id-token: write      # OIDC token signing the attestation
+      attestations: write  # persist the attestation
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+  release:
+    # Gate 4 - publish the exact tested bytes: re-verify the sha256 digests
+    # 'package' recorded before creating the release.
+    needs: [gate, package]
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create the release and upload assets
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist/
+      - name: Verify the files are the exact bytes 'package' verified
+        env:
+          EXPECTED_DIST_SHA256: ${{ needs.package.outputs.dist_sha256 }}
+        run: |
+          set -euo pipefail
+          actual="$(sha256sum dist/* | sort -k 2 | tr '\n' '|')"
+          if [ "$actual" != "$EXPECTED_DIST_SHA256" ]; then
+            echo "::error::dist digests changed in transit; refusing to publish:" >&2
+            echo "  expected: ${EXPECTED_DIST_SHA256}" >&2
+            echo "  actual:   ${actual}" >&2
+            exit 1
+          fi
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,5 +251,5 @@ jobs:
           else
             notes=$(git log --pretty=format:'- %s' "${tag}")
           fi
-          # Create release with artifacts
+          # Create release with the exact CI-tested artifacts
           gh release create "$tag" --title "$tag" --notes "$notes" dist/*.whl dist/*.tar.gz

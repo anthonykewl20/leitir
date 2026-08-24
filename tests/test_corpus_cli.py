@@ -77,6 +77,33 @@ def test_gitignore_is_created_when_missing(tmp_path):
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".leitir-refs/\n"
 
 
+def test_read_only_local_commands_do_not_modify_gitignore(tmp_path, monkeypatch):
+    """Audit 2026-08-23 P3: read-only --local commands never touch user files."""
+
+    import io
+    from types import SimpleNamespace
+
+    from leitir import cli
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Err(io.StringIO):
+        pass
+
+    err = _Err()
+    root = cli._corpus_root(
+        SimpleNamespace(command="list", local=True, root=None), err
+    )
+    assert root == (tmp_path / ".leitir-refs").absolute()
+    assert not (tmp_path / ".gitignore").exists()
+    assert "not modified" in err.getvalue()
+
+    err_mutating = _Err()
+    cli._corpus_root(SimpleNamespace(command="get", local=True, root=None), err_mutating)
+    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".leitir-refs/\n"
+    assert "created" in err_mutating.getvalue()
+
+
 def _fabricate(root):
     relative = f"repos/github.com/acme/demo/{SHA}"
     source = root / relative
@@ -401,6 +428,46 @@ def _invoke(argv):
     out, err = io.StringIO(), io.StringIO()
     code = main(argv, stdout=out, stderr=err)
     return code, out.getvalue(), err.getvalue()
+
+
+def test_degraded_resolution_announces_registry_only_warning(monkeypatch, tmp_path):
+    """Audit 2026-08-23 P1(b): a registry-only (degraded) resolution is
+    announced on the announce stream before materialization proceeds."""
+
+    from leitir.resolver import Ecosystem, PackageRef, ResolvedPackage, registry_only_scope_slug
+    from leitir.search import RepoScope
+
+    monkeypatch.setenv("LEITIR_HOME", str(tmp_path))
+    degraded = ResolvedPackage(
+        PackageRef(Ecosystem.NPM, "demo", "1.0.0"),
+        RepoScope(registry_only_scope_slug("demo"), "f" * 40),
+        None,
+        "https://www.npmjs.com/package/demo/v/1.0.0",
+        degraded_provenance="repository tag lookup unavailable: HTTP 403 rate limit",
+    )
+    monkeypatch.setattr(
+        "leitir.resolver.resolve_corpus_spec",
+        lambda *_args, **_kwargs: (degraded, None, None, None),
+    )
+
+    class _StubResolver:
+        def resolve(self, _spec, _cwd):
+            return degraded
+
+    import leitir.cli as cli
+
+    announce = io.StringIO()
+    cli._resolve_corpus_spec(
+        parse_corpus_spec("npm:demo@1.0.0"),
+        _StubResolver(),
+        None,
+        tmp_path,
+        announce,
+    )
+    text = announce.getvalue()
+    assert "resolved registry-only" in text
+    assert "HTTP 403 rate limit" in text
+    assert "registry-derived, not a git commit" in text
 
 
 def test_list_human_and_json(tmp_path, monkeypatch):

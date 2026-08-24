@@ -182,6 +182,28 @@ release review.
 - Users opting in must secure keys, trust-root configuration, and recovery media.
 - A cryptographic provider becomes part of the optional trusted computing base.
 
+## Amendment (2026-08-23): enforcement surface and the unsigned-mode boundary
+
+The production-readiness audit found that `--require-manifest-auth` existed
+only on `get`, `info`, and `diff`, so a "signed shelves only" policy could not
+actually be enforced: the same shelves could be consulted through `fetch`, `list`,
+`api`, `examples`, `trust`, `sbom`, `export`, `index`, `bts-compute`, and
+`bts-run` with no authenticated path. The flag and its `--trusted-keys`
+companion are now available and enforced on all of those commands —
+spec-based commands verify the shelves they touch, and corpus-wide commands
+(`list`, `index`, `sbom`, `export`, `trust`) verify every shelved source
+before producing output.
+
+The unsigned-mode boundary is unchanged and remains a documented limitation
+rather than a claim: without publisher signatures, file *contents* stay
+protected by the load-time tree verification (ADR-0006), but displayed
+metadata — `registry_url`, source names, trust fields, and other manifest
+strings that are not covered by `materialized_tree_hash` — can be edited
+undetected by whoever controls the local storage. Authenticating displayed
+provenance requires opting in to manifest auth (or a future projection that
+covers those fields); agents and automation must not treat unsigned-mode
+metadata displays as tamper-evident.
+
 ## Links
 
 - [#40 — Manifest authenticity](https://github.com/anthonykewl20/leitir/issues/40)

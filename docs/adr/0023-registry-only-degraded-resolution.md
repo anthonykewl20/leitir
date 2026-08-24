@@ -125,11 +125,16 @@ metadata provides a checksum-verified source artifact, resolution succeeds
   times can carry different reason strings. The shelf identity remains the
   deterministic registry-digest SHA above; only the human-readable reason
   varies.
-- **Crates intentionally remains fail-closed during tag-lookup outages**
-  (reviewer round 2): `CratesResolver` has no degraded branch — this ADR
-  ratifies the fallback for PyPI and npm only, and extending it to crates.io
-  (which does publish checksummed `.crate` artifacts) is a separate
-  owner-gated change, not a silent scope widening.
+- **Crates is covered by the same fallback (owner-approved extension,
+  2026-08-24).** `CratesResolver` originally shipped without a degraded
+  branch; the owner approved extending the fallback after the #248 round
+  made the classification contract trustworthy. crates.io publishes
+  checksummed `.crate` artifacts (`version.checksum`, sha256), so the same
+  rule applies: transport-level tag-lookup failure + checksummed artifact →
+  registry-only degrade; absence, fatal client errors, and missing
+  checksums keep failing closed. Pinned by
+  `test_crates_resolution_degrades_over_real_transport` and
+  `test_crates_absent_tag_still_fails_closed`.
 
 The CLI announces the degradation on stderr before materialization
 (`leitir: warning: <spec> resolved registry-only (...)`) so operators see

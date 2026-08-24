@@ -222,8 +222,13 @@ class CorpusBenchmarkRunner:
         from leitir.spec import parse_corpus_spec
 
         parsed = parse_corpus_spec(spec)
+        # announce=sys.stderr keeps the registry-only degraded-provenance
+        # warning visible on the benchmark path too (reviewer-qwen
+        # 2026-08-23); the announce stream is write-only.
+        import sys
+
         resolved_raw, _tag, _source, _detection = _resolve_corpus_spec(
-            parsed, self._resolver, self._heads, Path.cwd()
+            parsed, self._resolver, self._heads, Path.cwd(), sys.stderr
         )
         resolved = resolved_raw
         scope = resolved.scope if isinstance(resolved, ResolvedPackage) else resolved

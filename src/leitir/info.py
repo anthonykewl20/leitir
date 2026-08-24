@@ -353,6 +353,11 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
             "owner": entry.get("owner"),
             "repo": entry.get("repo"),
             "commit_sha": entry.get("commit_sha"),
+            # Honest labeling for registry-only shelves (ADR-0023): the
+            # digest above is a deterministic registry identity, not a git
+            # commit; expose the degradation reason to info consumers
+            # (reviewer-qwen 2026-08-23).
+            "degraded_provenance": manifest.get("degraded_provenance"),
             "version": manifest.get("version"),
             "version_source": manifest.get("version_source"),
             "source": manifest.get("source"),

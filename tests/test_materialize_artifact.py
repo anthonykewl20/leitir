@@ -102,6 +102,54 @@ def test_materialize_verified_artifact_manifest(tmp_path):
     assert manifest["has_tests"] is None
 
 
+def test_degraded_registry_only_resolution_materializes_and_records_it(tmp_path):
+    """Audit 2026-08-23 P1(b): a throttled GitHub tag lookup resolves
+    registry-only and still materializes from the checksum-verified artifact,
+    recording the degraded provenance and a registry/ shelf identity."""
+
+    from leitir.resolver import DegradedProvenanceError, registry_only_scope_slug
+
+    data = _tar("package", {"index.js": b"module.exports = 1\n"})
+    artifact = _artifact(data)
+    degraded_reason = "repository tag lookup unavailable: HTTP 403 rate limit"
+    resolved = ResolvedPackage(
+        PackageRef(Ecosystem.NPM, "demo", "1.0.0"),
+        RepoScope(registry_only_scope_slug("demo"), "f" * 40),
+        None,
+        "https://www.npmjs.com/package/demo/v/1.0.0",
+        artifact=artifact,
+        degraded_provenance=degraded_reason,
+    )
+    with pytest.raises(DegradedProvenanceError):
+        resolved.require_full_provenance()
+
+    target = materialize_source(
+        "npm:demo@1.0.0",
+        resolved,
+        root=tmp_path,
+        parity_fetcher=RegistryArtifactFetcher(get_bytes=lambda _url: data),
+    )
+
+    manifest = json.loads((target / MANIFEST_NAME).read_text())
+    assert manifest["source"] == "registry-artifact"
+    assert manifest["owner"] == "registry"
+    assert manifest["repo"] == "demo"
+    assert manifest["commit_sha"] == "f" * 40
+    assert manifest["degraded_provenance"] == degraded_reason
+    assert manifest["parity"] == "unknown"
+    # The degraded shelf must not present a fabricated repository URL
+    # (reviewer-qwen 2026-08-23): no git commit backs this shelf.
+    assert manifest["repo_url"] == ""
+    assert (target / "index.js").read_bytes() == b"module.exports = 1\n"
+
+    # The shelved source reloads cleanly through the standard validator,
+    # so future loads see the degraded marker.
+    from leitir.materialize import read_valid_manifest
+
+    reloaded = read_valid_manifest(target, "registry", "demo", "f" * 40)
+    assert reloaded is not None and reloaded["degraded_provenance"] == degraded_reason
+
+
 def test_git_materialization_does_not_reuse_artifact_cache(tmp_path):
     artifact_data = _tar("package", {"index.js": b"artifact\n"})
     artifact = _artifact(artifact_data)

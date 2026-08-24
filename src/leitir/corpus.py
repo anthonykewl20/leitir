@@ -13,6 +13,7 @@ from typing import Any, cast
 from leitir.materialize import (
     MANIFEST_NAME,
     ArtifactRetrievalError,
+    MaterializationError,
     _assert_target_confinement,
     _file_lock,
     _fsync_directory,
@@ -38,6 +39,10 @@ _INDEX_FIELDS = {
     "path": str,
     "fetched_at": str,
 }
+# Optional per-entry marker for registry-only (degraded) shelves: the
+# commit_sha is a deterministic registry digest, not a git commit
+# (ADR-0023; reviewer-qwen 2026-08-23).
+_INDEX_OPTIONAL_FIELDS = {"degraded_provenance": str}
 
 
 def resolve_root(root: str | os.PathLike[str] | None = None) -> Path:
@@ -436,6 +441,12 @@ def materialize_source(
     if isinstance(resolved, ResolvedPackage):
         scope = resolved.scope
         host = resolved.host
+        # Audit 2026-08-23 P1(b): a registry-only (degraded) resolution has no
+        # git commit to bind a hosted-repository shelf to; only the artifact
+        # channel (which materializes straight from the checksum-verified
+        # registry artifact) may proceed, and it records the degraded
+        # provenance in the manifest.
+        artifact_only = resolved.degraded_provenance is not None
         if repository_resolver is None and host in {"gitlab.com", "bitbucket.org"}:
             from leitir.resolver import BitbucketResolver, GitLabResolver
 
@@ -472,6 +483,15 @@ def materialize_source(
         artifact = (
             resolved.artifact if isinstance(resolved.artifact, ArtifactInfo) else None
         )
+        if artifact_only and artifact is None:
+            # Degraded resolution requires a checksum-verified artifact; the
+            # resolvers guarantee one, so reaching here means an inconsistency
+            # between the resolver contract and this orchestration.
+            raise MaterializationError(
+                f"registry-only resolution of {spec} has no checksum-verified artifact"
+            )
+        if artifact_only:
+            manifest_fields["degraded_provenance"] = resolved.degraded_provenance
     if isinstance(resolved, ResolvedPackage) and resolved.go_module_zip:
         if resolved.go_proxy_url is None:
             raise RuntimeError("Go module zip resolution has no proxy URL")
@@ -505,6 +525,11 @@ def materialize_source(
                 on_fetch=on_fetch,
             )
         except ArtifactRetrievalError:
+            if artifact_only:
+                # No hosted-repository fallback exists for a degraded
+                # resolution: its scope is not a git commit, so the repo
+                # channel cannot be bound (audit 2026-08-23 P1(b)).
+                raise
             target = materialize_repo(
                 corpus_root,
                 spec,
@@ -561,7 +586,14 @@ def materialize_source(
 
             if manifest.get("parity") not in {"exact", "drift"}:
                 has_tests: bool | None = None
-                if manifest.get("source") == "registry-artifact":
+                if artifact_only:
+                    # The hosted-repository parity comparison is unavailable
+                    # for a degraded scope: there is no git commit to
+                    # materialize. The artifact checksum was already verified
+                    # during materialization, so record the parity verdict as
+                    # unknown with the degraded provenance retained above.
+                    parity = UNKNOWN_PARITY
+                elif manifest.get("source") == "registry-artifact":
                     temporary_root = Path(tempfile.mkdtemp(prefix="leitir-git-parity-"))
                     try:
                         git_target = materialize_repo(
@@ -637,6 +669,13 @@ def materialize_source(
             "fetched_at": manifest["fetched_at"],
             "verified": manifest.get("verified", False),
         }
+        # Propagate the degraded marker into the corpus index so
+        # consumers (list/sbom/export) never present the fabricated
+        # 40-hex registry digest as an ordinary commit pin
+        # (reviewer-qwen 2026-08-23).
+        degraded_reason = manifest.get("degraded_provenance")
+        if isinstance(degraded_reason, str) and degraded_reason:
+            entry["degraded_provenance"] = degraded_reason
     # Pointer regeneration may lock every indexed target. Do it only after
     # releasing this target's writer lock to preserve the global lock order.
     _upsert(corpus_root, entry)

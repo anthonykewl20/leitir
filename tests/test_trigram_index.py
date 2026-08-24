@@ -177,13 +177,13 @@ def test_cli_index_skips_ineligible_shelves_without_blocking_eligible_ones(
     assert "parity" in captured.err
 
 
-def test_cli_index_all_ineligible_shelves_fail_with_named_reasons(
+def test_cli_index_all_ineligible_shelves_exit_nothing_indexed_with_named_reasons(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _corpus(tmp_path, {"drift.py": b"needle\n"}, parity="drift")
     monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
 
-    assert main(["index", "--root", str(tmp_path)]) == ExitCode.CORPUS_FAILURE
+    assert main(["index", "--root", str(tmp_path)]) == ExitCode.NOTHING_INDEXED
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
@@ -192,6 +192,9 @@ def test_cli_index_all_ineligible_shelves_fail_with_named_reasons(
     assert payload["skipped_ineligible"][0]["conditions"] == ["parity"]
     assert "github.com:example/demo@" + SHA in captured.err
     assert "parity" in captured.err
+    # The no-op outcome must be self-describing, not a terse failure.
+    assert "nothing to index" in captured.err
+    assert "NOTHING_INDEXED" in captured.err
 
 
 def test_indexed_and_exhaustive_reports_have_identical_source_identities(tmp_path):

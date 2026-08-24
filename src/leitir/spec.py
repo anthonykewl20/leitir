@@ -13,6 +13,21 @@ from urllib.parse import unquote, urlsplit
 _SHA1 = re.compile(r"^[0-9a-fA-F]{40}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+$")
 _NPM_NAME = re.compile(r"^(?:[A-Za-z0-9_.~-][A-Za-z0-9_.~-]*|@[A-Za-z0-9_.~-]+/[A-Za-z0-9_.~-]+)$")
+# PyPI project names: PEP 508/503 grammar (ASCII letters, digits, and the
+# inner separators ``.``, ``-``, ``_``; no leading/trailing separator).
+_PYPI_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+# crates.io crate names: ASCII alphanumerics, ``-``, and ``_``.
+_CRATES_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
+_Ecosystem_NAME = {
+    "npm": _NPM_NAME,
+    "pypi": _PYPI_NAME,
+    "crates": _CRATES_NAME,
+}
+_Ecosystem_FAILURE = {
+    "npm": "invalid npm package name",
+    "pypi": "invalid pypi package name",
+    "crates": "invalid crates package name",
+}
 _PREFIXES = {
     "npm": "npm",
     "pypi": "pypi",
@@ -65,6 +80,12 @@ class CorpusSpec:
 
 def _fail(raw: object, reason: str) -> SpecParseError:
     return SpecParseError(raw, reason)
+
+
+def _non_ascii_url_unsafe(value: str) -> bool:
+    """True when ``value`` contains anything outside visible ASCII."""
+
+    return any(not 0x21 <= ord(character) <= 0x7E for character in value)
 
 
 def _repo_result(
@@ -205,8 +226,15 @@ def _split_package(raw: str, ecosystem: str, value: str) -> CorpusSpec:
             raise _fail(raw, "package name or version is malformed")
     if not name or any(ch.isspace() for ch in name):
         raise _fail(raw, "package name must be non-empty and contain no whitespace")
-    if ecosystem == "npm" and not _NPM_NAME.fullmatch(name):
-        raise _fail(raw, "invalid npm package name")
+    # Registry names and versions are request-URL material: reject anything
+    # outside printable ASCII with the typed parser error instead of letting
+    # a unicode spec surface later as a bare ``'ascii' codec can't encode``
+    # failure (production-readiness audit 2026-08-23, P3).
+    if _non_ascii_url_unsafe(name) or (version is not None and _non_ascii_url_unsafe(version)):
+        raise _fail(raw, "package names and versions must be printable ASCII")
+    grammar = _Ecosystem_NAME.get(ecosystem)
+    if grammar is not None and grammar.fullmatch(name) is None:
+        raise _fail(raw, _Ecosystem_FAILURE[ecosystem])
     if ecosystem == "go" and "/" not in name:
         raise _fail(raw, "go package specs require a module path")
     return CorpusSpec(raw, ecosystem, name, version=version)

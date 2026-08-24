@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import fields, is_dataclass
 from enum import Enum
+from pathlib import Path
 
 import pytest
 
@@ -80,6 +81,22 @@ def test_occupied_validate_artifact_happy_path_and_tamper_matrix() -> None:
     with pytest.raises(BTSError) as caught:
         occupied_validate_artifact(_bytes(artifact))
     assert caught.value.evidence.detail_code == "occupied_conflict_matrix_identity_v1"
+
+
+def test_committed_example_artifact_validates_and_rejects_tamper() -> None:
+    """The committed example (audit 2026-08-23 P3) keeps `leitir
+    occupied-validate` exercisable from the CLI without assembling fixtures."""
+
+    path = Path(__file__).parent / "fixtures" / "occupied_validate" / "example-artifact.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    summary = occupied_validate(path.read_bytes())
+    assert summary["status"] == "complete"
+
+    tampered = dict(payload)
+    tampered["test_set_digest"] = _digest(b"tampered")
+    with pytest.raises(BTSError) as caught:
+        occupied_validate(_bytes(tampered))
+    assert caught.value.evidence.detail_code
 
 
 def test_occupied_validate_artifact_rejects_stale_rerun_and_collision() -> None:

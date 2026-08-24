@@ -590,7 +590,15 @@ def _read_valid_manifest(
         return None
     if not isinstance(payload.get("spec"), str) or not payload["spec"]:
         return None
-    expected_url = None if host == "go-module-zip" else f"{canonical_base}/{owner}/{repo}"
+    if host == "go-module-zip":
+        expected_url = None
+    elif owner == "registry" and payload.get("degraded_provenance") is not None:
+        # Degraded (registry-only) shelves carry no repository URL at all
+        # (reviewer-qwen 2026-08-23): a canonical github.com URL would
+        # misattribute the registry digest as a real commit.
+        expected_url = ""
+    else:
+        expected_url = f"{canonical_base}/{owner}/{repo}"
     if payload.get("repo_url") != expected_url:
         return None
     if not isinstance(payload.get("fetched_at"), str) or not payload["fetched_at"]:
@@ -1832,7 +1840,13 @@ def _materialize_artifact_locked(
                 "repo": repo,
                 "commit_sha": scope.commit_sha,
                 "tag": tag,
-                "repo_url": f"https://github.com/{owner}/{repo}",
+                # A degraded (registry-only) shelf has no repository; a
+                # fabricated github.com URL would misattribute the
+                # registry digest as a real commit URL to downstream
+                # consumers (reviewer-qwen 2026-08-23).
+                "repo_url": ""
+                if manifest.get("degraded_provenance")
+                else f"https://github.com/{owner}/{repo}",
                 "fetched_at": now,
                 "fetch_method": "registry-artifact",
                 "subpath": subpath,

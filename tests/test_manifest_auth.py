@@ -413,6 +413,69 @@ def test_get_require_manifest_auth_accepts_signed_cache_and_rejects_tamper(
     assert json.loads(err.splitlines()[-1].removeprefix("leitir: error: "))["error"] == "manifest_auth_bad_signature_v1"
 
 
+@pytest.mark.skipif(not _HAS_CRYPTOGRAPHY or not _HAS_NO_FOLLOW, reason="auth trust-anchor reads require cryptography and O_NOFOLLOW")
+@pytest.mark.parametrize("command", ["list", "index", "sbom", "export", "trust"])
+def test_read_side_commands_enforce_manifest_auth_over_unsigned_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """Audit 2026-08-23 P2: --require-manifest-auth is now enforceable on the
+    read-side corpus commands, so a signed-shelves-only policy cannot be
+    bypassed by consulting list/index/sbom/export/trust instead of get."""
+
+    sha = "c" * 40
+    root = tmp_path / "corpus"
+    shelf = target_path(root, "acme", "widget", sha)
+    shelf.mkdir(parents=True)
+    (shelf / "proof.txt").write_text("proof\n", encoding="utf-8")
+    digest, scope = compute_materialized_tree_hash(shelf)
+    manifest: dict[str, object] = {
+        "commit_sha": sha,
+        "fetch_method": "codeload-tarball",
+        "fetched_at": "2026-08-23T00:00:00Z",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "widget",
+        "repo_url": "https://github.com/acme/widget",
+        "source": "git-commit",
+        "spec": "acme/widget",
+        "verified": False,
+        "verified_at": None,
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (shelf / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    from leitir.corpus import write_sources
+
+    write_sources(
+        root,
+        [{"name": "acme/widget", "host": "github.com", "owner": "acme", "repo": "widget", "commit_sha": sha, "path": str(shelf.relative_to(root)), "fetched_at": "2026-08-23T00:00:00Z"}],
+    )
+    monkeypatch.setattr("leitir.corpus.record_trust", lambda *_a, **_k: (_raise_unsigned(),)[0])
+
+    def _raise_unsigned():
+        raise AssertionError("trust scoring must not run against an unsigned corpus")
+
+    trusted_keys = tmp_path / "trusted-keys.json"
+    trusted_keys.write_text(json.dumps({"keys": []}), encoding="utf-8")
+    output = tmp_path / f"out-{command}"
+
+    argv = {
+        "list": [command, "--root", str(root)],
+        "index": [command, "--root", str(root)],
+        "sbom": [command, "--format", "spdx", "--cwd", str(tmp_path), "--root", str(root)],
+        "export": [command, "-o", str(output), "--root", str(root)],
+        "trust": [command, "acme/widget", "--root", str(root)],
+    }[command]
+    out, err = io.StringIO(), io.StringIO()
+    code_unsigned = main([*argv, "--require-manifest-auth", "--trusted-keys", str(trusted_keys)], stdout=out, stderr=err)
+    assert code_unsigned == ExitCode.CORPUS_FAILURE
+
+    # Without the flag the same unsigned corpus remains usable (default
+    # unsigned mode is unchanged).
+    out, err = io.StringIO(), io.StringIO()
+    code_plain = main(argv, stdout=out, stderr=err)
+    assert code_plain in {int(ExitCode.SUCCESS), int(ExitCode.NOTHING_INDEXED), int(ExitCode.CORPUS_FAILURE)}
+
+
 # --- Issue #207: trusted-key lifecycle (expiry + revocation), ADR-0022 ---
 
 _LIFECYCLE_NOW = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)

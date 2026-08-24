@@ -2,8 +2,9 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Status: implementation-complete; production-readiness evidence is complete.
-No public release has been cut.**
+**Status: released — [`v0.1.4`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4)
+is the first `v*` tag (2026-08-17); milestone v0.1.4 is complete and
+`pyproject.toml` is 0.1.4. Production-readiness evidence is complete.**
 
 ## Why
 
@@ -96,15 +97,19 @@ flowchart LR
 ## Installation
 
 ```bash
-# Install the latest from GitHub
+# Install the released tag (v0.1.4, 2026-08-17)
+pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.4
+
+# Or the latest from main
 pip install git+https://github.com/anthonykewl20/leitir.git
 
 # Then use the `leitir` command
 leitir info npm:zod@3.22.0
 ```
 
-Leitir is distributed via GitHub. The runtime is stdlib-only (`dependencies = []`),
-so no third-party runtime dependencies are pulled in.
+Leitir is distributed via GitHub releases and tags (not PyPI). The runtime is
+stdlib-only (`dependencies = []`), so no third-party runtime dependencies are
+pulled in.
 
 For optional JavaScript/TypeScript/Rust/Go graph production:
 
@@ -265,7 +270,10 @@ flowchart LR
    Ineligible shelves are reported by shelf identity and failed `source`, `parity`,
    or `scope` condition in stderr and `skipped_ineligible` JSON; eligible shelves
    still index. The command exits 0 only when at least one eligible shelf indexed
-   and no hard error occurred.
+   and no hard error occurred; when every candidate shelf is skipped as
+   ineligible it prints a named `nothing to index` message and exits with the
+   dedicated status 4 (`NOTHING_INDEXED`) instead of the generic failure 1,
+   so callers can distinguish "nothing eligible" from corruption or hard errors.
   `search --index` reports uncovered fallback scopes as partial;
   `search --require-index` rejects them. Search never builds or repairs an index.
   Export/import excludes index artifacts and `gc` preserves them.
@@ -280,7 +288,7 @@ flowchart LR
 ### Corpus
 - `get`: materialize sources and print absolute local path(s).
 - `fetch`: prefetch materialized sources without printing paths.
-- `list`: show current corpus entries and trust/verification state.
+- `list [--require-manifest-auth]`: show current corpus entries and trust/verification state; with the flag, unsigned or untrusted shelves fail closed instead of being listed.
 - `remove`: delete a shelved source entry.
 - `clean`: clear corpus metadata and cached materialization.
 - `gc`: remove abandoned repository staging and obsolete backups under target locks;
@@ -294,6 +302,7 @@ flowchart LR
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
 - `diff`: compare two resolved versions with file and API-symbol deltas.
 - `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. `--list-seeds` instead lists selectable donor definition seeds and cannot be combined with seed or output arguments. Without `--allow-reject`, a written REJECT result exits nonzero; `--allow-reject` retains the artifact but exits successfully. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
+- `occupied-validate artifact.json`: validate a canonical occupied-recipient attachment artifact offline. A committed, self-validating example lives at `tests/fixtures/occupied_validate/example-artifact.json` (regenerate deterministically with `PYTHONPATH=src python tests/fixtures/occupied_validate/generate.py`); for example, `leitir occupied-validate tests/fixtures/occupied_validate/example-artifact.json --json`.
 - `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph with a non-empty slug-like caller label (`letters`, digits, `-`, `_`, `.`); JSON labels it `caller-declared-label`, not derived authority. For example, `leitir analysis-architecture graph.json --subject widget --json`.
 - `analysis-lineage manifest.json`: validate a canonical lineage manifest; for example, `leitir analysis-lineage lineage.json --json`.
 - `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check. `ratified_manifest_digest` is record-level content binding; `ratified_runtime_digest` is the separate out-of-band authority value consumed only by `exit-gate-run`.
@@ -375,7 +384,7 @@ $ leitir sbom --format cyclonedx | jq '.components[0]'
 }
 ```
 
-Paths shown are under the corpus root (for example `~/.leitir/...` or project-local `./.leitir-refs/...`).
+Paths shown are under the corpus root (for example `~/.leitir/...` or project-local `./.leitir-refs/...`). Commands that *write* to a project-local corpus append `.leitir-refs/` to the project `.gitignore` (announcing it once); read-only commands against an uncovered project-local root never modify `.gitignore` and instead print a note that the directory is not covered.
 
 ## Honesty guarantees
 
@@ -383,7 +392,33 @@ Paths shown are under the corpus root (for example `~/.leitir/...` or project-lo
   integrity and subject binding only; it does not authenticate a repository owner
   or publisher. `--require-manifest-auth` requires the separately installed,
   hash-locked `auth` extra and an explicitly configured out-of-band trust root,
-  and fails closed rather than accepting unsigned or untrusted manifests.
+  and fails closed rather than accepting unsigned or untrusted manifests. The
+  flag is enforced on every shelf-consuming command (`get`, `fetch`, `info`,
+  `diff`, `api`, `examples`, `list`, `trust`, `sbom`, `export`, `index`,
+  `bts-compute`, `bts-run`); corpus-wide commands verify *every* shelved source before
+  producing output, so a signed-shelves-only policy has no unauthenticated
+  read path. In unsigned mode the boundary is: file *contents* remain
+  tamper-evident via load-time tree verification, but displayed metadata
+  (`registry_url`, names, trust fields, and other manifest strings not covered
+  by `materialized_tree_hash`) can be edited undetected by whoever controls the
+  local storage — do not treat unsigned-mode metadata displays as
+  tamper-evident.
+- **Registry-only degraded resolution is announced, never silent.** When a
+  PyPI/npm tag-to-commit lookup fails for a transport reason (throttle, outage)
+  while the registry artifact is reachable and checksum-verified, resolution
+  succeeds registry-only: the shelf identity is the deterministic
+  `registry/<name>` scope (never a git commit), the manifest records
+  `degraded_provenance` with `parity: unknown`, and the CLI prints a warning
+  before materializing (ADR-0023). A provably absent repository or tag
+  (`TagAbsentError`) still fails closed, as does a package without a
+  checksummed artifact.
+- Offline exact pins (#245, ADR-0024): once a `pypi`/`npm`/`crates`
+  name+version pin is shelved, `get`/`info`/`api`/`examples`/`diff`
+  resolve it local-first from the load-time-verified shelf — no
+  registry contact. The cached resolution is announced (`resolved
+  offline from the corpus index`), degraded shelves still warn, a
+  tampered shelf is skipped (fail-closed offline, self-heals online),
+  and floating/`latest` specs still require the live registry.
 - Provenance-bound corpus outputs resolve to immutable provenance and source-specific manifests. Verified corpus shelves are re-hashed against `materialized_tree_hash` on every load; unverified shelves may omit the digest. Global search results are not necessarily materialized shelves.
 - Full-coverage load-time verification (since #194): every newly materialized manifest carries `materialized_file_digests`, a flat per-file SHA-256 map (Cargo-checksum style). At load, every file's digest is verified in one streaming pass and the map is checked against the anchored full-scope `materialized_tree_hash`, so corruption of *any* file — including files outside the legacy sampled window on shelves above the verification caps — is detected and rejected with a typed error naming the path. The caps now bound only ingest-time sampling heuristics, never the load-time trust level; `sampled` survives solely as an ingest-time cross-check label.
 - Fail-closed verification: checksum or tree mismatches remove or reject materialization and never create a trusted cache entry. Archive symlink chains are resolved lexically before extraction, so confinement does not depend on host symlink behavior.
@@ -424,7 +459,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status: **2657 passed, 122 skipped**; the optional tree-sitter extra runs **105 additional polyglot tests**.
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-23 audit round): **3164 passed, 142 skipped** without extras; **3191 passed, 92 skipped** with the tree-sitter extra active; combined line+branch coverage **83.31%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%).
 
 ## Current state
 
@@ -451,6 +486,21 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - The credential-gated live provider canary is enabled on its daily schedule.
   Its main-branch probes are green; three v2 probes intentionally skip because
   their test files have not landed.
+- **Local-verification boundary (2026-08-23 audit):** the full contained
+  donor-execution pipeline (`bts-run` under nsjail) was *not* re-executed
+  locally for this audit round; its acceptance evidence remains the milestone
+  Phase-C exit-gate runs — branch
+  [32018653190](https://github.com/anthonykewl20/leitir/actions/runs/32018653190)
+  and canonical main
+  [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262)
+  — which completed 5/5 donors against the ratified runtime digest
+  (`sha256:72949674…`, owner key `7baec2e9…`, ceremony recorded in
+  `benchmarks/exit-corpus/ratification-v1.json`). Likewise, `--global`
+  code-search result-capping behavior is covered by offline tests for every
+  bound code (`tests/test_discovery_search_capping.py`), but no live
+  rate-limited index was driven to produce a capped report this round; live
+  evidence remains the daily canary. No new local coverage is claimed for
+  either area beyond what is cited here.
 
 ## Repository layout
 

@@ -121,6 +121,16 @@ def test_all_repository_hosts_treat_full_sha_as_immutable(prefix):
         "@babel",
         " owner/repo",
         "unknown:value",
+        # Non-ASCII (emoji/unicode) names and versions must fail with the
+        # typed parser error, never a later bare ``'ascii' codec`` failure
+        # (production-readiness audit 2026-08-23, P3).
+        "pypi:flask\U0001F389@1.0",
+        "npm:data-\u00e9",
+        "crates:demo-\u00fc@1.0",
+        "go:example.com/\U0001F389@v1.0.0",
+        "pypi:six@1.0\U0001F389",
+        "pypi:-leading-sep@1.0",
+        "crates:-leading-dash@1.0",
     ],
 )
 def test_malformed_or_unsafe_specs_raise_typed_error(raw):
@@ -128,3 +138,18 @@ def test_malformed_or_unsafe_specs_raise_typed_error(raw):
         parse_corpus_spec(raw)
     assert caught.value.spec == raw
     assert repr(raw) in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "pypi:A_0-l.e@1.0.0",
+        "crates:a_b-c@1.0",
+        "go:example.com/mod@v1.0.0",
+        "npm:@scope/pkg@1.0.0",
+    ],
+)
+def test_printable_ascii_grammar_names_still_parse(raw):
+    spec = parse_corpus_spec(raw)
+    assert spec.ecosystem is not None
+    assert spec.name

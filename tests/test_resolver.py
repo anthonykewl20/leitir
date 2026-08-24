@@ -5,11 +5,13 @@ from __future__ import annotations
 import io
 import json
 import os
+from dataclasses import replace
 
 import pytest
 
 from leitir.resolver import (
     CratesResolver,
+    DegradedProvenanceError,
     Ecosystem,
     GitHubTagResolver,
     GoResolver,
@@ -133,6 +135,24 @@ class TestPackageRef:
     def test_bad_ecosystem_rejected(self):
         with pytest.raises(TypeError):
             PackageRef("npm", "express", "4.0.0")
+
+    def test_non_ascii_name_rejected_typed(self):
+        # Audit 2026-08-23 P3: emoji/unicode specs must fail validation here,
+        # not as a bare ``'ascii' codec can't encode`` error at request time.
+        with pytest.raises(ValueError, match="printable ASCII"):
+            PackageRef(Ecosystem.PYPI, "flask\U0001F389", "1.0")
+
+    def test_non_ascii_version_rejected_typed(self):
+        with pytest.raises(ValueError, match="printable ASCII"):
+            PackageRef(Ecosystem.NPM, "express", "4.0\u00e9")
+
+    def test_non_pypi_grammar_name_rejected(self):
+        with pytest.raises(ValueError, match="invalid pypi package name"):
+            PackageRef(Ecosystem.PYPI, "-leading-sep", "1.0")
+
+    def test_non_crates_grammar_name_rejected(self):
+        with pytest.raises(ValueError, match="invalid crates package name"):
+            PackageRef(Ecosystem.CRATES, "-leading-dash", "1.0")
 
 
 class TestResolvedPackage:
@@ -444,6 +464,188 @@ class ScriptedTagResolver:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class TestRegistryOnlyFallback:
+    """Audit 2026-08-23 P1(b): throttled/down GitHub tag lookups degrade to
+    a checksum-verified registry-only resolution instead of hard-failing,
+    while genuinely absent tags keep failing closed."""
+
+    @staticmethod
+    def _pypi_payload():
+        return {
+            "info": {
+                "version": "1.2.3",
+                "project_url": "https://github.com/acme/demo",
+                "project_urls": {"Source": "https://github.com/acme/demo"},
+            },
+            "urls": [
+                {
+                    "packagetype": "sdist",
+                    "url": "https://files.example/demo-1.2.3.tar.gz",
+                    "digests": {
+                        "sha256": "b" * 64,
+                        "md5": "0" * 32,
+                    },
+                    "upload_time_iso_8601": "2024-01-01T00:00:00+00:00",
+                }
+            ],
+        }
+
+    def _resolve_pypi(self, monkeypatch, tag_outcome, payload=None):
+        payload = payload or self._pypi_payload()
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        tags = ScriptedTagResolver(
+            {"v1.2.3": tag_outcome, "1.2.3": tag_outcome}
+        )
+        return PyPIResolver(tags).resolve(PackageRef(Ecosystem.PYPI, "demo", "1.2.3")), tags
+
+    def test_throttled_tag_lookup_degrades_to_registry_only(self, monkeypatch):
+        throttle = ResolutionError(
+            "github.com API call failed: HTTP 403 rate limit exceeded"
+        )
+        result, tags = self._resolve_pypi(monkeypatch, throttle)
+
+        assert result.degraded_provenance is not None
+        assert "unavailable" in result.degraded_provenance
+        assert result.tag is None
+        assert result.scope.slug == "registry/demo"
+        assert len(result.scope.commit_sha) == 40
+        assert result.artifact is not None
+        assert result.artifact.digest == "b" * 64
+        with pytest.raises(DegradedProvenanceError, match="registry-only"):
+            result.require_full_provenance()
+
+    def test_absent_tag_still_fails_closed(self, monkeypatch):
+        absent = TagAbsentError("tag 'v1.2.3' not found in acme/demo: 404")
+        with pytest.raises(TagAbsentError):
+            self._resolve_pypi(monkeypatch, absent)
+
+    def test_npm_throttled_tag_lookup_degrades_to_registry_only(self, monkeypatch):
+        import base64
+
+        # 64 raw bytes -> valid sha512 integrity token, as npm serves.
+        digest_bytes = bytes(range(64))
+        integrity = "sha512-" + base64.b64encode(digest_bytes).decode()
+        payload = {
+            "versions": {
+                "1.0.0": {
+                    "repository": {"type": "git", "url": "https://github.com/acme/demo"},
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+                        "integrity": integrity,
+                    },
+                }
+            },
+            "time": {"1.0.0": "2024-01-01T00:00:00.000Z"},
+        }
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        throttle = ResolutionError("github.com API call failed: HTTP 503")
+        tags = ScriptedTagResolver(
+            {
+                "demo@1.0.0": throttle,
+                "v1.0.0": throttle,
+                "1.0.0": throttle,
+            }
+        )
+        result = NpmResolver(tags).resolve(PackageRef(Ecosystem.NPM, "demo", "1.0.0"))
+
+        assert result.degraded_provenance is not None
+        assert result.scope.slug == "registry/demo"
+        assert len(result.scope.commit_sha) == 40
+        assert result.artifact is not None
+        assert result.artifact.digest == digest_bytes.hex()
+
+    def test_fallback_scope_is_deterministic(self, monkeypatch):
+        throttle = ResolutionError("github.com API call failed: HTTP 403")
+        first, _ = self._resolve_pypi(monkeypatch, throttle)
+        second, _ = self._resolve_pypi(monkeypatch, throttle)
+        assert first.scope == second.scope
+
+    def test_malformed_metadata_is_not_transport_and_still_fails_closed(self, monkeypatch):
+        # reviewer-qwen 2026-08-23: only the transport envelope is
+        # fallback-eligible; malformed forge data must keep failing closed.
+        malformed = ResolutionError("github.com returned malformed metadata")
+        with pytest.raises(ResolutionError, match="malformed"):
+            self._resolve_pypi(monkeypatch, malformed)
+
+    def test_scoped_npm_name_degrades_to_a_grammar_safe_slug(self, monkeypatch):
+        import base64
+
+        digest_bytes = bytes(range(64))
+        integrity = "sha512-" + base64.b64encode(digest_bytes).decode()
+        payload = {
+            "versions": {
+                "1.0.0": {
+                    "repository": {"type": "git", "url": "https://github.com/babel/babel"},
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/@babel/core/-/core-1.0.0.tgz",
+                        "integrity": integrity,
+                    },
+                }
+            },
+            "time": {"1.0.0": "2024-01-01T00:00:00.000Z"},
+        }
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        throttle = ResolutionError("github.com API call failed: HTTP 503")
+        tags = ScriptedTagResolver(
+            {
+                "@babel/core@1.0.0": throttle,
+                "v1.0.0": throttle,
+                "1.0.0": throttle,
+            }
+        )
+        # Candidate tags for the scoped name include the scoped form.
+        tags.outcomes["@babel/core@1.0.0"] = throttle
+        tags.outcomes["babel--core@1.0.0"] = throttle
+        result = NpmResolver(tags).resolve(
+            PackageRef(Ecosystem.NPM, "@babel/core", "1.0.0")
+        )
+
+        assert result.degraded_provenance is not None
+        assert result.scope.slug == "registry/babel--core"
+        assert len(result.scope.commit_sha) == 40
+        # The shelf SHA still hashes the original scoped name, so two
+        # packages that flatten to the same slug never share a shelf.
+        flat = NpmResolver(tags).resolve(
+            PackageRef(Ecosystem.NPM, "babel--core", "1.0.0")
+        )
+        assert flat.scope.slug == result.scope.slug
+        assert flat.scope.commit_sha != result.scope.commit_sha
+
+    def test_no_artifact_means_no_fallback(self, monkeypatch):
+        payload = {
+            "info": {
+                "version": "1.2.3",
+                "project_url": "https://github.com/acme/demo",
+            },
+            "urls": [],
+        }
+        throttle = ResolutionError("github.com API call failed: HTTP 403")
+        with pytest.raises(ResolutionError):
+            self._resolve_pypi(monkeypatch, throttle, payload=payload)
+
+    def test_degraded_result_requires_marker_scope(self):
+        good = ResolvedPackage(
+            ref=PackageRef(Ecosystem.PYPI, "demo", "1.2.3"),
+            scope=RepoScope("acme/demo", SHA),
+            tag="v1.2.3",
+            registry_url="https://pypi.org/project/demo/1.2.3/",
+        )
+        with pytest.raises(ValueError, match="registry/"):
+            replace(good, degraded_provenance="repository tag lookup unavailable")
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,21 @@ An observation is still useful in the fail-closed direction: an observed donor
 or undeclared import is terminal.  A conforming report can only request a fresh
 static ``compute_bts`` analysis.  It cannot add a BTS member, resolve an edge,
 change a static status, or remove an ADR-0008 blocker.
+
+One bounded class of imports is classified as interpreter infrastructure
+rather than an environment import: the platform path-shim modules
+(``genericpath``, ``ntpath``, ``posixpath``).  CPython may import these
+lazily from inside import machinery — notably ``pathlib`` on 3.12.3-era
+builds, whose ``PurePath.__init__`` imports :mod:`ntpath` on POSIX, and
+import hooks such as pytest's assertion rewriting — at arbitrary points
+during any in-flight import.  Such an import is authorized only when it is
+nested inside another import (never a top-level import by the observed
+code), the module is a member of ``sys.stdlib_module_names``, and the
+loader is the interpreter's own frozen finder or the plain source loader
+with bytes from the interpreter's own path-module directory.  Anything
+else — a direct shim
+import by observed code, or a shim shadowed on ``sys.path`` — keeps the
+fail-closed UNKNOWN verdict.  See ADR-0009 section 7.
 """
 
 from __future__ import annotations
@@ -38,6 +53,12 @@ _MAX_TEXT_BYTES = 512
 _MAX_COUNTER = 1_000_000
 _SHA256_LENGTH = 71
 _ACTIVE_LOCK = threading.Lock()
+# The interpreter's platform path shims: ``os.path`` is one of these on every
+# supported platform, and CPython may import the pair (plus their shared
+# ``genericpath`` dependency) lazily from inside import machinery — notably
+# ``pathlib`` on 3.12.3-era builds and import hooks such as pytest's
+# assertion rewriting.  Bounded infrastructure, never donor code.
+_PATH_SHIM_MODULES = frozenset({"genericpath", "ntpath", "posixpath"})
 
 
 class RuntimeImportClassification(str, Enum):  # noqa: UP042 - closed ADR schema
@@ -499,13 +520,29 @@ def _loaded_bytes_digest(module: ModuleType, loader_kind: RuntimeLoaderKind, int
     return f"sha256:{digest.hexdigest()}"
 
 
-def _origin_under(module: ModuleType, roots: Sequence[Path]) -> bool:
+def _origin_realpath(module: ModuleType) -> str | None:
+    """Return ``os.path.realpath`` of a module origin, or ``None`` if absent.
+
+    Deliberately avoids ``pathlib``: on CPython 3.12.3-era builds
+    ``PurePath.__init__`` itself lazily imports :mod:`ntpath`, and the
+    recorder must never trigger imports from its own classification path.
+    """
+
     spec = getattr(module, "__spec__", None)
     origin = getattr(spec, "origin", None)
     if not isinstance(origin, str) or not origin or origin in {"built-in", "frozen"}:
-        return False
-    candidate = Path(os.path.realpath(origin))
-    return any(candidate == root or candidate.is_relative_to(root) for root in roots)
+        return None
+    return os.path.realpath(origin)
+
+
+def _path_is_under(candidate: str, roots: Sequence[str]) -> bool:
+    """Pure-string containment so classification stays import-free."""
+
+    return any(
+        candidate == root
+        or candidate.startswith(root if root.endswith(os.sep) else root + os.sep)
+        for root in roots
+    )
 
 
 def _matches_identity(module: str, identities: Sequence[str]) -> bool:
@@ -546,11 +583,16 @@ class RuntimeImportRecorder:
         self._policy = policy
         self._members = _member_bindings(policy.bts)
         self._allowed = {item.module: item for item in (*policy.stdlib, *policy.declared_externals)}
+        self._donor_roots = tuple(
+            os.fspath(os.path.realpath(item)) for item in policy.donor_path_roots
+        )
+        self._stdlib_path_dir = os.path.dirname(os.path.abspath(os.path.__file__))
         self._events: dict[RuntimeObservation, RuntimeObservation] = {}
         self._evidence_bytes = 0
         self._terminal: BTSError | None = None
         self._armed = False
         self._used = False
+        self._import_depth = 0
 
     def _remember(self, event: RuntimeObservation) -> None:
         if event in self._events:
@@ -569,9 +611,57 @@ class RuntimeImportRecorder:
         self._events[event] = event
         self._evidence_bytes = prospective_bytes
 
+    def _path_shim_event(
+        self,
+        name: str,
+        origin: str | None,
+        loader: RuntimeLoaderKind,
+        loaded_digest: str,
+        provenance_digest: str,
+    ) -> RuntimeObservation | None:
+        """Classify one interpreter-internal platform path-shim import.
+
+        Returns ``None`` (falling through to the fail-closed UNKNOWN
+        verdict) unless every bound holds: the import is nested inside
+        another in-flight import rather than a top-level import by the
+        observed code; the module is one of the three platform path shims
+        and a member of ``sys.stdlib_module_names``; and the loader is one
+        the interpreter itself uses for its shims — the frozen finder
+        (whose table is compiled into the binary and cannot be shadowed
+        from ``sys.path``; the bytes bind to the pinned interpreter build
+        digest) or the plain source loader with bytes from the running
+        interpreter's own path-module directory.  A shim shadowed on
+        ``sys.path`` therefore never authorizes itself.
+        """
+
+        if self._import_depth < 2 or name not in _PATH_SHIM_MODULES:
+            return None
+        if name not in sys.stdlib_module_names:
+            return None
+        if loader is RuntimeLoaderKind.FROZEN:
+            pass
+        elif loader is RuntimeLoaderKind.SOURCE:
+            if origin is None or os.path.dirname(os.path.abspath(origin)) != self._stdlib_path_dir:
+                return None
+        else:
+            return None
+        return RuntimeObservation(
+            RuntimeImportClassification.STDLIB,
+            RuntimeImportResult.SUCCESS,
+            _identity_digest(name),
+            _identity_digest(f"runtime-path-shim-v1:{name}"),
+            RuntimeImportProvenance.SOURCE_IMPORT_HOOK,
+            provenance_digest,
+            loader,
+            loaded_digest,
+            RuntimeOriginRole.STDLIB_MANIFEST,
+            "runtime_path_shim_v1",
+        )
+
     def _classify(self, name: str, module: ModuleType) -> RuntimeObservation:
-        donor = _matches_identity(name, self._policy.donor_module_identities) or _origin_under(
-            module, self._policy.donor_path_roots
+        origin = _origin_realpath(module)
+        donor = _matches_identity(name, self._policy.donor_module_identities) or (
+            origin is not None and _path_is_under(origin, self._donor_roots)
         )
         try:
             loader = _loader_kind(module)
@@ -639,6 +729,9 @@ class RuntimeImportRecorder:
                 role,
                 "runtime_allowlist_entry_v1",
             )
+        shim = self._path_shim_event(name, origin, loader, loaded_digest, provenance_digest)
+        if shim is not None:
+            return shim
         return RuntimeObservation(
             RuntimeImportClassification.UNKNOWN,
             RuntimeImportResult.SUCCESS,
@@ -736,29 +829,33 @@ class RuntimeImportRecorder:
                     self._terminal = error
                     raise error
                 absolute = self._absolute_name(name, globals, level)
+                self._import_depth += 1
                 try:
-                    imported = original_import(name, globals, locals, fromlist, level)
-                except BTSError:
-                    raise
-                except BaseException as exc:
-                    if _matches_identity(absolute, self._policy.donor_module_identities):
+                    try:
+                        imported = original_import(name, globals, locals, fromlist, level)
+                    except BTSError:
+                        raise
+                    except BaseException as exc:
+                        if _matches_identity(absolute, self._policy.donor_module_identities):
+                            error = BTSError(
+                                BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED,
+                                "a donor import attempt was observed by the diagnostic recorder",
+                                detail_code="runtime_donor_import_v1",
+                                cause=exc,
+                            )
+                            self._terminal = error
+                            raise error from exc
                         error = BTSError(
-                            BTSRejectReason.REJECT_DONOR_IMPORT_OBSERVED,
-                            "a donor import attempt was observed by the diagnostic recorder",
-                            detail_code="runtime_donor_import_v1",
+                            BTSRejectReason.REJECT_UNRESOLVED_EDGE,
+                            "an import attempt could not be classified successfully",
+                            detail_code="runtime_import_failed_v1",
                             cause=exc,
                         )
                         self._terminal = error
                         raise error from exc
-                    error = BTSError(
-                        BTSRejectReason.REJECT_UNRESOLVED_EDGE,
-                        "an import attempt could not be classified successfully",
-                        detail_code="runtime_import_failed_v1",
-                        cause=exc,
-                    )
-                    self._terminal = error
-                    raise error from exc
-                self._observe(absolute)
+                    self._observe(absolute)
+                finally:
+                    self._import_depth -= 1
                 return imported
 
             builtins.__import__ = observed_import

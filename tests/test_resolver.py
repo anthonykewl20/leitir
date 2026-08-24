@@ -615,6 +615,117 @@ class TestDegradedClassificationRealTransport:
             assert _degraded_reason(excinfo.value) is None
             assert "API call failed:" not in str(excinfo.value)
 
+    @pytest.mark.parametrize(
+        ("sha", "via_annotated"),
+        [
+            ("z" * 40, False),  # 40 chars, non-hex
+            ("a" * 39, False),  # too short
+            ("a" * 41, False),  # too long
+            ("z" * 40, True),  # annotated-tag dereference, non-hex
+        ],
+    )
+    def test_non_hex_sha_wraps_typed_not_raw_valueerror(
+        self, sha, via_annotated
+    ):
+        # Issue #249: a valid-JSON 200 whose object.sha is not 40-hex must
+        # fail closed as a typed ResolutionError at the resolver boundary —
+        # never propagate into RepoScope and surface as a raw ValueError.
+        if via_annotated:
+            ref_body = {"object": {"type": "tag", "sha": "d" * 40}}
+            script = [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body(ref_body),
+                ),
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "commit", "sha": sha}}),
+                ),
+            ]
+            match = "malformed annotated-tag"
+        else:
+            script = [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "commit", "sha": sha}}),
+                ),
+            ]
+            match = "malformed tag"
+        with _hs.scripted_server(script) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError, match=match) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+
+    @pytest.mark.parametrize("via_annotated", [False, True])
+    def test_uppercase_sha_normalized_not_raw_valueerror(self, via_annotated):
+        # reviewer-hy3/qwen round 1 (issue #249): uppercase 40-hex passes
+        # the format gate, so it must be normalized to lowercase — exact
+        # resolve_commit_to_sha parity — never returned as-is to die as a
+        # raw ValueError in RepoScope (lowercase-only regex).
+        if via_annotated:
+            script = [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body(
+                        {"object": {"type": "tag", "sha": ("D" * 40)}}
+                    ),
+                ),
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body(
+                        {"object": {"type": "commit", "sha": ("A" * 40)}}
+                    ),
+                ),
+            ]
+        else:
+            script = [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body(
+                        {"object": {"type": "commit", "sha": ("A" * 40)}}
+                    ),
+                ),
+            ]
+        with _hs.scripted_server(script) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            assert resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3") == "a" * 40
+            # The annotated variant must actually dereference (two requests),
+            # with the normalized lowercase tag sha (reviewer-qwen round 2).
+            assert server.state.served_count == (2 if via_annotated else 1)
+
+    def test_non_hex_tag_object_sha_rejected_before_dereference_request(self):
+        # reviewer-qwen round 1 (issue #249): a malformed tag-object sha
+        # fails closed at the ref response — the crafted string is never
+        # interpolated into the /git/tags/{sha} dereference URL, so the
+        # server sees exactly one request.
+        with _hs.scripted_server(
+            [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "tag", "sha": "z" * 40}}),
+                ),
+                # Would serve the dereference if it were ever requested.
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "commit", "sha": "a" * 40}}),
+                ),
+            ]
+        ) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError, match="malformed tag"):
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert server.state.served_count == 1
+
     def test_pypi_resolution_degrades_over_real_transport(self):
         # Both sides drive the REAL transport through a real local server:
         # request 1 serves PyPI metadata, request 2 is the tag lookup and

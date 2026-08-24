@@ -565,11 +565,21 @@ class GitHubTagResolver:
         obj = payload.get("object") if isinstance(payload, dict) else None
         obj_type = obj.get("type") if isinstance(obj, dict) else None
         obj_sha = obj.get("sha") if isinstance(obj, dict) else None
-        if obj_type == "commit" and isinstance(obj_sha, str):
-            logger.debug("resolved tag slug=%s tag=%s sha=%s", slug, tag, obj_sha[:12])
-            return obj_sha
-        if obj_type == "tag" and isinstance(obj_sha, str):
-            return self._dereference_annotated_tag(slug, obj_sha)
+        if obj_type in ("commit", "tag") and isinstance(obj_sha, str):
+            if re.fullmatch(r"[0-9a-fA-F]{40}", obj_sha) is None:
+                # Parity with resolve_commit_to_sha: a forge that answers
+                # with a non-40-hex sha has returned malformed metadata — a
+                # provenance fact, fail closed before RepoScope ever sees it
+                # (issue #249).
+                raise ResolutionError(
+                    f"github.com returned malformed tag metadata for {slug}"
+                )
+            if obj_type == "commit":
+                logger.debug(
+                    "resolved tag slug=%s tag=%s sha=%s", slug, tag, obj_sha[:12]
+                )
+                return obj_sha.lower()
+            return self._dereference_annotated_tag(slug, obj_sha.lower())
         if obj_type is None or not isinstance(obj_sha, str):
             raise ResolutionError(
                 f"github.com returned malformed tag metadata for {slug}"
@@ -673,7 +683,14 @@ class GitHubTagResolver:
                 f"github.com returned malformed annotated-tag metadata for {slug}: "
                 f"object type {obj_type!r}"
             )
-        return obj_sha
+        if re.fullmatch(r"[0-9a-fA-F]{40}", obj_sha) is None:
+            # Same parity as the tag-ref path (issue #249): a non-40-hex
+            # sha is malformed metadata and fails closed here, not as a raw
+            # ValueError from RepoScope downstream.
+            raise ResolutionError(
+                f"github.com returned malformed annotated-tag metadata for {slug}"
+            )
+        return obj_sha.lower()
 
 
 def _git_blob_sha(data: bytes) -> str:

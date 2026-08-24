@@ -114,7 +114,11 @@ metadata provides a checksum-verified source artifact, resolution succeeds
   annotated-tag dereference stays a bare `ResolutionError` (absent data,
   not an outage); malformed 200 bodies raise typed `ResolutionError`
   (provenance fact, fail-closed), never a raw `JSONDecodeError`/`KeyError`
-  leak.
+  leak. Forge-provided tag shas are additionally validated as 40-hex at the
+  resolver boundary and normalized to lowercase — `resolve_commit_to_sha`
+  parity — so a crafted non-hex or uppercase sha fails closed as typed
+  `ResolutionError` before `RepoScope` ever sees it (issue #249; SHA-256
+  object-format ids are not servable by github.com and fail the same gate).
 - **Degradation reason strings are diagnostics, not identity** (reviewer
   round 2): `degraded_provenance` may embed wall-clock recovery timestamps
   and locale-derived errno text, so identical outages resolved at different

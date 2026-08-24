@@ -1075,7 +1075,12 @@ def test_lock_emits_machine_json_and_progress_on_stderr(tmp_path, monkeypatch):
     assert "resolving npm:a@1.0.0" in err.getvalue()
     assert "materializing npm:a@1.0.0" in err.getvalue()
     assert seen["directory"] == project
-    assert seen["resolver"] is resolver
+    # ADR-0024: the CLI wraps its resolver in the local-first lock
+    # adapter; the CLI-built resolver must still be the delegated inner.
+    from leitir.cli import _LocalFirstLockResolver
+
+    assert isinstance(seen["resolver"], _LocalFirstLockResolver)
+    assert seen["resolver"]._inner is resolver  # noqa: SLF001 - wiring pin
 
 
 def test_lock_best_effort_emits_failures_and_reports_each_one(tmp_path, monkeypatch):

@@ -22,6 +22,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - register the live pytest marker and make the live inventory authoritative (`tests`)
 - report honest coverage bounds in search output and help (`discovery`)
 - resolve exact ecosystem pins local-first from verified shelves (`cli`)
+- resolve lockfile pins local-first from cached shelves (`cli`)
 - route every corpus/info/search source transplant-ok or study-only (`license`)
 
 ### Fixed

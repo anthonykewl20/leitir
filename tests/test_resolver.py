@@ -7,6 +7,7 @@ import json
 import os
 from dataclasses import replace
 
+import _http_server as _hs
 import pytest
 
 from leitir.resolver import (
@@ -23,6 +24,8 @@ from leitir.resolver import (
     ResolutionError,
     ResolvedPackage,
     TagAbsentError,
+    TagLookupUnavailableError,
+    _degraded_reason,
     resolve_corpus_spec,
 )
 from leitir.search import RepoScope
@@ -464,6 +467,191 @@ class ScriptedTagResolver:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class TestDegradedClassificationRealTransport:
+    """Issue #248: the *real* ``GitHubTagResolver`` transport must raise
+    errors that ``_degraded_reason`` classifies as fallback-eligible.
+
+    These tests deliberately avoid ``ScriptedTagResolver``: the original
+    bug — bare, envelope-less ``ResolutionError``s on transport failure —
+    was invisible to every fake-based test while both ADR-0023 headline
+    scenarios (403 throttle, outage) failed closed in production."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_rate_limit_notices(self):
+        # The 403-with-headers scenarios touch the process-global notice
+        # registry keyed by host; reset so notice-asserting tests in
+        # test_http.py can never be affected by ordering (reviewer-qwen P3).
+        from leitir._http import reset_rate_limit_notices
+
+        reset_rate_limit_notices()
+        yield
+        reset_rate_limit_notices()
+
+    @staticmethod
+    def _real_tag_resolver(base_url: str) -> GitHubTagResolver:
+        return GitHubTagResolver(
+            base_url=base_url,
+            allow_insecure_http_for_tests=True,
+            max_attempts=1,
+            sleeper=lambda _seconds: None,
+        )
+
+    def test_connection_refused_classifies_as_unavailable(self):
+        resolver = self._real_tag_resolver("http://127.0.0.1:9")
+        with pytest.raises(TagLookupUnavailableError) as excinfo:
+            resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+        message = str(excinfo.value)
+        assert "API call failed:" in message
+        assert "not found" not in message  # transport failure, not absence
+        assert _degraded_reason(excinfo.value) is not None
+
+    def test_http_403_rate_limit_classifies_as_unavailable(self):
+        with _hs.scripted_server(
+            [(403, {"X-RateLimit-Remaining": "0", "Retry-After": "0"}, b"")]
+        ) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(TagLookupUnavailableError) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert "API call failed:" in str(excinfo.value)
+            assert _degraded_reason(excinfo.value) is not None
+
+    def test_http_404_stays_tag_absent_and_fail_closed(self):
+        with _hs.scripted_server([(404, {}, b"")]) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(TagAbsentError) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert _degraded_reason(excinfo.value) is None
+
+    @pytest.mark.parametrize("status", [401, 451, 422])
+    def test_permanent_client_error_stays_fail_closed(self, status):
+        # reviewer-hy3 round 2 (issue #248): a fatal 4xx — bad credentials,
+        # DMCA takedown, malformed query — is a configuration/access fact,
+        # not an outage. It must NOT become fallback-eligible degraded
+        # provenance; an expired token degrading forever would hide the
+        # configuration error entirely.
+        with _hs.scripted_server([(status, {}, b"")]) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+            assert "API call failed:" not in str(excinfo.value)
+
+    def test_plain_403_without_rate_limit_headers_stays_fail_closed(self):
+        # GitHub permission denial (SAML/private repo/IP policy) sends 403
+        # with no rate-limit headers: FATAL per _http.classify, so it fails
+        # closed instead of degrading. Eligibility follows the same line
+        # retry semantics draw (reviewer-hy3 round 2).
+        with _hs.scripted_server([(403, {}, b"")]) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+
+    def test_http_503_outage_classifies_as_unavailable(self):
+        with _hs.scripted_server([(503, {}, b"")]) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(TagLookupUnavailableError) as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert "API call failed:" in str(excinfo.value)
+            assert _degraded_reason(excinfo.value) is not None
+
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [(200, b"<html>not json</html>"), (200, b"{}"), (200, b"[]")],
+    )
+    def test_malformed_200_body_wraps_as_typed_error(self, status, body):
+        # Parity with _HostedRepoResolver._get_json: malformed forge data is
+        # a provenance fact (fail-closed ResolutionError), never a raw
+        # JSONDecodeError/KeyError leak and never fallback-eligible
+        # (reviewer round 2, both reviewers).
+        with _hs.scripted_server([(status, {"Content-Type": "application/json"}, body)]) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError, match="malformed") as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+
+    def test_dereference_malformed_200_wraps_typed(self):
+        # reviewer-qwen round 2: pin the annotated-tag dereference path's
+        # malformed-body wrap (ref lookup 200 + dereference garbage), which
+        # probe coverage held but no in-suite test pinned.
+        with _hs.scripted_server(
+            [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "tag", "sha": "d" * 40}}),
+                ),
+                (200, {"Content-Type": "application/json"}, b"<html>nope</html>"),
+            ]
+        ) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError, match="malformed") as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+
+    def test_dereference_fatal_401_stays_fail_closed(self):
+        # reviewer-qwen round 2: pin the dereference path's FATAL branch —
+        # a 401 while dereferencing must not become degraded provenance.
+        with _hs.scripted_server(
+            [
+                (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _hs.json_body({"object": {"type": "tag", "sha": "d" * 40}}),
+                ),
+                (401, {}, b""),
+            ]
+        ) as server:
+            resolver = self._real_tag_resolver(server.base_url)
+            with pytest.raises(ResolutionError, match="dereferencing") as excinfo:
+                resolver.resolve_tag_to_sha("pallets/flask", "v3.0.3")
+            assert not isinstance(excinfo.value, TagLookupUnavailableError)
+            assert _degraded_reason(excinfo.value) is None
+            assert "API call failed:" not in str(excinfo.value)
+
+    def test_pypi_resolution_degrades_over_real_transport(self):
+        # Both sides drive the REAL transport through a real local server:
+        # request 1 serves PyPI metadata, request 2 is the tag lookup and
+        # answers 403 rate-limited, exactly the ADR-0023 headline scenario.
+        sleeps: list[float] = []
+        script = [
+            (
+                200,
+                {"Content-Type": "application/json"},
+                _hs.json_body(TestRegistryOnlyFallback._pypi_payload()),
+            ),
+            (403, {"X-RateLimit-Remaining": "0", "Retry-After": "0"}, b""),
+        ]
+        with _hs.scripted_server(script) as server:
+            tags = GitHubTagResolver(
+                base_url=server.base_url,
+                sleeper=sleeps.append,
+                base_delay=1.0,
+                max_attempts=1,
+                allow_insecure_http_for_tests=True,
+            )
+            resolver = PyPIResolver(
+                tag_resolver=tags,
+                base_url=server.base_url,
+                sleeper=sleeps.append,
+                base_delay=1.0,
+                allow_insecure_http_for_tests=True,
+            )
+            result = resolver.resolve(PackageRef(Ecosystem.PYPI, "demo", "1.2.3"))
+
+        assert result.degraded_provenance is not None
+        assert "unavailable" in result.degraded_provenance
+        assert result.tag is None
+        assert result.scope.slug == "registry/demo"
+        assert result.artifact is not None
+        with pytest.raises(DegradedProvenanceError, match="registry-only"):
+            result.require_full_provenance()
 
 
 class TestRegistryOnlyFallback:

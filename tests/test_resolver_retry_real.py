@@ -115,7 +115,7 @@ class TestGitHubTagResolverReal:
             (404, {}, b""),  # dereference fails fatally
         ]) as h:
             r = _tag_resolver(h.base_url, sleeps.append)
-            with pytest.raises(ResolutionError, match="dereference") as error:
+            with pytest.raises(ResolutionError, match="annotated tag") as error:
                 r.resolve_tag_to_sha(SLUG, "v3.11.0")
         assert not isinstance(error.value, TagAbsentError)
         assert sleeps == []

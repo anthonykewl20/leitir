@@ -85,6 +85,47 @@ metadata provides a checksum-verified source artifact, resolution succeeds
   enforced, and it is retained).
 - A package whose registry metadata publishes no checksummed artifact also
   keeps failing closed: there is nothing trustworthy to fall back to.
+- **How transport-level failures are recognized (issue #248).** The primary
+  signal is the typed `TagLookupUnavailableError`, raised by the real
+  `GitHubTagResolver` transport — `resolve_tag_to_sha` and the annotated-tag
+  dereference it calls — on retryable network exceptions and on
+  `HTTPError`s that `_http.classify` maps to `RATE_LIMITED` or `TRANSIENT`
+  (429, 403 with rate-limit headers, 5xx except 501, 408/425) once retries
+  are exhausted. Eligibility follows exactly the line retry semantics draw
+  (reviewer-hy3 round 2): a `FATAL` 4xx — 401 bad credentials, 403 without
+  rate-limit headers (permission denied, SAML, IP policy), 410, 451, 400/422
+  — raises a bare `ResolutionError` and keeps failing closed, because a
+  permanent configuration or access fact hidden behind warning-only
+  degraded provenance (e.g. an expired token degrading every resolution
+  forever) is worse than a loud failure. `_degraded_reason` accepts the
+  typed error plus, for the `_get_json` resolver family and test fakes, the
+  legacy `"API call failed:"` message envelope. Before #248 the GitHub tag
+  path raised bare, envelope-less `ResolutionError`s whose messages even
+  claimed the tag was "not found", so every ADR-0023 headline scenario
+  failed closed in production while fake-based tests (which injected
+  hand-crafted envelope strings) stayed green. Regression coverage must
+  therefore drive the **real** transport
+  (`TestDegradedClassificationRealTransport`: refused connection,
+  real-server 403 with rate-limit headers, real-server 503, real-server 404
+  → `TagAbsentError`, fatal 401/403-plain/451/422 → fail-closed, malformed
+  200 bodies → typed `ResolutionError`, and a PyPI resolution degraded end
+  to end through a real local server), not a scripted tag resolver. 404 on
+  the tag ref stays `TagAbsentError`/fail-closed; a 404 on the
+  annotated-tag dereference stays a bare `ResolutionError` (absent data,
+  not an outage); malformed 200 bodies raise typed `ResolutionError`
+  (provenance fact, fail-closed), never a raw `JSONDecodeError`/`KeyError`
+  leak.
+- **Degradation reason strings are diagnostics, not identity** (reviewer
+  round 2): `degraded_provenance` may embed wall-clock recovery timestamps
+  and locale-derived errno text, so identical outages resolved at different
+  times can carry different reason strings. The shelf identity remains the
+  deterministic registry-digest SHA above; only the human-readable reason
+  varies.
+- **Crates intentionally remains fail-closed during tag-lookup outages**
+  (reviewer round 2): `CratesResolver` has no degraded branch — this ADR
+  ratifies the fallback for PyPI and npm only, and extending it to crates.io
+  (which does publish checksummed `.crate` artifacts) is a separate
+  owner-gated change, not a silent scope widening.
 
 The CLI announces the degradation on stderr before materialization
 (`leitir: warning: <spec> resolved registry-only (...)`) so operators see

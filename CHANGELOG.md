@@ -31,6 +31,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bound archive-channel divergence and harden enumeration parsing (`resolver`)
 - bound concurrent-writer reader loop to dodge msvcrt contention cap (`tests`)
 - capture stderr in auth-tests zero-skip guard (`ci`)
+- classify tag-lookup transport failures for the ADR-0023 fallback (`resolver`)
 - close all 12 production-readiness audit findings
 - consolidate atomic writes with fd sentinel + parent-dir fsync; manifest double-close fixed, durability hardened (`safeio`)
 - de-flake the two environment-sensitive retry tests (#202) (`tests`)

@@ -1,25 +1,25 @@
 {
   "combined_line_and_branch_percent": {
-    "measured": 83.30574026326502,
+    "measured": 83.48220309253313,
     "minimum": 81.0
   },
   "modules": {
-    "src/leitir/corpus.py": 90.78,
-    "src/leitir/exit_corpus.py": 84.47,
-    "src/leitir/funnel_cli.py": 78.63,
-    "src/leitir/graph/go.py": 88.02,
-    "src/leitir/graph/javascript.py": 91.64,
-    "src/leitir/graph/policy.py": 88.93,
-    "src/leitir/graph/rust.py": 85.65,
-    "src/leitir/graph/ts_kernel.py": 88.48,
-    "src/leitir/graph/typescript.py": 88.56,
-    "src/leitir/materialize.py": 77.62,
-    "src/leitir/manifest_auth.py": 81.13,
-    "src/leitir/pipeline_cli.py": 66.28,
-    "src/leitir/resolver.py": 81.77,
-    "src/leitir/safeio.py": 89.19,
-    "src/leitir/snapshot.py": 84.36,
-    "src/leitir/treehash.py": 93.96,
-    "src/leitir/trust.py": 97.95
+    "src/leitir/corpus.py": 90.84,
+    "src/leitir/exit_corpus.py": 84.42,
+    "src/leitir/funnel_cli.py": 78.57,
+    "src/leitir/graph/go.py": 87.97,
+    "src/leitir/graph/javascript.py": 91.59,
+    "src/leitir/graph/policy.py": 88.88,
+    "src/leitir/graph/rust.py": 85.6,
+    "src/leitir/graph/ts_kernel.py": 88.42,
+    "src/leitir/graph/typescript.py": 88.5,
+    "src/leitir/manifest_auth.py": 81.07,
+    "src/leitir/materialize.py": 78.09,
+    "src/leitir/pipeline_cli.py": 66.23,
+    "src/leitir/resolver.py": 81.81,
+    "src/leitir/safeio.py": 89.13,
+    "src/leitir/snapshot.py": 84.31,
+    "src/leitir/treehash.py": 93.9,
+    "src/leitir/trust.py": 97.89
   }
 }

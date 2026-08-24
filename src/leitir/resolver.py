@@ -107,21 +107,23 @@ def _registry_only_scope(
 def _degraded_reason(exc: BaseException) -> str | None:
     """Classify a tag-lookup failure as fallback-eligible or terminal.
 
-    Only transport-level failures of the hosted-forge API — throttling,
-    secondary rate limits, outages, and network errors (the message
-    envelope produced by ``_get_json``/``_retry`` for HTTP and network
-    failures) — are eligible for the registry-only fallback.
-    Data-integrity failures (malformed metadata, invalid URLs, absent
-    data) are *not*: a forge that answered with malformed data is a
-    provenance fact, not an outage, so resolution keeps failing closed
-    (reviewer-qwen 2026-08-23). A :class:`TagAbsentError` (the repository
-    or tag genuinely does not exist) is likewise not eligible: the
-    registry artifact exists but its provenance binding provably does
-    not (audit 2026-08-23 P1(b)).
+    Two signals are accepted: the typed :class:`TagLookupUnavailableError`
+    raised by the real ``GitHubTagResolver`` transport (issue #248), and —
+    for the ``_get_json`` resolver family and test fakes — the legacy
+    ``"API call failed:"`` message envelope. Data-integrity failures
+    (malformed metadata, invalid URLs, absent data) are *not* eligible:
+    a forge that answered with malformed data is a provenance fact, not
+    an outage, so resolution keeps failing closed (reviewer-qwen
+    2026-08-23). A :class:`TagAbsentError` (the repository or tag
+    genuinely does not exist) is likewise not eligible: the registry
+    artifact exists but its provenance binding provably does not
+    (audit 2026-08-23 P1(b)).
     """
 
     if isinstance(exc, TagAbsentError):
         return None
+    if isinstance(exc, TagLookupUnavailableError):
+        return f"repository tag lookup unavailable: {exc}"
     if isinstance(exc, ResolutionError):
         message = str(exc)
         if "API call failed:" in message:
@@ -352,6 +354,19 @@ class TagAbsentError(ResolutionError):
     """A requested repository tag definitively does not exist."""
 
 
+class TagLookupUnavailableError(ResolutionError):
+    """The hosted-forge tag lookup failed at the transport level.
+
+    Throttling, secondary rate limits, outages, and network errors — as
+    opposed to a provably absent tag (:class:`TagAbsentError`) or malformed
+    forge data. Eligible for the ADR-0023 registry-only degraded fallback:
+    the registry artifact is fetchable and checksum-verifiable, only the
+    immutable tag-to-commit binding is temporarily unobtainable (issue
+    #248: the real ``GitHubTagResolver`` transport must raise this for
+    ``_degraded_reason`` to ever classify an outage).
+    """
+
+
 class ArchiveOnlyVerification(Exception):
     """The host can authenticate an archive but cannot enumerate its Git tree."""
 
@@ -525,21 +540,43 @@ class GitHubTagResolver:
                     f"tag {tag!r} not found in {slug}: "
                     f"{_http.describe_failure(exc)}"
                 ) from exc
-            raise ResolutionError(
-                f"tag {tag!r} not found in {slug}: {_http.describe_failure(exc)}"
+            if _http.classify(exc) is _http.HttpErrorKind.FATAL:
+                # Permanent client-side failure (bad credentials, permission
+                # denied, DMCA, malformed query): a configuration or access
+                # fact, not an outage — keep failing closed exactly as
+                # before (reviewer-hy3 2026-08-24, issue #248 round 2).
+                raise ResolutionError(
+                    f"tag {tag!r} lookup in {slug} failed: "
+                    f"{_http.describe_failure(exc)}"
+                ) from exc
+            raise TagLookupUnavailableError(
+                f"github.com API call failed: tag {tag!r} lookup in {slug}: "
+                f"{_http.describe_failure(exc)}"
             ) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
-            raise ResolutionError(
-                f"tag {tag!r} not found in {slug}: {_http.describe_failure(exc)}"
+            raise TagLookupUnavailableError(
+                f"github.com API call failed: tag {tag!r} lookup in {slug}: "
+                f"{_http.describe_failure(exc)}"
             ) from exc
-
-        obj = payload["object"]
-        if obj["type"] == "commit":
-            logger.debug("resolved tag slug=%s tag=%s sha=%s", slug, tag, obj["sha"][:12])
-            return obj["sha"]
-        if obj["type"] == "tag":
-            return self._dereference_annotated_tag(slug, obj["sha"])
-        raise ResolutionError(f"unexpected object type {obj['type']!r}")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ResolutionError(
+                f"github.com returned malformed tag metadata for {slug}"
+            ) from exc
+        obj = payload.get("object") if isinstance(payload, dict) else None
+        obj_type = obj.get("type") if isinstance(obj, dict) else None
+        obj_sha = obj.get("sha") if isinstance(obj, dict) else None
+        if obj_type == "commit" and isinstance(obj_sha, str):
+            logger.debug("resolved tag slug=%s tag=%s sha=%s", slug, tag, obj_sha[:12])
+            return obj_sha
+        if obj_type == "tag" and isinstance(obj_sha, str):
+            return self._dereference_annotated_tag(slug, obj_sha)
+        if obj_type is None or not isinstance(obj_sha, str):
+            raise ResolutionError(
+                f"github.com returned malformed tag metadata for {slug}"
+            )
+        raise ResolutionError(
+            f"unexpected object type {obj_type!r} in tag metadata for {slug}"
+        )
 
     def resolve_commit_to_sha(self, slug: str, ref: str) -> str:
         """Expand a Git commit reference, including Go pseudo-version revisions."""
@@ -605,21 +642,38 @@ class GitHubTagResolver:
         try:
             payload = self._retry(_fetch)
         except HTTPError as exc:
-            raise ResolutionError(
-                f"cannot dereference annotated tag {tag_sha} in {slug}: "
-                f"{_http.describe_failure(exc)}"
+            if exc.code == 404:
+                raise ResolutionError(
+                    f"annotated tag {tag_sha} not found in {slug}: "
+                    f"{_http.describe_failure(exc)}"
+                ) from exc
+            if _http.classify(exc) is _http.HttpErrorKind.FATAL:
+                raise ResolutionError(
+                    f"dereferencing annotated tag {tag_sha} in {slug} failed: "
+                    f"{_http.describe_failure(exc)}"
+                ) from exc
+            raise TagLookupUnavailableError(
+                f"github.com API call failed: dereferencing annotated tag "
+                f"{tag_sha} in {slug}: {_http.describe_failure(exc)}"
             ) from exc
         except _http.RETRIABLE_EXCEPTIONS as exc:
-            raise ResolutionError(
-                f"cannot dereference annotated tag {tag_sha} in {slug}: "
-                f"{_http.describe_failure(exc)}"
+            raise TagLookupUnavailableError(
+                f"github.com API call failed: dereferencing annotated tag "
+                f"{tag_sha} in {slug}: {_http.describe_failure(exc)}"
             ) from exc
-        obj = payload["object"]
-        if obj["type"] != "commit":
+        except (ValueError, TypeError, KeyError) as exc:
             raise ResolutionError(
-                f"annotated tag does not point to a commit: {obj['type']!r}"
+                f"github.com returned malformed annotated-tag metadata for {slug}"
+            ) from exc
+        obj = payload.get("object") if isinstance(payload, dict) else None
+        obj_type = obj.get("type") if isinstance(obj, dict) else None
+        obj_sha = obj.get("sha") if isinstance(obj, dict) else None
+        if obj_type != "commit" or not isinstance(obj_sha, str):
+            raise ResolutionError(
+                f"github.com returned malformed annotated-tag metadata for {slug}: "
+                f"object type {obj_type!r}"
             )
-        return obj["sha"]
+        return obj_sha
 
 
 def _git_blob_sha(data: bytes) -> str:

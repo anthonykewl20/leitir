@@ -274,7 +274,12 @@ def test_cli_help_lists_bench_and_bench_help_has_no_side_effects(capsys):
     assert main(["--help"]) == ExitCode.SUCCESS
     assert "bench" in capsys.readouterr().out
     assert main(["bench", "--help"]) == ExitCode.SUCCESS
-    assert "search-v1" in capsys.readouterr().out
+    help_text = capsys.readouterr().out
+    assert "search-v1" in help_text
+    # QA finding: users need up-front warning that the default run is slow
+    # and downloads real repositories, before they hit Ctrl+C mid-run.
+    assert "32 tasks" in help_text
+    assert "pinned" in help_text
 
 
 def test_cli_bench_emits_ranked_artifact_and_summary():
@@ -293,6 +298,37 @@ def test_cli_bench_emits_ranked_artifact_and_summary():
     assert payload["benchmark"]["id"] == "search-v1"
     assert len(payload["tasks"]) == 32
     assert "artifact_sha256=" in err.getvalue()
+
+
+def test_cli_bench_reports_task_progress_with_count_and_elapsed_time_to_stderr():
+    # QA finding: the default search-v1 benchmark materializes ~30 real repo
+    # trees one task at a time with only a bare "task X starting" line, which
+    # reads as a hang. Progress must show N/total and elapsed time, must stay
+    # on stderr, and stdout must remain pure JSON.
+    manifest = load_manifest()
+    out = io.StringIO()
+    err = io.StringIO()
+    code = main(
+        ["bench"],
+        tree_source_factory=lambda _token: object(),
+        searcher_factory=lambda _tree: _FixtureSearcher(manifest),
+        stdout=out,
+        stderr=err,
+    )
+    assert code == ExitCode.SUCCESS
+    # stdout is exactly the JSON artifact plus the trailing newline `print` adds.
+    stdout_text = out.getvalue()
+    json.loads(stdout_text)
+    assert stdout_text.endswith("\n")
+    assert stdout_text.count("\n") == 1
+
+    stderr_lines = [line for line in err.getvalue().splitlines() if "benchmark task" in line]
+    assert len(stderr_lines) == 32
+    for index, line in enumerate(stderr_lines, start=1):
+        assert line.startswith(f"leitir: benchmark task {index}/32 ")
+        assert "starting" in line
+        assert "elapsed " in line
+        assert line.rstrip().endswith("s)")
 
 
 def test_artifact_digest_is_identical_across_python_hash_seeds():

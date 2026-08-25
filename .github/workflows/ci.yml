@@ -68,7 +68,12 @@ jobs:
     # shifted env (TZ=Asia/Kathmandu — a +05:45 offset — LC_ALL=C, which also
     # engages PEP 540 UTF-8 mode). Ordering-sensitive modules beyond the
     # original four: sbom (+ spdx/cyclonedx), apisurface (+ heuristic), diff,
-    # index/builder, graph/registry, docpointers (issue #199).
+    # index/builder, graph/registry, docpointers (issue #199). usage evidence
+    # pipeline (issues #255-#259, PR #260): every stage emits canonical-JSON
+    # digests and must replay byte-identically offline, so its whole test
+    # surface belongs here. regex_budget (ReDoS bounds): catastrophic-shape
+    # detection and match caps are pure/bounded and must classify identically
+    # across seeds/locales.
     timeout-minutes: 10
     runs-on: ubuntu-latest
     strategy:
@@ -105,7 +110,12 @@ jobs:
           tests/test_sbom.py tests/test_sbom_spdx.py tests/test_sbom_cyclonedx.py
           tests/test_apisurface.py tests/test_apisurface_heuristic.py
           tests/test_diff.py tests/test_trigram_index.py
-          tests/test_graph_polyglot.py tests/test_docpointers.py -q
+          tests/test_graph_polyglot.py tests/test_docpointers.py
+          tests/test_usage_contract.py tests/test_usage_fixtures.py
+          tests/test_usage_admission.py tests/test_usage_import_catalog.py
+          tests/test_usage_resolver.py tests/test_usage_assemble.py
+          tests/test_usage_cli.py tests/test_usage_replay.py
+          tests/test_usage_portable_io.py tests/test_regex_budget.py -q
 
   tree-sitter-extra:
     # Observed ≤0:18; 15 min covers cold hash-locked wheel installs (issue #199).

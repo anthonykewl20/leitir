@@ -505,7 +505,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
     )
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
-    export.add_argument("-o", "--output", default="corpus.lock")
+    export.add_argument(
+        "-o",
+        "--output",
+        default="corpus.lock",
+        help=(
+            "path for the lock file (default: corpus.lock in the current "
+            "working directory; the accompanying tarball is written "
+            "alongside it as corpus.tar.gz)"
+        ),
+    )
     export.add_argument(
         "--require-manifest-auth",
         action="store_true",
@@ -2941,6 +2950,15 @@ def _write_bts_error(exc: Exception, *, as_json: bool, err: TextIO) -> None:
     print(f"leitir: error: {redact(str(exc))}", file=err)
 
 
+# Conventional shell exit code for a process terminated by SIGINT (128 + 2).
+# Not part of ExitCode: that enum enumerates *command outcomes* the corpus
+# logic can decide on (success/failure/malformed/etc.), whereas an interrupt
+# is delivered by the OS mid-operation and never reaches command logic at
+# all. Reusing 130 keeps `leitir` consistent with how every POSIX shell
+# already reports Ctrl+C for any other program.
+_SIGINT_EXIT_CODE = 130
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2956,8 +2974,55 @@ def main(
     stderr: TextIO | None = None,
     _exit_windows_doctor_success: bool = False,
 ) -> int:
-    """Parse one command and wire resolver -> engine -> report."""
+    """Parse one command and wire resolver -> engine -> report.
 
+    This is a thin wrapper around :func:`_main_impl` whose sole job is to
+    convert a ``KeyboardInterrupt`` raised anywhere during command dispatch
+    (network I/O, materialization, searching, ...) into a clean, single-line
+    stderr message and a conventional exit code instead of letting a raw
+    traceback reach the user. It intentionally does not install a custom
+    signal handler and does not suppress the interrupt: a second Ctrl+C
+    during unwinding still raises normally, and this handler only fires
+    once the first KeyboardInterrupt has already unwound the stack.
+    """
+    err = stderr or sys.stderr
+    try:
+        return _main_impl(
+            argv,
+            tree_source_factory=tree_source_factory,
+            resolver_factory=resolver_factory,
+            searcher_factory=searcher_factory,
+            code_search_factory=code_search_factory,
+            global_searcher_factory=global_searcher_factory,
+            benchmark_runner_factory=benchmark_runner_factory,
+            stdout=stdout,
+            stderr=stderr,
+            _exit_windows_doctor_success=_exit_windows_doctor_success,
+        )
+    except KeyboardInterrupt:
+        try:
+            print("leitir: interrupted", file=err)
+        except OSError as exc:
+            if not _is_broken_pipe_error(exc):
+                raise
+        return _SIGINT_EXIT_CODE
+
+
+def _main_impl(
+    argv: Sequence[str] | None = None,
+    *,
+    tree_source_factory: Callable[[str | None], object] = _build_default_tree_source,
+    resolver_factory: Callable[[str | None], object] = _build_default_resolver,
+    searcher_factory: Callable[..., object] = _build_default_searcher,
+    code_search_factory: Callable[[str | None], object] = _build_default_code_search,
+    global_searcher_factory: Callable[..., object] = _build_default_global_searcher,
+    benchmark_runner_factory: Callable[
+        [object], object
+    ] = _build_default_benchmark_runner,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    _exit_windows_doctor_success: bool = False,
+) -> int:
     out = stdout or sys.stdout
     err = stderr or sys.stderr
     parser = build_parser()

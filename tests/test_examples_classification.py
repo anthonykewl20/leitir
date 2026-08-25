@@ -70,6 +70,48 @@ def test_exact_path_rules_classify_without_calling_tests_production(
     assert classify_example(_record(path=path)).labels == expected
 
 
+@pytest.mark.parametrize("alias", ["pycon", "python2", "python3", "py", "ipython", "doctest"])
+def test_python_fence_aliases_classify_as_python_usage(alias: str) -> None:
+    record = _record(
+        language=alias,
+        code=">>> from tabulate import tabulate\n>>> print(tabulate([[1, 2]]))\n",
+        symbols=["tabulate"],
+    )
+
+    result = classify_example(record)
+
+    assert ExampleClass.MINIMAL_USAGE in result.labels
+    assert ExampleClass.UNKNOWN not in result.labels
+    assert all(item.language == "python" for item in result.evidence)
+
+
+def test_pip_install_only_shell_snippet_is_not_ranked_as_usage() -> None:
+    record = _record(
+        path="README.md",
+        language="shell",
+        code="pip install tabulate",
+        symbols=["tabulate"],
+    )
+
+    result = classify_example(record)
+
+    assert ExampleClass.MINIMAL_USAGE not in result.labels
+    assert result.labels == (ExampleClass.UNKNOWN,)
+
+
+def test_shell_snippet_with_more_than_install_still_classifies_as_usage() -> None:
+    record = _record(
+        path="README.md",
+        language="shell",
+        code="pip install tabulate\ntabulate --help",
+        symbols=["tabulate"],
+    )
+
+    result = classify_example(record)
+
+    assert ExampleClass.MINIMAL_USAGE in result.labels
+
+
 def test_unsupported_language_is_unknown_and_unknown_is_exclusive() -> None:
     result = classify_example(_record(language="brainfuck"))
 

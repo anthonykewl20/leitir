@@ -32,6 +32,16 @@ def test_extracts_markdown_fences_and_whole_code_files_with_provenance(tmp_path)
     ]
 
 
+def test_pycon_fence_is_normalized_to_python_language(tmp_path):
+    (tmp_path / "README.md").write_text(
+        "```pycon\n>>> from pkg import alpha\n>>> alpha()\n```\n", encoding="utf-8"
+    )
+
+    snippets = extract_snippets(tmp_path)
+
+    assert [(item["path"], item["language"]) for item in snippets] == [("README.md", "python")]
+
+
 def test_ranking_drops_zero_matches_is_deterministic_and_capped(tmp_path):
     examples = tmp_path / "examples"
     examples.mkdir()

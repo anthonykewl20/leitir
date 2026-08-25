@@ -22,7 +22,7 @@ from leitir.adapters import LanguageAdapter
 from leitir.adapters.languages import canonicalize_language
 from leitir.adapters.registry import trusted_adapter_language
 from leitir.credentials import validate_secret
-from leitir.engine import _required_language, _score_content_ex, path_matches
+from leitir.engine import _required_language, _score_content_ex, path_matches_ex
 from leitir.materialize import _utc_now
 from leitir.ranking import order_source_matches, source_identity
 from leitir.search import (
@@ -709,6 +709,7 @@ BOUND_RESULT_BUDGET = "result-budget"
 BOUND_TRANSPORT_ERROR = "transport-error"
 BOUND_PARSER_UNAVAILABLE = "parser-unavailable"
 BOUND_VERIFICATION_FAILED = "verification-failed"
+BOUND_REGEX_BUDGET = "regex-budget"
 _BOUND_REASONS = frozenset(
     {
         BOUND_INCOMPLETE_RESULTS,
@@ -718,6 +719,7 @@ _BOUND_REASONS = frozenset(
         BOUND_TRANSPORT_ERROR,
         BOUND_PARSER_UNAVAILABLE,
         BOUND_VERIFICATION_FAILED,
+        BOUND_REGEX_BUDGET,
     }
 )
 
@@ -912,9 +914,14 @@ class GlobalSearcher:
                 if group_index >= 1:
                     promoted_attempted += 1
                 attempts += 1
-                if path_preds and not path_matches(hit.path, path_preds):
-                    exclusions["path_mismatch"] = exclusions.get("path_mismatch", 0) + 1
-                    continue
+                if path_preds:
+                    path_matched, path_budget_exceeded = path_matches_ex(hit.path, path_preds)
+                    if path_budget_exceeded:
+                        incomplete_results = True
+                        bound_reasons.add(BOUND_REGEX_BUDGET)
+                    if not path_matched:
+                        exclusions["path_mismatch"] = exclusions.get("path_mismatch", 0) + 1
+                        continue
                 adapter = self._adapter_for(hit.path, required_language)
                 if adapter is None:
                     exclusions["no_adapter"] = exclusions.get("no_adapter", 0) + 1

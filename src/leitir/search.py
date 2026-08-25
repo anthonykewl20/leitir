@@ -124,7 +124,7 @@ class Predicate:
             # at spec-construction time, the same place a syntactically invalid pattern is
             # already rejected -- see leitir._regex_budget for why this can only be a
             # heuristic first line of defense, not a complete guarantee (matching still runs
-            # under a wall-clock budget as a backstop).
+            # under a bounded input-length cap as a backstop).
             from leitir._regex_budget import has_catastrophic_shape
 
             if has_catastrophic_shape(self.value):

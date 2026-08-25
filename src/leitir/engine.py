@@ -208,19 +208,60 @@ def _required_language(spec: SearchSpec) -> str | None:
     return values[0] if values else None
 
 
-def path_matches(path: str, predicates: Sequence[Predicate]) -> bool:
-    """Return whether ``path`` satisfies any local PATH predicate."""
+def path_matches_ex(path: str, predicates: Sequence[Predicate]) -> tuple[bool, bool]:
+    """Return ``(matched, budget_exceeded)`` for whether ``path`` satisfies any PATH predicate.
+
+    A PATH predicate value is tried both as a literal substring (unconditionally -- see
+    below) and, opportunistically, as a regex against ``path``. The regex attempt is a ReDoS
+    risk exactly like the ``regex:``/``signature:`` paths ``leitir._regex_budget`` already
+    protects: a corpus can contain very long paths (deeply nested vendored trees are real),
+    and a PATH predicate is never shape-checked at construction time the way ``regex:``
+    predicates are (``Predicate.__post_init__`` skips the check for ``PredicateKind.PATH``
+    on purpose, because a PATH value is legitimately used as a plain literal substring first
+    -- rejecting construction outright on a catastrophic-looking literal would break that
+    correct, common case). So the same two defenses from ``_regex_budget`` are applied here,
+    at match time, only around the *regex* attempt:
+
+    1. If ``predicate.value`` has a known catastrophic-backtracking shape
+       (:func:`has_catastrophic_shape`), the regex attempt is skipped.
+    2. If ``path`` is longer than :data:`MAX_REGEX_LINE_LENGTH`, the regex attempt is
+       skipped (reusing the same cap as line matching -- ``PATH_MAX`` on Linux is 4096
+       bytes, so this comfortably covers every real filesystem path while still bounding
+       worst-case backtracking input length).
+
+    The literal substring check (`predicate.value in path`) always runs first and is never
+    skipped, so ordinary PATH predicates behave exactly as before. ``budget_exceeded`` is
+    True whenever a regex attempt was skipped for either reason and no earlier predicate
+    already matched; callers must treat that as an incomplete result (like
+    ``parser_unavailable`` elsewhere in this module), never as a silent non-match.
+    """
+    from leitir._regex_budget import MAX_REGEX_LINE_LENGTH, has_catastrophic_shape
+
+    budget_exceeded = False
     for predicate in predicates:
         if predicate.kind is not PredicateKind.PATH:
             continue
         if predicate.value in path:
-            return True
+            return True, budget_exceeded
+        if has_catastrophic_shape(predicate.value) or len(path) > MAX_REGEX_LINE_LENGTH:
+            budget_exceeded = True
+            continue
         try:
             if re.search(predicate.value, path):
-                return True
+                return True, budget_exceeded
         except re.error:
             pass
-    return False
+    return False, budget_exceeded
+
+
+def path_matches(path: str, predicates: Sequence[Predicate]) -> bool:
+    """Return whether ``path`` satisfies any local PATH predicate.
+
+    Convenience wrapper around :func:`path_matches_ex` for callers that do not need to
+    surface budget-exceeded incompleteness (e.g. tests exercising ordinary predicates).
+    """
+    matched, _budget_exceeded = path_matches_ex(path, predicates)
+    return matched
 
 
 def _span_excluded_ex(
@@ -487,18 +528,21 @@ class ScopedSearcher:
             ),
             key=lambda blob: (blob.path, blob.blob_sha),
         )
+        path_budget_exceeded = False
         if path_preds:
-            eligible_blobs = [
-                b
-                for b in eligible_blobs
-                if path_matches(b.path, path_preds)
-            ]
+            filtered_blobs = []
+            for b in eligible_blobs:
+                matched, exceeded = path_matches_ex(b.path, path_preds)
+                path_budget_exceeded = path_budget_exceeded or exceeded
+                if matched:
+                    filtered_blobs.append(b)
+            eligible_blobs = filtered_blobs
 
         files_eligible = len(eligible_blobs)
         files_indexed = 0
         files_excluded = 0
         matches: list[SourceMatch] = []
-        partial = False
+        partial = path_budget_exceeded
 
         for blob in eligible_blobs:
             if blob.size > self._max_blob_size:

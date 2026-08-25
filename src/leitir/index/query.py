@@ -11,10 +11,10 @@ from typing import Any
 
 from leitir.adapters import LanguageAdapter
 from leitir.adapters.registry import trusted_adapter_language
-from leitir.engine import ScopedSearcher, _required_language, _score_content_ex, path_matches
+from leitir.engine import ScopedSearcher, _required_language, _score_content_ex, path_matches_ex
 from leitir.index.postings import intersect_sorted, iter_trigrams
 from leitir.index.rank import dedupe_source_matches
-from leitir.index.verify import ShelfRef, VerifiedIndexShelf, open_verified_shelf
+from leitir.index.verify import IndexDocument, ShelfRef, VerifiedIndexShelf, open_verified_shelf
 from leitir.matching import document_excluded_ex
 from leitir.materialize import VerificationError, _utc_now
 from leitir.ranking import order_source_matches
@@ -162,15 +162,22 @@ class IndexedSearcher:
         required_language: str | None,
     ) -> tuple[int, int, int, list[SourceMatch], bool]:
         path_predicates = tuple(predicate for predicate in spec.must if predicate.kind is PredicateKind.PATH)
-        allowed_documents = tuple(
-            (doc_id, document, adapter)
-            for doc_id, document in enumerate(shelf.documents)
-            if (adapter := self._adapter_for(document.path, required_language)) is not None
-            and (not path_predicates or path_matches(document.path, path_predicates))
-        )
+        path_budget_exceeded = False
+        allowed_documents_list: list[tuple[int, IndexDocument, LanguageAdapter]] = []
+        for doc_id, document in enumerate(shelf.documents):
+            adapter = self._adapter_for(document.path, required_language)
+            if adapter is None:
+                continue
+            if path_predicates:
+                matched, exceeded = path_matches_ex(document.path, path_predicates)
+                path_budget_exceeded = path_budget_exceeded or exceeded
+                if not matched:
+                    continue
+            allowed_documents_list.append((doc_id, document, adapter))
+        allowed_documents = tuple(allowed_documents_list)
         allowed = tuple(doc_id for doc_id, _document, _adapter in allowed_documents)
         planned = candidate_ids(spec, shelf, allowed)
-        incomplete = False
+        incomplete = path_budget_exceeded
         if planned is None:
             selected = allowed_documents[: self._fallback_file_limit]
             incomplete = len(selected) != len(allowed_documents)

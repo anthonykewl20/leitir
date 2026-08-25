@@ -20,6 +20,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - resolve Python consumer usage statically (`usage`)
 
 ### Fixed
+- bound regex matching for path predicates (`search`)
 - handle Ctrl+C cleanly and correct example classification (`cli`)
 - harden registry parsing, interrupt handling, and index caching
 - support platforms without O_NOFOLLOW (`usage`)

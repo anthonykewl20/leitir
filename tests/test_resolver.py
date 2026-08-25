@@ -1033,6 +1033,91 @@ class TestRegistryOnlyFallback:
             replace(good, degraded_provenance="repository tag lookup unavailable")
 
 
+class TestNullRegistryFields:
+    """Real registries emit JSON `null` for an existing key (not merely an
+    absent key), which makes `dict.get(key, default)` return `None` instead
+    of `default`. Confirmed live against PyPI: `pypi.org/pypi/pluggy/1.6.0/json`
+    serves `"info": {..., "project_urls": null, "home_page": null, ...}}`.
+    Chaining `.values()`/`.get()` off such a field raised a bare
+    AttributeError; every case here must degrade gracefully instead."""
+
+    def test_pypi_null_project_urls_is_treated_as_absent(self, monkeypatch):
+        # The exact real-world shape observed for pluggy==1.6.0: project_urls
+        # and home_page are both JSON null, but project_url still points at
+        # a GitHub URL, so resolution should still succeed via that field.
+        payload = {
+            "info": {
+                "version": "1.2.3",
+                "project_url": "https://github.com/acme/demo",
+                "project_urls": None,
+                "home_page": None,
+            },
+            "urls": [],
+        }
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        tags = ScriptedTagResolver({"v1.2.3": SHA, "1.2.3": SHA})
+        result = PyPIResolver(tags).resolve(PackageRef(Ecosystem.PYPI, "demo", "1.2.3"))
+
+        assert result.scope.slug == "acme/demo"
+        assert result.scope.commit_sha == SHA
+
+    def test_pypi_null_project_urls_and_no_other_github_url_fails_closed_cleanly(
+        self, monkeypatch
+    ):
+        # The real pluggy==1.6.0 shape: project_urls and home_page are both
+        # null, and project_url points at PyPI itself, not GitHub. No crash;
+        # a normal, actionable ResolutionError instead.
+        payload = {
+            "info": {
+                "version": "1.2.3",
+                "project_url": "https://pypi.org/project/demo/",
+                "project_urls": None,
+                "home_page": None,
+            },
+            "urls": [],
+        }
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        tags = ScriptedTagResolver({})
+        with pytest.raises(ResolutionError, match="no GitHub repository found"):
+            PyPIResolver(tags).resolve(PackageRef(Ecosystem.PYPI, "demo", "1.2.3"))
+
+    def test_pypi_null_info_in_latest_version_does_not_crash(self, monkeypatch):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps({"info": None}).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="no latest version"):
+            PyPIResolver(GitHubTagResolver()).latest_version("demo")
+
+    def test_crates_null_version_in_repository_lookup_fails_closed_cleanly(
+        self, monkeypatch
+    ):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps({"version": None}).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="no GitHub repository"):
+            CratesResolver(GitHubTagResolver()).resolve(
+                PackageRef(Ecosystem.CRATES, "demo", "1.2.3")
+            )
+
+    def test_crates_null_crate_in_latest_version_does_not_crash(self, monkeypatch):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps({"crate": None}).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="no latest version"):
+            CratesResolver(GitHubTagResolver()).latest_version("demo")
+
+
 @pytest.mark.parametrize(
     ("resolver_factory", "candidates"),
     [

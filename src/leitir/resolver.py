@@ -2015,7 +2015,8 @@ class PyPIResolver:
                 f"PyPI latest-version lookup failed for {name}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
-        version = payload.get("info", {}).get("version")
+        info = payload.get("info")
+        version = info.get("version") if isinstance(info, dict) else None
         if not isinstance(version, str) or not version.strip():
             raise ResolutionError(f"PyPI returned no latest version for {name}")
         return version
@@ -2038,13 +2039,16 @@ class PyPIResolver:
         return timestamps[0] if timestamps else None
 
     def _extract_github_slug(self, payload: dict) -> str | None:
-        info = payload.get("info", {})
+        info = payload.get("info")
+        info = info if isinstance(info, dict) else {}
         urls_to_check = []
         if info.get("project_url"):
             urls_to_check.append(info["project_url"])
-        for url_entry in info.get("project_urls", {}).values():
-            if url_entry:
-                urls_to_check.append(url_entry)
+        project_urls = info.get("project_urls")
+        if isinstance(project_urls, dict):
+            for url_entry in project_urls.values():
+                if url_entry:
+                    urls_to_check.append(url_entry)
         if info.get("home_page"):
             urls_to_check.append(info["home_page"])
 
@@ -2131,7 +2135,8 @@ class CratesResolver:
                 f"{_http.describe_failure(exc)}"
             ) from exc
 
-        version_info = payload.get("version", {})
+        version_info = payload.get("version")
+        version_info = version_info if isinstance(version_info, dict) else {}
         repo_url = version_info.get("repository") or ""
         m = _GITHUB_URL_RE.search(repo_url)
         if not m:
@@ -2206,7 +2211,8 @@ class CratesResolver:
                 f"crates.io latest-version lookup failed for {name}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
-        version = payload.get("crate", {}).get("max_version")
+        crate = payload.get("crate")
+        version = crate.get("max_version") if isinstance(crate, dict) else None
         if not isinstance(version, str) or not version.strip():
             raise ResolutionError(f"crates.io returned no latest version for {name}")
         return version

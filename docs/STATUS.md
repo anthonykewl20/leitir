@@ -169,9 +169,13 @@ real on-disk corpus/requirements bytes, fail-closed on any tamper) in
 `src/leitir/cli.py`, backed by `src/leitir/usage/cli_support.py`. An
 opt-in, pinned public-source E2E benchmark is wired at
 `tests/e2e/test_usage_e2e.py`, gated on `LEITIR_ENABLE_LIVE_E2E` and the
-`live` marker; the public-source identity/pin selection itself is an
-owner decision recorded as UNKNOWN in issue #259 and does not gate the
-local-fixture proof.
+`live` marker; it does not gate the local-fixture proof. The public-source
+identity/pin selection (an owner decision originally recorded as UNKNOWN
+in issue #259) has since been made: provider `pypi:six@1.16.0` (MIT,
+pinned by sdist digest) and consumer `benjaminp/six` pinned at the exact
+commit tagged `1.16.0` (its `test_six.py`, a genuine real-world `import
+six` consumer). With `LEITIR_ENABLE_LIVE_E2E=1` the test fetches both over
+the real network and drives the real pipeline and CLI end to end.
 
 ## Operational readiness
 

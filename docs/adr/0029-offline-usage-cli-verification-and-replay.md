@@ -33,11 +33,12 @@ that benchmark, or invented identities, to gate local completion.
   partial or "looks valid" JSON document.
 - MCP is out of scope for every issue in this chain; the CLI surface must
   not introduce the token anywhere, including help text.
-- The issue records the public-source E2E identity/pin selection as an
-  explicit **owner decision: UNKNOWN**. Local-fixture completion (AC-1,
-  SP-1) is independent of that decision and must not be gated on it, and a
-  missing owner selection must never be papered over by inventing pins or
-  weakening the local proof.
+- The issue originally recorded the public-source E2E identity/pin
+  selection as an explicit **owner decision: UNKNOWN**. That decision has
+  since been made (see "Decision Outcome" below); regardless, local-fixture
+  completion (AC-1, SP-1) remains independent of it and must not be gated
+  on it, and the pins chosen must never be invented or weaken the local
+  proof.
 
 ## Considered Options
 
@@ -58,9 +59,13 @@ that benchmark, or invented identities, to gate local completion.
   (chosen).
 - Implement the pinned public-source E2E against a hard-coded PyPI
   package/GitHub repo chosen unilaterally by this issue's implementation
-  (rejected -- the issue explicitly records the pin selection as an owner
-  decision; inventing one would be exactly the kind of unauthorized
-  identity claim the usage evidence pipeline exists to prevent).
+  without owner sign-off (rejected at the time this ADR was first written
+  -- the issue recorded the pin selection as an owner decision; inventing
+  one without that delegation would have been exactly the kind of
+  unauthorized identity claim the usage evidence pipeline exists to
+  prevent. The owner has since delegated the selection -- see "Decision
+  Outcome" below -- so this option is no longer rejected, it is simply
+  superseded by the pins actually chosen.)
 
 ## Decision Outcome
 
@@ -101,13 +106,26 @@ Chosen option: a `usage` subcommand in `src/leitir/cli.py`, backed by
 - **The opt-in, pinned public-source E2E** lives at
   `tests/e2e/test_usage_e2e.py`, carrying both `@pytest.mark.live` and a
   `skipif` gated on `LEITIR_ENABLE_LIVE_E2E` (the pairing
-  `tests/test_live_marker_inventory.py` enforces). Its skip condition also
-  checks a module-level `_PUBLIC_E2E_PINS: dict | None`, left `None`
-  pending the recorded owner decision; the default run always passes by
-  skipping and reports UNKNOWN rather than fabricating a pin, and the test
-  body re-checks `_PUBLIC_E2E_PINS is None` a second time so a future edit
-  that clears the module-level skip without wiring real fetch/pin logic
-  still refuses to reach the network on invented identities.
+  `tests/test_live_marker_inventory.py` enforces). The owner delegated the
+  identity/pin decision (see the module docstring); the chosen pins are a
+  module-level `_PUBLIC_E2E_PINS: dict[str, str]` constant:
+  - provider: PyPI `six==1.16.0` (MIT, a single ~34 KB file, unmaintained
+    since 2021 and therefore effectively immutable), pinned by its exact
+    sdist URL and real `sha256` digest;
+  - consumer: the `six` project's own GitHub repository
+    (`benjaminp/six`), MIT, pinned at the exact 40-hex commit SHA tagged
+    `1.16.0`, whose `test_six.py` is a genuine real-world consumer with a
+    module-level `import six` and dozens of statically-resolvable
+    `six.<attr>` usages.
+  When `LEITIR_ENABLE_LIVE_E2E=1`, the test fetches both pinned artifacts
+  over the real network, verifies the sdist bytes against the pinned
+  digest, runs the real admission/import-catalog/resolver/assembler
+  pipeline over the genuinely fetched consumer source, writes the
+  resulting report to disk, and drives it through the real shipped CLI
+  (`usage verify`, then `usage replay --times 2` run twice) -- asserting a
+  non-empty resolved reference count and byte-identical replay output.
+  With the env var unset (the default), the test still never touches the
+  network: the `skipif` short-circuits before any fetch.
 
 ### Positive Consequences
 
@@ -144,9 +162,14 @@ docstring both now say this explicitly.
   convention of its own (`tests/fixtures/usage/*/manifest.json` is a
   test-only convention, not part of `leitir.usage`'s public contract); a
   human or CI caller must know these paths.
-- The pinned public-source E2E is deliberately inert until an owner
-  supplies `_PUBLIC_E2E_PINS`; this ADR does not by itself unblock real
-  public-source E2E coverage, only the local-fixture proof.
+- The pinned public-source E2E now runs real network fetches against
+  `pypi.org`/`files.pythonhosted.org` and the GitHub API whenever
+  `LEITIR_ENABLE_LIVE_E2E=1`; it depends on both services being reachable
+  and, for GitHub, benefits from a `GH_TOKEN`/`GITHUB_TOKEN` to avoid
+  anonymous rate limits. Because `six==1.16.0` and its pinned commit are
+  immutable historical artifacts, this dependency is expected to be
+  durable, but it is still an external dependency the default offline
+  suite deliberately does not share.
 
 ## Links
 

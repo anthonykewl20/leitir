@@ -71,6 +71,29 @@ def test_ties_use_path_then_line_before_length(tmp_path):
     ]
 
 
+def test_install_only_snippets_rank_below_real_usage_regardless_of_symbol_count(tmp_path):
+    # A pure "pip install tabulate" block matches the "tabulate" symbol just
+    # like real usage does, and by symbol-count alone would tie or even beat
+    # a real usage example with fewer matched symbols. Ranking must consult
+    # classification so the install-only snippet is demoted below genuine
+    # usage instead of only being relabeled UNKNOWN in isolation.
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "```shell\npip install tabulate\n```\n"
+        "```python\nfrom tabulate import tabulate\ntabulate([[1, 2]])\n```\n",
+        encoding="utf-8",
+    )
+
+    index = extract_examples(tmp_path, _api("tabulate"))
+
+    assert [item["classification"]["labels"] for item in index["snippets"]] == [
+        ["minimal_usage"],
+        ["unknown"],
+    ]
+    assert index["snippets"][0]["language"] == "python"
+    assert index["snippets"][1]["language"] == "shell"
+
+
 def test_matching_uses_identifier_boundaries():
     assert match_symbols("alpha(); pkg.beta()", ("alpha", "pkg.beta", "bet")) == [
         "alpha",

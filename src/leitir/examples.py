@@ -70,6 +70,16 @@ _LANGUAGE_ALIASES = {
     "pycon": "python",
     "ipython": "python",
     "doctest": "python",
+    # Terminal/shell transcript tags commonly seen in READMEs for install
+    # instructions (``choco``/``winget`` in _PACKAGE_MANAGER_INSTALL exist
+    # specifically for the powershell/cmd case). These carry the same
+    # command syntax as bash/sh for the purposes of classification, so
+    # normalize them to the canonical "shell" spelling rather than leaving
+    # them unsupported and always UNKNOWN regardless of content.
+    "zsh": "shell",
+    "console": "shell",
+    "cmd": "shell",
+    "powershell": "shell",
 }
 
 
@@ -79,7 +89,11 @@ def _normalize_language(language: str) -> str:
 
 # Fence languages whose content is a shell/terminal command line, used to
 # recognize package-manager install commands (see _is_install_only_snippet).
-_SHELL_LIKE_LANGUAGES = frozenset({"bash", "sh", "shell", "zsh", "console", "cmd", "powershell"})
+# zsh/console/cmd/powershell fence tags normalize to "shell" via
+# _LANGUAGE_ALIASES before classification, so they reach this set already
+# canonicalized; listed here as just the three post-normalization spellings
+# that can actually appear by the time _is_install_only_snippet runs.
+_SHELL_LIKE_LANGUAGES = frozenset({"bash", "sh", "shell"})
 _PACKAGE_MANAGER_INSTALL = re.compile(
     r"^(?:\$\s*)?(?:sudo\s+)?"
     r"(?:pip3?|pipx|conda|uv|poetry|npm|yarn|pnpm|cargo|gem|go|apt(?:-get)?|brew|choco|winget)\s+"
@@ -493,14 +507,19 @@ def extract_examples(
         if matched:
             record = dict(snippet, symbols=matched)
             ranked.append(dict(record, classification=classify_example(record).as_dict()))
-    ranked.sort(
-        key=lambda item: (
+    def _sort_key(item: dict[str, object]) -> tuple[int, int, str, int, int]:
+        classification = cast(dict[str, object], item["classification"])
+        labels = cast(list[str], classification["labels"])
+        is_unknown_only = labels == [ExampleClass.UNKNOWN.value]
+        return (
+            1 if is_unknown_only else 0,
             -len(cast(list[str], item["symbols"])),
             str(item["path"]),
             int(cast(str | bytes | bytearray | int, item["line"])),
             -len(str(item["code"])),
         )
-    )
+
+    ranked.sort(key=_sort_key)
     logger.debug("examples matched=%d returned=%d", len(ranked), min(len(ranked), max(0, limit)))
     return {
         "schema_version": EXAMPLES_SCHEMA_VERSION,

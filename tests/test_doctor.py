@@ -660,6 +660,79 @@ def test_doctor_exit_codes(monkeypatch: pytest.MonkeyPatch) -> None:
         assert doctor.run_doctor(no_network=True, stdout=stream) == expected
 
 
+def test_doctor_windows_exit_path_ctrl_c_is_clean_not_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Windows-only os._exit fast path used for ``doctor`` must honor the
+    same clean-interrupt contract as main()'s own KeyboardInterrupt handler:
+    a short "leitir: interrupted" message on stderr and exit 130, never a
+    raw traceback -- even though this path calls os._exit directly and so
+    bypasses main()'s try/except entirely."""
+
+    def _raise(*args: object, **kwargs: object) -> int:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(doctor, "run_doctor", _raise)
+    monkeypatch.setattr(os, "name", "nt")
+
+    captured: dict[str, int] = {}
+
+    def fake_exit(code: int) -> None:
+        captured["code"] = code
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+
+    out, err = StringIO(), StringIO()
+    with pytest.raises(SystemExit):
+        main(
+            ["doctor", "--json"],
+            stdout=out,
+            stderr=err,
+            _exit_windows_doctor_success=True,
+        )
+
+    assert captured["code"] == 130
+    assert err.getvalue().strip() == "leitir: interrupted"
+    assert "Traceback" not in err.getvalue()
+    assert out.getvalue() == ""
+
+
+def test_doctor_windows_exit_path_normal_success_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-interrupt doctor run on the Windows fast path still exits with
+    doctor's actual result code via os._exit, unchanged by the new
+    KeyboardInterrupt branch."""
+
+    monkeypatch.setattr(
+        doctor,
+        "collect_checks",
+        lambda **kwargs: ([doctor.Check("x", "pass", "ok")], "0.1.0"),
+    )
+    monkeypatch.setattr(os, "name", "nt")
+
+    captured: dict[str, int] = {}
+
+    def fake_exit(code: int) -> None:
+        captured["code"] = code
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+
+    out, err = StringIO(), StringIO()
+    with pytest.raises(SystemExit):
+        main(
+            ["doctor", "--json", "--no-network"],
+            stdout=out,
+            stderr=err,
+            _exit_windows_doctor_success=True,
+        )
+
+    assert captured["code"] == 0
+    assert "interrupted" not in err.getvalue()
+
+
 def test_doctor_color_disabled_when_not_tty(tmp_path: Path) -> None:
     _code, output, _error = _invoke(tmp_path, "--no-network")
     assert "\033[" not in output

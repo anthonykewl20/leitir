@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, TypeGuard
 
-from .apisurface import extract_api_surface
+from .apisurface import API_SCHEMA_VERSION, extract_api_surface
 from .corpus import (
     api_index_path,
     examples_index_path,
@@ -114,7 +114,7 @@ def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, obj
 def _valid_api(index: object) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(index, dict)
-        and index.get("schema_version") == EXAMPLES_SCHEMA_VERSION
+        and index.get("schema_version") == API_SCHEMA_VERSION
         and isinstance(index.get("methods"), list)
         and isinstance(index.get("modules"), list)
         and isinstance(index.get("symbols"), list)
@@ -135,7 +135,7 @@ def _valid_api(index: object) -> TypeGuard[dict[str, object]]:
 def _valid_examples(index: object) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(index, dict)
-        and index.get("schema_version") == 1
+        and index.get("schema_version") == EXAMPLES_SCHEMA_VERSION
         and isinstance(index.get("symbols_source"), str)
         and index.get("symbols_source") == "api_index"
         and isinstance(index.get("snippets"), list)

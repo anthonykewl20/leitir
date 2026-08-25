@@ -1118,6 +1118,92 @@ class TestNullRegistryFields:
             CratesResolver(GitHubTagResolver()).latest_version("demo")
 
 
+class TestNonDictTopLevelPayload:
+    """A registry or mirror can return a top-level JSON payload that is not
+    an object at all: `null`, `[]`, or a bare string, with HTTP 200. Every
+    resolve()/latest_version() path must reject that with a typed
+    ResolutionError, not an AttributeError from calling .get() on it."""
+
+    @pytest.mark.parametrize("body", [None, [], "oops", 42])
+    def test_pypi_resolve_rejects_non_dict_payload(self, monkeypatch, body):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(body).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="malformed metadata"):
+            PyPIResolver(GitHubTagResolver()).resolve(
+                PackageRef(Ecosystem.PYPI, "demo", "1.2.3")
+            )
+
+    @pytest.mark.parametrize("body", [None, [], "oops", 42])
+    def test_pypi_latest_version_rejects_non_dict_payload(self, monkeypatch, body):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(body).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="malformed metadata"):
+            PyPIResolver(GitHubTagResolver()).latest_version("demo")
+
+    @pytest.mark.parametrize("body", [None, [], "oops", 42])
+    def test_crates_resolve_rejects_non_dict_payload(self, monkeypatch, body):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(body).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="malformed metadata"):
+            CratesResolver(GitHubTagResolver()).resolve(
+                PackageRef(Ecosystem.CRATES, "demo", "1.2.3")
+            )
+
+    @pytest.mark.parametrize("body", [None, [], "oops", 42])
+    def test_crates_latest_version_rejects_non_dict_payload(self, monkeypatch, body):
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(body).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="malformed metadata"):
+            CratesResolver(GitHubTagResolver()).latest_version("demo")
+
+
+class TestNonStringGithubUrlCandidates:
+    """A non-conformant mirror can return a truthy non-string value for a
+    URL-shaped field (e.g. a nested object). The GitHub-slug regex search
+    must not be handed a non-string; such candidates must be skipped
+    cleanly rather than raising TypeError."""
+
+    def test_pypi_non_string_project_urls_values_are_skipped(self, monkeypatch):
+        payload = {
+            "info": {
+                "version": "1.2.3",
+                "project_url": {"nested": "object"},
+                "project_urls": {"Homepage": {"nested": "object"}},
+                "home_page": ["not", "a", "string"],
+            },
+            "urls": [],
+        }
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="no GitHub repository found"):
+            PyPIResolver(GitHubTagResolver()).resolve(
+                PackageRef(Ecosystem.PYPI, "demo", "1.2.3")
+            )
+
+    def test_crates_non_string_repository_is_skipped(self, monkeypatch):
+        payload = {"version": {"repository": {"nested": "object"}}}
+
+        def fake_urlopen(request, timeout):
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
+        with pytest.raises(ResolutionError, match="no GitHub repository"):
+            CratesResolver(GitHubTagResolver()).resolve(
+                PackageRef(Ecosystem.CRATES, "demo", "1.2.3")
+            )
+
+
 @pytest.mark.parametrize(
     ("resolver_factory", "candidates"),
     [

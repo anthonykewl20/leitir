@@ -3090,10 +3090,23 @@ def _main_impl(
             return result
         finally:
             if exit_process:
+                error = sys.exception()
+                if isinstance(error, KeyboardInterrupt):
+                    # Honor the same clean-interrupt contract as main():
+                    # a short message on stderr and the conventional SIGINT
+                    # exit code, never a raw traceback. This still needs
+                    # os._exit (see below) because os.name == "nt" here and
+                    # a normal `raise`/return would unwind back through
+                    # Py_RunMain, which can stomp the exit status.
+                    try:
+                        print("leitir: interrupted", file=err)
+                    except OSError as exc:
+                        if not _is_broken_pipe_error(exc):
+                            raise
+                    os._exit(_SIGINT_EXIT_CODE)
                 # Py_RunMain changes the status to 120 when Py_FinalizeEx
                 # cannot flush Windows stdout.  Exit with doctor's actual
                 # result (or infrastructure failure if it raised) first.
-                error = sys.exception()
                 try:
                     if error is not None:
                         sys.excepthook(type(error), error, error.__traceback__)

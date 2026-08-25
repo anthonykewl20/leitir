@@ -1946,6 +1946,10 @@ class PyPIResolver:
                 f"PyPI lookup failed for {ref.name}=={ref.version}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
+        if not isinstance(payload, dict):
+            raise ResolutionError(
+                f"PyPI returned malformed metadata for {ref.name}=={ref.version}"
+            )
 
         slug = self._extract_github_slug(payload)
         artifact = self._artifact(ref, payload)
@@ -2015,6 +2019,8 @@ class PyPIResolver:
                 f"PyPI latest-version lookup failed for {name}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
+        if not isinstance(payload, dict):
+            raise ResolutionError(f"PyPI returned malformed metadata for {name}")
         info = payload.get("info")
         version = info.get("version") if isinstance(info, dict) else None
         if not isinstance(version, str) or not version.strip():
@@ -2053,6 +2059,8 @@ class PyPIResolver:
             urls_to_check.append(info["home_page"])
 
         for candidate in urls_to_check:
+            if not isinstance(candidate, str):
+                continue
             m = _GITHUB_URL_RE.search(candidate)
             if m:
                 slug = m.group(1).rstrip("/")
@@ -2134,10 +2142,15 @@ class CratesResolver:
                 f"crates.io lookup failed for {ref.name}=={ref.version}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
+        if not isinstance(payload, dict):
+            raise ResolutionError(
+                f"crates.io returned malformed metadata for {ref.name}=={ref.version}"
+            )
 
         version_info = payload.get("version")
         version_info = version_info if isinstance(version_info, dict) else {}
-        repo_url = version_info.get("repository") or ""
+        repo_url = version_info.get("repository")
+        repo_url = repo_url if isinstance(repo_url, str) else ""
         m = _GITHUB_URL_RE.search(repo_url)
         if not m:
             raise ResolutionError(
@@ -2211,6 +2224,8 @@ class CratesResolver:
                 f"crates.io latest-version lookup failed for {name}: "
                 f"{_http.describe_failure(exc)}"
             ) from exc
+        if not isinstance(payload, dict):
+            raise ResolutionError(f"crates.io returned malformed metadata for {name}")
         crate = payload.get("crate")
         version = crate.get("max_version") if isinstance(crate, dict) else None
         if not isinstance(version, str) or not version.strip():

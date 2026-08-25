@@ -85,7 +85,11 @@ def test_python_fence_aliases_classify_as_python_usage(alias: str) -> None:
     assert all(item.language == "python" for item in result.evidence)
 
 
-def test_pip_install_only_shell_snippet_is_not_ranked_as_usage() -> None:
+def test_pip_install_only_shell_snippet_classifies_as_unknown_not_usage() -> None:
+    # This exercises classify_example() in isolation; ranking (extract_examples
+    # sorting install-only snippets below real usage) is covered separately by
+    # test_install_only_snippets_rank_below_real_usage_regardless_of_symbol_count
+    # in tests/test_examples.py.
     record = _record(
         path="README.md",
         language="shell",

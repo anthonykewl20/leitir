@@ -262,6 +262,18 @@ flowchart LR
 
 ## Commands
 
+Every subcommand exits with one of the stable `ExitCode` values (`src/leitir/cli.py`),
+except when interrupted:
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 0 | `SUCCESS` | Command completed as requested. |
+| 1 | `CORPUS_FAILURE` | Content/corpus-level failure (e.g. verification or resolution rejected). |
+| 2 | `MALFORMED_USAGE` | Bad input (arguments, spec, or file) the user must correct. |
+| 3 | `INFRASTRUCTURE_FAILURE` | Environment/transport failure (network, filesystem, unexpected error). |
+| 4 | `NOTHING_INDEXED` | Command completed cleanly but every candidate was skipped (see `index` below). |
+| 130 | *(not in `ExitCode`)* | Interrupted by Ctrl+C (SIGINT); a deliberate process-level outcome, not a corpus decision — matches the POSIX shell convention (128 + `SIGINT`). |
+
 ### Search and benchmark
 - `search`: resolve spec+predicate scope and return provenance-bound results; scoped search serves matching verified local shelves without per-file API fetches.
 - `index [scope ...] [--root ROOT|--local]`: explicitly build deterministic local

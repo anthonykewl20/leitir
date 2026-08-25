@@ -178,6 +178,88 @@ def test_build_info_rebuilds_api_cache_with_unhashable_values(tmp_path):
     assert rebuilt["api"]["top_symbols"][0]["qualified_name"] == "context.connect"
 
 
+def test_valid_api_accepts_a_freshly_extracted_index(tmp_path):
+    from leitir.apisurface import extract_api_surface
+
+    _source(tmp_path)
+    scan_path = tmp_path / f"repos/github.com/acme/context/{SHA}"
+    fresh = extract_api_surface(scan_path, None)
+
+    assert _valid_api(fresh)
+
+
+def test_valid_api_rejects_wrong_schema_version():
+    good = {"schema_version": 1, "methods": [], "modules": [], "symbols": []}
+    assert _valid_api(good)
+    assert not _valid_api({**good, "schema_version": 2})
+    assert not _valid_api({**good, "schema_version": 0})
+
+
+def test_valid_examples_accepts_a_freshly_extracted_index(tmp_path):
+    from leitir.apisurface import extract_api_surface
+    from leitir.examples import extract_examples
+
+    _source(tmp_path)
+    scan_path = tmp_path / f"repos/github.com/acme/context/{SHA}"
+    api_index = extract_api_surface(scan_path, None)
+    fresh = extract_examples(scan_path, api_index)
+
+    assert _valid_examples(fresh)
+
+
+def test_valid_examples_rejects_wrong_schema_version():
+    good = {"schema_version": 2, "symbols_source": "api_index", "snippets": []}
+    assert _valid_examples(good)
+    # schema_version 1 predates the classification-bearing v2 shape (#67):
+    # a genuinely stale on-disk cache from before that change must still be
+    # invalidated, not silently accepted.
+    assert not _valid_examples({**good, "schema_version": 1})
+    assert not _valid_examples({**good, "schema_version": 3})
+
+
+def test_build_info_reuses_a_freshly_written_cache_on_second_call(tmp_path):
+    """The core fix under test: with the schema-version checks corrected,
+    a second build_info() call over the same source must hit the cache
+    instead of unconditionally re-extracting and rewriting it."""
+    _source(tmp_path)
+
+    first = build_info(SPEC, corpus_root=tmp_path)
+    api_path = Path(first["paths"]["api_index"])
+    examples_path = Path(first["paths"]["examples_index"])
+    api_bytes_before = api_path.read_bytes()
+    examples_bytes_before = examples_path.read_bytes()
+    api_mtime_before = api_path.stat().st_mtime_ns
+    examples_mtime_before = examples_path.stat().st_mtime_ns
+
+    second = build_info(SPEC, corpus_root=tmp_path)
+
+    assert second == first
+    assert api_path.read_bytes() == api_bytes_before
+    assert examples_path.read_bytes() == examples_bytes_before
+    assert api_path.stat().st_mtime_ns == api_mtime_before
+    assert examples_path.stat().st_mtime_ns == examples_mtime_before
+
+
+def test_build_info_invalidates_a_genuinely_stale_examples_cache(tmp_path):
+    """A cache on disk written under the pre-v2 (#67) examples schema -- no
+    classification field, schema_version 1 -- must be detected as stale and
+    regenerated to the current v2 shape, not served as-is."""
+    _source(tmp_path)
+    first = build_info(SPEC, corpus_root=tmp_path)
+    examples_cache_path = first["paths"]["examples_index"]
+
+    stale = {"schema_version": 1, "symbols_source": "api_index", "snippets": []}
+    with open(examples_cache_path, "w", encoding="utf-8") as cache_file:
+        json.dump(stale, cache_file)
+
+    rebuilt = build_info(SPEC, corpus_root=tmp_path)
+
+    with open(examples_cache_path, encoding="utf-8") as cache_file:
+        on_disk = json.load(cache_file)
+    assert on_disk["schema_version"] == 2
+    assert rebuilt["examples"] is not None
+
+
 def test_examples_validator_rejects_unhashable_scalar_values():
     assert not _valid_examples(
         {

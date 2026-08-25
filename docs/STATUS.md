@@ -155,6 +155,24 @@ are closed; #20 is closed with its performance optimization deferred. The
 originating #17 is also closed. Broader audit work is tracked by the
 [Production-ready path (v0.x series)](https://github.com/anthonykewl20/leitir/milestone/1).
 
+**ADRs 0025-0029 (the usage evidence pipeline, issues #255-#259) are
+implemented.** `src/leitir/usage/` freezes a closed, versioned evidence
+contract (`contract.py`) with typed fail-closed errors (`errors.py`),
+conservative consumer admission and distribution-to-import-root cataloging
+(`admission.py`, `import_catalog.py`), a static, execution-free Python
+usage resolver (`resolver.py`), and deterministic assembly of bounded,
+ranked, explainable usage evidence (`assemble.py`). It is exposed via
+`leitir usage verify report.json` (structural validation and
+self-consistency) and `leitir usage replay report.json --corpus-root DIR
+--requirements FILE` (fully offline, byte-identical replay against the
+real on-disk corpus/requirements bytes, fail-closed on any tamper) in
+`src/leitir/cli.py`, backed by `src/leitir/usage/cli_support.py`. An
+opt-in, pinned public-source E2E benchmark is wired at
+`tests/e2e/test_usage_e2e.py`, gated on `LEITIR_ENABLE_LIVE_E2E` and the
+`live` marker; the public-source identity/pin selection itself is an
+owner decision recorded as UNKNOWN in issue #259 and does not gate the
+local-fixture proof.
+
 ## Operational readiness
 
 | Gate | State | Evidence / remaining work |

@@ -677,6 +677,26 @@ def build_parser() -> argparse.ArgumentParser:
     occupied_validate.add_argument("artifact", metavar="artifact.json")
     occupied_validate.add_argument("--json", action="store_true", dest="as_json")
 
+    usage_cmd = commands.add_parser(
+        "usage",
+        help="verify or replay a local usage evidence bundle (fully offline)",
+    )
+    usage_cmd.add_argument("action", choices=["verify", "replay"], help="verify: parse/validate report.json; replay: also recompute digests against on-disk corpus bytes")
+    usage_cmd.add_argument("report", metavar="report.json")
+    usage_cmd.add_argument(
+        "--corpus-root", default=None,
+        help="consumer source root the report's references resolve against (required for replay)",
+    )
+    usage_cmd.add_argument(
+        "--requirements", default=None,
+        help="requirements.txt path backing the report's dependency evidence (required for replay)",
+    )
+    usage_cmd.add_argument(
+        "--times", type=int, default=2,
+        help="number of independent replay passes to compare for byte-identical output (replay only, default: 2)",
+    )
+    usage_cmd.add_argument("--json", action="store_true", dest="as_json")
+
     scope_group = search.add_mutually_exclusive_group(required=False)
     scope_group.add_argument(
         "--repo",
@@ -2901,9 +2921,13 @@ def _write_cli_payload(payload: dict[str, object], *, as_json: bool, out: TextIO
 def _write_bts_error(exc: Exception, *, as_json: bool, err: TextIO) -> None:
     if as_json:
         from .bts_errors import BTSError
+        from .usage import UsageError
 
         if isinstance(exc, BTSError):
             print(f"leitir: error: {exc.to_json().strip()}", file=err)
+            return
+        if isinstance(exc, UsageError):
+            print(f"leitir: error: {json.dumps(exc.to_json(), sort_keys=True)}", file=err)
             return
     print(f"leitir: error: {redact(str(exc))}", file=err)
 
@@ -3035,6 +3059,7 @@ def main(
         "exit-gate-validate",
         "exit-gate-run",
         "occupied-validate",
+        "usage",
     }:
         try:
             if args.command in {"bts-compute", "bts-run"} and getattr(
@@ -3166,6 +3191,34 @@ def main(
                     substrate_rootfs_digest=args.substrate_rootfs_digest,
                     trusted_keys_path=None if args.trusted_keys is None else Path(args.trusted_keys),
                     ratification_sidecar=None if args.ratification_sidecar is None else Path(args.ratification_sidecar),
+                )
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
+            elif args.command == "usage":
+                from .usage.cli_support import load_report, replay_payload, verify_payload
+
+                if args.action == "replay" and (args.corpus_root is None or args.requirements is None):
+                    print(
+                        "leitir: error: usage replay requires --corpus-root and --requirements",
+                        file=err,
+                    )
+                    return int(ExitCode.MALFORMED_USAGE)
+                if args.times < 1:
+                    print("leitir: error: --times must be >= 1", file=err)
+                    return int(ExitCode.MALFORMED_USAGE)
+
+                usage_report = load_report(Path(args.report))
+                if args.action == "verify":
+                    payload = verify_payload(usage_report)
+                else:
+                    payload = replay_payload(
+                        usage_report,
+                        corpus_root=Path(args.corpus_root),
+                        dependency_path=Path(args.requirements),
+                        times=args.times,
+                    )
+                print(
+                    f"leitir: usage {args.action} ok report_digest={usage_report.report_digest}",
+                    file=err,
                 )
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
             else:

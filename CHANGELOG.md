@@ -12,6 +12,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Fixed
+- report benchmark progress and guard usage determinism (`bench,ci`)
+
 ## [0.1.6]
 
 ### Added

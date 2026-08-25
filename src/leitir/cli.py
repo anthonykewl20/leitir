@@ -20,6 +20,7 @@ import os
 import shutil
 import stat
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from enum import IntEnum
@@ -310,6 +311,20 @@ def build_parser() -> argparse.ArgumentParser:
     bench = commands.add_parser(
         "bench",
         help="run the pinned search benchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "runtime:\n"
+            "  The default search-v1 manifest scoped-exhaustively searches 32 tasks\n"
+            "  across 8 real, pinned repositories (including python/cpython and\n"
+            "  microsoft/TypeScript), materializing each repo's full tree once. On a\n"
+            "  cold cache this downloads several hundred MB and commonly takes tens of\n"
+            "  minutes even with a valid GH_TOKEN; a warm cache (same LEITIR_HOME, same\n"
+            "  pinned commits) reuses the on-disk shelves and is much faster. Progress\n"
+            "  (task N/total, elapsed time) is printed to stderr as it runs -- it has\n"
+            "  not hung. The repo set and commits are pinned for determinism and are not\n"
+            "  configurable via a flag; pass --manifest to point at a different manifest\n"
+            "  file or packaged benchmark id entirely.\n"
+        ),
     )
     bench.add_argument(
         "--manifest",
@@ -969,6 +984,33 @@ def _build_default_searcher(
         adapters=build_adapters(ast_python=ast_python),
         corpus_root=corpus_root,
     )
+
+
+def _bench_progress_reporter(total: int, *, err: TextIO) -> Callable[[object], None]:
+    """Build a stderr progress callback reporting task N/total and elapsed time.
+
+    The pinned search-v1 benchmark walks ~30 tasks across full repository
+    trees (redis, cpython, TypeScript, ...) with no other user-visible
+    output in between; a bare "task X starting" line gives no sense of how
+    much work remains, which reads as a hang. This adds a running count and
+    an elapsed-time stamp, still one line per task, still stderr-only so
+    ``--json`` stdout stays pure.
+    """
+    start = time.monotonic()
+    state = {"index": 0}
+
+    def _report(task: object) -> None:
+        state["index"] += 1
+        elapsed = time.monotonic() - start
+        minutes, seconds = divmod(int(elapsed), 60)
+        print(
+            f"leitir: benchmark task {state['index']}/{total} "
+            f"{getattr(task, 'task_id', 'unknown')} starting "
+            f"(elapsed {minutes}m{seconds:02d}s)",
+            file=err,
+        )
+
+    return _report
 
 
 def _build_default_benchmark_runner(
@@ -3133,14 +3175,12 @@ def _main_impl(
                 tree_source = tree_source_factory(token)
                 searcher = searcher_factory(tree_source)
                 if benchmark_runner_factory is _build_default_benchmark_runner:
+                    total_tasks = len(cast(Sequence[object], getattr(manifest, "tasks", ())))
                     runner = cast(
                         _BenchmarkRunner,
                         _build_default_benchmark_runner(
                             searcher,
-                            progress=lambda task: print(
-                                f"leitir: benchmark task {getattr(task, 'task_id', 'unknown')} starting",
-                                file=err,
-                            ),
+                            progress=_bench_progress_reporter(total_tasks, err=err),
                         ),
                     )
                 else:

@@ -12,6 +12,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+## [0.1.6]
+
 ### Added
 - add usage CLI verification, replay, and E2E harness (`usage`)
 - admit verified consumers and catalog Python imports (`usage`)
@@ -294,6 +296,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
-[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/anthonykewl20/leitir/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/anthonykewl20/leitir/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4

@@ -1,0 +1,11 @@
+{
+  "case": "ambiguous",
+  "consumer_dir": "consumer",
+  "description": "Two distinct import statements bind the same local name, so the binding is ambiguous.",
+  "expect": "valid",
+  "expected_state": "ambiguous-binding",
+  "kind": "ambiguous",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

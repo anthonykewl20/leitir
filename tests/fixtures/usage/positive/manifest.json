@@ -1,0 +1,11 @@
+{
+  "case": "positive",
+  "consumer_dir": "consumer",
+  "description": "A direct, unaliased import of the pinned distribution resolves cleanly with full coverage.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "positive",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

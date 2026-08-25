@@ -298,3 +298,23 @@ def test_tier2_search_is_hash_seed_independent() -> None:
 
     assert outputs[0] == outputs[1] == outputs[2]
     assert json.loads(outputs[0]) == [[1, ["call"], "heuristic"], [2, ["call"], "heuristic"]]
+
+
+def test_tier2_regex_predicate_over_length_cap_is_incomplete_not_hung():
+    """ReDoS regression (BUG2): mirrors the same guarantee for the tier-2 (JS/TS/Java/C/C++)
+    regex adapters, which have their own copy of the predicate-matching loop.
+    """
+    long_line = "a" * 5000
+    content = f"first line\n{long_line}\nlast line\n"
+    predicate = Predicate(PredicateKind.REGEX, r"^(a|a)*b")
+    result = JavaScriptAdapter().find_matches_ex(content, (predicate,))
+    assert result.spans == ()
+    assert result.parser_unavailable is True
+
+
+def test_tier2_regex_predicate_under_cap_is_unaffected():
+    content = "needle here\nno match on this line\n"
+    predicate = Predicate(PredicateKind.REGEX, r"needle")
+    result = JavaScriptAdapter().find_matches_ex(content, (predicate,))
+    assert result.parser_unavailable is False
+    assert [span.start_line for span in result.spans] == [1]

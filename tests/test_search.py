@@ -114,6 +114,24 @@ def test_regex_predicate_must_compile():
         Predicate(PredicateKind.REGEX, "([")
 
 
+def test_regex_predicate_rejects_catastrophic_backtracking_shape():
+    """ReDoS regression: a nested-quantifier pattern is rejected at spec-construction time,
+    before it is ever run against any corpus content, so this terminates instantly rather
+    than hanging.
+    """
+    with pytest.raises(ValueError, match="catastrophic-backtracking"):
+        Predicate(PredicateKind.REGEX, r"(a+)+$")
+    with pytest.raises(ValueError, match="catastrophic-backtracking"):
+        Predicate(PredicateKind.REGEX, r"([a-z]*)+")
+
+
+def test_regex_predicate_allows_ordinary_nested_groups():
+    """A group repeat is only rejected when the group's own content also repeats."""
+    Predicate(PredicateKind.REGEX, r"(ab)+c")
+    Predicate(PredicateKind.REGEX, r"(?:foo|bar)+")
+    Predicate(PredicateKind.REGEX, r"\d{2,4}-\d{2,4}")
+
+
 def test_spec_digest_is_stable_and_order_sensitive():
     assert _spec().digest() == _spec().digest()
     other = _spec(must=(Predicate(PredicateKind.IDENTIFIER, "doseq"),))

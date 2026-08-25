@@ -82,7 +82,7 @@ def _manifest(root: Path, *, digest: bool = True) -> Path:
         "owner": "owner",
         "repo": "repo",
         "commit_sha": sha,
-        "fetch_method": "github-archive",
+        "fetch_method": "codeload-tarball",
         "spec": f"github.com/owner/repo@{sha}",
         "repo_url": "https://github.com/owner/repo",
         "fetched_at": "2026-08-06T12:00:00Z",
@@ -237,6 +237,79 @@ def test_doctor_detects_corrupted_shelf(tmp_path: Path) -> None:
     result = next(check for check in checks if check.name == "cache.corrupted")
     assert result.status == "warn"
     assert str(path) in (result.detail or "")
+
+
+def _register_source(root: Path, manifest_path: Path, *, name: str = "repo") -> None:
+    from leitir.corpus import write_sources
+
+    target = manifest_path.parent
+    write_sources(root, [{
+        "name": name,
+        "host": "github.com",
+        "owner": "owner",
+        "repo": "repo",
+        "commit_sha": "a" * 40,
+        "path": target.relative_to(root).as_posix(),
+        "fetched_at": "2026-08-06T12:00:00Z",
+    }])
+
+
+def test_doctor_registered_shelf_with_valid_manifest_passes(tmp_path: Path) -> None:
+    path = _manifest(tmp_path)
+    _register_source(tmp_path, path)
+    result = doctor.check_registered_shelves(tmp_path)
+    assert result.status == "pass"
+    assert result.json_data == {"total": 1, "invalid": 0}
+
+
+def test_doctor_flags_registered_shelf_with_deleted_manifest(tmp_path: Path) -> None:
+    """BUG1 regression: a shelf whose manifest.json was deleted must NOT be reported healthy.
+
+    `check_cache_state` globs for manifest.json files that physically exist, so a deleted
+    manifest simply has no path to find -- it silently vanishes from every cache.* count.
+    `check_registered_shelves` instead walks sources.json (the same source of truth `leitir
+    list` uses) and must catch this.
+    """
+    path = _manifest(tmp_path)
+    _register_source(tmp_path, path)
+    path.unlink()
+
+    # The blind spot: the physical-glob checks see nothing wrong because there is no manifest
+    # left to find at all.
+    cache_checks, _manifests = doctor.check_cache_state(tmp_path)
+    corrupted = next(check for check in cache_checks if check.name == "cache.corrupted")
+    assert corrupted.status == "pass"
+
+    result = doctor.check_registered_shelves(tmp_path)
+    assert result.status == "error"
+    assert "1 of 1" in result.summary
+    assert "manifest is missing" in (result.detail or "")
+    assert result.json_data is not None
+    assert result.json_data["invalid"] == 1
+
+    # And doctor's aggregate result must actually flag it, end to end.
+    checks, _version = doctor.collect_checks(no_network=True, root=tmp_path)
+    aggregate = next(check for check in checks if check.name == "cache.registered_shelves")
+    assert aggregate.status == "error"
+    stream = StringIO()
+    assert doctor.run_doctor(as_json=True, no_network=True, stdout=stream, root=tmp_path) == 2
+
+
+def test_doctor_flags_registered_shelf_with_truncated_manifest(tmp_path: Path) -> None:
+    """BUG1 regression: a present-but-malformed/truncated manifest must also be flagged."""
+    path = _manifest(tmp_path)
+    _register_source(tmp_path, path)
+    path.write_text('{"host": "github.c', encoding="utf-8")  # truncated JSON
+
+    result = doctor.check_registered_shelves(tmp_path)
+    assert result.status == "error"
+    assert "manifest failed validation" in (result.detail or "")
+    assert result.json_data is not None
+    assert result.json_data["invalid"] == 1
+
+    checks, _version = doctor.collect_checks(no_network=True, root=tmp_path)
+    aggregate = next(check for check in checks if check.name == "cache.registered_shelves")
+    assert aggregate.status == "error"
 
 
 def test_doctor_selftest_catches_integrity_regression(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -518,7 +591,10 @@ def test_doctor_offline_machine_warns_every_network_check_and_exits_cleanly(
     update = next(check for check in checks if check.name == "update.available")
     assert update.status == "warn"
     stream = StringIO()
-    assert doctor.run_doctor(as_json=True, stdout=stream, root=tmp_path) == 1
+    # Network reachability is not a corpus-integrity concern: an offline machine with an
+    # otherwise-healthy corpus must exit 0, not fail doctor just because it could not phone
+    # home (see `_is_transient_warning`).
+    assert doctor.run_doctor(as_json=True, stdout=stream, root=tmp_path) == 0
 
 
 def test_doctor_quiet_suppresses_passing_checks(tmp_path: Path) -> None:

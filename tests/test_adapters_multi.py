@@ -381,3 +381,26 @@ def test_adapter_whole_file_deduplicates_evidence_in_stable_order(adapter, conte
         (1, (PredicateKind.CALL, PredicateKind.SYMBOL_DEFINITION)),
         (2, (PredicateKind.CALL,)),
     )
+
+
+@pytest.mark.parametrize("adapter", (PythonAdapter(), RustAdapter(), GoAdapter()))
+def test_adapter_regex_predicate_over_length_cap_is_incomplete_not_hung(adapter):
+    """ReDoS regression (BUG2): a regex predicate whose shape evades the compile-time check
+    must not hang when matched against a long, repetitive line -- the adapter must instead
+    report the file's evidence as incomplete via ``parser_unavailable``.
+    """
+    long_line = "a" * 5000
+    content = f"first line\n{long_line}\nlast line\n"
+    predicate = Predicate(PredicateKind.REGEX, r"^(a|a)*b")
+    result = adapter.find_matches_ex(content, (predicate,))
+    assert result.spans == ()
+    assert result.parser_unavailable is True
+
+
+@pytest.mark.parametrize("adapter", (PythonAdapter(), RustAdapter(), GoAdapter()))
+def test_adapter_regex_predicate_under_cap_is_unaffected(adapter):
+    content = "needle here\nno match on this line\n"
+    predicate = Predicate(PredicateKind.REGEX, r"needle")
+    result = adapter.find_matches_ex(content, (predicate,))
+    assert result.parser_unavailable is False
+    assert [span.start_line for span in result.spans] == [1]

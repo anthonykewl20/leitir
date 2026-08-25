@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from leitir._regex_budget import RegexBudgetExceeded, bounded_matching_lines
 from leitir.adapters import AdapterMatchResult, MatchMethod, SpanMatch
 from leitir.adapters._tier2_patterns import mask_comments_and_strings
 from leitir.search import Predicate, PredicateKind
@@ -94,17 +95,21 @@ class Tier2RegexAdapter:
         *,
         whole_file: bool = False,
     ) -> AdapterMatchResult:
-        return AdapterMatchResult(
-            spans=self.find_matches(content, predicates, whole_file=whole_file),
-            parser_unavailable=False,
-        )
+        try:
+            spans = self.find_matches(content, predicates, whole_file=whole_file)
+        except RegexBudgetExceeded:
+            # A regex/signature predicate could not be matched within its time budget for
+            # this file. Report no spans from this file *and* flag it -- never silently drop
+            # the file as an ordinary "no match".
+            return AdapterMatchResult(spans=(), parser_unavailable=True)
+        return AdapterMatchResult(spans=spans, parser_unavailable=False)
 
     def _lines_for_predicate(self, lines: list[str], pred: Predicate) -> set[int]:
         if pred.kind is PredicateKind.EXACT_TEXT:
             return {index for index, line in enumerate(lines) if pred.value in line}
         if pred.kind is PredicateKind.REGEX:
             pattern = re.compile(pred.value)
-            return {index for index, line in enumerate(lines) if pattern.search(line)}
+            return bounded_matching_lines(lines, pattern)
         if pred.kind is PredicateKind.IDENTIFIER:
             pattern = re.compile(r"\b" + re.escape(pred.value) + r"\b")
             return {index for index, line in enumerate(lines) if pattern.search(line)}
@@ -121,11 +126,7 @@ class Tier2RegexAdapter:
             return references - self._inventory_lines(lines, self._inventory.definitions, pred.value)
         if pred.kind is PredicateKind.SIGNATURE:
             pattern = re.compile(pred.value)
-            return {
-                index
-                for index, line in enumerate(lines)
-                if pattern.search(line) and self._matches_any_definition(line)
-            }
+            return bounded_matching_lines(lines, pattern, extra=self._matches_any_definition)
         if pred.kind is PredicateKind.CALL:
             return self._inventory_lines(lines, self._inventory.calls, pred.value)
         if pred.kind is PredicateKind.IMPORT:

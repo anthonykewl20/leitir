@@ -266,7 +266,30 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", dest="as_json")
     doctor.add_argument("--quiet", action="store_true")
     doctor.add_argument("--no-network", action="store_true")
-    search = commands.add_parser("search", help="search a pinned code corpus")
+    search = commands.add_parser(
+        "search",
+        help="search a pinned code corpus",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "predicate matching and comments/strings:\n"
+            "  On every non-Python language (JavaScript, TypeScript, Java, C, C++), content\n"
+            "  predicates (exact_text, regex, identifier, token_sequence, signature, call,\n"
+            "  import, symbol_definition, symbol_reference) are matched against source with\n"
+            "  comments and string/template literals masked out first -- an occurrence that\n"
+            "  exists only inside a comment or a string literal is never returned, even\n"
+            "  though a plain-text tool like grep would report it.\n"
+            "  Python does not mask: the default heuristic Python adapter matches raw,\n"
+            "  unmasked source lines, so a predicate CAN match inside a Python string\n"
+            "  literal or '#' comment. `--ast`'s structural predicate kinds\n"
+            "  (symbol_definition, symbol_reference, call, import, signature) consult the\n"
+            "  parsed AST instead and so cannot match inside a comment, but any other\n"
+            "  content predicate on a Python file (e.g. exact_text, regex) still falls back\n"
+            "  to the same raw, unmasked line scan.\n"
+            "  If a diff against grep looks like leitir is 'missing' matches on a non-Python\n"
+            "  file, check whether they are inside a comment or string literal first --\n"
+            "  that is expected, by-design behavior. See docs/search-capabilities.md.\n"
+        ),
+    )
     index_command = commands.add_parser(
         "index", help="explicitly build or refresh local trigram index shelves"
     )

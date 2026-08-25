@@ -174,6 +174,29 @@ and also marks the result incomplete; the engine converts either condition to
 `src/leitir/adapters/python_ast.py:273-290`,
 `src/leitir/engine.py:369-395`.)
 
+**Comments and string literals are excluded from matches on every non-Python
+language.** All five Tier-2 adapters (JavaScript, TypeScript, Java, C, C++) run
+`mask_comments_and_strings()` on the file before evaluating any content
+predicate (`exact_text`, `regex`, `identifier`, `token_sequence`, `signature`,
+`call`, `import`, `symbol_definition`/`symbol_reference`); an occurrence that
+exists only inside a comment or a string/template literal is never returned,
+even though the raw bytes are present in the file and a plain-text tool such as
+`grep` would report them. (`src/leitir/adapters/_tier2/_base.py:48`,
+`src/leitir/adapters/_tier2_patterns.py`.) **Python is the one language where
+this does not apply.** The default heuristic Python adapter matches against
+raw, unmasked source lines, so a required predicate can match text inside a
+Python string literal or `#` comment. `--ast`'s structural predicate kinds
+(`symbol_definition`, `symbol_reference`, `call`, `import`, `signature`)
+consult the parsed AST and so cannot match inside a comment (comments are not
+nodes) or, for those kinds specifically, inside a string; but any *content*
+predicate on a Python file that is not one of those structural kinds (for
+example `exact_text` or `regex`) still falls back to the same raw, unmasked
+line scan as the non-AST default. (`src/leitir/adapters/__init__.py:119`,
+`src/leitir/adapters/python_ast.py:233-244`.) In short: if a diff against
+`grep` shows leitir "missing" matches on a JS/TS/Java/C/C++ file, check whether
+they are inside a comment or string literal first -- that is expected,
+by-design behavior, not a bug.
+
 By default, required content predicates intersect on one line. `--whole-file`
 sets `SearchSpec.whole_file_must`, allowing required predicates to occur on
 different lines in one ordinary-sized file. (`src/leitir/cli.py:377-389`,
@@ -219,6 +242,14 @@ of hash iteration order for identical inputs.
   coverage, not silently treated as parser-backed completeness.
   (`src/leitir/adapters/python_ast.py:207-226`,
   `src/leitir/engine.py:369-395`.)
+- Non-Python content predicates silently exclude matches inside comments and
+  string/template literals (the Tier-2 adapters mask them out before
+  matching); Python content predicates other than the structural `--ast`
+  kinds do not, and match raw source text including comments and string
+  contents. This asymmetry is intentional (code-search, not plain-text
+  search) but is easy to mistake for a bug when comparing byte-for-byte
+  against `grep`. (`src/leitir/adapters/_tier2/_base.py:48`,
+  `src/leitir/adapters/__init__.py:119`.)
 
 ### Verification and operations
 

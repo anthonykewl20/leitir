@@ -13,8 +13,8 @@ import json
 import pytest
 from test_usage_fixtures import CaseFixture, discover_cases
 
-from leitir.safeio import read_regular_file
 from leitir.usage import ImportMapping, UnresolvedState
+from leitir.usage._io import read_portable_file
 from leitir.usage.import_catalog import (
     CATALOG_SCHEMA_VERSION,
     DISTRIBUTION_RECORD_SCHEMA_VERSION,
@@ -158,7 +158,7 @@ def _catalog_cases() -> list[CaseFixture]:
         sidecar_path = case.directory / "admission.json"
         if not sidecar_path.is_file():
             continue
-        raw = read_regular_file(sidecar_path, maximum_bytes=_MAX_SIDECAR_BYTES, no_follow=True)
+        raw = read_portable_file(sidecar_path, maximum_bytes=_MAX_SIDECAR_BYTES)
         payload = json.loads(raw.decode("utf-8"))
         if "distribution_records" in payload:
             cases.append(case)
@@ -166,7 +166,7 @@ def _catalog_cases() -> list[CaseFixture]:
 
 
 def _load_records(case: CaseFixture) -> tuple[dict[str, object], tuple[DistributionRecord, ...]]:
-    raw = read_regular_file(case.directory / "admission.json", maximum_bytes=_MAX_SIDECAR_BYTES, no_follow=True)
+    raw = read_portable_file(case.directory / "admission.json", maximum_bytes=_MAX_SIDECAR_BYTES)
     payload = json.loads(raw.decode("utf-8"))
     records = tuple(
         DistributionRecord(

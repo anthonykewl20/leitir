@@ -35,8 +35,8 @@ Four properties this module guarantees:
   marker (``license_guess="unknown"`` in that case).
 
 Nothing here imports or executes consumer code. File reads (for the
-advisory license scan) go through ``leitir.safeio.read_regular_file`` with
-an explicit byte bound, and are entirely best-effort: any I/O failure
+advisory license scan) go through ``leitir.usage._io.read_portable_file``
+(itself backed by ``leitir.safeio.read_regular_file``) with an explicit byte bound, and are entirely best-effort: any I/O failure
 degrades to an "unknown" advisory license record rather than raising.
 """
 
@@ -47,9 +47,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from leitir.safeio import confined_path, read_regular_file
+from leitir.safeio import confined_path
 
 from ._canonical import canonical_bytes, digest_value, is_sha256_digest
+from ._io import read_portable_file
 from .contract import (
     CODE_REFERENCE_SCHEMA_VERSION,
     CONTRACT_VERSION,
@@ -489,7 +490,7 @@ def _scan_license_evidence(
             relative = relative[len(path_prefix) :]
         try:
             target = confined_path(consumer_root, relative)
-            data = read_regular_file(target, maximum_bytes=max_scan_bytes, no_follow=True)
+            data = read_portable_file(target, maximum_bytes=max_scan_bytes)
             text = data.decode("utf-8")
         except (OSError, ValueError, UnicodeDecodeError):
             text = ""

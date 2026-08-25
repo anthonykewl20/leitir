@@ -12,8 +12,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from leitir.safeio import read_regular_file
 from leitir.usage import FIXTURE_MANIFEST_SCHEMA_VERSION
+from leitir.usage._io import read_portable_file
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "usage"
 
@@ -67,7 +67,7 @@ def discover_cases() -> list[CaseFixture]:
         manifest_path = entry / "manifest.json"
         if not entry.is_dir() or not manifest_path.is_file():
             continue
-        raw = read_regular_file(manifest_path, maximum_bytes=_MAX_MANIFEST_BYTES, no_follow=True)
+        raw = read_portable_file(manifest_path, maximum_bytes=_MAX_MANIFEST_BYTES)
         manifest = json.loads(raw.decode("utf-8"))
         cases.append(CaseFixture(name=entry.name, directory=entry, manifest=manifest))
     return cases

@@ -14,16 +14,14 @@ operations the CLI exposes:
   compared byte-for-byte.
 
 Nothing here performs network I/O or imports/executes consumer code: every
-file read goes through ``leitir.safeio.read_regular_file`` with an explicit
-byte bound, and replay only ever reads source text to recompute digests,
+file read goes through ``leitir.usage._io.read_portable_file`` (itself backed by
+``leitir.safeio.read_regular_file``) with an explicit byte bound, and replay only ever reads source text to recompute digests,
 never executes it.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from leitir.safeio import read_regular_file
 
 from . import (
     Identity,
@@ -35,6 +33,7 @@ from . import (
     replay_report,
     report_from_json_bytes,
 )
+from ._io import read_portable_file
 
 # A generous but bounded cap on the report document itself -- reports are
 # closed, capped structures (MAX_REFERENCES etc. in contract.py), so a
@@ -67,7 +66,7 @@ def load_report(report_path: Path) -> UsageReport:
     """
 
     try:
-        raw = read_regular_file(report_path, maximum_bytes=MAX_REPORT_BYTES, no_follow=True)
+        raw = read_portable_file(report_path, maximum_bytes=MAX_REPORT_BYTES)
     except ValueError as exc:
         raise UsageUnsupportedError(
             UsageErrorEvidence(

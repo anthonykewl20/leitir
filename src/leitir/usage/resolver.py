@@ -27,9 +27,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from leitir.safeio import read_regular_file
-
 from ._canonical import digest_bytes
+from ._io import read_portable_file
 from .contract import (
     CODE_REFERENCE_SCHEMA_VERSION,
     COVERAGE_RECORD_SCHEMA_VERSION,
@@ -710,7 +709,7 @@ def resolve_consumer(
     for relpath in kept:
         full_path = consumer_root / relpath
         try:
-            raw = read_regular_file(full_path, maximum_bytes=max_file_bytes, no_follow=True)
+            raw = read_portable_file(full_path, maximum_bytes=max_file_bytes)
             sources[relpath] = raw.decode("utf-8")
         except (OSError, ValueError, UnicodeDecodeError):
             excluded.append(relpath)

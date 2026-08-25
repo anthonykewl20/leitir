@@ -13,7 +13,6 @@ import sys
 import pytest
 from test_usage_fixtures import CaseFixture, discover_cases
 
-from leitir.safeio import read_regular_file
 from leitir.usage import (
     CODE_REFERENCE_SCHEMA_VERSION,
     IDENTITY_SCHEMA_VERSION,
@@ -36,13 +35,14 @@ from leitir.usage import (
     report_from_json_bytes,
 )
 from leitir.usage._canonical import digest_bytes, digest_value
+from leitir.usage._io import read_portable_file
 
 _MAX_REPORT_BYTES = 65_536
 
 
 def _load_report_bytes(case: CaseFixture) -> bytes:
     report_path = case.directory / str(case.manifest["report_file"])
-    return read_regular_file(report_path, maximum_bytes=_MAX_REPORT_BYTES, no_follow=True)
+    return read_portable_file(report_path, maximum_bytes=_MAX_REPORT_BYTES)
 
 
 def _valid_cases() -> list[CaseFixture]:
@@ -288,7 +288,7 @@ def test_valid_fixture_cases_validate_and_replay_offline(case: CaseFixture) -> N
 
     # Dependency evidence: exact bytes, digest, and parser identity/version.
     requirements_path = case.directory / str(case.manifest["requirements_file"])
-    on_disk_requirements = read_regular_file(requirements_path, maximum_bytes=65_536, no_follow=True)
+    on_disk_requirements = read_portable_file(requirements_path, maximum_bytes=65_536)
     assert report.dependency_evidence.requirements_text.encode("utf-8") == on_disk_requirements
     assert report.dependency_evidence.requirements_digest == digest_bytes(on_disk_requirements)
     assert report.dependency_evidence.parser_name

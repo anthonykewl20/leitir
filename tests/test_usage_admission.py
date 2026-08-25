@@ -15,9 +15,9 @@ import json
 import pytest
 from test_usage_fixtures import CaseFixture, discover_cases
 
-from leitir.safeio import read_regular_file
 from leitir.usage import UsageMalformedError, UsageTamperError, UsageUnsupportedError
 from leitir.usage._canonical import digest_bytes
+from leitir.usage._io import read_portable_file
 from leitir.usage.admission import (
     ADMITTED_CONSUMER_SCHEMA_VERSION,
     PINNED_REQUIREMENT_SCHEMA_VERSION,
@@ -43,7 +43,7 @@ def _admission_cases() -> list[CaseFixture]:
 
 
 def _load_sidecar(case: CaseFixture) -> dict[str, object]:
-    raw = read_regular_file(case.directory / "admission.json", maximum_bytes=_MAX_SIDECAR_BYTES, no_follow=True)
+    raw = read_portable_file(case.directory / "admission.json", maximum_bytes=_MAX_SIDECAR_BYTES)
     payload = json.loads(raw.decode("utf-8"))
     assert isinstance(payload, dict)
     return payload
@@ -224,7 +224,7 @@ def test_tamper_consumer_ref_mismatch_never_constructs_dependency_evidence() -> 
 def test_fixture_admission_scenarios_match_expected_outcome(case: CaseFixture) -> None:
     sidecar = _load_sidecar(case)
     requirements_path = case.directory / str(case.manifest["requirements_file"])
-    requirements_bytes = read_regular_file(requirements_path, maximum_bytes=65_536, no_follow=True)
+    requirements_bytes = read_portable_file(requirements_path, maximum_bytes=65_536)
 
     kwargs = dict(
         consumer_name=str(sidecar["consumer_name"]),

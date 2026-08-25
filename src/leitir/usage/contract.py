@@ -17,7 +17,8 @@ replay + E2E) all build on. It defines:
 
 Nothing in this module performs network I/O, imports or executes consumer
 code, or writes to the filesystem. All reads go through
-``leitir.safeio.read_regular_file`` with an explicit byte bound.
+``leitir.usage._io.read_portable_file`` (itself backed by
+``leitir.safeio.read_regular_file``) with an explicit byte bound.
 """
 
 from __future__ import annotations
@@ -29,9 +30,10 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from leitir.safeio import confined_path, read_regular_file
+from leitir.safeio import confined_path
 
 from ._canonical import canonical_bytes, digest_bytes, digest_value, is_sha256_digest
+from ._io import read_portable_file
 from .errors import UsageErrorEvidence, UsageMalformedError, UsageTamperError, UsageUnsupportedError
 
 # --------------------------------------------------------------------------
@@ -925,7 +927,7 @@ def replay_report(report: UsageReport, *, corpus_root: Path, dependency_path: Pa
     stage = "replay"
     dependency = report.dependency_evidence
     try:
-        on_disk_requirements = read_regular_file(dependency_path, maximum_bytes=MAX_REQUIREMENTS_BYTES, no_follow=True)
+        on_disk_requirements = read_portable_file(dependency_path, maximum_bytes=MAX_REQUIREMENTS_BYTES)
     except ValueError as exc:
         raise _unsupported(
             stage,
@@ -963,7 +965,7 @@ def replay_report(report: UsageReport, *, corpus_root: Path, dependency_path: Pa
             except ValueError as exc:
                 raise _malformed(stage, f"references[{index}].span.file", str(exc)) from exc
             try:
-                raw = read_regular_file(path, maximum_bytes=MAX_REPLAY_SOURCE_FILE_BYTES, no_follow=True)
+                raw = read_portable_file(path, maximum_bytes=MAX_REPLAY_SOURCE_FILE_BYTES)
             except ValueError as exc:
                 raise _unsupported(
                     stage,

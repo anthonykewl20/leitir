@@ -1,0 +1,11 @@
+{
+  "case": "verified-consumer",
+  "consumer_dir": "consumer",
+  "description": "A SHA-pinned consumer with exact direct pins is admitted and retains full dependency evidence.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "positive",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

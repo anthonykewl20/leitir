@@ -1,0 +1,10 @@
+{
+  "consumer_name": "range-pin-consumer",
+  "consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "consumer_version": "0.1.0",
+  "expected_consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_error": "UsageUnsupportedError",
+  "expected_outcome": "reject",
+  "recorded_requirements_digest": "sha256:53996f80d14daf3701249104cfdff828288238b408a7102af5193e422c0ede71",
+  "scenario": "range-pin"
+}

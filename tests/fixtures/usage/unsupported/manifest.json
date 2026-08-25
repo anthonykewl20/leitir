@@ -1,0 +1,11 @@
+{
+  "case": "unsupported",
+  "consumer_dir": "consumer",
+  "description": "A dynamic `__import__` call cannot be statically resolved to an import root.",
+  "expect": "valid",
+  "expected_state": "dynamic-import",
+  "kind": "unsupported",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

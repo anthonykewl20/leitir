@@ -1,0 +1,11 @@
+{
+  "case": "missing-mapping",
+  "consumer_dir": "consumer",
+  "description": "No local evidence declares any import root for the pinned distribution.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "unsupported",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

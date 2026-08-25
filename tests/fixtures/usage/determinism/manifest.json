@@ -1,0 +1,11 @@
+{
+  "case": "determinism",
+  "consumer_dir": "consumer",
+  "description": "Re-validating and re-replaying this case must reproduce byte-identical output every run.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "determinism",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

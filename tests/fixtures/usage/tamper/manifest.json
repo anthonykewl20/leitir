@@ -1,0 +1,13 @@
+{
+  "case": "tamper",
+  "consumer_dir": "consumer",
+  "description": "The report is self-consistent (its own report_digest validates) but the on-disk consumer source was altered after the report was produced, so offline replay must detect the code_digest mismatch and reject before doing anything else.",
+  "expect": "tamper",
+  "expected_error": "UsageTamperError",
+  "expected_state": "resolved",
+  "kind": "tamper",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1",
+  "tamper_stage": "replay"
+}

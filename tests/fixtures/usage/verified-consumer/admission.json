@@ -1,0 +1,9 @@
+{
+  "consumer_name": "verified-consumer",
+  "consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "consumer_version": "0.1.0",
+  "expected_consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_outcome": "admit",
+  "recorded_requirements_digest": "sha256:c7c145388a9dec7fc59b1b0c2b8165a1a8f74e9ee29d65d7ec70a4a98f84e981",
+  "scenario": "verified-consumer"
+}

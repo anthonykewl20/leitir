@@ -1,0 +1,10 @@
+{
+  "consumer_name": "digest-mismatch-consumer",
+  "consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "consumer_version": "0.1.0",
+  "expected_consumer_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_error": "UsageTamperError",
+  "expected_outcome": "reject",
+  "recorded_requirements_digest": "sha256:c2c46bf583ca9f4bf26dfabee8d94e056fb7e12b3ee3ee943bdda62652ec21cc",
+  "scenario": "digest-mismatch"
+}

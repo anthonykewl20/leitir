@@ -12,6 +12,19 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Added
+- add usage CLI verification, replay, and E2E harness (`usage`)
+- admit verified consumers and catalog Python imports (`usage`)
+- assemble deterministic usage evidence (`usage`)
+- define usage evidence and replay contract (`usage`)
+- resolve Python consumer usage statically (`usage`)
+
+### Fixed
+- support platforms without O_NOFOLLOW (`usage`)
+
+### Security
+- make replay work on real-sized files and type all errors (`usage`)
+
 ## [0.1.5]
 
 ### Added

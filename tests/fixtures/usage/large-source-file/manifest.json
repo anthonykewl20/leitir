@@ -1,0 +1,11 @@
+{
+  "case": "large-source-file",
+  "consumer_dir": "consumer",
+  "description": "The consumer source file is padded past MAX_SNIPPET_BYTES (4096 bytes) with the real, digested reference placed near the end, so offline replay must read the whole file (bounded by MAX_REPLAY_SOURCE_FILE_BYTES) rather than truncating it at the per-snippet cap.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "positive",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

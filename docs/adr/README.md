@@ -29,6 +29,11 @@ please use [`template.md`](template.md) as the basis.
 | [0022](0022-trusted-key-lifecycle.md) | Trusted-key lifecycle: expiry and revocation in a versioned trusted-keys schema | Accepted | 2026-08-20 |
 | [0023](0023-registry-only-degraded-resolution.md) | Registry-only degraded resolution when the repository tag lookup is unavailable | Accepted | 2026-08-23 |
 | [0024](0024-local-first-cached-resolution.md) | Local-first resolution for exact ecosystem pins from verified cached shelves | Accepted | 2026-08-23 |
+| [0025](0025-usage-evidence-and-replay-contract.md) | Usage evidence and offline replay contract | Accepted | 2026-08-25 |
+| [0026](0026-conservative-admission-and-import-catalog.md) | Conservative consumer admission and distribution-to-import-root cataloging | Accepted | 2026-08-25 |
+| [0027](0027-static-python-usage-resolver.md) | Static, execution-free resolution of Python consumer usage | Accepted | 2026-08-25 |
+| [0028](0028-deterministic-usage-evidence-assembly.md) | Deterministic assembly of bounded, explainable usage evidence | Accepted | 2026-08-25 |
+| [0029](0029-offline-usage-cli-verification-and-replay.md) | Offline usage CLI verification, replay, and opt-in pinned public-source E2E | Accepted | 2026-08-25 |
 
 ## Status vocabulary
 

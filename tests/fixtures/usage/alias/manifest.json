@@ -1,0 +1,11 @@
+{
+  "case": "alias",
+  "consumer_dir": "consumer",
+  "description": "An aliased import (`import widgetlib as wl`) still resolves to the same distribution.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "alias",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

@@ -19,6 +19,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - define usage evidence and replay contract (`usage`)
 - resolve Python consumer usage statically (`usage`)
 
+### Security
+- make replay work on real-sized files and type all errors (`usage`)
+
 ## [0.1.5]
 
 ### Added

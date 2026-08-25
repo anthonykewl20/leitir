@@ -1,0 +1,11 @@
+{
+  "case": "range-pin",
+  "consumer_dir": "consumer",
+  "description": "A '>=' range pin is not an exact direct pin; admission must reject the whole requirements set.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "unsupported",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

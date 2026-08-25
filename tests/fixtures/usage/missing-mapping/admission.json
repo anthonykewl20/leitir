@@ -1,0 +1,13 @@
+{
+  "distribution_records": [
+    {
+      "declared_roots": [],
+      "distribution": "widgetlib",
+      "schema_version": "leitir-usage-distribution-record-v1",
+      "source": "top-level-txt"
+    }
+  ],
+  "expected_outcome": "unresolved",
+  "expected_state": "unsupported-syntax",
+  "scenario": "missing-mapping"
+}

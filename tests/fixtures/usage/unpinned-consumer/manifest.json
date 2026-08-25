@@ -1,0 +1,11 @@
+{
+  "case": "unpinned-consumer",
+  "consumer_dir": "consumer",
+  "description": "A floating branch ref ('main') is not a SHA pin; admission must reject it.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "unsupported",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

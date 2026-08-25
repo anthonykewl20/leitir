@@ -1,0 +1,15 @@
+{
+  "distribution_records": [
+    {
+      "declared_roots": [
+        "widgetlib"
+      ],
+      "distribution": "widgetlib",
+      "schema_version": "leitir-usage-distribution-record-v1",
+      "source": "namespace-pth-file"
+    }
+  ],
+  "expected_outcome": "unresolved",
+  "expected_state": "unsupported-syntax",
+  "scenario": "unsupported-packaging"
+}

@@ -1,0 +1,23 @@
+{
+  "distribution_records": [
+    {
+      "declared_roots": [
+        "widget_lib"
+      ],
+      "distribution": "widget-lib",
+      "schema_version": "leitir-usage-distribution-record-v1",
+      "source": "top-level-txt"
+    },
+    {
+      "declared_roots": [
+        "widgetlib"
+      ],
+      "distribution": "widget_lib",
+      "schema_version": "leitir-usage-distribution-record-v1",
+      "source": "top-level-txt"
+    }
+  ],
+  "expected_outcome": "unresolved",
+  "expected_state": "ambiguous-binding",
+  "scenario": "ambiguous-mapping"
+}

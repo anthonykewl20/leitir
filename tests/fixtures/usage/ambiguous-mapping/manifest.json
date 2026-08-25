@@ -1,0 +1,11 @@
+{
+  "case": "ambiguous-mapping",
+  "consumer_dir": "consumer",
+  "description": "Two distinct distributions normalize to the same identity and disagree, so both are ambiguous.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "ambiguous",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

@@ -1,0 +1,11 @@
+{
+  "case": "multi-root-distribution",
+  "consumer_dir": "consumer",
+  "description": "One coherent evidence source declares two import roots for one distribution; still resolved.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "positive",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

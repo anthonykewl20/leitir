@@ -1,0 +1,13 @@
+{
+  "case": "digest-mismatch",
+  "consumer_dir": "consumer",
+  "description": "The report (and its recorded requirements digest) is self-consistent, but the on-disk requirements.txt was altered afterward; both offline replay and admission must reject on the digest mismatch before retaining any dependency claim.",
+  "expect": "tamper",
+  "expected_error": "UsageTamperError",
+  "expected_state": "resolved",
+  "kind": "tamper",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1",
+  "tamper_stage": "replay"
+}

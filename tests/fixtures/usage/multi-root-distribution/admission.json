@@ -1,0 +1,19 @@
+{
+  "distribution_records": [
+    {
+      "declared_roots": [
+        "widgetlib",
+        "widgetlib_ext"
+      ],
+      "distribution": "widgetlib",
+      "schema_version": "leitir-usage-distribution-record-v1",
+      "source": "top-level-txt"
+    }
+  ],
+  "expected_import_roots": [
+    "widgetlib",
+    "widgetlib_ext"
+  ],
+  "expected_outcome": "resolved",
+  "scenario": "multi-root-distribution"
+}

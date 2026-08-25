@@ -1,0 +1,11 @@
+{
+  "case": "unsupported-packaging",
+  "consumer_dir": "consumer",
+  "description": "The only local evidence for this distribution comes from an unsupported packaging shape.",
+  "expect": "valid",
+  "expected_state": "resolved",
+  "kind": "unsupported",
+  "report_file": "report.json",
+  "requirements_file": "requirements.txt",
+  "schema_version": "leitir-usage-fixture-manifest-v1"
+}

@@ -48,6 +48,8 @@ def test_bounded_matching_lines_terminates_on_pattern_that_evades_the_shape_chec
     must still not hang the process when matched against a long, repetitive line -- the
     length cap must stop it from ever reaching re.search at all.
     """
+    # codeql[py/redos] -- intentional hostile input: this pattern is the SUBJECT of the
+    # test, proving MAX_REGEX_LINE_LENGTH stops it before it ever reaches re.search.
     pattern_text = r"^(a|a)*b"
     assert not has_catastrophic_shape(pattern_text)  # confirms this exercises the backstop
     pattern = re.compile(pattern_text)

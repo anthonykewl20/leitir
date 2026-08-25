@@ -549,7 +549,42 @@ def assemble_usage_evidence(
     record. ``unresolved_distributions`` (typically
     :attr:`~leitir.usage.import_catalog.ImportCatalog.unresolved`) is
     carried forward verbatim and also folded into the underlying report's
-    coverage as exclusion entries (``"unresolved-distribution:<name>:<state>"``).
+coverage as exclusion entries (``"unresolved-distribution:<name>:<state>"``).
+
+    ``CoverageSummary.exclusions`` grammar (undocumented in the frozen #255
+    contract, since ``exclusions`` is declared there only as an opaque
+    ``tuple[str, ...]`` free-text bag -- this docstring is the closest
+    thing to a spec). This module contributes exactly three colon-delimited
+    string shapes into that shared bag, alongside whatever opaque strings
+    upstream resolver batches already put there:
+
+    - ``"unresolved-distribution:<name>:<state>"`` -- one entry per
+      ``unresolved_distributions`` member, added here.
+    - ``"assemble:conflicting-provenance:<identity_digest>"`` -- a result
+      whose provenance records disagree on ``code_digest`` for the same
+      logical usage (see the ``conflicting`` branch above).
+    - ``"assemble:capped-result:<identity_digest>"`` -- a result excluded
+      from ``results``/``capped_results`` bookkeeping by
+      ``max_provenance_per_result`` or ranking (see the ``CAP_EXCEEDED``
+      branch above).
+
+    **Collision caveat**: all three shapes, plus any upstream batch's own
+    exclusion strings, share one flat ``set[str]`` with no namespacing
+    enforced beyond the literal prefixes above -- nothing prevents an
+    upstream batch from independently emitting a string that happens to
+    collide with one of these three shapes (they would simply deduplicate,
+    silently). ``<name>`` in the first shape is PEP 503-normalized (never
+    contains ``:``); ``<state>`` is an ``UnresolvedState.value`` (also
+    never contains ``:``); ``<identity_digest>`` is a ``sha256:``-prefixed
+    digest string, which DOES contain a ``:`` -- round-tripping any of
+    these three shapes back into parts must use ``rsplit(":", 1)`` (state
+    values never contain ``:``, so this recovers ``state`` correctly even
+    though ``identity_digest`` itself has an internal colon) rather than a
+    naive ``split(":")``. There is no reverse-parsing helper in this
+    package; a caller that needs to distinguish these programmatically
+    should match on the literal prefix (``"unresolved-distribution:"``,
+    ``"assemble:conflicting-provenance:"``, ``"assemble:capped-result:"``)
+    rather than guessing at colon positions.
 
     Every bound is enforced without ever dropping a duplicate provenance
     record: a result whose provenance exceeds ``max_provenance_per_result``,

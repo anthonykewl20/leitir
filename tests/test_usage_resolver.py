@@ -218,6 +218,21 @@ def test_reexport_through_a_local_proxy_module_is_typed_unresolved() -> None:
     assert _single_record_state(result, "pkgproxy/__init__.py") == UnresolvedState.RESOLVED
 
 
+def test_reexport_through_two_local_hops_is_typed_unresolved_not_resolved() -> None:
+    # Regression for a coverage-honesty bug: app.py -> proxy_of_proxy.py ->
+    # actual_proxy.py -> widgetlib. Only the FIRST hop (actual_proxy.py's
+    # direct `import widgetlib as w`) is a tracked provider import;
+    # proxy_of_proxy.py re-exports it via another *local* module (a
+    # two-hop chain), which the resolver's shallow, one-hop cross-file scan
+    # cannot follow. No reference may be guessed for `w.use()` in app.py --
+    # but app.py's coverage record must NOT be misreported as fully
+    # RESOLVED either: it must explicitly carry RE_EXPORT.
+    result = resolve_consumer(consumer_root=_consumer("reexport_through_two_local_hops"), import_roots=_WIDGETLIB_ROOTS)
+
+    assert result.references == ()
+    assert _single_record_state(result, "app.py") == UnresolvedState.RE_EXPORT
+
+
 def test_syntax_error_is_unsupported_syntax_and_does_not_raise() -> None:
     # Named app.txt (not app.py) so ruff's default *.py glob does not try to
     # lint deliberately-invalid syntax; passed explicitly via `files=`.

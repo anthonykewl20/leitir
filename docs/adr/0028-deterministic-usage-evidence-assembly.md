@@ -141,6 +141,36 @@ wrapping a normal, frozen-contract `UsageReport` plus:
   out must agree on the `"unresolved-distribution:<name>:<state>"` format
   rather than getting a typed field.
 
+### Exclusions string grammar (documentation-only clarification)
+
+`CoverageSummary.exclusions` is a single flat `set[str]`/`tuple[str, ...]`
+shared by every contributor in the pipeline -- `assemble.py` is not the
+only writer. It contributes exactly three colon-delimited shapes:
+
+- `"unresolved-distribution:<name>:<state>"` -- one per
+  `unresolved_distributions` entry (`<name>` is PEP 503-normalized,
+  `<state>` is an `UnresolvedState.value`; neither ever contains `:`).
+- `"assemble:conflicting-provenance:<identity_digest>"` -- a result whose
+  provenance disagrees on `code_digest`.
+- `"assemble:capped-result:<identity_digest>"` -- a result excluded by
+  `max_provenance_per_result` or ranking.
+
+`<identity_digest>` is a `sha256:`-prefixed digest and DOES contain an
+internal `:`, so round-tripping any of these three shapes back into parts
+must use `rsplit(":", 1)` (never a naive `split(":")`) to recover the
+trailing `<state>`/`<identity_digest>` field correctly.
+
+**Collision caveat**: nothing namespaces this bag beyond the literal
+prefixes above. An upstream `ReferenceBatch.coverage.exclusions` string
+that happens to collide with one of these three shapes (or with another
+batch's own convention) silently deduplicates into the same `set[str]`,
+since equality is by string value alone. A consumer that needs to
+distinguish entries programmatically should match on the literal prefix
+(`"unresolved-distribution:"`, `"assemble:conflicting-provenance:"`,
+`"assemble:capped-result:"`) rather than assuming every entry follows one
+of these three shapes. See the matching docstring note on
+`assemble_usage_evidence` in `src/leitir/usage/assemble.py`.
+
 ## Links
 
 - `docs/adr/0025-usage-evidence-and-replay-contract.md` -- the frozen

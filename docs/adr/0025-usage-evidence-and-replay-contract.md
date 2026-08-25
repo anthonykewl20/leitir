@@ -111,6 +111,24 @@ anything from the corpus, performs no network access, and writes nothing;
 on success it returns the same report object unchanged, proving the replay
 was a verification and never a substitution.
 
+Each referenced source file is read from disk in full, bounded by
+`MAX_REPLAY_SOURCE_FILE_BYTES` (1 MiB) -- a distinct constant from
+`MAX_SNIPPET_BYTES` (4 KiB), which only bounds one already-extracted
+snippet, never a whole file. `MAX_REPLAY_SOURCE_FILE_BYTES` is deliberately
+aligned with the resolver's `MAX_RESOLVER_FILE_BYTES` (also 1 MiB, #257):
+replay must be able to re-read, in full, any consumer source file the
+resolver was permitted to scan and attribute a reference to. `read_regular_file`
+raises a bare `ValueError` (not `OSError`) when a read exceeds its cap;
+`replay_report` catches this alongside `OSError` at both read sites (the
+`requirements.txt` read and each source-file read) and re-raises the
+correctly typed error (`UsageUnsupportedError` for an over-cap file --
+well-formed input this build's bound does not support -- `UsageMalformedError`
+for any other read failure), never letting the bare exception escape.
+Note also that a `byte_identical: true` replay proves *span-level*
+integrity for every reference -- it does not hash bytes of a referenced
+file outside its recorded spans (see ADR-0029's "Known limitation" section
+for the full caveat).
+
 ## Fixture corpus
 
 `tests/fixtures/usage/<case>/` holds one directory per required case --

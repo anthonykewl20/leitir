@@ -18,12 +18,14 @@ from pathlib import Path
 import pytest
 
 from leitir.cli import ExitCode, main
-from leitir.usage import UsageTamperError, report_from_json_bytes
+from leitir.usage import UsageMalformedError, UsageTamperError, UsageUnsupportedError, report_from_json_bytes
 from leitir.usage.cli_support import load_report, replay_payload
+from leitir.usage.contract import MAX_REPLAY_SOURCE_FILE_BYTES, MAX_SNIPPET_BYTES
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "usage"
 _POSITIVE = _FIXTURES / "positive"
 _TAMPER = _FIXTURES / "tamper"
+_LARGE_SOURCE = _FIXTURES / "large-source-file"
 _ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -150,3 +152,81 @@ def test_replay_reports_are_never_substituted_when_tampered() -> None:
         pass
     else:
         pytest.fail("tampered fixture must be rejected, not silently replayed")
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 regression: replay must read a whole referenced source file, not
+# truncate it at MAX_SNIPPET_BYTES (a per-snippet cap, not a whole-file cap),
+# and an over-cap file must raise a typed UsageError, never a bare ValueError.
+# ---------------------------------------------------------------------------
+
+
+def test_replay_succeeds_against_a_source_file_larger_than_the_snippet_cap() -> None:
+    on_disk_size = len((_LARGE_SOURCE / "consumer" / "app.py").read_bytes())
+    assert on_disk_size > MAX_SNIPPET_BYTES, "fixture must exceed the historic 4096-byte snippet cap"
+
+    report = load_report(_LARGE_SOURCE / "report.json")
+    payload = replay_payload(report, corpus_root=_LARGE_SOURCE, dependency_path=_LARGE_SOURCE / "requirements.txt")
+
+    assert payload["byte_identical"] is True
+
+
+def test_cli_usage_replay_succeeds_against_a_source_file_larger_than_the_snippet_cap() -> None:
+    argv = [
+        "usage", "replay", str(_LARGE_SOURCE / "report.json"),
+        "--corpus-root", str(_LARGE_SOURCE),
+        "--requirements", str(_LARGE_SOURCE / "requirements.txt"),
+        "--json",
+    ]
+    code, out, err = _run(argv)
+    assert code == int(ExitCode.SUCCESS), err
+    payload = json.loads(out)
+    assert payload["byte_identical"] is True
+
+
+def test_replay_rejects_a_referenced_source_file_exceeding_the_whole_file_replay_cap(tmp_path: Path) -> None:
+    # Reuse the positive fixture's report/requirements unchanged, but swap the
+    # on-disk consumer source for one that exceeds MAX_REPLAY_SOURCE_FILE_BYTES.
+    # The over-cap read must be rejected with a TYPED error (never a bare
+    # ValueError escaping from leitir.safeio.read_regular_file) and must never
+    # yield a success result (fail-closed).
+    report = report_from_json_bytes((_POSITIVE / "report.json").read_bytes())
+    consumer_dir = tmp_path / "consumer"
+    consumer_dir.mkdir()
+    oversized = "import widgetlib\n" + ("#" * 80 + "\n") * ((MAX_REPLAY_SOURCE_FILE_BYTES // 81) + 10)
+    assert len(oversized.encode("utf-8")) > MAX_REPLAY_SOURCE_FILE_BYTES
+    (consumer_dir / "app.py").write_text(oversized, encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("widgetlib==1.2.3\n", encoding="utf-8")
+
+    with pytest.raises(UsageUnsupportedError) as excinfo:
+        replay_payload(report, corpus_root=tmp_path, dependency_path=tmp_path / "requirements.txt")
+    assert excinfo.value.kind == "usage_unsupported"
+    assert "span.file" in (excinfo.value.evidence.field or "")
+
+
+def test_replay_rejects_a_missing_referenced_source_file_as_malformed_not_bare_oserror(tmp_path: Path) -> None:
+    report = report_from_json_bytes((_POSITIVE / "report.json").read_bytes())
+    # Deliberately do not create consumer/app.py at all.
+    (tmp_path / "requirements.txt").write_text("widgetlib==1.2.3\n", encoding="utf-8")
+
+    with pytest.raises(UsageMalformedError) as excinfo:
+        replay_payload(report, corpus_root=tmp_path, dependency_path=tmp_path / "requirements.txt")
+    assert excinfo.value.kind == "usage_malformed"
+
+
+# ---------------------------------------------------------------------------
+# QA-A: an untyped, non-UsageError exception at the usage CLI load/read
+# boundary (e.g. a missing report file) must not escape as raw exception
+# text -- it must surface as a proper "usage_*" JSON envelope under --json.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_usage_verify_missing_report_path_emits_typed_json_envelope(tmp_path: Path) -> None:
+    missing = tmp_path / "no-such-report.json"
+    argv = ["usage", "verify", str(missing), "--json"]
+    code, out, err = _run(argv)
+
+    assert code != 0
+    assert out == ""
+    payload = json.loads(err.removeprefix("leitir: error: ").strip())
+    assert payload["kind"].startswith("usage_")

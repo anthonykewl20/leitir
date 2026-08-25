@@ -16,7 +16,7 @@ import pytest
 from test_usage_fixtures import CaseFixture, discover_cases
 
 from leitir.safeio import read_regular_file
-from leitir.usage import UsageTamperError, UsageUnsupportedError
+from leitir.usage import UsageMalformedError, UsageTamperError, UsageUnsupportedError
 from leitir.usage._canonical import digest_bytes
 from leitir.usage.admission import (
     ADMITTED_CONSUMER_SCHEMA_VERSION,
@@ -172,6 +172,25 @@ def test_tamper_requirements_digest_mismatch_is_rejected_and_retains_no_claim() 
             recorded_requirements_digest=wrong_digest,
         )
     assert excinfo.value.kind == "usage_tamper"
+    assert excinfo.value.evidence.field == "requirements_bytes"
+
+
+def test_non_utf8_requirements_bytes_are_rejected_as_malformed_not_bare_unicode_error() -> None:
+    # requirements_bytes must digest-match recorded_requirements_digest to
+    # reach the decode step at all; use its own digest so the tamper check
+    # passes and the decode failure is what's actually exercised.
+    requirements = b"widgetlib==1.2.3\n# \xff\xfe not valid utf-8\n"
+    digest = digest_bytes(requirements)
+    with pytest.raises(UsageMalformedError) as excinfo:
+        admit_consumer(
+            consumer_name="demo-consumer",
+            consumer_version="0.1.0",
+            consumer_ref=_PINNED_SHA,
+            expected_consumer_ref=_PINNED_SHA,
+            requirements_bytes=requirements,
+            recorded_requirements_digest=digest,
+        )
+    assert excinfo.value.kind == "usage_malformed"
     assert excinfo.value.evidence.field == "requirements_bytes"
 
 

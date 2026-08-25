@@ -187,6 +187,20 @@ def build_import_catalog(records: tuple[DistributionRecord, ...]) -> ImportCatal
             continue
 
         distribution = raw_names[0]
+        # NOTE (known limitation, see docs/adr/0026-conservative-admission-and-import-catalog.md
+        # "Known limitation" section): UnresolvedState.UNSUPPORTED_SYNTAX is
+        # deliberately overloaded here to mean "missing/unusable packaging
+        # evidence" -- a completely different condition from the resolver's
+        # (resolver.py) only other producer of this member, which means "the
+        # Python source did not parse". The UnresolvedState enum was frozen by
+        # issue #255 before this module (#256) existed, and the closest
+        # alternative, AMBIGUOUS_BINDING, would have been a worse (also
+        # inaccurate) fit. A future contract revision should add a dedicated
+        # member instead of overloading this one. Consumers of catalog-sourced
+        # UnresolvedDistribution entries MUST read `.reason` (a free-text but
+        # always-present explanation) before branching on `.state` alone --
+        # `.state == UNSUPPORTED_SYNTAX` is NOT sufficient to conclude the
+        # source failed to parse.
         unsupported_sources = sorted({r.source for r in group if r.source not in SUPPORTED_EVIDENCE_SOURCES})
         if unsupported_sources:
             unresolved[distribution] = UnresolvedDistribution(

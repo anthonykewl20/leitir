@@ -25,7 +25,16 @@ from pathlib import Path
 
 from leitir.safeio import read_regular_file
 
-from . import Identity, UsageErrorEvidence, UsageReport, UsageTamperError, replay_report, report_from_json_bytes
+from . import (
+    Identity,
+    UsageErrorEvidence,
+    UsageMalformedError,
+    UsageReport,
+    UsageTamperError,
+    UsageUnsupportedError,
+    replay_report,
+    report_from_json_bytes,
+)
 
 # A generous but bounded cap on the report document itself -- reports are
 # closed, capped structures (MAX_REFERENCES etc. in contract.py), so a
@@ -45,14 +54,36 @@ def _identity_payload(identity: Identity) -> dict[str, object]:
 def load_report(report_path: Path) -> UsageReport:
     """Read and structurally validate a usage report from ``report_path``.
 
-    Raises :class:`leitir.usage.UsageMalformedError`,
-    :class:`leitir.usage.UsageUnsupportedError`, or
-    :class:`leitir.usage.UsageTamperError` (self-inconsistent
-    ``report_digest``) -- never partially returns a report that failed
-    validation.
+    Raises :class:`leitir.usage.UsageMalformedError` (missing file,
+    permission denied, not a regular file, or any other operating-system
+    read failure), :class:`leitir.usage.UsageUnsupportedError` (the file
+    on disk exceeds ``MAX_REPORT_BYTES``, or the parsed report declares an
+    unsupported schema/parser version), or :class:`leitir.usage.UsageTamperError`
+    (self-inconsistent ``report_digest``) -- never partially returns a
+    report that failed validation, and never lets a bare ``OSError`` or
+    ``ValueError`` escape to the caller, so the CLI's ``--json`` diagnostic
+    contract always gets a structured ``usage_*`` envelope instead of raw
+    Python exception text.
     """
 
-    raw = read_regular_file(report_path, maximum_bytes=MAX_REPORT_BYTES, no_follow=True)
+    try:
+        raw = read_regular_file(report_path, maximum_bytes=MAX_REPORT_BYTES, no_follow=True)
+    except ValueError as exc:
+        raise UsageUnsupportedError(
+            UsageErrorEvidence(
+                message=f"report file exceeds the {MAX_REPORT_BYTES}-byte CLI read bound: {exc}",
+                stage="load",
+                field="report",
+            )
+        ) from exc
+    except OSError as exc:
+        raise UsageMalformedError(
+            UsageErrorEvidence(
+                message=f"report file could not be read: {exc}",
+                stage="load",
+                field="report",
+            )
+        ) from exc
     return report_from_json_bytes(raw)
 
 
@@ -79,13 +110,21 @@ def verify_payload(report: UsageReport) -> dict[str, object]:
 def replay_payload(report: UsageReport, *, corpus_root: Path, dependency_path: Path, times: int = 2) -> dict[str, object]:
     """Replay ``report`` offline ``times`` times and confirm byte-identical output.
 
-    Raises :class:`leitir.usage.UsageMalformedError` or
-    :class:`leitir.usage.UsageTamperError` (fail-closed) if any replay pass
-    rejects the on-disk bytes. If every individual pass succeeds but their
-    canonical bytes somehow disagree -- which should be unreachable given
-    :func:`leitir.usage.replay_report`'s own determinism -- this raises
-    :class:`leitir.usage.UsageTamperError` rather than reporting a false
-    "byte_identical" claim.
+    Raises :class:`leitir.usage.UsageMalformedError`,
+    :class:`leitir.usage.UsageUnsupportedError` (an on-disk file exceeds
+    this build's whole-file read bound), or :class:`leitir.usage.UsageTamperError`
+    (fail-closed) if any replay pass rejects the on-disk bytes. If every
+    individual pass succeeds but their canonical bytes somehow disagree --
+    which should be unreachable given :func:`leitir.usage.replay_report`'s
+    own determinism -- this raises :class:`leitir.usage.UsageTamperError`
+    rather than reporting a false "byte_identical" claim.
+
+    Note: a successful, ``byte_identical`` replay proves *span-level*
+    integrity -- every reference's recorded ``code_digest`` matches the
+    bytes at its recorded span, read fresh from disk on each pass -- not
+    whole-file integrity. Bytes outside every referenced span (e.g.
+    unrelated content appended to a source file) are not covered by any
+    digest this function checks.
     """
 
     if times < 1:

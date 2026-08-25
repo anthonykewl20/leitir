@@ -681,7 +681,16 @@ def build_parser() -> argparse.ArgumentParser:
         "usage",
         help="verify or replay a local usage evidence bundle (fully offline)",
     )
-    usage_cmd.add_argument("action", choices=["verify", "replay"], help="verify: parse/validate report.json; replay: also recompute digests against on-disk corpus bytes")
+    usage_cmd.add_argument(
+        "action",
+        choices=["verify", "replay"],
+        help=(
+            "verify: parse/validate report.json; "
+            "replay: also recompute digests against on-disk corpus bytes and confirm each "
+            "reference's recorded span (not the whole source file) is byte-identical to what "
+            "is on disk"
+        ),
+    )
     usage_cmd.add_argument("report", metavar="report.json")
     usage_cmd.add_argument(
         "--corpus-root", default=None,

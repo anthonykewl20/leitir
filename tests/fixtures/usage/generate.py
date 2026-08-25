@@ -255,6 +255,29 @@ def main() -> None:
         extra_manifest_fields={"tamper_stage": "replay", "expected_error": "UsageTamperError"},
     )
 
+    # Regression fixture for the whole-file replay read cap (contract.py's
+    # MAX_REPLAY_SOURCE_FILE_BYTES): the source file is deliberately padded
+    # well past the historic 4096-byte MAX_SNIPPET_BYTES snippet cap (which
+    # replay used to, wrongly, reuse as a whole-file cap) with the real,
+    # digested reference placed near the end of the file, so replay must
+    # read the *entire* file, not just a MAX_SNIPPET_BYTES-sized prefix.
+    padding_lines = "".join(f"# padding line {i:04d} to exceed MAX_SNIPPET_BYTES (4096 bytes)\n" for i in range(120))
+    large_source = padding_lines + "import widgetlib\n\nwidgetlib.do_thing()\n"
+    assert len(large_source.encode("utf-8")) > 4096, "fixture must exceed the historic 4096-byte snippet cap"
+    _write_case(
+        "large-source-file",
+        description=(
+            "The consumer source file is padded past MAX_SNIPPET_BYTES (4096 bytes) with the "
+            "real, digested reference placed near the end, so offline replay must read the "
+            "whole file (bounded by MAX_REPLAY_SOURCE_FILE_BYTES) rather than truncating it at "
+            "the per-snippet cap."
+        ),
+        consumer_files={"app.py": large_source},
+        reference_needle=("app.py", "import widgetlib"),
+        coverage_state=UnresolvedState.RESOLVED,
+        extra_manifest_fields={"kind": "positive"},
+    )
+
     print(f"regenerated {len(list(ROOT.iterdir()))} fixture entries under {ROOT}")
 
 

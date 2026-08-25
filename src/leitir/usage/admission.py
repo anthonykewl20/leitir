@@ -28,7 +28,7 @@ from typing import NoReturn
 
 from ._canonical import digest_bytes, digest_value, is_sha256_digest
 from .contract import DEPENDENCY_EVIDENCE_SCHEMA_VERSION, IDENTITY_SCHEMA_VERSION, DependencyEvidence, Identity
-from .errors import UsageErrorEvidence, UsageTamperError, UsageUnsupportedError
+from .errors import UsageErrorEvidence, UsageMalformedError, UsageTamperError, UsageUnsupportedError
 
 # --------------------------------------------------------------------------
 # Schema version and parser identity literals.
@@ -109,6 +109,10 @@ def _reject_tamper(context: str, message: str, *, expected: str, actual: str) ->
     raise UsageTamperError(
         UsageErrorEvidence(message=message, stage="validate", field=context, expected=expected, actual=actual)
     )
+
+
+def _reject_malformed(context: str, message: str) -> NoReturn:
+    raise UsageMalformedError(UsageErrorEvidence(message=message, stage="validate", field=context))
 
 
 def _is_pinned_ref(ref: str) -> bool:
@@ -248,7 +252,10 @@ def admit_consumer(
             actual=actual_digest,
         )
 
-    requirements_text = requirements_bytes.decode("utf-8")
+    try:
+        requirements_text = requirements_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        _reject_malformed("requirements_bytes", f"requirements.txt bytes are not valid UTF-8: {exc}")
     direct_pins = parse_exact_pins(requirements_text)
 
     dependency_evidence = DependencyEvidence(

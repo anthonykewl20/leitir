@@ -87,6 +87,37 @@ legitimate multi-root distribution) -- multi-root is not itself ambiguous.
 - "Missing mapping" and "genuinely unsupported packaging" are not
   distinguishable by `state` alone, only by `reason` text.
 
+## Known limitation
+
+`UnresolvedState.UNSUPPORTED_SYNTAX` has exactly one other producer in the
+whole `leitir.usage` package: the static resolver (`resolver.py`), where it
+means "the Python source did not parse" (a `SyntaxError`/cap-exceeded
+condition). `import_catalog.py` reuses the same enum member (see the
+`# NOTE (known limitation, ...)` comment at its two producer sites) for a
+completely different condition -- "no usable local packaging evidence was
+found for this distribution" (either an unsupported evidence-source kind,
+or no evidence declaring any import root). A consumer branching on
+`UnresolvedDistribution.state`/`CoverageRecord.state` alone cannot tell
+these two apart; only `reason` (free text, always present) distinguishes
+them.
+
+This was a forced choice, not an oversight: the `UnresolvedState` enum was
+frozen by #255 before #256 (this issue) existed, so no dedicated
+"missing packaging evidence" member was available, and the enum is
+explicitly closed for exhaustive switching downstream (#257-#259) --
+extending it was out of this issue's file scope (see "Considered Options"
+above). The nearest alternative, `AMBIGUOUS_BINDING`, would have been a
+worse fit: it already has its own distinct, unrelated meaning here
+(disagreeing evidence sources / colliding roots), and reusing it for
+"missing evidence" too would conflate three conditions under one member
+instead of two.
+
+**Consumers of catalog-sourced unresolved entries must read `.reason`
+before acting on `.state` alone.** A future contract revision (updating the
+frozen #255 enum, which would need coordinated changes across #256-#259)
+should add a dedicated member -- e.g. something like
+`MISSING_PACKAGING_EVIDENCE` -- so this overload can be retired.
+
 ## Pros and Cons of the Options
 
 ### Extend `UnresolvedState`

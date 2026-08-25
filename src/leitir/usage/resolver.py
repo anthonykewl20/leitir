@@ -201,6 +201,25 @@ def _scan_module_level_bindings(tree: ast.Module, import_roots: Mapping[str, str
     only needs to answer one question for another file's benefit: "does
     this local module forward a name that came from a tracked provider
     import?".
+
+    This is a strictly *one-hop* scan: it only ever inspects the module's
+    own top-level statements, never the modules those statements import
+    from. A ``from <local_module> import name`` binding, where
+    ``<local_module>`` is not itself a tracked provider root, therefore
+    lands in an analyzable blind spot -- ``<local_module>`` might forward a
+    tracked provider name through a further local re-export (a multi-hop
+    chain this scan deliberately does not follow), or it might be a wholly
+    unrelated local name. Since this function cannot tell those two cases
+    apart without recursing (which it intentionally never does), it must
+    not report ``"shadow"`` (which means "definitely unrelated to any
+    provider") for that binding -- doing so previously caused a consuming
+    module to be reported as fully ``RESOLVED`` even when a real,
+    unattributed usage was silently missed through the chain. Such bindings
+    are tagged ``"reexport"`` instead, so a module that consumes them is
+    forced into the explicit :class:`~leitir.usage.UnresolvedState.RE_EXPORT`
+    coverage state rather than an inaccurate ``RESOLVED`` state. A plain
+    ``import`` statement is not affected: it binds a module *object*, not a
+    forwarded name, so it is unambiguously local and stays ``"shadow"``.
     """
 
     bindings: dict[str, _Binding] = {}
@@ -218,7 +237,10 @@ def _scan_module_level_bindings(tree: ast.Module, import_roots: Mapping[str, str
             distribution = import_roots.get(from_root) if from_root else None
             for alias in stmt.names:
                 bound = alias.asname or alias.name
-                bindings[bound] = _Binding(kind="import", distribution=distribution) if distribution else _Binding(kind="shadow")
+                # Direct provider import: "import". Anything else forwarded via
+                # `from ... import` leaves the one-hop analyzable window and must
+                # be flagged "reexport" (see docstring), never "shadow".
+                bindings[bound] = _Binding(kind="import", distribution=distribution) if distribution else _Binding(kind="reexport")
     return bindings
 
 
@@ -377,7 +399,16 @@ class _ScopeVisitor(ast.NodeVisitor):
             bound = alias.asname or alias.name
             if tracked_distribution is not None:
                 binding = _Binding(kind="import", distribution=tracked_distribution)
-            elif local_bindings is not None and local_bindings.get(alias.name) is not None and local_bindings[alias.name].kind == "import":
+            elif (
+                local_bindings is not None
+                and local_bindings.get(alias.name) is not None
+                and local_bindings[alias.name].kind in ("import", "reexport")
+            ):
+                # "import": the local module directly re-exports a tracked provider
+                # name (single-hop). "reexport": the local module's own binding
+                # already left the analyzable one-hop window (see
+                # _scan_module_level_bindings) -- propagate the same honest,
+                # typed-unresolved signal rather than guessing "shadow".
                 binding = _Binding(kind="reexport")
             else:
                 binding = _Binding(kind="shadow")

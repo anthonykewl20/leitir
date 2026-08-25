@@ -120,6 +120,22 @@ Chosen option: a `usage` subcommand in `src/leitir/cli.py`, backed by
   `_write_bts_error`, the shared validate-cluster frozenset, `ExitCode`),
   so it does not add a second dispatch pattern for future readers to learn.
 
+### Known limitation: replay proves span-level integrity, not whole-file integrity
+
+`leitir usage replay` (and the underlying `replay_report`) recomputes and
+compares `code_digest` for each reference's recorded *span* only -- the
+exact `[start_line:start_col, end_line:end_col)` slice of the on-disk
+source file. It does not hash or otherwise check any byte of a referenced
+file outside every recorded span. Content appended after the last
+reference in a file, or an untouched region between two references, can
+change on disk without a `byte_identical: true` replay detecting it; this
+is by design (replay's job is to confirm the report's specific claims
+still hold against real bytes, not to fingerprint whole files it was never
+asked to fingerprint) but "replay confirms the corpus was not tampered
+with" is easy to over-read as whole-file integrity, which it is not. The
+CLI's `usage replay` action help text and `cli_support.replay_payload`'s
+docstring both now say this explicitly.
+
 ### Negative Consequences
 
 - `leitir usage replay` requires the caller to separately supply

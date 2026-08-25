@@ -57,6 +57,14 @@ TOOL_VERSION = "leitir-usage-tool-v1"
 
 MAX_REQUIREMENTS_BYTES = 65_536
 MAX_SNIPPET_BYTES = 4_096
+# Whole-file read cap for offline replay (contract.py::replay_report), distinct from
+# MAX_SNIPPET_BYTES (which only bounds one already-extracted snippet, not a whole
+# consumer source file). Deliberately aligned with resolver.MAX_RESOLVER_FILE_BYTES
+# (1 MiB): replay must be able to re-read, in full, any consumer source file the
+# resolver was permitted to scan and reference -- otherwise a report generated
+# against a large-but-permitted file becomes unreplayable, which defeats offline
+# replay for realistic repositories. Do not reuse MAX_SNIPPET_BYTES here.
+MAX_REPLAY_SOURCE_FILE_BYTES = 1_048_576
 MAX_COVERAGE_CAP = 10_000
 MAX_REFERENCES = 2_000
 MAX_IMPORT_MAPPINGS = 500
@@ -894,15 +902,36 @@ def replay_report(report: UsageReport, *, corpus_root: Path, dependency_path: Pa
     Performs no network access, imports or executes no consumer code, and
     writes nothing. On success, returns ``report`` unchanged (the replay is
     a verification, never a substitution); on any mismatch it raises
-    :class:`UsageTamperError` before doing anything else with the input, and
-    on any structurally invalid on-disk input it raises
-    :class:`UsageMalformedError`.
+    :class:`UsageTamperError` before doing anything else with the input; on
+    any structurally invalid on-disk input (missing file, permission
+    denied, not a regular file, or any other read failure) it raises
+    :class:`UsageMalformedError`; and if a file on disk exceeds this
+    build's whole-file read bound (``MAX_REQUIREMENTS_BYTES`` for the
+    pinned requirements file, ``MAX_REPLAY_SOURCE_FILE_BYTES`` for a
+    referenced consumer source file) it raises
+    :class:`UsageUnsupportedError` -- never a bare ``OSError`` or
+    ``ValueError``. An over-cap file never yields a success result
+    (fail-closed).
+
+    Note on the scope of the guarantee: replay recomputes and compares the
+    digest of each reference's *span* bytes only, not the whole source
+    file. Bytes outside every recorded span (e.g. appended trailing
+    content, or an untouched region of the file) are not covered by any
+    digest check here and can change without replay detecting it. Replay
+    proves span-level integrity for every referenced line range, not
+    whole-file integrity.
     """
 
     stage = "replay"
     dependency = report.dependency_evidence
     try:
         on_disk_requirements = read_regular_file(dependency_path, maximum_bytes=MAX_REQUIREMENTS_BYTES, no_follow=True)
+    except ValueError as exc:
+        raise _unsupported(
+            stage,
+            "dependency_evidence.requirements_text",
+            f"exceeds the {MAX_REQUIREMENTS_BYTES}-byte requirements read bound: {exc}",
+        ) from exc
     except OSError as exc:
         raise _malformed(stage, "dependency_evidence.requirements_text", f"could not be read: {exc}") from exc
     try:
@@ -934,7 +963,13 @@ def replay_report(report: UsageReport, *, corpus_root: Path, dependency_path: Pa
             except ValueError as exc:
                 raise _malformed(stage, f"references[{index}].span.file", str(exc)) from exc
             try:
-                raw = read_regular_file(path, maximum_bytes=MAX_SNIPPET_BYTES, no_follow=True)
+                raw = read_regular_file(path, maximum_bytes=MAX_REPLAY_SOURCE_FILE_BYTES, no_follow=True)
+            except ValueError as exc:
+                raise _unsupported(
+                    stage,
+                    f"references[{index}].span.file",
+                    f"exceeds the {MAX_REPLAY_SOURCE_FILE_BYTES}-byte whole-file replay read bound: {exc}",
+                ) from exc
             except OSError as exc:
                 raise _malformed(stage, f"references[{index}].span.file", f"could not be read: {exc}") from exc
             try:

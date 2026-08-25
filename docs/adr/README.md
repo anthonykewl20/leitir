@@ -32,6 +32,7 @@ please use [`template.md`](template.md) as the basis.
 | [0025](0025-usage-evidence-and-replay-contract.md) | Usage evidence and offline replay contract | Accepted | 2026-08-25 |
 | [0026](0026-conservative-admission-and-import-catalog.md) | Conservative consumer admission and distribution-to-import-root cataloging | Accepted | 2026-08-25 |
 | [0027](0027-static-python-usage-resolver.md) | Static, execution-free resolution of Python consumer usage | Accepted | 2026-08-25 |
+| [0028](0028-deterministic-usage-evidence-assembly.md) | Deterministic assembly of bounded, explainable usage evidence | Accepted | 2026-08-25 |
 
 ## Status vocabulary
 

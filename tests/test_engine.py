@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import Iterator
 from itertools import permutations
 from pathlib import Path
@@ -20,8 +21,9 @@ from pathlib import Path
 import pytest
 from _http_server import json_body, routed_server
 
+from leitir._regex_budget import MAX_REGEX_LINE_LENGTH
 from leitir.adapters import PythonAdapter, RustAdapter, SpanMatch
-from leitir.engine import ScopedSearcher, score_content
+from leitir.engine import ScopedSearcher, path_matches_ex, score_content
 from leitir.materialize import (
     VerificationError,
     manifest_digest_fields,
@@ -861,6 +863,62 @@ class TestPathPredicate:
         report = _searcher().search(spec)
         assert len(report.matches) == 0
         assert report.coverage.files_eligible == 0
+
+    def test_path_predicate_ordinary_regex_still_matches_exactly_as_before(self):
+        # A benign PATH regex (no nested-quantifier shape, ordinary-length path) must behave
+        # identically to before the ReDoS guard was added.
+        matched, budget_exceeded = path_matches_ex(
+            "Lib/urllib/parse.py",
+            (Predicate(PredicateKind.PATH, r"^Lib/urllib/.*\.py$"),),
+        )
+        assert matched is True
+        assert budget_exceeded is False
+
+    def test_path_predicate_catastrophic_pattern_is_never_run_and_marks_incomplete(self):
+        # (a+)+ against a long run of 'a' is the textbook catastrophic-backtracking shape.
+        # It must terminate near-instantly (never handed to re.search) and the caller must be
+        # told the result is incomplete rather than silently told "no match".
+        hostile = Predicate(PredicateKind.PATH, "(a+)+$")
+        pathological_path = "a" * 50_000 + "!"
+        start = time.monotonic()
+        matched, budget_exceeded = path_matches_ex(pathological_path, (hostile,))
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, f"path_matches_ex took {elapsed}s -- ReDoS guard did not apply"
+        assert matched is False
+        assert budget_exceeded is True
+
+    def test_path_predicate_long_path_skips_regex_but_not_literal_match(self):
+        # A very long path (deeply nested vendored tree) with a non-catastrophic regex value
+        # must be skipped for the regex attempt (bounded by MAX_REGEX_LINE_LENGTH, the same
+        # cap used for regex-family content matching) and flagged incomplete, never silently
+        # dropped or hung on. A literal substring match is completely unaffected by the cap.
+        long_path = ("vendor/" * 1000) + "leaf.py"
+        assert len(long_path) > MAX_REGEX_LINE_LENGTH
+        matched, budget_exceeded = path_matches_ex(long_path, (Predicate(PredicateKind.PATH, r"leaf\.py$"),))
+        assert matched is False
+        assert budget_exceeded is True
+
+        # The literal substring branch runs before any length check and is unaffected.
+        matched, budget_exceeded = path_matches_ex(long_path, (Predicate(PredicateKind.PATH, "leaf.py"),))
+        assert matched is True
+        assert budget_exceeded is False
+
+    def test_path_predicate_end_to_end_hostile_pattern_terminates_and_marks_report_partial(self):
+        # Full ScopedSearcher path: a hostile PATH predicate must not hang the search and must
+        # surface as an honest incomplete-results report, never a silently wrong "no match".
+        spec = _spec(
+            must=(
+                Predicate(PredicateKind.PATH, "(a+)+$"),
+                Predicate(PredicateKind.IDENTIFIER, "urlencode"),
+            )
+        )
+        start = time.monotonic()
+        report = _searcher().search(spec)
+        elapsed = time.monotonic() - start
+        assert elapsed < 5.0, f"search took {elapsed}s -- ReDoS guard did not apply end to end"
+        assert len(report.matches) == 0
+        assert report.coverage.incomplete_results is True
+        assert report.coverage.status is CoverageStatus.PARTIAL
 
 
 class TestAdapterProtocol:

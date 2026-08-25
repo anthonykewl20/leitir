@@ -32,6 +32,16 @@ def test_extracts_markdown_fences_and_whole_code_files_with_provenance(tmp_path)
     ]
 
 
+def test_pycon_fence_is_normalized_to_python_language(tmp_path):
+    (tmp_path / "README.md").write_text(
+        "```pycon\n>>> from pkg import alpha\n>>> alpha()\n```\n", encoding="utf-8"
+    )
+
+    snippets = extract_snippets(tmp_path)
+
+    assert [(item["path"], item["language"]) for item in snippets] == [("README.md", "python")]
+
+
 def test_ranking_drops_zero_matches_is_deterministic_and_capped(tmp_path):
     examples = tmp_path / "examples"
     examples.mkdir()
@@ -59,6 +69,29 @@ def test_ties_use_path_then_line_before_length(tmp_path):
         (2, "alpha()"),
         (5, "alpha() # much longer"),
     ]
+
+
+def test_install_only_snippets_rank_below_real_usage_regardless_of_symbol_count(tmp_path):
+    # A pure "pip install tabulate" block matches the "tabulate" symbol just
+    # like real usage does, and by symbol-count alone would tie or even beat
+    # a real usage example with fewer matched symbols. Ranking must consult
+    # classification so the install-only snippet is demoted below genuine
+    # usage instead of only being relabeled UNKNOWN in isolation.
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "```shell\npip install tabulate\n```\n"
+        "```python\nfrom tabulate import tabulate\ntabulate([[1, 2]])\n```\n",
+        encoding="utf-8",
+    )
+
+    index = extract_examples(tmp_path, _api("tabulate"))
+
+    assert [item["classification"]["labels"] for item in index["snippets"]] == [
+        ["minimal_usage"],
+        ["unknown"],
+    ]
+    assert index["snippets"][0]["language"] == "python"
+    assert index["snippets"][1]["language"] == "shell"
 
 
 def test_matching_uses_identifier_boundaries():

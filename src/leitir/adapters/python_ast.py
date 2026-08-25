@@ -11,6 +11,7 @@ from leitir._python_ast import (
     python_signature,
     python_symtable,
 )
+from leitir._regex_budget import RegexBudgetExceeded
 from leitir.adapters import (
     AdapterMatchResult,
     MatchMethod,
@@ -207,10 +208,13 @@ class PythonAstAdapter:
         try:
             tree = parse_python(content)
         except (SyntaxError, ValueError, RecursionError):
+            # Use find_matches_ex (not find_matches) so a regex/signature predicate that
+            # exceeds its matching time budget is caught internally rather than propagating
+            # as an unhandled exception; parser_unavailable is already True here regardless.
             return AdapterMatchResult(
-                self._regex.find_matches(
+                self._regex.find_matches_ex(
                     content, predicates, whole_file=whole_file
-                ),
+                ).spans,
                 parser_unavailable=True,
             )
         parser_unavailable = False
@@ -235,12 +239,15 @@ class PythonAstAdapter:
         nodes = tuple(ast.walk(tree))
         for predicate in must:
             if predicate.kind not in _STRUCTURAL_KINDS:
-                hits.append(
-                    {
-                        line + 1: None
-                        for line in self._regex._lines_for_predicate(lines, predicate)
-                    }
-                )
+                try:
+                    regex_hits = self._regex._lines_for_predicate(lines, predicate)
+                except RegexBudgetExceeded:
+                    # A regex/signature predicate exceeded its time budget on this file's
+                    # content; treat as no hits and flag the result incomplete rather than
+                    # let the exception crash the whole search (mirrors find_matches_ex).
+                    parser_unavailable = True
+                    regex_hits = set()
+                hits.append({line + 1: None for line in regex_hits})
                 continue
             predicate_hits: dict[int, list[ast.AST] | None] = {}
             for node in nodes:

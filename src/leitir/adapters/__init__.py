@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from leitir._regex_budget import RegexBudgetExceeded, bounded_matching_lines
 from leitir.search import Predicate, PredicateKind
 
 
@@ -167,9 +168,14 @@ class PythonAdapter:
         *,
         whole_file: bool = False,
     ) -> AdapterMatchResult:
-        return AdapterMatchResult(
-            self.find_matches(content, predicates, whole_file=whole_file)
-        )
+        try:
+            spans = self.find_matches(content, predicates, whole_file=whole_file)
+        except RegexBudgetExceeded:
+            # A regex/signature predicate could not be matched within its time budget for
+            # this file. Report no spans from this file *and* flag it -- never silently drop
+            # the file as an ordinary "no match".
+            return AdapterMatchResult((), parser_unavailable=True)
+        return AdapterMatchResult(spans)
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -182,7 +188,7 @@ class PythonAdapter:
 
         if kind is PredicateKind.REGEX:
             pattern = re.compile(value)
-            return {i for i, line in enumerate(lines) if pattern.search(line)}
+            return bounded_matching_lines(lines, pattern)
 
         if kind is PredicateKind.IDENTIFIER:
             pattern = re.compile(r"\b" + re.escape(value) + r"\b")
@@ -211,12 +217,9 @@ class PythonAdapter:
 
         if kind is PredicateKind.SIGNATURE:
             pattern = re.compile(value)
-            return {
-                i
-                for i, line in enumerate(lines)
-                if ("def " in line or "class " in line)
-                and pattern.search(line)
-            }
+            return bounded_matching_lines(
+                lines, pattern, extra=lambda line: "def " in line or "class " in line
+            )
 
         if kind is PredicateKind.CALL:
             pattern = re.compile(_CALL_RE_TEMPLATE.format(name=re.escape(value)))
@@ -336,9 +339,14 @@ class RustAdapter:
         *,
         whole_file: bool = False,
     ) -> AdapterMatchResult:
-        return AdapterMatchResult(
-            self.find_matches(content, predicates, whole_file=whole_file)
-        )
+        try:
+            spans = self.find_matches(content, predicates, whole_file=whole_file)
+        except RegexBudgetExceeded:
+            # A regex/signature predicate could not be matched within its time budget for
+            # this file. Report no spans from this file *and* flag it -- never silently drop
+            # the file as an ordinary "no match".
+            return AdapterMatchResult((), parser_unavailable=True)
+        return AdapterMatchResult(spans)
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -351,7 +359,7 @@ class RustAdapter:
 
         if kind is PredicateKind.REGEX:
             pattern = re.compile(value)
-            return {i for i, line in enumerate(lines) if pattern.search(line)}
+            return bounded_matching_lines(lines, pattern)
 
         if kind is PredicateKind.IDENTIFIER:
             pattern = re.compile(r"\b" + re.escape(value) + r"\b")
@@ -379,12 +387,10 @@ class RustAdapter:
 
         if kind is PredicateKind.SIGNATURE:
             pattern = re.compile(value)
-            return {
-                i
-                for i, line in enumerate(lines)
-                if ("fn " in line or "struct " in line or "trait " in line)
-                and pattern.search(line)
-            }
+            return bounded_matching_lines(
+                lines, pattern,
+                extra=lambda line: "fn " in line or "struct " in line or "trait " in line,
+            )
 
         if kind is PredicateKind.CALL:
             pattern = re.compile(r"\b" + re.escape(value) + r"\s*[(<]")
@@ -496,9 +502,14 @@ class GoAdapter:
         *,
         whole_file: bool = False,
     ) -> AdapterMatchResult:
-        return AdapterMatchResult(
-            self.find_matches(content, predicates, whole_file=whole_file)
-        )
+        try:
+            spans = self.find_matches(content, predicates, whole_file=whole_file)
+        except RegexBudgetExceeded:
+            # A regex/signature predicate could not be matched within its time budget for
+            # this file. Report no spans from this file *and* flag it -- never silently drop
+            # the file as an ordinary "no match".
+            return AdapterMatchResult((), parser_unavailable=True)
+        return AdapterMatchResult(spans)
 
     def _lines_for_predicate(
         self, lines: list[str], pred: Predicate
@@ -511,7 +522,7 @@ class GoAdapter:
 
         if kind is PredicateKind.REGEX:
             pattern = re.compile(value)
-            return {i for i, line in enumerate(lines) if pattern.search(line)}
+            return bounded_matching_lines(lines, pattern)
 
         if kind is PredicateKind.IDENTIFIER:
             pattern = re.compile(r"\b" + re.escape(value) + r"\b")
@@ -539,12 +550,9 @@ class GoAdapter:
 
         if kind is PredicateKind.SIGNATURE:
             pattern = re.compile(value)
-            return {
-                i
-                for i, line in enumerate(lines)
-                if ("func " in line or "type " in line)
-                and pattern.search(line)
-            }
+            return bounded_matching_lines(
+                lines, pattern, extra=lambda line: "func " in line or "type " in line
+            )
 
         if kind is PredicateKind.CALL:
             pattern = re.compile(r"\b" + re.escape(value) + r"\s*\(")

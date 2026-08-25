@@ -20,9 +20,13 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - resolve Python consumer usage statically (`usage`)
 
 ### Fixed
+- handle Ctrl+C cleanly and correct example classification (`cli`)
+- harden registry parsing, interrupt handling, and index caching
 - support platforms without O_NOFOLLOW (`usage`)
+- tolerate null fields in real registry metadata (`resolver`)
 
 ### Security
+- detect broken shelves and bound regex matching (`doctor,search`)
 - make replay work on real-sized files and type all errors (`usage`)
 
 ## [0.1.5]

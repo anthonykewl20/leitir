@@ -38,6 +38,10 @@ ApiIndex: TypeAlias = dict[str, object]
 Extractor: TypeAlias = Callable[[Path, str], ApiIndex]
 logger = logging.getLogger(__name__)
 
+# Schema version embedded in every emitted API index. Bump when the shape of
+# the "methods"/"modules"/"symbols" payload changes incompatibly.
+API_SCHEMA_VERSION = 1
+
 
 @dataclass(frozen=True, slots=True)
 class SignatureChange:
@@ -81,7 +85,7 @@ _GO_INTERFACE_METHOD = re.compile(rf"^\s*{_GO_IDENTIFIER}\s*\(")
 
 
 def _empty_index() -> ApiIndex:
-    return {"schema_version": 1, "methods": [], "modules": [], "symbols": []}
+    return {"schema_version": API_SCHEMA_VERSION, "methods": [], "modules": [], "symbols": []}
 
 
 def _module_name(relative: Path) -> str:
@@ -552,7 +556,7 @@ def _finish(modules: list[dict[str, object]], symbols: list[dict[str, object]]) 
         )
     )
     methods = sorted({str(item["method"]) for item in modules + symbols})
-    return {"schema_version": 1, "methods": methods, "modules": modules, "symbols": symbols}
+    return {"schema_version": API_SCHEMA_VERSION, "methods": methods, "modules": modules, "symbols": symbols}
 
 
 _EXTRACTORS: dict[str, Extractor] = {
@@ -641,6 +645,7 @@ def diff_api_indexes(index_a: ApiIndex, index_b: ApiIndex) -> ApiDiff:
 
 
 __all__ = [
+    "API_SCHEMA_VERSION",
     "ApiDiff",
     "ApiIndex",
     "Extractor",

@@ -266,7 +266,30 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", dest="as_json")
     doctor.add_argument("--quiet", action="store_true")
     doctor.add_argument("--no-network", action="store_true")
-    search = commands.add_parser("search", help="search a pinned code corpus")
+    search = commands.add_parser(
+        "search",
+        help="search a pinned code corpus",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "predicate matching and comments/strings:\n"
+            "  On every non-Python language (JavaScript, TypeScript, Java, C, C++), content\n"
+            "  predicates (exact_text, regex, identifier, token_sequence, signature, call,\n"
+            "  import, symbol_definition, symbol_reference) are matched against source with\n"
+            "  comments and string/template literals masked out first -- an occurrence that\n"
+            "  exists only inside a comment or a string literal is never returned, even\n"
+            "  though a plain-text tool like grep would report it.\n"
+            "  Python does not mask: the default heuristic Python adapter matches raw,\n"
+            "  unmasked source lines, so a predicate CAN match inside a Python string\n"
+            "  literal or '#' comment. `--ast`'s structural predicate kinds\n"
+            "  (symbol_definition, symbol_reference, call, import, signature) consult the\n"
+            "  parsed AST instead and so cannot match inside a comment, but any other\n"
+            "  content predicate on a Python file (e.g. exact_text, regex) still falls back\n"
+            "  to the same raw, unmasked line scan.\n"
+            "  If a diff against grep looks like leitir is 'missing' matches on a non-Python\n"
+            "  file, check whether they are inside a comment or string literal first --\n"
+            "  that is expected, by-design behavior. See docs/search-capabilities.md.\n"
+        ),
+    )
     index_command = commands.add_parser(
         "index", help="explicitly build or refresh local trigram index shelves"
     )
@@ -505,7 +528,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
     )
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
-    export.add_argument("-o", "--output", default="corpus.lock")
+    export.add_argument(
+        "-o",
+        "--output",
+        default="corpus.lock",
+        help=(
+            "path for the lock file (default: corpus.lock in the current "
+            "working directory; the accompanying tarball is written "
+            "alongside it as corpus.tar.gz)"
+        ),
+    )
     export.add_argument(
         "--require-manifest-auth",
         action="store_true",
@@ -2941,6 +2973,15 @@ def _write_bts_error(exc: Exception, *, as_json: bool, err: TextIO) -> None:
     print(f"leitir: error: {redact(str(exc))}", file=err)
 
 
+# Conventional shell exit code for a process terminated by SIGINT (128 + 2).
+# Not part of ExitCode: that enum enumerates *command outcomes* the corpus
+# logic can decide on (success/failure/malformed/etc.), whereas an interrupt
+# is delivered by the OS mid-operation and never reaches command logic at
+# all. Reusing 130 keeps `leitir` consistent with how every POSIX shell
+# already reports Ctrl+C for any other program.
+_SIGINT_EXIT_CODE = 130
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2956,8 +2997,55 @@ def main(
     stderr: TextIO | None = None,
     _exit_windows_doctor_success: bool = False,
 ) -> int:
-    """Parse one command and wire resolver -> engine -> report."""
+    """Parse one command and wire resolver -> engine -> report.
 
+    This is a thin wrapper around :func:`_main_impl` whose sole job is to
+    convert a ``KeyboardInterrupt`` raised anywhere during command dispatch
+    (network I/O, materialization, searching, ...) into a clean, single-line
+    stderr message and a conventional exit code instead of letting a raw
+    traceback reach the user. It intentionally does not install a custom
+    signal handler and does not suppress the interrupt: a second Ctrl+C
+    during unwinding still raises normally, and this handler only fires
+    once the first KeyboardInterrupt has already unwound the stack.
+    """
+    err = stderr or sys.stderr
+    try:
+        return _main_impl(
+            argv,
+            tree_source_factory=tree_source_factory,
+            resolver_factory=resolver_factory,
+            searcher_factory=searcher_factory,
+            code_search_factory=code_search_factory,
+            global_searcher_factory=global_searcher_factory,
+            benchmark_runner_factory=benchmark_runner_factory,
+            stdout=stdout,
+            stderr=stderr,
+            _exit_windows_doctor_success=_exit_windows_doctor_success,
+        )
+    except KeyboardInterrupt:
+        try:
+            print("leitir: interrupted", file=err)
+        except OSError as exc:
+            if not _is_broken_pipe_error(exc):
+                raise
+        return _SIGINT_EXIT_CODE
+
+
+def _main_impl(
+    argv: Sequence[str] | None = None,
+    *,
+    tree_source_factory: Callable[[str | None], object] = _build_default_tree_source,
+    resolver_factory: Callable[[str | None], object] = _build_default_resolver,
+    searcher_factory: Callable[..., object] = _build_default_searcher,
+    code_search_factory: Callable[[str | None], object] = _build_default_code_search,
+    global_searcher_factory: Callable[..., object] = _build_default_global_searcher,
+    benchmark_runner_factory: Callable[
+        [object], object
+    ] = _build_default_benchmark_runner,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    _exit_windows_doctor_success: bool = False,
+) -> int:
     out = stdout or sys.stdout
     err = stderr or sys.stderr
     parser = build_parser()
@@ -3002,10 +3090,23 @@ def main(
             return result
         finally:
             if exit_process:
+                error = sys.exception()
+                if isinstance(error, KeyboardInterrupt):
+                    # Honor the same clean-interrupt contract as main():
+                    # a short message on stderr and the conventional SIGINT
+                    # exit code, never a raw traceback. This still needs
+                    # os._exit (see below) because os.name == "nt" here and
+                    # a normal `raise`/return would unwind back through
+                    # Py_RunMain, which can stomp the exit status.
+                    try:
+                        print("leitir: interrupted", file=err)
+                    except OSError as exc:
+                        if not _is_broken_pipe_error(exc):
+                            raise
+                    os._exit(_SIGINT_EXIT_CODE)
                 # Py_RunMain changes the status to 120 when Py_FinalizeEx
                 # cannot flush Windows stdout.  Exit with doctor's actual
                 # result (or infrastructure failure if it raised) first.
-                error = sys.exception()
                 try:
                     if error is not None:
                         sys.excepthook(type(error), error, error.__traceback__)

@@ -55,10 +55,11 @@ leitir export --root "$LEITIR_HOME" -o /secure/backups/corpus-2026-08-09.lock
 ```
 
 If `LEITIR_HOME` is unset, use the actual root explicitly, for example
-`--root "$HOME/.leitir"`. `-o`/`--output` names the lock file. Export writes an
-adjacent gzip tarball with the same basename, such as
-`corpus-2026-08-09.tar.gz`, and prints JSON containing the lock path, tarball
-path, and `lock_sha256`.
+`--root "$HOME/.leitir"`. `-o`/`--output` names the lock file; when omitted,
+it defaults to `corpus.lock` in the current working directory. Export writes
+an adjacent gzip tarball with the same basename, such as
+`corpus-2026-08-09.tar.gz` (or `corpus.tar.gz` when `-o` is omitted), and
+prints JSON containing the lock path, tarball path, and `lock_sha256`.
 
 Record the printed `lock_sha256`. Back up both the exact lock file and its
 adjacent snapshot tarball as one set. The lock binds the snapshot contents and

@@ -631,6 +631,31 @@ def test_infrastructure_error_on_resolver_failure():
     assert "registry unreachable" in err
 
 
+def test_keyboard_interrupt_prints_clean_message_and_exits_130():
+    """Ctrl+C anywhere during dispatch must never surface a raw traceback.
+
+    KeyboardInterrupt is a BaseException, not an Exception, so it sails past
+    every per-command ``except Exception`` handler untouched; only the
+    top-level wrapper in ``main()`` is positioned to catch it for every
+    subcommand at once.
+    """
+    resolver = FakeResolver(error=KeyboardInterrupt())
+    code, out, err, _, _ = invoke(
+        [
+            "search",
+            "--package", "requests",
+            "--version", "2.28.1",
+            "--ecosystem", "pypi",
+            "--must", "identifier:Session",
+        ],
+        resolver=resolver,
+    )
+    assert code == 130
+    assert err.strip() == "leitir: interrupted"
+    assert out == ""
+    assert "Traceback" not in err
+
+
 def test_invalid_commit_sha_is_infrastructure_failure():
     code, out, err, _, _ = invoke(
         [

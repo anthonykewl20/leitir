@@ -120,6 +120,18 @@ class Predicate:
                 re.compile(self.value)
             except re.error as exc:
                 raise ValueError("regex predicate must compile") from exc
+            # Reject the obvious catastrophic-backtracking (ReDoS) pattern shapes up front,
+            # at spec-construction time, the same place a syntactically invalid pattern is
+            # already rejected -- see leitir._regex_budget for why this can only be a
+            # heuristic first line of defense, not a complete guarantee (matching still runs
+            # under a wall-clock budget as a backstop).
+            from leitir._regex_budget import has_catastrophic_shape
+
+            if has_catastrophic_shape(self.value):
+                raise ValueError(
+                    "regex predicate rejected: nested quantified group is a "
+                    "catastrophic-backtracking (ReDoS) risk"
+                )
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {

@@ -24,7 +24,7 @@ from typing import Any, Literal, TextIO
 
 from . import _http
 from ._update_check import _GITHUB_RELEASES_URL, _MAX_RESPONSE_BYTES
-from .corpus import resolve_root
+from .corpus import load_sources, resolve_root
 from .materialize import MANIFEST_NAME, read_valid_manifest
 from .treehash import (
     TREE_HASH_ALGORITHM,
@@ -176,6 +176,12 @@ def check_corpus_root_path(root: Path) -> Check:
 def check_corpus_root_exists(root: Path) -> Check:
     if root.is_dir():
         return Check("corpus.exists", "pass", "directory exists")
+    if root.exists():
+        # The path is occupied by something other than a directory (a plain file, a device
+        # node, etc.) -- distinct from "nothing here yet". The corpus can never be created at
+        # this path until it is cleared, so "does not exist" would be actively misleading.
+        return Check("corpus.exists", "warn",
+                     "path exists but is not a directory; the corpus cannot be created here")
     return Check("corpus.exists", "pass", "directory does not exist (normal before first use)")
 
 
@@ -288,6 +294,81 @@ def check_cache_state(root: Path) -> tuple[list[Check], list[tuple[Path, dict[st
     return [shelf, digest, corrupt], loaded
 
 
+def check_registered_shelves(root: Path) -> Check:
+    """Validate that every corpus entry in ``sources.json`` has a usable manifest.
+
+    ``check_cache_state`` finds shelves by globbing for ``leitir-manifest.json`` files that
+    physically exist on disk. That glob has a blind spot: when a shelf's manifest is deleted
+    (or the shelf directory is otherwise missing its manifest) there is no path left to glob,
+    so the shelf silently disappears from every "cache.*" count instead of being reported as
+    broken. ``leitir list`` does not have this blind spot because it iterates the registered
+    entries in ``sources.json`` -- the corpus's own source of truth -- and validates each one's
+    manifest with :func:`read_valid_manifest`. This check mirrors that approach so doctor and
+    list agree about which shelves are broken.
+
+    This intentionally does a cheap, bounded read of each shelf's manifest (already the full
+    cost of ``leitir list``'s own validation) rather than a full materialized-tree-hash
+    recomputation, which would make ``doctor`` slow to the point of being unusable on a large
+    corpus. Deep content verification is what ``check_integrity_selftest`` and the treehash
+    module exist for; this check only answers "does this shelf have a manifest that identifies
+    it correctly", which is exactly what a missing or truncated manifest fails.
+    """
+    try:
+        entries = load_sources(root)
+    except Exception as exc:
+        return Check("cache.registered_shelves", "error",
+                     "failed to read the corpus source index (sources.json)",
+                     "".join(traceback.format_exception(exc)))
+    if not entries:
+        return Check("cache.registered_shelves", "pass", "no registered corpus entries",
+                     json_data={"total": 0, "invalid": 0})
+    invalid: list[dict[str, Any]] = []
+    manifest_logger = logging.getLogger("leitir.materialize")
+    old_disabled = manifest_logger.disabled
+    manifest_logger.disabled = True
+    try:
+        for entry in entries:
+            relative = Path(str(entry.get("path", "")))
+            target = root / relative
+            manifest_path = target / MANIFEST_NAME
+            try:
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("registered path escapes the corpus root")
+                valid = read_valid_manifest(
+                    target, entry["owner"], entry["repo"], entry["commit_sha"],
+                    host=entry.get("host", "github.com"),
+                )
+            except Exception:
+                valid = None
+            if valid is None:
+                reason = "manifest is missing" if not manifest_path.is_file() else "manifest failed validation"
+                invalid.append({
+                    "name": entry.get("name"),
+                    "path": str(target),
+                    "manifest": str(manifest_path),
+                    "reason": reason,
+                })
+    finally:
+        manifest_logger.disabled = old_disabled
+    if invalid:
+        detail = "\n".join(
+            f"{item['name'] or item['path']}: {item['reason']} ({item['manifest']})"
+            for item in invalid
+        )
+        return Check(
+            "cache.registered_shelves", "error",
+            f"{len(invalid)} of {len(entries)} registered corpus entries have a missing or invalid "
+            "manifest (run `leitir list` for details, or re-materialize the affected source)",
+            detail,
+            {"total": len(entries), "invalid": len(invalid), "entries": invalid},
+        )
+    return Check(
+        "cache.registered_shelves", "pass",
+        f"all {len(entries)} registered corpus entries have a valid manifest",
+        json_data={"total": len(entries), "invalid": 0},
+    )
+
+
 def check_credentials() -> Check:
     present = [name for name in _CREDENTIALS if name in os.environ]
     malformed = [name for name in present if any(char.isspace() or ord(char) < 32
@@ -342,19 +423,45 @@ def check_network_endpoint(name: str, url: str, version: str | None) -> Check:
 
 
 def check_manifest_schema(manifests: list[tuple[Path, dict[str, Any]]]) -> Check:
+    """Schema-check every shelf manifest that could be parsed as JSON, not just the newest.
+
+    A single "most recent shelf" sample cannot see a schema regression on any other shelf.
+    Shelves whose manifest is missing entirely or fails to parse as JSON never make it into
+    ``manifests`` in the first place (see ``check_cache_state``); those are caught instead by
+    ``check_registered_shelves``, which validates against the corpus's registered source list.
+    """
     if not manifests:
         return Check("manifest.schema", "skip", "no shelves to inspect")
-    path, payload = max(manifests, key=lambda item: str(item[1].get("fetched_at", "")))
-    missing = [field for field in _REQUIRED_MANIFEST_FIELDS if field not in payload]
-    if missing:
-        return Check("manifest.schema", "error", f"most-recent shelf is missing required fields: {', '.join(missing)}",
-                     str(path), {"path": str(path), "missing": missing})
-    algorithm = payload.get("materialized_tree_hash_algorithm")
-    if algorithm is not None and algorithm != TREE_HASH_ALGORITHM:
-        return Check("manifest.schema", "warn", f"most-recent shelf uses unknown tree-hash algorithm: {algorithm}",
-                     str(path), {"path": str(path), "algorithm": algorithm})
-    return Check("manifest.schema", "pass", "most-recent shelf passes schema check",
-                 json_data={"path": str(path), "algorithm": algorithm})
+    missing_fields = [
+        (path, missing)
+        for path, payload in manifests
+        if (missing := [field for field in _REQUIRED_MANIFEST_FIELDS if field not in payload])
+    ]
+    if missing_fields:
+        detail = "\n".join(f"{path}: missing {', '.join(fields)}" for path, fields in missing_fields)
+        return Check(
+            "manifest.schema", "error",
+            f"{len(missing_fields)} of {len(manifests)} shelf manifest(s) are missing required fields",
+            detail,
+            {"total": len(manifests), "invalid": len(missing_fields),
+             "paths": [str(path) for path, _fields in missing_fields]},
+        )
+    bad_algorithm = [
+        (path, algorithm)
+        for path, payload in manifests
+        if (algorithm := payload.get("materialized_tree_hash_algorithm")) is not None
+        and algorithm != TREE_HASH_ALGORITHM
+    ]
+    if bad_algorithm:
+        detail = "\n".join(f"{path}: {algorithm}" for path, algorithm in bad_algorithm)
+        return Check(
+            "manifest.schema", "warn",
+            f"{len(bad_algorithm)} of {len(manifests)} shelf manifest(s) use an unknown tree-hash algorithm",
+            detail,
+            {"total": len(manifests), "invalid": len(bad_algorithm)},
+        )
+    return Check("manifest.schema", "pass", f"all {len(manifests)} shelf manifest(s) pass schema check",
+                 json_data={"total": len(manifests)})
 
 
 def check_integrity_selftest() -> Check:
@@ -538,6 +645,7 @@ def collect_checks(*, no_network: bool = False, root: Path | None = None) -> tup
         checks.append(Check("cache.shelves", "error", "cache inspection failed",
                             "".join(traceback.format_exception(exc))))
         manifests = []
+    checks.append(_safe("cache.registered_shelves", lambda: check_registered_shelves(corpus_root)))
     checks.append(_safe("index.shelves", lambda: check_search_indexes(corpus_root)))
     checks.append(_safe("creds", check_credentials))
     installed = next((check.json_data["version"] for check in checks
@@ -563,10 +671,28 @@ def _counts(checks: Sequence[Check]) -> dict[str, int]:
             for status in ("pass", "warn", "error", "skip")}
 
 
+# Check-name prefixes whose "warn" status reflects a transient/external condition (a rate
+# limit, a 404 on a not-yet-published release, a slow or blocked network) rather than a real
+# problem with the user's corpus. Keeping doctor's own 0/1/2 scheme (rather than aligning to
+# the global `ExitCode` enum, which encodes CLI-command outcomes like CORPUS_FAILURE and has no
+# slot for "environment diagnostic") is simpler and already load-bearing: scripts checking
+# `doctor`'s exit code care about "is my corpus healthy", not "which CLI subcommand failed
+# how". But routine network flakiness must never make a fully healthy corpus report failure --
+# that trains users and CI alike to ignore doctor's exit code entirely, which defeats the
+# point of having one. So a warning is only exit-significant when it is NOT purely about
+# network reachability or update-checking; a genuine integrity problem (cache.*, manifest.*,
+# index.*, corpus.*) still fails doctor even if it is only a "warn".
+_TRANSIENT_WARNING_PREFIXES = ("network.", "update.available")
+
+
+def _is_transient_warning(check: Check) -> bool:
+    return check.status == "warn" and check.name.startswith(_TRANSIENT_WARNING_PREFIXES)
+
+
 def _exit_code(checks: Sequence[Check]) -> int:
     if any(check.status == "error" for check in checks):
         return 2
-    if any(check.status == "warn" for check in checks):
+    if any(check.status == "warn" and not _is_transient_warning(check) for check in checks):
         return 1
     return 0
 

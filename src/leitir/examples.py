@@ -55,6 +55,70 @@ _CODE_LANGUAGES = {
 _FENCE_OPEN = re.compile(r"^\s*```\s*([^\s`]*)?.*$")
 _FENCE_CLOSE = re.compile(r"^\s*```\s*$")
 
+# Conventional Markdown fence tags that denote Python source but are not the
+# bare ``python`` spelling: interactive-shell transcripts (``pycon``,
+# ``ipython``, ``doctest``), the historically common short form (``py``),
+# and explicit version-qualified tags seen in older docs (``python2``,
+# ``python3``). Normalized to the canonical extension-derived spelling so a
+# README's real usage transcript classifies the same way a ``.py`` file
+# would, instead of falling through to ``unknown`` because the raw tag never
+# matches ``_SUPPORTED_LANGUAGES``.
+_LANGUAGE_ALIASES = {
+    "py": "python",
+    "python2": "python",
+    "python3": "python",
+    "pycon": "python",
+    "ipython": "python",
+    "doctest": "python",
+    # Terminal/shell transcript tags commonly seen in READMEs for install
+    # instructions (``choco``/``winget`` in _PACKAGE_MANAGER_INSTALL exist
+    # specifically for the powershell/cmd case). These carry the same
+    # command syntax as bash/sh for the purposes of classification, so
+    # normalize them to the canonical "shell" spelling rather than leaving
+    # them unsupported and always UNKNOWN regardless of content.
+    "zsh": "shell",
+    "console": "shell",
+    "cmd": "shell",
+    "powershell": "shell",
+}
+
+
+def _normalize_language(language: str) -> str:
+    return _LANGUAGE_ALIASES.get(language, language)
+
+
+# Fence languages whose content is a shell/terminal command line, used to
+# recognize package-manager install commands (see _is_install_only_snippet).
+# zsh/console/cmd/powershell fence tags normalize to "shell" via
+# _LANGUAGE_ALIASES before classification, so they reach this set already
+# canonicalized; listed here as just the three post-normalization spellings
+# that can actually appear by the time _is_install_only_snippet runs.
+_SHELL_LIKE_LANGUAGES = frozenset({"bash", "sh", "shell"})
+_PACKAGE_MANAGER_INSTALL = re.compile(
+    r"^(?:\$\s*)?(?:sudo\s+)?"
+    r"(?:pip3?|pipx|conda|uv|poetry|npm|yarn|pnpm|cargo|gem|go|apt(?:-get)?|brew|choco|winget)\s+"
+    r"(?:install|add|get)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_install_only_snippet(language: str, code: str) -> bool:
+    """Return whether a shell-like snippet is nothing but package-manager installs.
+
+    A ``pip install thing`` block is genuinely useful documentation, but it
+    is not a *usage* example -- ranking it as ``minimal_usage`` inverts the
+    signal a human relies on to find real API calls. Conservative by design:
+    only shell-family languages are considered, and every non-comment,
+    non-blank line must match a known install-command shape; anything with
+    additional commands (piping, running the tool, etc.) is left alone.
+    """
+    if language not in _SHELL_LIKE_LANGUAGES:
+        return False
+    lines = [stripped for line in code.splitlines() if (stripped := line.strip()) and not stripped.startswith("#")]
+    if not lines:
+        return False
+    return all(_PACKAGE_MANAGER_INSTALL.match(line) is not None for line in lines)
+
 
 class ExampleClass(str, Enum):  # noqa: UP042 - ADR-0010 requires str, Enum
     """Closed, maintainer-pinned semantic example labels in canonical order."""
@@ -230,7 +294,7 @@ def _source_fields(record: Mapping[str, object]) -> tuple[str, int, str, str, tu
     ):
         raise _classification_error("example source record is malformed")
     symbols = tuple(sorted(set(cast(list[str] | tuple[str, ...], raw_symbols))))
-    return path, line, language.casefold(), code, symbols
+    return path, line, _normalize_language(language.casefold()), code, symbols
 
 
 def _path_words(path: str) -> tuple[set[str], str]:
@@ -270,7 +334,9 @@ def classify_example(record: Mapping[str, object]) -> ExampleClassification:
                 rules[ExampleClass.UNIT_TEST] = ("unit_test_path", 9500)
         elif path_words & _PRODUCTION_SEGMENTS:
             rules[ExampleClass.PRODUCTION_USAGE] = ("production_path", 9500)
-        elif "docs" in path_words or "examples" in path_words or filename.startswith("readme"):
+        elif (
+            "docs" in path_words or "examples" in path_words or filename.startswith("readme")
+        ) and not _is_install_only_snippet(language, code):
             rules[ExampleClass.MINIMAL_USAGE] = ("usage_example_path", 9000)
 
         if code_tokens & _ERROR_MARKERS:
@@ -357,7 +423,7 @@ def _fenced_snippets(text: str, path: str) -> list[dict[str, object]]:
             match = _FENCE_OPEN.match(line)
             if match is not None:
                 start = number + 1
-                language = (match.group(1) or "").casefold()
+                language = _normalize_language((match.group(1) or "").casefold())
                 content = []
         elif _FENCE_CLOSE.match(line):
             code = "\n".join(content)
@@ -441,14 +507,19 @@ def extract_examples(
         if matched:
             record = dict(snippet, symbols=matched)
             ranked.append(dict(record, classification=classify_example(record).as_dict()))
-    ranked.sort(
-        key=lambda item: (
+    def _sort_key(item: dict[str, object]) -> tuple[int, int, str, int, int]:
+        classification = cast(dict[str, object], item["classification"])
+        labels = cast(list[str], classification["labels"])
+        is_unknown_only = labels == [ExampleClass.UNKNOWN.value]
+        return (
+            1 if is_unknown_only else 0,
             -len(cast(list[str], item["symbols"])),
             str(item["path"]),
             int(cast(str | bytes | bytearray | int, item["line"])),
             -len(str(item["code"])),
         )
-    )
+
+    ranked.sort(key=_sort_key)
     logger.debug("examples matched=%d returned=%d", len(ranked), min(len(ranked), max(0, limit)))
     return {
         "schema_version": EXAMPLES_SCHEMA_VERSION,

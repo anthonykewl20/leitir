@@ -293,6 +293,11 @@ jobs:
         run: uv run --no-project --with mypy --with-requirements requirements.txt python -m mypy
       - name: Changelog sync
         run: uv run --no-project --with-requirements requirements.txt python tools/sync_changelog.py --check
+      - name: Docs truth
+        # stdlib-only, imports no leitir code (parses src/leitir/cli.py as
+        # text/AST); catches docs that reference a `leitir <verb>` command
+        # that isn't a real registered subcommand (issue #266).
+        run: python tools/check_docs_truth.py --check
       - name: Byte-compile source
         run: python -m compileall -q src
       - name: Smoke-import key modules

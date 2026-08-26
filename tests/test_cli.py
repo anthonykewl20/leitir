@@ -246,6 +246,157 @@ def test_bts_compute_cli_rejects_at_sign_in_owner_or_repo(spec: str) -> None:
     assert stderr == ""
 
 
+def _bts_registry_artifact_shelf(root: Path) -> None:
+    """A shelf materialized from a registry artifact rather than an exact Git commit.
+
+    Mirrors the dogfood-reported #266/C3 chain: this is what a caller who
+    ran ``leitir get npm:...``/``pypi:...`` and then tried ``bts-compute``
+    on it actually has on disk.
+    """
+
+    from leitir.materialize import manifest_digest_fields, target_path
+    from leitir.treehash import compute_materialized_tree_hash
+
+    target = target_path(root, "owner", "donor", SHA)
+    shutil.copytree(_BTS_FIXTURES / "donor", target)
+    digest, scope = compute_materialized_tree_hash(target)
+    manifest = {
+        "commit_sha": SHA,
+        "fetch_method": "registry-artifact",
+        "fetched_at": "2026-08-15T00:00:00Z",
+        "host": "github.com",
+        "owner": "owner",
+        "repo": "donor",
+        "repo_url": "https://github.com/owner/donor",
+        "source": "registry-artifact",
+        "artifact_kind": "npm-tarball",
+        "artifact_checksum": "b" * 64,
+        "parity": "exact",
+        "spec": "npm:donor@1.0.0",
+        "tag": None,
+        "verified": True,
+        "verified_at": "2026-08-15T00:00:00Z",
+    }
+    manifest.update(manifest_digest_fields(digest, scope=scope))
+    (target / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_bts_compute_registry_artifact_shelf_names_source_and_a_remediation_command(
+    tmp_path: Path,
+) -> None:
+    """#266/C3: the real message a caller who tried bts-compute on a
+    ``get npm:``/``pypi:`` shelf sees today.  It must name what was found
+    and hand back a concrete next command, not a bare "not a Git commit".
+    """
+
+    root = tmp_path / "corpus"
+    _bts_registry_artifact_shelf(root)
+
+    code, stdout, stderr, _, _ = invoke(
+        [
+            "bts-compute",
+            f"owner/donor@{SHA}",
+            "--root",
+            str(root),
+            "--seed-module",
+            "package.policy",
+            "--seed-name",
+            "package.policy.normalize_contract",
+            "--out",
+            str(tmp_path / "artifacts"),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["evidence"]["detail_code"] == "bts_cli_source_unsupported_v1"
+    message = error["evidence"]["message"]
+    assert "found source='registry-artifact'" in message
+    assert f"leitir get github:owner/donor@{SHA}" in message
+
+
+def test_bts_compute_missing_tree_sitter_lock_names_the_lock_and_the_flag(
+    tmp_path: Path,
+) -> None:
+    """#266/C3: the real message today for a non-Python bts-compute whose
+    ``--lock`` does not resolve to a readable file.  It must say this is
+    the tree-sitter lock (not a generic "input") and name ``--lock``.
+    """
+
+    root = tmp_path / "corpus"
+    _bts_shelf(root)
+    missing_lock = tmp_path / "no-such-requirements-tree-sitter.lock"
+
+    code, stdout, stderr, _, _ = invoke(
+        [
+            "bts-compute",
+            f"owner/donor@{SHA}",
+            "--root",
+            str(root),
+            "--language",
+            "javascript",
+            "--lock",
+            str(missing_lock),
+            "--seed-module",
+            "package.policy",
+            "--seed-name",
+            "package.policy.normalize_contract",
+            "--out",
+            str(tmp_path / "artifacts"),
+            "--json",
+        ]
+    )
+
+    assert code == ExitCode.CORPUS_FAILURE
+    assert stdout == ""
+    error = json.loads(stderr.removeprefix("leitir: error: "))
+    assert error["evidence"]["detail_code"] == "bts_cli_source_read_v1"
+    message = error["evidence"]["message"]
+    assert "tree-sitter lock file" in message
+    assert str(missing_lock) in message
+    assert "--lock" in message
+    assert "requirements-tree-sitter.lock" in message
+
+
+def test_bts_compute_debug_emits_seed_resolution_diagnostics_only_with_debug(
+    tmp_path: Path,
+) -> None:
+    """#266/F2: ``--debug`` previously added nothing for a bts-compute seed
+    failure. It must now emit detail explaining the rejection, present only
+    when ``--debug`` is passed.
+    """
+
+    root = tmp_path / "corpus"
+    _bts_shelf(root)
+    argv = [
+        "bts-compute",
+        f"owner/donor@{SHA}",
+        "--root",
+        str(root),
+        "--seed-module",
+        "package.policy",
+        "--seed-name",
+        "missing",
+        "--out",
+        str(tmp_path / "artifacts"),
+        "--json",
+    ]
+
+    code, stdout, stderr, _, _ = invoke(argv)
+    assert code == ExitCode.CORPUS_FAILURE
+    assert "bts-compute seed resolution" not in stderr
+    assert "bts-compute graph produced" not in stderr
+
+    code, stdout, stderr, _, _ = invoke(["--debug", *argv])
+    assert code == ExitCode.CORPUS_FAILURE
+    assert "bts-compute graph produced" in stderr
+    assert "bts-compute seed resolution: requested module='package.policy' qualified_name='missing'" in stderr
+    assert "matched no eligible donor seed" in stderr
+    assert "eligible seeds already in module" in stderr
+
+
 def test_analysis_architecture_cli_emits_pinned_json_summary():
     code, stdout, _stderr, _, _ = invoke(
         [
@@ -509,6 +660,29 @@ def test_stdout_is_valid_json_report():
     assert payload["coverage"]["status"] == "complete_for_declared_universe"
     assert len(payload["matches"]) == 1
     assert payload["matches"][0]["source"]["slug"] == "python/cpython"
+
+
+def test_search_json_flag_is_an_accepted_noop_alias():
+    """F5 (dogfood #266): ``search`` has no conditional output today -- it
+    always writes the machine-readable report to stdout and the human
+    summary to stderr. ``--json`` is accepted only so ``search`` is
+    invocable with the same flag shape as every other verb; it must not
+    change what goes to which stream, byte for byte. The MCP bridge
+    (src/leitir/mcp/bridge.py) depends on this being unconditional and
+    never passes --json itself."""
+
+    argv = [
+        "search",
+        "--repo", "python/cpython",
+        "--commit", SHA,
+        "--must", "identifier:urlencode",
+    ]
+    code_plain, out_plain, err_plain, _, _ = invoke(argv)
+    code_json, out_json, err_json, _, _ = invoke([*argv, "--json"])
+
+    assert code_plain == code_json == ExitCode.SUCCESS
+    assert out_plain == out_json
+    assert err_plain == err_json
 
 
 def test_stderr_has_human_summary():

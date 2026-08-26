@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import logging
 import os
 import stat
 from collections.abc import Mapping
@@ -89,6 +90,8 @@ from leitir.materialize import _target_lock, read_valid_manifest, target_path
 from leitir.safeio import atomic_write_bytes, read_regular_file
 from leitir.treehash import FULL, SAMPLED, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
+_LOGGER = logging.getLogger(__name__)
+
 CLI_SCHEMA_VERSION = "leitir-bts-cli-compute-v1"
 DEFAULT_POLICY_ID = "leitir-bts-cli-default-policy-v1"
 DEFAULT_POLICY_AUTHORITY = "leitir"
@@ -143,6 +146,30 @@ class _PolicySpec:
     sibling_source_modules: tuple[str, ...] = ()
 
 
+# Reverse of materialize._HOST_METADATA's host set, restricted to the hosts
+# that accept a direct "<prefix>:owner/repo@commit" spec (spec.py's
+# _REPOSITORY_HOSTS). Used only to compose an actionable remediation hint;
+# it duplicates no fail-closed logic and its absence for an unmapped host
+# (e.g. go-module-zip) only degrades the hint text, never a check.
+_HOST_SPEC_PREFIX = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "bitbucket.org": "bitbucket",
+    "codeberg.org": "codeberg",
+    "git.sr.ht": "sourcehut",
+}
+
+
+def _rematerialize_as_git_commit_hint(owner: str, repo: str, commit_sha: str, host: str) -> str:
+    """Return a concrete next command for a non-git-commit or non-exact shelf."""
+
+    prefix = _HOST_SPEC_PREFIX.get(host)
+    if prefix is None:
+        return "re-materialize the donor from an exact Git commit host before running bts-compute"
+    slug = f"~{owner}/{repo}" if host == "git.sr.ht" else f"{owner}/{repo}"
+    return f're-materialize an exact Git-commit shelf first, e.g. "leitir get {prefix}:{slug}@{commit_sha}", then retry bts-compute'
+
+
 def load_donor_snapshot(root: Path, owner: str, repo: str, commit_sha: str, *, host: str = "github.com") -> DonorSnapshot:
     """Load only an exact, fully verified Git-commit shelf into a snapshot."""
 
@@ -152,7 +179,12 @@ def load_donor_snapshot(root: Path, owner: str, repo: str, commit_sha: str, *, h
     if manifest is None:
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor shelf is not verified", "bts_cli_shelf_unverified_v1")
     if manifest.get("source") != "git-commit":
-        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor source is not a Git commit", "bts_cli_source_unsupported_v1")
+        _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"donor source is not a Git commit (found source={manifest.get('source')!r}); "
+            + _rematerialize_as_git_commit_hint(owner, repo, commit_sha, host),
+            "bts_cli_source_unsupported_v1",
+        )
     if manifest.get("parity") != "exact":
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor parity is not exact", "bts_cli_parity_v1")
     if manifest.get("verified") is not True:
@@ -181,7 +213,12 @@ def load_donor_materialization(root: Path, owner: str, repo: str, commit_sha: st
     if manifest is None:
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor shelf is not structurally verified", "bts_cli_shelf_unverified_v1")
     if manifest.get("source") != "git-commit":
-        _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor source is not a Git commit", "bts_cli_source_unsupported_v1")
+        _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"donor source is not a Git commit (found source={manifest.get('source')!r}); "
+            + _rematerialize_as_git_commit_hint(owner, repo, commit_sha, host),
+            "bts_cli_source_unsupported_v1",
+        )
     if manifest.get("verified") not in (True, "sampled"):
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "donor materialization verification is incomplete", "bts_cli_verification_v1")
     tree_hash = manifest.get("materialized_tree_hash")
@@ -200,6 +237,8 @@ def _read_regular(
     *,
     maximum: int | None = None,
     maximum_detail_code: str = "bts_cli_input_bound_v1",
+    subject: str = "input",
+    hint: str | None = None,
 ) -> bytes:
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -218,9 +257,10 @@ def _read_regular(
     except BTSError:
         raise
     except OSError as exc:
+        suffix = "" if hint is None else f"; {hint}"
         _reject(
             BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
-            f"cannot safely read input: {path}: {exc.strerror or str(exc)}",
+            f"cannot safely read {subject}: {path}: {exc.strerror or str(exc)}{suffix}",
             "bts_cli_source_read_v1",
             cause=exc,
         )
@@ -319,7 +359,16 @@ def python_graph_provider(snapshot: DonorSnapshot) -> GraphProvider:
 
 
 def _read_lock_text(lock_path: Path) -> str:
-    data = _read_regular(lock_path, maximum=_LOCK_MAX_BYTES)
+    data = _read_regular(
+        lock_path,
+        maximum=_LOCK_MAX_BYTES,
+        subject="tree-sitter lock file",
+        hint=(
+            "non-Python bts-compute requires the pinned requirements-tree-sitter.lock; "
+            "pass --lock PATH or copy the repository's requirements-tree-sitter.lock into "
+            "the current working directory (the default --lock value)"
+        ),
+    )
     try:
         return data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
@@ -419,7 +468,7 @@ def _load_policy_spec(path: Path) -> _PolicySpec:
     """Load only the documented closed-schema policy JSON."""
 
     try:
-        raw = _read_regular(path, maximum=_LOCK_MAX_BYTES)
+        raw = _read_regular(path, maximum=_LOCK_MAX_BYTES, subject="resolution policy")
         value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_object)
         if not isinstance(value, dict) or set(value) not in (
             {"schema_version", "stdlib_modules", "adapters"},
@@ -608,6 +657,74 @@ def _seed_evidence_candidates(candidates: tuple[NodeId, ...]) -> str:
     return f"; candidates: {rendered or '(none)'}{suffix}"
 
 
+def _debug_seed_not_found(graph: Graph, selector: SeedSelector, module_candidates: tuple[NodeId, ...]) -> None:
+    """Log why every graph node with this exact selector was excluded.
+
+    Deliberately independent of ``--list-seeds`` (which lists eligible
+    selectable seeds only): this explains *rejections*, including the
+    common case where the requested (module, qualified_name) pair exists
+    in the graph but only under a non-donor origin (e.g. a test's
+    ``declared_external`` import of the very symbol the caller wanted to
+    seed) or under a node kind that is not seed-eligible (e.g. a class or
+    module node). All listings are fully sorted and untruncated.
+    """
+
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    same_module = ", ".join(
+        f"{candidate.qualified_name} (kind={candidate.kind.value}, location={candidate.location_key})"
+        for candidate in module_candidates
+    ) or "(none)"
+    excluded_same_pair = sorted(
+        {
+            f"origin={node.id.origin.value} kind={node.id.kind.value} location={node.id.location_key}"
+            for node in graph.nodes
+            if node.id.module == selector.module and node.id.qualified_name == selector.qualified_name
+        }
+    )
+    other_modules_same_name = sorted(
+        {
+            f"{node.id.module}.{node.id.qualified_name} (origin={node.id.origin.value}, kind={node.id.kind.value})"
+            for node in graph.nodes
+            if node.id.qualified_name == selector.qualified_name and node.id.module != selector.module
+        }
+    )
+    _LOGGER.debug(
+        "bts-compute seed resolution: requested module=%r qualified_name=%r matched no eligible donor seed "
+        "(eligible seed kinds: function, async_function, method, async_method; eligible origin: donor). "
+        "eligible seeds already in module %r: %s. "
+        "nodes with the exact requested (module, qualified_name) pair under any origin/kind, excluded because "
+        "none is an eligible donor seed: %s. "
+        "other modules exposing a symbol with only the same qualified_name: %s.",
+        selector.module,
+        selector.qualified_name,
+        selector.module,
+        same_module,
+        "; ".join(excluded_same_pair) or "(none)",
+        "; ".join(other_modules_same_name) or "(none)",
+    )
+
+
+def _debug_seed_ambiguous(selector: SeedSelector, matches: tuple[NodeId, ...]) -> None:
+    """Log every ambiguous match untruncated (the rejection message caps at 10)."""
+
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    rendered = "; ".join(
+        f"kind={match.kind.value} origin={match.origin.value} location={match.location_key}" for match in matches
+    )
+    _LOGGER.debug(
+        "bts-compute seed resolution: requested module=%r qualified_name=%r matched %d donor definitions "
+        "(ambiguous; the selector only matches on module + qualified_name, so a colliding definition or a "
+        "re-export cannot be disambiguated by name alone -- use --list-seeds to inspect every candidate's "
+        "location_key): %s",
+        selector.module,
+        selector.qualified_name,
+        len(matches),
+        rendered,
+    )
+
+
 def resolve_seed(graph: Graph, selector: SeedSelector) -> NodeId:
     """Resolve exactly one graph node, refusing absent or ambiguous selectors."""
 
@@ -617,12 +734,14 @@ def resolve_seed(graph: Graph, selector: SeedSelector) -> NodeId:
         if node.module == selector.module and node.qualified_name == selector.qualified_name
     )
     if not matches:
+        _debug_seed_not_found(graph, selector, candidates)
         _reject(
             BTSRejectReason.REJECT_UNRESOLVED_EDGE,
             "seed selector matched no donor definition" + _seed_evidence_candidates(candidates),
             "bts_cli_seed_not_found_v1",
         )
     if len(matches) != 1:
+        _debug_seed_ambiguous(selector, matches)
         _reject(
             BTSRejectReason.REJECT_DUPLICATE_RESULT,
             "seed selector matched multiple donor definitions" + _seed_evidence_candidates(matches),
@@ -649,6 +768,51 @@ def _summary(snapshot: DonorSnapshot, language: str, seed: NodeId, result: BTSRe
         "bts_digest": None if result.bts is None else result.bts.bts_digest,
         "member_equivalence_digest": None if result.bts is None else result.bts.member_equivalence_digest,
     }
+
+
+def _debug_graph_summary(graph: Graph) -> None:
+    """Log a deterministic breakdown of the produced graph before seed resolution."""
+
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    by_origin_kind: dict[tuple[str, str], int] = {}
+    for node in graph.nodes:
+        key = (node.id.origin.value, node.id.kind.value)
+        by_origin_kind[key] = by_origin_kind.get(key, 0) + 1
+    breakdown = "; ".join(
+        f"{origin}/{kind}={count}" for (origin, kind), count in sorted(by_origin_kind.items())
+    )
+    seed_count = len(list_seed_candidates(graph))
+    _LOGGER.debug(
+        "bts-compute graph produced: nodes=%d edges=%d unresolved_edges=%d eligible_seeds=%d; "
+        "nodes by origin/kind: %s",
+        len(graph.nodes), len(graph.edges), len(graph.unresolved), seed_count, breakdown or "(none)",
+    )
+
+
+def _debug_resolution_policy(policy: ResolutionPolicy, policy_path: Path | None) -> None:
+    """Log the resolution policy identity that governs BTS construction.
+
+    This is the policy applied *after* the seed already resolved -- it
+    governs which reached edges are mapped/adapted/replaced/rejected, not
+    seed selection itself, but a REJECT during compute_bts is otherwise as
+    opaque as a seed-resolution failure without seeing what the policy
+    allowed.
+    """
+
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    _LOGGER.debug(
+        "bts-compute resolution policy: source=%s authority=%r policy_id=%r policy_digest=%s "
+        "stdlib_allowlist_entries=%d adapter_catalog_entries=%d disposition_rules=%d",
+        "default (no --policy)" if policy_path is None else str(policy_path),
+        policy.authority,
+        policy.policy_id,
+        policy.policy_digest,
+        len(policy.stdlib_identity.allowlist_entries),
+        len(policy.adapter_catalog.entries),
+        len(policy.rules),
+    )
 
 
 def run_bts_compute(
@@ -685,8 +849,10 @@ def run_bts_compute(
             if not callable(provider):
                 raise TypeError("BTS CLI graph provider must be callable")
             graph = provider(snapshot.source_root)
+            _debug_graph_summary(graph)
             selected = resolve_seed(graph, seed)
             policy = _default_resolution_policy() if policy_path is None else load_resolution_policy(policy_path, graph)
+            _debug_resolution_policy(policy, policy_path)
             result = compute_bts(snapshot, selected, graph, _default_budget(), policy)
     except TreeHashError as exc:
         _reject(BTSRejectReason.REJECT_PROVENANCE_MISMATCH, "materialized donor tree integrity verification failed", "bts_materialized_tree_hash_v1", cause=exc)

@@ -34,6 +34,7 @@ please use [`template.md`](template.md) as the basis.
 | [0027](0027-static-python-usage-resolver.md) | Static, execution-free resolution of Python consumer usage | Accepted | 2026-08-25 |
 | [0028](0028-deterministic-usage-evidence-assembly.md) | Deterministic assembly of bounded, explainable usage evidence | Accepted | 2026-08-25 |
 | [0029](0029-offline-usage-cli-verification-and-replay.md) | Offline usage CLI verification, replay, and opt-in pinned public-source E2E | Accepted | 2026-08-25 |
+| [0030](0030-check-command-conservative-symbol-existence-gate.md) | `leitir check`: a conservative, three-way symbol-existence gate for written code | Accepted | 2026-08-26 |
 
 ## Status vocabulary
 

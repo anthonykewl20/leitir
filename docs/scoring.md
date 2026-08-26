@@ -115,6 +115,8 @@ The fixed file layout is:
 | Controlled performance | `performance-runner.json`, `baseline-asv.json`, `candidate-asv.json` |
 | Advisory live latency | `live-network-latency.json` |
 
+The Output effectiveness dimension evaluates retrieval performance using the search-v1 benchmark qrels. When `judgments_complete` is false in the qrels, the precision metrics (`precision_at_5`, `precision_at_10`, and `average_precision_at_10`) are suppressed and become None, because retrieved-but-unjudged items cannot be scored. In contrast, `recall_at_10` and `ndcg_at_10` remain valid: recall over the judged relevant set is well-defined (its denominator is the known relevant set, which unjudged items do not inflate), and nDCG treats unjudged results as zero gain while preserving rank position.
+
 Generate these artifacts in the formats consumed by the S3–S7 adapters, using
 the pinned commands/tool versions recorded in the ADR and
 `requirements-score.txt`; do not edit normalized

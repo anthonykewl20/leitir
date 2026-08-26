@@ -750,6 +750,76 @@ the exact ratified corpus digest, backend binary/rootfs digests, and probe/test
 contents are required release artifacts to be measured and approved before
 execution can ship, not open design choices.
 
+## Amendment 1 (2026-08-26): containment environment resolution for `bts-run`
+
+Issue #266 (task C1) found that `leitir bts-run` required eleven mandatory
+flags, five of which are containment-substrate identity values
+(`--nsjail-sha256`, `--nsjail-version`, `--nsjail-build-identity`,
+`--config-schema-digest`, `--rootfs-digest`) that are fixed pins, not
+per-machine measurements: `nsjail_sha256` and the commit behind
+`nsjail_version` are pinned in `tools/build-nsjail.sh`, `nsjail_build_identity`
+is a pure deterministic function of those two values
+(`exec_sandbox._nsjail_build_identity`), and `config_schema_digest` /
+`rootfs_digest` match the published `containment-rootfs-v1` release asset
+already documented in AGENTS.md and README.md. Requiring a caller to retype
+these five values on every invocation made the transplant path unreachable
+without the handoff doc open, for humans and AI agents alike.
+
+`leitir bts-cli` now ships a committed, self-verifying descriptor,
+`src/leitir/containment-environment-v1.json` (schema
+`leitir-containment-environment-v1`), holding exactly those five pins.
+`leitir.bts_cli.resolve_containment_substrate` resolves the five
+containment-substrate flags of `bts-run`, independently per field:
+
+- an explicit flag always wins for that field;
+- an unset field is filled in from the descriptor at
+  `--containment-environment` (default: the shipped descriptor);
+- `--rootfs-source` is the one field that cannot be pinned this way, since it
+  names a local materialization directory rather than an identity value; it
+  resolves from the flag, then `LEITIR_ROOTFS_SOURCE`, then the documented
+  conventional default (`~/.leitir/containment-rootfs-v1`). Its *digest*
+  still resolves and verifies exactly like the other four.
+
+**This is a convenience over containment verification, never a substitute
+for it.** Nothing about resolution changes what gets checked or when:
+
+1. `load_containment_environment_descriptor` performs an internal-consistency
+   check before any of its values are trusted -- it independently re-derives
+   `nsjail_build_identity` from the descriptor's own `nsjail_sha256`/
+   `nsjail_version` and rejects (`BTSRejectReason.REJECT_EXECUTION_THREAT`,
+   `detail_code="bts_cli_containment_env_identity_mismatch_v1"`) if they are
+   inconsistent. This consistency check proves only that the descriptor's values
+   are mutually faithful to the descriptor's own definition; it does NOT verify
+   that the pins correspond to the real released nsjail binary or rootfs tree.
+   Truth is established solely downstream, where the resolved values are
+   measured against the actual runtime. A missing, unreadable, or structurally
+   malformed descriptor rejects the same way rather than silently falling back
+   to any default.
+2. Once resolved, the five values are passed to `pipeline_cli.run_pipeline`
+   completely unchanged -- the same `BTSSubstratePins`, the same
+   `build_containment_policy`, and the same measured runtime checks in
+   `exec_sandbox` (`_verify_backend`, `_verify_mount_sources`,
+   `_verify_nsjail_identity`) that an explicitly typed flag was already
+   subject to. A resolved value that does not match the measured `/usr/bin/nsjail`
+   binary or the measured rootfs tree rejects exactly as an explicit
+   mismatched flag rejects today (`detail_code="nsjail_digest_mismatch"`,
+   etc.); none of that verification code changed. `exec_sandbox` and
+   `pipeline_cli` are unmodified by this amendment.
+3. Donor execution remains default-off and Linux-only, still gated on
+   `LEITIR_ENABLE_DONOR_EXECUTION=1` (`pipeline_cli._require_substrate`);
+   resolution does not touch that gate.
+4. Every resolved value and its source (`flag`, `descriptor`,
+   `env:LEITIR_ROOTFS_SOURCE`, or `default`) is written to
+   `<out>/containment-environment-resolution.json` before the pipeline runs
+   (so the audit trail survives a rejected run) and echoed in the CLI's JSON
+   payload under `containment_environment_resolution`. Resolution is never
+   silent.
+
+An owner re-measures and updates `containment-environment-v1.json` in a
+separately reviewable change whenever `tools/build-nsjail.sh`'s pins or the
+published `containment-rootfs-v1` asset change; the descriptor's own
+identity cross-check catches an inconsistent edit before it ships.
+
 ## Links
 
 - [Epic #52 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/issues/52)

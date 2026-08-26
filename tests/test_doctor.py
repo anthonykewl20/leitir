@@ -736,3 +736,25 @@ def test_doctor_windows_exit_path_normal_success_unaffected(
 def test_doctor_color_disabled_when_not_tty(tmp_path: Path) -> None:
     _code, output, _error = _invoke(tmp_path, "--no-network")
     assert "\033[" not in output
+
+
+def test_doctor_crates_api_endpoint_passes_on_200(tmp_path: Path) -> None:
+    """L4 fix: crates.io /api/v1/crates (which returns 200) indicates reachability."""
+    from tests._http_server import routed_server
+
+    routes = {
+        "/api/v1/crates": (200, {}, b'{"crates":[]}'),
+    }
+    with routed_server(routes) as server:
+        result = doctor.check_network_endpoint("crates", server.base_url + "/api/v1/crates", "0.1.0")
+    assert result.status == "pass"
+    assert "reachable" in result.summary
+    assert result.json_data == {"url": server.base_url + "/api/v1/crates", "http_status": 200}
+
+
+def test_doctor_crates_genuinely_unreachable_still_fails(tmp_path: Path) -> None:
+    """L4 constraint: a genuinely unreachable crates.io must still fail."""
+    result = doctor.check_network_endpoint("crates", "http://127.0.0.1:1", "0.1.0")
+    assert result.status == "warn"
+    assert "network error" in result.summary or "unreachable" in result.summary
+    assert result.json_data == {"url": "http://127.0.0.1:1"}

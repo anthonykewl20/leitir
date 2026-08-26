@@ -64,7 +64,7 @@ _CREDENTIALS = (
 _ENDPOINTS = (
     ("npm", "https://registry.npmjs.org/"),
     ("pypi", "https://pypi.org/"),
-    ("crates", "https://crates.io/"),
+    ("crates", "https://crates.io/api/v1/crates"),
     ("github", "https://api.github.com/"),
     ("gitlab", "https://gitlab.com/"),
     ("bitbucket", "https://api.bitbucket.org/"),

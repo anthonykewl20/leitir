@@ -21,6 +21,9 @@ tree-sitter = [
     "tree-sitter-rust==0.24.2",
     "tree-sitter-go==0.25.0",
 ]
+mcp = [
+    "mcp==2.1.1",
+]
 test = [
     "pytest>=7.0",
     "coverage>=7.0",
@@ -42,6 +45,7 @@ leitir = [
     "benchmarks/**/*.json",
     "benchmarks/**/*.md",
     "benchmarks/**/*.txt",
+    "containment-environment-v1.json",
 ]
 
 [tool.ruff]

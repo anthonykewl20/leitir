@@ -4,11 +4,16 @@ import io
 import json
 import logging
 import os
+import re
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from test_offline_cached_resolution import SHA_A, _DeadRegistryResolver, _invoke
 
+from leitir.cli import ExitCode
 from leitir.corpus import write_sources
 from leitir.info import (
     TOP_SYMBOLS_LIMIT,
@@ -488,3 +493,218 @@ def test_live_tinode_routes_study_only(tmp_path):
     summary = io.StringIO()
     _write_summary(report, file=summary, routings=_corpus_routings(tmp_path))
     assert "routing=study-only/copyleft:GPL-3.0" in summary.getvalue()
+
+
+# --- `leitir info --brief` (issue #266 A2) ---------------------------------
+#
+# `--brief` must be a purely subtractive projection of the full payload: an
+# agent must be able to trust that a field present in both documents never
+# disagrees between them. These tests drive the public `info` CLI offline
+# (issue #245's cached-shelf path), the same way test_offline_cached_
+# resolution.py exercises other spec commands without a live registry.
+
+
+def _shelve_with_source(tmp_path: Path) -> tuple[Path, str]:
+    """A cached, verified shelf with real API symbols and a fenced example,
+    reachable offline via the exact-pin cache path (issue #245).
+
+    Mirrors ``_shelve_package`` but writes the source files *before* hashing
+    the tree, since ``_shelve_package`` pins its digest over a single
+    ``payload.txt`` and adding files afterward would fail load-time tree
+    verification.
+    """
+
+    relative = f"repos/github.com/acme/demo/{SHA_A}"
+    source = tmp_path / relative
+    source.mkdir(parents=True)
+    (source / "context.py").write_text(
+        "def connect(value: str):\n    return value\n\n"
+        "def disconnect(value: str) -> None:\n    pass\n",
+        encoding="utf-8",
+    )
+    (source / "README.md").write_text("```python\nconnect('ok')\n```\n", encoding="utf-8")
+    (source / "LICENSE-MIT").write_text("SPDX-License-Identifier: MIT\n", encoding="utf-8")
+    digest, scope = compute_materialized_tree_hash(source)
+    manifest: dict[str, object] = {
+        "spec": "pypi:demo",
+        "ecosystem": "pypi",
+        "name": "demo",
+        "version": "1.0.0",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "demo",
+        "commit_sha": SHA_A,
+        "fetch_method": "registry-artifact",
+        "source": "registry-artifact",
+        "repo_url": "https://github.com/acme/demo",
+        "registry_url": "https://pypi.org/project/demo/1.0.0/",
+        "artifact_kind": "sdist",
+        "artifact_checksum": "sha256:" + "1" * 64,
+        "docs_urls": ["https://demo.example/docs"],
+        "fetched_at": "2026-08-23T00:00:00Z",
+        "verified": True,
+        "verified_at": "2026-08-23T00:00:00Z",
+        "tag": "v1.0.0",
+        **manifest_digest_fields(digest, scope=scope),
+    }
+    (source / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    entry = {
+        "name": "demo",
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "demo",
+        "commit_sha": SHA_A,
+        "path": relative,
+        "fetched_at": "2026-08-23T00:00:00Z",
+    }
+    write_sources(tmp_path, [entry])
+    return source, "pypi:demo@1.0.0"
+
+
+def test_brief_emits_provenance_signatures_one_example_and_trust_score(tmp_path):
+    _source, spec = _shelve_with_source(tmp_path)
+
+    code, out, err = _invoke(
+        ["info", spec, "--brief", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    lines = out.splitlines()
+    assert lines[0].startswith(f"{spec} acme/demo@{SHA_A}")
+    assert any(line.strip().startswith("function context.connect") for line in lines)
+    assert any(line.strip().startswith("example: README.md:") for line in lines)
+    assert any(re.fullmatch(r"trust: \d{1,3}/100", line) for line in lines)
+    assert lines[-1].startswith("# Per ") and lines[-1].endswith(":")
+
+
+def test_brief_and_json_compose(tmp_path):
+    _source, spec = _shelve_with_source(tmp_path)
+
+    code, out, err = _invoke(
+        ["info", spec, "--brief", "--json", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    brief = json.loads(out)
+    assert set(brief) == {
+        "schema_version", "spec", "provenance", "api", "examples", "trust", "citation",
+    }
+    assert isinstance(brief["trust"], int)
+    assert len(brief["examples"]["top"]) == 1
+
+
+def test_brief_fields_are_byte_identical_projections_of_full_payload(tmp_path):
+    _source, spec = _shelve_with_source(tmp_path)
+
+    code_full, out_full, err_full = _invoke(
+        ["info", spec, "--json", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+    assert code_full == ExitCode.SUCCESS, err_full
+    full = json.loads(out_full)
+
+    code_brief, out_brief, err_brief = _invoke(
+        ["info", spec, "--brief", "--json", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+    assert code_brief == ExitCode.SUCCESS, err_brief
+    brief = json.loads(out_brief)
+
+    # The provenance anchor (spec + resolved commit) is never dropped, and is
+    # byte-identical to the full payload's provenance -- never recomputed.
+    assert brief["schema_version"] == full["schema_version"]
+    assert brief["spec"] == full["spec"]
+    assert brief["provenance"] == full["provenance"]
+    assert brief["provenance"]["commit_sha"] == SHA_A
+
+    # Top signatures: a byte-identical prefix of the full ranked list.
+    assert brief["api"]["method"] == full["api"]["method"]
+    kept = len(brief["api"]["top_symbols"])
+    assert 0 < kept <= 5
+    assert brief["api"]["top_symbols"] == full["api"]["top_symbols"][:kept]
+
+    # One ranked example, byte-identical to the full payload's top example.
+    assert brief["examples"]["top"] == full["examples"]["top"][:1]
+
+    # Trust score as a bare number, identical to the full payload's score.
+    assert brief["trust"] == full["trust"]["score"]
+
+    # Sections purely dropped from brief, never recomputed as something else.
+    for dropped in ("parity", "license", "routing", "paths"):
+        assert dropped not in brief
+
+    # `citation` is new to brief, not a reformatting of an existing field.
+    assert "citation" not in full
+
+
+def test_default_info_output_is_unchanged_by_the_brief_addition(tmp_path):
+    _source, spec = _shelve_with_source(tmp_path)
+
+    code, out, err = _invoke(
+        ["info", spec, "--json", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+
+    assert code == ExitCode.SUCCESS, err
+    document = json.loads(out)
+    assert set(document) == {
+        "schema_version", "spec", "provenance", "parity", "license", "routing",
+        "api", "examples", "trust", "paths",
+    }
+    assert "citation" not in document
+    assert isinstance(document["trust"], dict) and "breakdown" in document["trust"]
+
+    code_text, out_text, err_text = _invoke(
+        ["info", spec, "--root", str(tmp_path)], resolver=_DeadRegistryResolver()
+    )
+    assert code_text == ExitCode.SUCCESS, err_text
+    assert "citation" not in out_text.lower()
+    for expected_prefix in (
+        "tree:", "version:", "license:", "routing:", "parity:", "api:", "examples:", "trust:",
+    ):
+        assert any(line.startswith(expected_prefix) for line in out_text.splitlines()), out_text
+
+
+def test_citation_line_matches_the_documented_owner_repo_file_at_sha_shape(tmp_path):
+    _source, spec = _shelve_with_source(tmp_path)
+
+    code, out, err = _invoke(
+        ["info", spec, "--brief", "--json", "--root", str(tmp_path)],
+        resolver=_DeadRegistryResolver(),
+    )
+    assert code == ExitCode.SUCCESS, err
+    brief = json.loads(out)
+
+    citation = brief["citation"]
+    # SKILL.md documents `<owner>/<repo>/<file>@<commit-SHA>`, paste-ready as
+    # a "# Per ...:" comment line (SKILL.md's own worked example).
+    assert citation.startswith("# Per ")
+    assert citation.endswith(":")
+    body = citation[len("# Per "):-1]
+    location, _, _line_anchor = body.partition("#")
+    owner_repo_file, _, sha = location.rpartition("@")
+    assert sha == SHA_A
+    assert owner_repo_file == "acme/demo/README.md"
+    assert re.fullmatch(r"L\d+(-L\d+)?", _line_anchor)
+
+
+def test_brief_is_deterministic_across_hash_seeds(tmp_path):
+    _source(tmp_path)
+    script = (
+        "import json; from pathlib import Path; from leitir.info import build_brief_info; "
+        f"print(json.dumps(build_brief_info({SPEC!r}, corpus_root=Path({str(tmp_path)!r})), "
+        "sort_keys=True, separators=(',', ':')))"
+    )
+    outputs = []
+    for seed in ("0", "1", "42", "1000003"):
+        environment = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH="src")
+        outputs.append(
+            subprocess.check_output(
+                [sys.executable, "-c", script],
+                cwd=Path(__file__).parents[1],
+                env=environment,
+            )
+        )
+    assert len(set(outputs)) == 1

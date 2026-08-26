@@ -1,0 +1,9 @@
+{
+    "schema_version": "leitir-containment-environment-v1",
+    "source": "tools/build-nsjail.sh pins nsjail_sha256 (NSJAIL_EXECUTABLE_SHA256) and the commit behind nsjail_version (NSJAIL_COMMIT); nsjail_build_identity is the deterministic derivation of those two values verified by exec_sandbox._nsjail_build_identity; config_schema_digest and rootfs_digest match the published containment-rootfs-v1 release asset documented in AGENTS.md, README.md, and benchmarks/exit-corpus/README.md. An owner re-measures and updates this file in a separately reviewable change whenever those pins change.",
+    "nsjail_sha256": "sha256:2a740ac196d27176216788f6213d585cd5b5933f83f2c9bff31ce95cd64939d4",
+    "nsjail_version": "nsjail@f78475530b46d0186111a9096b30725f816b55fe",
+    "nsjail_build_identity": "sha256:9fc7783e8fee63cf059bb5e48053f3ac77e80fda34128917bae956bda90c0c4b",
+    "config_schema_digest": "sha256:39803af3291a1f08860ec1ec4b028aba5d000df53d2f0f73781718f75ff16c80",
+    "rootfs_digest": "sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac"
+}

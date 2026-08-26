@@ -264,6 +264,8 @@ Each task ships with a Dockerfile and a hidden `eval_test` suite that is unavail
 | First-Pass Compilation Rate (FPCR) | Tasks whose first Step 5 attempt passes the complete hidden test suite ÷ all valid benchmark tasks started. Infrastructure-invalid runs are reported separately. | `FPCR > 0.70` |
 | Self-Correction Convergence Rate (SCCR) | Tasks that fail the first valid Step 5 attempt but pass within the next three repair loops ÷ tasks with a valid first-pass failure. Infrastructure failures are excluded and reported separately. | `SCCR > 0.85` within three loops |
 
+**STATUS (as of 2026-08-26):** The metrics above remain **UNMEASURED**. No implementation of SER, DRI, FPCR, SCCR, or the 0%-hallucinated-parameters target exists in `src/`. These targets define required evidence but are not yet scored in production or on any benchmark run. Issue #266 items E1, E2, and E5 track either implementing these metrics or formally retiring them if they are superseded by the evidence-scoring engine in [ADR-0002](adr/0002-deterministic-evidence-scoring-engine.md) S4.
+
 SER measures retained retrieval evidence, not tokens in the generated source file. This distinction makes selection efficiency measurable independently of code verbosity.
 
 ### 6.3 Automated Inefficiency Diagnosis

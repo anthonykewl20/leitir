@@ -153,12 +153,20 @@ def ineligible_shelf_conditions(root: Path, shelf: ShelfRef) -> tuple[str, ...]:
     return tuple(conditions)
 
 
-def shelves_from_corpus(root: Path, selectors: tuple[str, ...] = ()) -> tuple[ShelfRef, ...]:
-    """Resolve deterministic shelf identities from the corpus source catalog."""
+def shelves_from_corpus(
+    root: Path, selectors: tuple[str, ...] = (), *, strict: bool = False
+) -> tuple[ShelfRef, ...]:
+    """Resolve deterministic shelf identities from the corpus source catalog.
+
+    ``strict`` is forwarded to ``load_sources`` unchanged (default ``False``,
+    the existing silent-recovery behavior for every caller except
+    corpus-wide search's eligibility path -- see ``load_sources`` and
+    ``leitir.index.query._corpus_eligibility``).
+    """
     from leitir.corpus import load_sources
 
     selected: list[ShelfRef] = []
-    for entry in load_sources(root):
+    for entry in load_sources(root, strict=strict):
         shelf = ShelfRef(entry["host"], entry["owner"], entry["repo"], entry["commit_sha"])
         aliases = {
             str(entry.get("name", "")), str(entry.get("spec", "")), shelf.slug,

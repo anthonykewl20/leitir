@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, TypeGuard, cast
 
 from .apisurface import API_SCHEMA_VERSION, extract_api_surface
 from .corpus import (
@@ -31,6 +31,9 @@ from .sbom import infer_license
 from .trust import compute_trust
 
 TOP_SYMBOLS_LIMIT = 50
+# --brief keeps only the highest-ranked signatures: an agent writing one call
+# needs the top few verified shapes, not the full API surface (issue #266 A2).
+BRIEF_TOP_SYMBOLS_LIMIT = 5
 _KIND_PRIORITY = {"class": 0, "function": 1, "method": 2, "constant": 3}
 logger = logging.getLogger(__name__)
 
@@ -401,4 +404,75 @@ def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
     }
 
 
-__all__ = ["build_info", "source_routing"]
+def _example_line_span(example: dict[str, object]) -> tuple[int | None, int | None]:
+    """Return (start, end) 1-based line numbers spanned by an example snippet.
+
+    ``end`` is derived from the snippet's own ``code`` text (a field already
+    present in the full payload), not recomputed from anything external, so
+    the citation stays anchored to data the caller can already see.
+    """
+
+    line = example.get("line")
+    if not isinstance(line, int) or isinstance(line, bool):
+        return None, None
+    code = example.get("code")
+    end = line + code.count("\n") if isinstance(code, str) and code else line
+    return line, end
+
+
+def _citation_line(provenance: dict[str, object], example: dict[str, object] | None) -> str:
+    """A ready-to-paste comment citing the source, matching SKILL.md's
+    ``<owner>/<repo>/<file>@<commit-SHA>`` shape, with a line anchor when a
+    specific example span is available.
+    """
+
+    owner = provenance.get("owner")
+    repo = provenance.get("repo")
+    sha = provenance.get("commit_sha")
+    if example is not None and example.get("path"):
+        start, end = _example_line_span(example)
+        location = f"{owner}/{repo}/{example['path']}@{sha}"
+        if start is not None:
+            location += f"#L{start}" if end is None or end == start else f"#L{start}-L{end}"
+        return f"# Per {location}:"
+    return f"# Per {owner}/{repo}@{sha}:"
+
+
+def build_brief_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
+    """A materially smaller projection of ``build_info`` for repeated agent calls.
+
+    Purely subtractive (issue #266 A2): every field returned here is
+    byte-identical to the same field in ``build_info``'s full payload. This
+    function only selects, truncates, and adds a derived citation line; it
+    never recomputes or reformats a value the full payload already carries.
+
+    Kept: the provenance anchor (spec + resolved commit) in full, the
+    highest-ranked verified signatures, one ranked example, and the trust
+    score as a bare number. Dropped: parity, license, routing, the full trust
+    factor breakdown, cache paths, and the long tail of symbols/examples.
+    """
+
+    document = build_info(spec, corpus_root=corpus_root)
+    provenance = cast(dict[str, object], document["provenance"])
+    api = cast(dict[str, object], document["api"])
+    examples = cast(dict[str, object], document["examples"])
+    trust = cast(dict[str, object], document["trust"])
+    top_symbols = cast(list[dict[str, object]], api["top_symbols"])
+    top_examples = cast(list[dict[str, object]], examples["top"])
+    brief_examples = top_examples[:1]
+    example = brief_examples[0] if brief_examples else None
+    return {
+        "schema_version": document["schema_version"],
+        "spec": document["spec"],
+        "provenance": provenance,
+        "api": {
+            "method": api["method"],
+            "top_symbols": top_symbols[:BRIEF_TOP_SYMBOLS_LIMIT],
+        },
+        "examples": {"top": brief_examples},
+        "trust": trust["score"],
+        "citation": _citation_line(provenance, example),
+    }
+
+
+__all__ = ["build_brief_info", "build_info", "source_routing"]

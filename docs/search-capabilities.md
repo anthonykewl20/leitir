@@ -213,7 +213,135 @@ Duplicate identities are rejected. (`src/leitir/ranking.py:13-24`,
 construction, streaming result emission, and ranking makes output independent
 of hash iteration order for identical inputs.
 
-## 3. Honest limitations
+## 3. Local-corpus path: corpus-wide search
+
+### Overview and motivation
+
+Corpus-wide search fans a scoped-exhaustive query out across every eligible
+materialized shelf in the local corpus. It is fully offline and commit- and
+blob-pinned: it does not discover new sources and does not require network
+access. The motivating use case is answering "where in anything I depend on does
+X happen?" when a developer has many materialized shelves but doesn't know which
+one holds the answer. (`src/leitir/index/query.py:335-462`,
+`src/leitir/cli.py:816-827`, `src/leitir/cli.py:3026-3053`.)
+
+```text
+leitir search --corpus --must kind:value[:language] ... \
+  [--index] [--require-index]
+```
+
+`--corpus` is mutually exclusive with `--global`, `--repo`, and `--package`.
+
+### Eligibility, exclusion, and coverage honesty
+
+A shelf is eligible for corpus search if it is present in the corpus index.
+`CorpusSearcher` performs a cheap pre-check (`_corpus_eligibility()`) that loads
+manifest metadata without reading source trees, then instantiates a
+`ScopedSearcher` (or `IndexedSearcher` with `--index`) for every eligible shelf.
+Each shelf's report is aggregated: coverage statistics are summed, matches are
+merged, and shelf-level outcomes are recorded.
+
+Shelf exclusion is named with a structured reason. A shelf is excluded (rather
+than searched) when:
+- `unindexed`: it has no built trigram index and `--require-index` was specified.
+- `verification_failed`: load-time verification (tree integrity or checksum) fails
+  after the cheap pre-check passes.
+- `drift_parity`: the shelf's parity metadata is `drift` or `unknown`.
+- `registry_provenance`: the shelf was resolved registry-only without a git
+  commit pinning.
+- `unsupported_host`: the shelf is on a host not yet supported by the adapter
+  for generic tree enumeration.
+- `partial_tree_scope`: the shelf's materialized-tree hash covers only a
+  partial-tree scope (incomplete source).
+
+Excluded shelves are always named in `shelves_excluded` with both identity and
+reason; this is never silent. (`src/leitir/search.py:495-504`,
+`src/leitir/index/query.py:405-418`, `src/leitir/cli.py:3041-3046`.)
+
+`corpus_status` is `CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE` only when
+both of these hold: (1) the `shelves_excluded` list is empty, and (2) every
+searched shelf itself reported `COMPLETE_FOR_DECLARED_UNIVERSE` coverage at the
+file level. Any named exclusion or any per-shelf partial result forces
+`corpus_status` to `PARTIAL`. An empty corpus (zero shelves materialized) is
+reported honestly: zero searched, zero excluded, no matches, and `corpus_status`
+remains `PARTIAL` (never a false "complete" claim about dependencies that were
+never materialized). (`src/leitir/search.py:559-616`,
+`src/leitir/index/query.py:446-450`.)
+
+### Indexing and fallback
+
+Like scoped search, `--index` uses local trigram indexes when available and
+falls back to full-tree scanning for unindexed shelves. `--require-index`
+rejects unindexed shelves instead, excluding them with reason `unindexed`.
+This is per-shelf: a corpus search with `--require-index` still searches all
+indexed shelves and reports the unindexed ones as excluded, never aborting the
+whole operation. (`src/leitir/index/query.py:400-413`.)
+
+## 4. Exit codes
+
+`leitir search` uses the same four-tier `ExitCode` as the rest of the CLI
+(`src/leitir/cli.py:64-70`): `SUCCESS = 0`, `CORPUS_FAILURE = 1`,
+`MALFORMED_USAGE = 2`, `INFRASTRUCTURE_FAILURE = 3`. The dispatcher wraps all
+four scopes -- `--corpus`, `--global`, and the scoped `--repo`/`--package`
+branch -- in one `try` block (`src/leitir/cli.py:3604-3733`) with a shared
+exception ladder, so the mapping below is uniform across scopes rather than
+scope-specific:
+
+- **0 (success):** the search ran to completion and produced a report,
+  including a `--corpus` run where individual shelves were excluded (see
+  below) and a partial/incomplete result on the deep or wide path -- an
+  incomplete-but-honest report is still a successful command invocation.
+- **1 (`CORPUS_FAILURE`):** `SearchSpecError` is not raised, but a
+  `VerificationError` propagates out of the scope's own search call
+  (`src/leitir/cli.py:3728-3730`). Concretely this covers:
+  - a corrupt or unreadable corpus catalog (`leitir-sources.json`) under
+    `--corpus`, raised before any shelf is even considered
+    (`src/leitir/corpus.py:94-99`, surfaced through
+    `_corpus_eligibility()`'s `shelves_from_corpus(root, strict=True)` at
+    `src/leitir/index/query.py:320`);
+  - a local materialized shelf whose bytes fail load-time tree-hash
+    verification, reached directly (not caught locally) on the scoped
+    `--repo`/`--package` path via `ScopedSearcher`/`IndexedSearcher`
+    (`src/leitir/engine.py:76-194` raises; nothing between there and
+    `src/leitir/cli.py:3728` catches it for this path).
+
+  This is **not** reachable on `--global`: `GlobalSearcher`
+  (`src/leitir/discovery_search.py:768-`) is built from a GitHub-backed
+  `CodeSearchPort` and `TreeSource` only, never a `corpus_root`, and never
+  touches `leitir.materialize.read_valid_manifest` or
+  `leitir.engine._LocalShelfReader` -- there is no local-shelf verification
+  step on the global-discovery path to fail.
+- **2 (`MALFORMED_USAGE`):** `SearchSpecError` (an invalid predicate/spec) or
+  an invalid scope combination caught earlier in argument handling -- e.g.
+  `--corpus` combined with `--repo`/`--package`/`--global`
+  (`src/leitir/cli.py:3725-3727`).
+- **3 (`INFRASTRUCTURE_FAILURE`):** everything else -- network/transport
+  errors, an unresolvable package reference, a malformed commit SHA, and any
+  other exception not typed as `SearchSpecError` or `VerificationError`
+  (`src/leitir/cli.py:3731-3733`).
+
+### `--corpus` is the one scope where the exit code alone is not the whole story
+
+Under `--corpus`, a per-shelf `VerificationError` (a tampered or otherwise
+unverifiable shelf) does **not** propagate to the top-level handler above --
+`CorpusSearcher.search()` catches it itself, excludes that one shelf, and
+keeps going (`src/leitir/index/query.py:410-427`). The command still exits
+**0**. The only way `--corpus` exits 1 is the catalog-level failure described
+above (nothing to iterate over at all), which is a materially different
+situation from "one shelf out of many was unverifiable."
+
+This means: **a caller that checks only the exit status of `--corpus` will
+not learn that some shelves were skipped.** The honesty lives entirely in the
+JSON payload, not the exit tier: `corpus_status` is forced to `"partial"`
+whenever anything was excluded, and `shelves_excluded` names every skipped
+shelf and its reason (`unindexed`, `verification_failed`, `drift_parity`,
+`registry_provenance`, `unsupported_host`, `partial_tree_scope` -- see
+section 3 above). Any agent or script consuming `leitir search --corpus`
+programmatically must read `corpus_status`/`shelves_excluded` from the
+payload, not just branch on the process exit code, or it will silently treat
+a partial, integrity-compromised result as if it were a complete one.
+
+## 5. Honest limitations
 
 ### Wide path
 
@@ -251,6 +379,17 @@ of hash iteration order for identical inputs.
   against `grep`. (`src/leitir/adapters/_tier2/_base.py:48`,
   `src/leitir/adapters/__init__.py:119`.)
 
+### Local-corpus path
+
+- Corpus search is offline but local-only: it does not discover new sources.
+  The set of searched shelves is determined entirely by prior materialization;
+  sources not yet downloaded are never searched.
+- An empty corpus (no shelves materialized) produces zero results and
+  `corpus_status=PARTIAL`, not a false "complete" claim.
+- Coverage depends on shelf-level eligibility and individual search success;
+  each excluded shelf is named with its reason and prevents corpus_status from
+  claiming completeness. (`src/leitir/search.py:559-616`.)
+
 ### Verification and operations
 
 - Real-provider tests are opt-in, and the live canary is fail-closed: its
@@ -260,7 +399,7 @@ of hash iteration order for identical inputs.
   workflow. (`docs/ci.md`.)
 - Retry cannot remove remote-index incompleteness or service-side limits.
 
-## 4. Improvement opportunities
+## 6. Improvement opportunities
 
 Search v2 shipped the adapter expansion, Python AST option, large-blob
 streaming, truncation recovery, whole-file mode, language routing, and exposed
@@ -272,7 +411,7 @@ global budgets. The remaining opportunities are:
 | Support global `REGEX` through a bounded superset | The legacy endpoint cannot express arbitrary regex; fail-closed rejection is safer than pretending a term is equivalent. (`src/leitir/discovery_search.py:349-377`) | L / hard | High | Possible only for safely bounded subsets |
 | Completed: live-search canary (S3 slice #88; PRs #106/#121) | Search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming are in the opt-in workflow. (`docs/ci.md`) | S | Low | Yes |
 
-## 5. References
+## 7. References
 
 - [ADR-0001: Remove Hy3 and make Leitir a deterministic code-search kernel](adr/0001-remove-hy3-deterministic-search.md)
 - Global transport, translation, verification, and provenance validation:

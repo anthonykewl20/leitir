@@ -2,9 +2,9 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Status: released — [`v0.1.4`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4)
-is the first `v*` tag (2026-08-17); milestone v0.1.4 is complete and
-`pyproject.toml` is 0.1.4. Production-readiness evidence is complete.**
+**Status: released — [`v0.1.6`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6)
+is the latest release (2026-08-25); v0.1.4 was the first `v*` tag (2026-08-17); current milestone v0.1.6 is complete and
+`pyproject.toml` is 0.1.6. Production-readiness evidence is complete.**
 
 ## Why
 
@@ -97,8 +97,8 @@ flowchart LR
 ## Installation
 
 ```bash
-# Install the released tag (v0.1.4, 2026-08-17)
-pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.4
+# Install the latest released tag (v0.1.6, 2026-08-25)
+pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.6
 
 # Or the latest from main
 pip install git+https://github.com/anthonykewl20/leitir.git
@@ -145,6 +145,27 @@ uv pip install --require-hashes --only-binary :all: -r requirements-auth.lock
 
 Unsigned, malformed, unknown-key, or invalidly signed shelves reject; this is
 an optional authenticity layer, separate from tree-integrity verification.
+
+For any MCP-capable agent runtime other than Claude Code's skill surface (Claude
+Code's own integration is the `skills/leitir/SKILL.md` path above, not this
+server):
+
+```bash
+pip install 'leitir[mcp]'
+# Hash-locked installs use the reviewed wheel-only closure:
+uv pip install --require-hashes --only-binary :all: -r requirements-mcp.lock
+
+python -m leitir.mcp
+```
+
+This is a deliberate, optional add-on: the runtime stays stdlib-only
+(`dependencies = []` in `pyproject.toml` is unchanged, and a plain
+`pip install leitir` pulls in nothing new). The server exposes five verbs as
+MCP tools — `info`, `search` (including `--corpus`), `examples`, `api`, and
+`diff` — each a thin wrapper that shells out to the `leitir` CLI and returns
+its JSON output unmodified, so provenance and coverage fields (`corpus_status`,
+`shelves_excluded`, trust scores, etc.) reach the calling agent exactly as the
+CLI produced them.
 The authentication trust-anchor surface requires a platform with no-follow-capable file reads; unsupported platforms fail closed.
 
 Trusted-key files carry a lifecycle from schema version 2 onward
@@ -214,11 +235,20 @@ leitir bench
 # Replay a recorded capability funnel and inspect its canonical decision summary
 leitir bts-funnel --spec capability.json --recipient-manifest recipient.json --stages stages.json --json
 
-# Run a pinned BTS pipeline only with explicit containment identity pins
-leitir bts-run owner/repo@<40-char-sha> --root "$LEITIR_HOME" --seed-module pkg.mod \
-  --seed-name symbol --contract-spec contracts.json --recipient-package recipient --out out/ \
+# Run a pinned BTS pipeline (containment identity resolved from descriptor)
+leitir bts-run owner/repo@<40-char-sha> --seed-module pkg.mod --seed-name symbol \
+  --contract-spec contracts.json --out out/ --recipient-package recipient
+
+# With explicit containment identity pins (for operators overriding the descriptor)
+leitir bts-run owner/repo@<40-char-sha> --seed-module pkg.mod --seed-name symbol \
+  --contract-spec contracts.json --out out/ --recipient-package recipient \
   --nsjail-sha256 sha256:<hex> --nsjail-version '<version>' --nsjail-build-identity sha256:<hex> \
   --config-schema-digest sha256:<hex> --rootfs-source /pinned/rootfs --rootfs-digest sha256:<hex>
+
+# Use an alternate containment environment descriptor
+leitir bts-run owner/repo@<40-char-sha> --seed-module pkg.mod --seed-name symbol \
+  --contract-spec contracts.json --out out/ --recipient-package recipient \
+  --containment-environment /path/to/alternate-environment.json
 
 # Validate or run the pinned five-donor exit corpus (runtime substrate pins are mandatory)
 # Requires a source checkout: the corpus path below is checkout-relative.
@@ -275,7 +305,11 @@ except when interrupted:
 | 130 | *(not in `ExitCode`)* | Interrupted by Ctrl+C (SIGINT); a deliberate process-level outcome, not a corpus decision — matches the POSIX shell convention (128 + `SIGINT`). |
 
 ### Search and benchmark
-- `search`: resolve spec+predicate scope and return provenance-bound results; scoped search serves matching verified local shelves without per-file API fetches.
+- `search`: resolve spec+predicate scope and return provenance-bound results. Four mutually exclusive search scopes:
+  - `--global`: discover across GitHub's code index (INDETERMINATE_GLOBAL coverage); accepts `--max-results`, `--max-pages`, `--language`.
+  - `--repo owner/repo --commit HASH`: search one pinned repository tree (COMPLETE_FOR_DECLARED_UNIVERSE coverage when successful).
+  - `--package NAME --version V [--ecosystem ECOSYSTEM]`: resolve a package and search its pinned tree (COMPLETE_FOR_DECLARED_UNIVERSE coverage when successful).
+  - `--corpus`: fan a scoped-exhaustive query across every eligible materialized shelf in the local corpus (offline, commit- and blob-pinned); shelves that are unindexed (with `--require-index`), drift-parity, registry-derived, on an unsupported host, or fail load-time verification are excluded and named in the output, and corpus_status is PARTIAL whenever any shelf was excluded. Example: `leitir search --corpus --must symbol_definition:parse` answers "where in anything I depend on does parse get defined?" without knowing which package holds it.
 - `index [scope ...] [--root ROOT|--local]`: explicitly build deterministic local
    trigram indexes for eligible materialized shelves. A shelf is eligible only with
    `source=git-commit`, `parity=exact`, and a full materialized-tree hash.
@@ -313,6 +347,7 @@ except when interrupted:
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
 - `diff`: compare two resolved versions with file and API-symbol deltas.
+- `check <path> --against <spec> [--json] [--root ROOT|--local] [--cwd DIR] [--no-verify]`: validate written Python source (a file or directory) against one materialized, pinned source's API surface, e.g. `leitir check ./src/app.py --against pypi:flask@3.0.3`. Python-only: a non-`.py` file or a directory with no `.py` files rejects (`MALFORMED_USAGE`). Every examined usage site gets one of three outcomes, never two: `ok` (the symbol was statically recovered *and* confirmed present), `violation` (provably absent from both the extracted API index and the pinned source's own text), or `unresolved` (statically undecidable — dynamic dispatch, `getattr`, an alias handed to a function, a re-export, a private `_name`, a star import). The gate fails (exit 1, `CORPUS_FAILURE`) only on `violation`; `unresolved` never fails it, but its count is real signal, not noise — a run with a high `sites_unresolved` verified little, so read `counts.sites_unresolved` alongside `counts.sites_violation` before trusting a clean result. **It checks symbol existence only — not arity, parameter types, or return types.** The API index carries no structured signature model, so a call with the right name and the wrong number or kind of arguments is not caught. If zero sites were examined, the run exits 4 (`NOTHING_INDEXED`), not 0, and stderr names the import root it searched for — this is not "clean," it is "nothing was checked," and it commonly happens when the guessed import root (normalized distribution name) differs from the real one: `pypi:pillow` imports as `PIL`, `beautifulsoup4` as `bs4`, `pyyaml` as `yaml`. It fails closed (`CORPUS_FAILURE`) if the pinned source's own API index is empty or unverifiable, before checking a single site. The JSON payload (`schema_version: "leitir-check-report-v1"`) carries `status` (`"nothing_examined"` / `"violations_found"` / `"clean"`), `counts` (`sites_examined`/`sites_ok`/`sites_violation`/`sites_unresolved`), per-site `violations`/`unresolved`/`ok` arrays (`file`, `line`, `col`, `symbol`, `outcome`, `reason`), `files_examined`, `files_excluded`, and `target_corroboration_capped` (true if the absence-corroboration text scan hit its byte budget, in which case no violation may be declared from the remaining unscanned text). See [ADR-0030](docs/adr/0030-check-command-conservative-symbol-existence-gate.md) for the full design and its accepted limitations.
 - `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. `--list-seeds` instead lists selectable donor definition seeds and cannot be combined with seed or output arguments. Without `--allow-reject`, a written REJECT result exits nonzero; `--allow-reject` retains the artifact but exits successfully. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
 - `occupied-validate artifact.json`: validate a canonical occupied-recipient attachment artifact offline. A committed, self-validating example lives at `tests/fixtures/occupied_validate/example-artifact.json` (regenerate deterministically with `PYTHONPATH=src python tests/fixtures/occupied_validate/generate.py`); for example, `leitir occupied-validate tests/fixtures/occupied_validate/example-artifact.json --json`.
 - `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph with a non-empty slug-like caller label (`letters`, digits, `-`, `_`, `.`); JSON labels it `caller-declared-label`, not derived authority. For example, `leitir analysis-architecture graph.json --subject widget --json`.
@@ -324,6 +359,31 @@ except when interrupted:
 - `export`: write a v2 `corpus.lock` plus compressed snapshot and emit the lock digest.
 - `import`: verify and rehydrate a v2 snapshot into an empty destination; the trusted
   `--lock-sha256` is mandatory. Existing v1 snapshots must be re-exported.
+
+### Usage evidence (offline)
+- `usage assemble plan.json --out report.json [--corpus-root ROOT] [--json]`: build a
+  deterministic `report.json` from a closed `assemble-plan.json` (provider/consumer
+  identity, dependency evidence, import mappings, and one or more typed resolver
+  reference batches) by calling `leitir.usage.assemble.assemble_usage_evidence`.
+  `--corpus-root` is optional and, when given, backs the advisory per-file license
+  scan. Before a single byte reaches disk, the assembled report is round-tripped
+  through the exact parser `usage verify` uses; a report that would not itself pass
+  `verify` is rejected right there (`usage_tamper`), never written out. The write
+  itself is atomic (tempfile + `os.replace` + fsync), so a rejected assembly, or a
+  crash mid-write, never leaves a partial or invalid `report.json` at `--out`.
+- `usage verify report.json [--json]`: parse and structurally validate a usage
+  evidence report, rejecting a malformed, unsupported, or self-inconsistent
+  (tampered) report before returning anything.
+- `usage replay report.json --corpus-root ROOT --requirements requirements.txt [--times N] [--json]`:
+  fully offline, deterministic replay of an already-verified report against the
+  real corpus/requirements bytes on disk, run `--times` times (default 2) and
+  compared byte-for-byte; proves span-level integrity for every recorded
+  reference, not whole-file integrity.
+
+  All three actions are stdlib-only and perform no network access; nothing they
+  read is imported or executed. See `tests/fixtures/usage/assemble_plan/plan.json`
+  for a minimal, self-consistent `assemble-plan.json` example, and
+  `tests/fixtures/usage/positive/report.json` for the resulting report shape.
 
 #### Screenshots
 
@@ -341,15 +401,17 @@ is-number      7.0.0 jonschlinkert/is-number@98e8ff1da1a89f93d1397a24d7413ed1542
 octocat/Hello-World … @7fd1a60b01f91b314f59955a4e4d4e80d8edf11d                                verified trust=unknown
 
 $ leitir trust npm:is-number@7.0.0
-is-number trust=56
-  age:               50/100  weight=15   (unknown — no cached release/commit timestamp)
-  artifact_checksum: 100/100 weight=15   (present — npm-tarball)
-  documentation:     100/100 weight=10   (docs + entry points)
-  license:           25/100  weight=15   (low confidence)
-  parity:             0/100  weight=15   (drift — artifact vs git tree)
-  tests:              0/100  weight=10   (absent — no tests/ in git tree)
-  verification:      100/100 weight=20   (verified=True)
+is-number trust=64
+  age: 25/100 weight=15 evidence={"days_at_fetch": 2974, "reason": "age measured at cached fetch time", "source": "published_at", "state": "known"}
+  artifact_checksum: 100/100 weight=15 evidence={"artifact_kind": "npm-tarball", "reason": "cached artifact checksum and kind are present", "state": "present"}
+  documentation: 100/100 weight=10 evidence={"docs_urls": true, "entry_points": true, "reason": "cached docs and entry-point presence", "state": "docs-and-entry-points"}
+  license: 100/100 weight=15 evidence={"method": "license-file", "reason": "license confidence is high", "state": "high"}
+  parity: 0/100 weight=15 evidence={"reason": "cached parity result", "state": "drift"}
+  tests: 0/100 weight=10 evidence={"reason": "cached Git tree tests/ presence", "state": "absent"}
+  verification: 100/100 weight=20 evidence={"reason": "cached verification state is True", "state": true}
 ```
+
+Measured on 2026-08-26 against v0.1.6 after `published_at` manifest field became populated from registry release metadata.
 
 ```bash
 $ leitir diff npm:is-number@6.0.0 npm:is-number@7.0.0
@@ -471,7 +533,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-24): **3192 passed, 142 skipped** without extras; **3242 passed, 92 skipped** with the tree-sitter extra active; combined line+branch coverage **83.48%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-24): **3431 passed, 143 skipped** without extras; additional polyglot tests run with the tree-sitter extra active; combined line+branch coverage **83.48%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
 
 ## Current state
 

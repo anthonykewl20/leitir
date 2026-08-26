@@ -21,7 +21,7 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 2661 passed / 123 skipped (current; the six L5 ratification tests additionally run with the optional `cryptography` extra), 0 failed; installing the tree-sitter extra runs 105 additional polyglot tests.
+- Target: 3431 passed / 143 skipped (current; the six L5 ratification tests additionally run with the optional `cryptography` extra), 0 failed; installing the tree-sitter extra runs additional polyglot tests.
 - Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
 - For security/integrity changes, add a tamper/reject test.

@@ -25,9 +25,10 @@ import importlib
 import json
 import os
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from leitir.adapters.languages import canonicalize_language
 from leitir.bts import (
@@ -85,7 +86,7 @@ from leitir.graph.ts_kernel import (
     DEFAULT_MAX_WORK_UNITS,
 )
 from leitir.materialize import _target_lock, read_valid_manifest, target_path
-from leitir.safeio import atomic_write_bytes
+from leitir.safeio import atomic_write_bytes, read_regular_file
 from leitir.treehash import FULL, SAMPLED, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
 CLI_SCHEMA_VERSION = "leitir-bts-cli-compute-v1"
@@ -724,6 +725,271 @@ def list_bts_seeds(
     return list_seed_candidates(graph)
 
 
+# --- Containment environment resolution (issue #266, C1) -------------------
+#
+# ``leitir bts-run`` requires five containment-substrate identity values
+# (nsjail_sha256, nsjail_version, nsjail_build_identity, config_schema_digest,
+# rootfs_digest) plus a local rootfs_source directory. Four of those five
+# digests are fixed pins, not per-machine measurements: nsjail_sha256 and the
+# commit behind nsjail_version are pinned in tools/build-nsjail.sh,
+# nsjail_build_identity is a pure deterministic function of those two values
+# (exec_sandbox._nsjail_build_identity), and config_schema_digest/
+# rootfs_digest match the published containment-rootfs-v1 release asset
+# documented in AGENTS.md/README.md. This section lets a caller resolve those
+# fixed pins from one committed, self-verified descriptor instead of typing
+# them, while an explicit flag always overrides the descriptor per field and
+# the descriptor is cross-checked internally before it is ever trusted. This
+# is strictly a convenience over the runtime containment verification in
+# exec_sandbox (_verify_backend / _verify_mount_sources / _verify_nsjail_identity)
+# -- it never substitutes for it: every resolved value still flows, unchanged,
+# into the same measured checks that an explicitly typed flag goes through
+# today, so a resolved value that does not match the measured runtime rejects
+# exactly as an explicit mismatched flag does.
+
+CONTAINMENT_ENVIRONMENT_SCHEMA_VERSION = "leitir-containment-environment-v1"
+DEFAULT_CONTAINMENT_ENVIRONMENT_PATH = Path(__file__).parent / "containment-environment-v1.json"
+# The rootfs is a local materialization of the containment-rootfs-v1 release
+# asset; unlike the four digests above, its filesystem location is inherently
+# per-machine and cannot be pinned. This is the documented conventional
+# default; ``--rootfs-source`` or ``LEITIR_ROOTFS_SOURCE`` still take priority.
+DEFAULT_ROOTFS_SOURCE_PATH = Path.home() / ".leitir" / "containment-rootfs-v1"
+ROOTFS_SOURCE_ENV_VAR = "LEITIR_ROOTFS_SOURCE"
+_CONTAINMENT_ENV_DIGEST_FIELDS = ("nsjail_sha256", "nsjail_build_identity", "config_schema_digest", "rootfs_digest")
+_CONTAINMENT_ENV_KEYS = frozenset(
+    {"schema_version", "source", "nsjail_sha256", "nsjail_version", "nsjail_build_identity", "config_schema_digest", "rootfs_digest"}
+)
+_CONTAINMENT_ENV_MAX_BYTES = 1 << 16
+_CONTAINMENT_SUBSTRATE_FIELDS = (
+    "nsjail_sha256", "nsjail_version", "nsjail_build_identity", "config_schema_digest", "rootfs_source", "rootfs_digest",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContainmentEnvironmentDescriptor:
+    """The four fixed containment-substrate digests, self-verified on load."""
+
+    nsjail_sha256: str
+    nsjail_version: str
+    nsjail_build_identity: str
+    config_schema_digest: str
+    rootfs_digest: str
+
+
+def load_containment_environment_descriptor(
+    path: Path = DEFAULT_CONTAINMENT_ENVIRONMENT_PATH,
+) -> ContainmentEnvironmentDescriptor:
+    """Load and self-verify the committed containment environment descriptor.
+
+    Missing, unreadable, malformed, or internally inconsistent descriptor
+    bytes reject rather than silently falling back to any default. As a
+    free integrity check, ``nsjail_build_identity`` is not merely parsed: it
+    is independently re-derived from ``nsjail_sha256``/``nsjail_version`` and
+    the descriptor is rejected if the recorded value does not match, which
+    catches a tampered or hand-edited descriptor before it ever reaches the
+    containment layer.
+    """
+
+    # Imported locally: exec_sandbox pulls in ``subprocess`` for its real
+    # containment probes, which would otherwise taint this module's import
+    # purity (tests/test_import_purity.py) even though descriptor loading
+    # itself never spawns a process.
+    from leitir.exec_sandbox import _DIGEST_RE, _NSJAIL_VERSION_RE, _nsjail_build_identity
+
+    try:
+        data = read_regular_file(path, maximum_bytes=_CONTAINMENT_ENV_MAX_BYTES, no_follow=False)
+    except OSError as exc:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor is unavailable",
+            "bts_cli_containment_env_unavailable_v1",
+            cause=exc,
+        )
+    except ValueError as exc:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor exceeds the configured bound",
+            "bts_cli_containment_env_bound_v1",
+            cause=exc,
+        )
+    try:
+        raw = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor is not valid JSON",
+            "bts_cli_containment_env_json_v1",
+            cause=exc,
+        )
+    if not isinstance(raw, dict) or set(raw) != _CONTAINMENT_ENV_KEYS:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor has unexpected fields",
+            "bts_cli_containment_env_fields_v1",
+        )
+    if raw.get("schema_version") != CONTAINMENT_ENVIRONMENT_SCHEMA_VERSION:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor schema_version is unsupported",
+            "bts_cli_containment_env_schema_v1",
+        )
+    if not isinstance(raw.get("source"), str) or not raw["source"]:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor is missing a source annotation",
+            "bts_cli_containment_env_source_v1",
+        )
+    values: dict[str, str] = {}
+    for field in _CONTAINMENT_ENV_DIGEST_FIELDS:
+        value = raw.get(field)
+        if not isinstance(value, str) or _DIGEST_RE.fullmatch(value) is None:
+            _reject(
+                BTSRejectReason.REJECT_EXECUTION_THREAT,
+                f"containment environment descriptor field {field} is not a valid sha256 digest",
+                "bts_cli_containment_env_digest_v1",
+            )
+        values[field] = value
+    version = raw.get("nsjail_version")
+    version_match = _NSJAIL_VERSION_RE.fullmatch(version) if isinstance(version, str) else None
+    if version_match is None:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor nsjail_version is malformed",
+            "bts_cli_containment_env_version_v1",
+        )
+    try:
+        expected_build_identity = _nsjail_build_identity(version_match.group(1), values["nsjail_sha256"])
+    except ValueError as exc:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor identity inputs are malformed",
+            "bts_cli_containment_env_identity_inputs_v1",
+            cause=exc,
+        )
+    if expected_build_identity != values["nsjail_build_identity"]:
+        _reject(
+            BTSRejectReason.REJECT_EXECUTION_THREAT,
+            "containment environment descriptor nsjail_build_identity does not match its own nsjail_sha256/nsjail_version pins",
+            "bts_cli_containment_env_identity_mismatch_v1",
+        )
+    return ContainmentEnvironmentDescriptor(
+        nsjail_sha256=values["nsjail_sha256"],
+        nsjail_version=cast(str, version),
+        nsjail_build_identity=values["nsjail_build_identity"],
+        config_schema_digest=values["config_schema_digest"],
+        rootfs_digest=values["rootfs_digest"],
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedContainmentValue:
+    """One resolved containment-substrate value plus where it came from."""
+
+    value: str
+    source: str  # "flag" | "descriptor" | f"env:{ROOTFS_SOURCE_ENV_VAR}" | "default"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedContainmentSubstrate:
+    """The six ``bts-run`` substrate inputs, each resolved with provenance."""
+
+    nsjail_sha256: ResolvedContainmentValue
+    nsjail_version: ResolvedContainmentValue
+    nsjail_build_identity: ResolvedContainmentValue
+    config_schema_digest: ResolvedContainmentValue
+    rootfs_source: ResolvedContainmentValue
+    rootfs_digest: ResolvedContainmentValue
+
+    def receipt(self) -> dict[str, object]:
+        """A JSON-safe audit record naming every resolved value and its source."""
+
+        return {
+            "schema_version": "leitir-containment-environment-resolution-v1",
+            "resolved": {
+                field: {"value": getattr(self, field).value, "source": getattr(self, field).source}
+                for field in _CONTAINMENT_SUBSTRATE_FIELDS
+            },
+        }
+
+    def to_bytes(self) -> bytes:
+        return (
+            json.dumps(self.receipt(), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            + "\n"
+        ).encode("utf-8")
+
+
+def resolve_containment_substrate(
+    *,
+    nsjail_sha256: str | None,
+    nsjail_version: str | None,
+    nsjail_build_identity: str | None,
+    config_schema_digest: str | None,
+    rootfs_source: str | None,
+    rootfs_digest: str | None,
+    descriptor_path: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> ResolvedContainmentSubstrate:
+    """Resolve the six ``bts-run`` substrate inputs; an explicit flag always wins.
+
+    Any of the five digests/identity fields left unset (``None``) is filled
+    in from the committed, self-verifying descriptor at ``descriptor_path``
+    (default :data:`DEFAULT_CONTAINMENT_ENVIRONMENT_PATH`); the descriptor is
+    loaded at most once and only when at least one field needs it. Because
+    ``load_containment_environment_descriptor`` rejects a missing or
+    malformed descriptor outright, an unset flag with no usable descriptor
+    never silently proceeds with a default -- it rejects.
+
+    ``rootfs_source`` is a local filesystem path, not a digest, so it cannot
+    be pinned the same way: it resolves from the explicit flag, then
+    ``LEITIR_ROOTFS_SOURCE``, then the documented conventional default
+    directory. Its *digest* is still resolved (and verified) exactly like
+    the other four.
+    """
+
+    env = os.environ if environ is None else environ
+    explicit = {
+        "nsjail_sha256": nsjail_sha256,
+        "nsjail_version": nsjail_version,
+        "nsjail_build_identity": nsjail_build_identity,
+        "config_schema_digest": config_schema_digest,
+        "rootfs_digest": rootfs_digest,
+    }
+    descriptor: ContainmentEnvironmentDescriptor | None = None
+    if any(value is None for value in explicit.values()):
+        path = DEFAULT_CONTAINMENT_ENVIRONMENT_PATH if descriptor_path is None else descriptor_path
+        descriptor = load_containment_environment_descriptor(path)
+
+    def pick(field: str) -> ResolvedContainmentValue:
+        value = explicit[field]
+        if value is not None:
+            return ResolvedContainmentValue(value, "flag")
+        assert descriptor is not None
+        return ResolvedContainmentValue(getattr(descriptor, field), "descriptor")
+
+    if rootfs_source is not None:
+        resolved_rootfs_source = ResolvedContainmentValue(rootfs_source, "flag")
+    else:
+        env_value = env.get(ROOTFS_SOURCE_ENV_VAR)
+        if env_value:
+            resolved_rootfs_source = ResolvedContainmentValue(env_value, f"env:{ROOTFS_SOURCE_ENV_VAR}")
+        else:
+            resolved_rootfs_source = ResolvedContainmentValue(str(DEFAULT_ROOTFS_SOURCE_PATH), "default")
+
+    return ResolvedContainmentSubstrate(
+        nsjail_sha256=pick("nsjail_sha256"),
+        nsjail_version=pick("nsjail_version"),
+        nsjail_build_identity=pick("nsjail_build_identity"),
+        config_schema_digest=pick("config_schema_digest"),
+        rootfs_source=resolved_rootfs_source,
+        rootfs_digest=pick("rootfs_digest"),
+    )
+
+
+def write_containment_environment_receipt(out_dir: Path, resolved: ResolvedContainmentSubstrate) -> None:
+    """Atomically record what was resolved and from where, for the audit trail."""
+
+    _atomic_write(out_dir / "containment-environment-resolution.json", resolved.to_bytes())
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     # The atomic-write mechanics live in leitir.safeio (issue #200); this
     # wrapper preserves the site's typed rejection mapping on write failures.
@@ -755,6 +1021,11 @@ def write_artifacts(result: BTSComputeArtifacts, out_dir: Path) -> None:
 
 
 __all__ = [
-    "CLI_SCHEMA_VERSION", "DEFAULT_MAX_INPUT_BYTES", "DEFAULT_POLICY_AUTHORITY", "DEFAULT_POLICY_ID", "POLICY_SCHEMA_VERSION", "BTSComputeArtifacts", "SeedSelector",
-    "load_donor_materialization", "load_donor_snapshot", "load_resolution_policy", "python_graph_provider", "resolve_seed", "run_bts_compute", "tree_sitter_graph_provider", "write_artifacts",
+    "CLI_SCHEMA_VERSION", "CONTAINMENT_ENVIRONMENT_SCHEMA_VERSION", "DEFAULT_CONTAINMENT_ENVIRONMENT_PATH",
+    "DEFAULT_MAX_INPUT_BYTES", "DEFAULT_POLICY_AUTHORITY", "DEFAULT_POLICY_ID", "DEFAULT_ROOTFS_SOURCE_PATH",
+    "POLICY_SCHEMA_VERSION", "ROOTFS_SOURCE_ENV_VAR",
+    "BTSComputeArtifacts", "ContainmentEnvironmentDescriptor", "ResolvedContainmentSubstrate", "ResolvedContainmentValue", "SeedSelector",
+    "load_containment_environment_descriptor", "load_donor_materialization", "load_donor_snapshot", "load_resolution_policy",
+    "python_graph_provider", "resolve_containment_substrate", "resolve_seed", "run_bts_compute", "tree_sitter_graph_provider",
+    "write_artifacts", "write_containment_environment_receipt",
 ]

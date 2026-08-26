@@ -1,0 +1,67 @@
+{
+  "consumer_identity": {
+    "digest": "sha256:65204896d409ea9593cc9d222fd791e73b6481ce2b80e6d17733f1b98ee367b5",
+    "name": "assemble-plan-consumer",
+    "role": "consumer",
+    "schema_version": "leitir-usage-identity-v1",
+    "version": "0.1.0"
+  },
+  "dependency_evidence": {
+    "parser_name": "leitir-requirements-parser",
+    "parser_version": "v1",
+    "requirements_digest": "sha256:c2c46bf583ca9f4bf26dfabee8d94e056fb7e12b3ee3ee943bdda62652ec21cc",
+    "requirements_text": "widgetlib==1.2.3\n",
+    "schema_version": "leitir-usage-dependency-v1"
+  },
+  "import_mappings": [
+    {
+      "distribution": "widgetlib",
+      "import_roots": [
+        "widgetlib"
+      ],
+      "schema_version": "leitir-usage-import-mapping-v1"
+    }
+  ],
+  "path_prefix": "",
+  "provider_identity": {
+    "digest": "sha256:00120c4eb40ae93ba052bc80c8922d18c1eb8cce36459f3b48fa9eeecd8e264e",
+    "name": "widgetlib",
+    "role": "provider",
+    "schema_version": "leitir-usage-identity-v1",
+    "version": "1.2.3"
+  },
+  "reference_batches": [
+    {
+      "coverage": {
+        "cap": 100,
+        "capped": false,
+        "exclusions": [],
+        "records": [
+          {
+            "file": "consumer/app.py",
+            "schema_version": "leitir-usage-coverage-record-v1",
+            "state": "resolved"
+          }
+        ],
+        "schema_version": "leitir-usage-coverage-v1"
+      },
+      "origin": "resolver-run-1",
+      "references": [
+        {
+          "code_digest": "sha256:8c776b88b5fce50296cafd8446e2e30bc9264b5871ec402e885b3118bca15dd1",
+          "distribution": "widgetlib",
+          "schema_version": "leitir-usage-reference-v1",
+          "span": {
+            "end_col": 20,
+            "end_line": 3,
+            "file": "consumer/app.py",
+            "start_col": 0,
+            "start_line": 3
+          }
+        }
+      ]
+    }
+  ],
+  "schema_version": "leitir-usage-cli-assemble-plan-v1",
+  "unresolved_distributions": []
+}

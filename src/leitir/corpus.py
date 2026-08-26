@@ -14,6 +14,7 @@ from leitir.materialize import (
     MANIFEST_NAME,
     ArtifactRetrievalError,
     MaterializationError,
+    VerificationError,
     _assert_target_confinement,
     _file_lock,
     _fsync_directory,
@@ -53,8 +54,27 @@ def resolve_root(root: str | os.PathLike[str] | None = None) -> Path:
     return Path(selected).expanduser().absolute()
 
 
-def load_sources(root: str | os.PathLike[str] | None = None) -> list[dict[str, Any]]:
-    """Load the index, backing up corruption and treating it as empty."""
+def load_sources(
+    root: str | os.PathLike[str] | None = None, *, strict: bool = False
+) -> list[dict[str, Any]]:
+    """Load the index, backing up corruption and treating it as empty.
+
+    A missing catalog (``FileNotFoundError``) is always a genuinely empty
+    corpus -- nothing has ever been materialized -- and is reported as an
+    empty list regardless of ``strict``.
+
+    By default (``strict=False``, unchanged for every existing caller --
+    list/export/sbom/snapshot/gc/etc.), a *corrupt or unreadable* catalog is
+    silently recovered: the bad file is backed up to ``sources.json.bak``
+    and an empty list is returned, exactly as before.
+
+    ``strict=True`` is for callers where "the declared universe could not be
+    established" must never be indistinguishable from "the declared universe
+    is empty" (issue #266 P1: corpus-wide search fail-closed). In that mode
+    a corrupt or unreadable catalog raises ``VerificationError`` instead of
+    being silently swallowed -- the ``.bak`` rename is no longer the only
+    record that something went wrong.
+    """
     corpus_root = resolve_root(root)
     index = corpus_root / INDEX_NAME
     try:
@@ -72,7 +92,12 @@ def load_sources(root: str | os.PathLike[str] | None = None) -> list[dict[str, A
         return payload
     except FileNotFoundError:
         return []
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        if strict:
+            raise VerificationError(
+                f"corpus catalog is corrupt or unreadable, the declared universe "
+                f"cannot be established: {index}"
+            ) from exc
         corpus_root.mkdir(parents=True, exist_ok=True)
         if index.exists():
             os.replace(index, corpus_root / f"{INDEX_NAME}.bak")

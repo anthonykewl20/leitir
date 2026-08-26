@@ -208,6 +208,18 @@ class RepoScope:
             raise ValueError("commit_sha must be a 40-char git SHA")
 
 
+def canonical_predicates(items: tuple[Predicate, ...]) -> list[dict[str, str]]:
+    """Canonical, order-preserving serialization of one predicate tuple."""
+    return [
+        {
+            "kind": item.kind.value,
+            "value": item.value,
+            "language": item.language or "",
+        }
+        for item in items
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class SearchSpec:
     """The harness-supplied, fully typed search intent."""
@@ -255,21 +267,11 @@ class SearchSpec:
         ).hexdigest()
 
     def _canonical(self) -> dict[str, object]:
-        def predicates(items: tuple[Predicate, ...]) -> list[dict[str, str]]:
-            return [
-                {
-                    "kind": item.kind.value,
-                    "value": item.value,
-                    "language": item.language or "",
-                }
-                for item in items
-            ]
-
         return {
             "mode": self.mode.value,
-            "must": predicates(self.must),
-            "should": predicates(self.should),
-            "must_not": predicates(self.must_not),
+            "must": canonical_predicates(self.must),
+            "should": canonical_predicates(self.should),
+            "must_not": canonical_predicates(self.must_not),
             "scopes": [
                 {"slug": scope.slug, "commit_sha": scope.commit_sha}
                 for scope in self.scopes
@@ -472,6 +474,184 @@ class SearchReport:
             separators=(",", ":"),
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    def to_json(self, *, indent: int | None = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, sort_keys=False)
+
+
+# --- Corpus-wide search (issue #266) ---
+#
+# A corpus-wide search fans a scoped-exhaustive query out across every
+# eligible materialized shelf and aggregates the results. The critical
+# contract is coverage honesty: a shelf that is unindexed (under
+# ``--require-index``), drift-parity, registry-derived (no immutable git
+# commit), on an unsupported host, or that fails load-time verification
+# (tamper) is never silently dropped. It is excluded and named here, and
+# ``CorpusSearchReport.corpus_status`` can only be
+# ``CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE`` when there are zero
+# such exclusions and every searched shelf itself reported complete,
+# file-level coverage.
+
+_SHELF_EXCLUSION_REASONS = frozenset(
+    {
+        "verification_failed",
+        "unsupported_host",
+        "registry_provenance",
+        "drift_parity",
+        "partial_tree_scope",
+        "unindexed",
+    }
+)
+
+
+def corpus_spec_digest(
+    must: tuple[Predicate, ...],
+    should: tuple[Predicate, ...] = (),
+    must_not: tuple[Predicate, ...] = (),
+    whole_file_must: bool = False,
+) -> str:
+    """Canonical identity of a corpus-wide query, independent of which shelves exist."""
+    canonical = {
+        "mode": "corpus_wide",
+        "must": canonical_predicates(must),
+        "should": canonical_predicates(should),
+        "must_not": canonical_predicates(must_not),
+        "whole_file_must": whole_file_must,
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ShelfExclusion:
+    """One materialized shelf named as excluded from a corpus-wide search."""
+
+    host: str
+    owner: str
+    repo: str
+    commit_sha: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        for name in ("host", "owner", "repo", "commit_sha"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be non-empty text")
+        if not isinstance(self.reason, str) or self.reason not in _SHELF_EXCLUSION_REASONS:
+            raise ValueError(f"unknown shelf exclusion reason: {self.reason!r}")
+
+    @property
+    def identity(self) -> tuple[str, str, str, str]:
+        return (self.host, self.owner, self.repo, self.commit_sha)
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "host": self.host,
+            "owner": self.owner,
+            "repo": self.repo,
+            "commit_sha": self.commit_sha,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusSearchReport:
+    """Deterministic aggregation of a scoped-exhaustive fan-out across a corpus.
+
+    ``coverage`` aggregates the file-level accounting of every *searched*
+    shelf, exactly as ``ScopedSearcher``/``IndexedSearcher`` already report it
+    per repository. ``corpus_status`` is the honest, shelf-level completeness
+    claim: it can equal ``CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE`` only
+    when ``shelves_excluded`` is empty and ``coverage.status`` is itself
+    complete. Any named exclusion, or any per-shelf partial result, forces
+    ``PARTIAL`` -- a corpus-wide search never claims silent completeness.
+
+    ``shelves_declared_total`` makes the report self-describing without
+    forcing a ``--json`` consumer to compute set arithmetic over two
+    differently-typed collections: it is always exactly
+    ``len(shelves_searched) + len(shelves_excluded)``, the size of the
+    declared universe this report was computed over (issue #266 P1, Probe
+    4). ``0`` means nothing was ever materialized -- a genuinely empty
+    corpus. Any positive value, together with an empty ``matches`` list,
+    means real declared shelves were searched and/or excluded and the
+    symbol is honestly absent from (or dropped from) that universe; it must
+    never be read as "this symbol exists nowhere in my dependencies" when
+    ``shelves_excluded`` is non-empty.
+    """
+
+    spec_digest: str
+    coverage: Coverage
+    matches: tuple[SourceMatch, ...]
+    resolution: Resolution
+    shelves_searched: tuple[tuple[str, str, str, str], ...]
+    shelves_excluded: tuple[ShelfExclusion, ...]
+    shelves_declared_total: int
+    corpus_status: CoverageStatus
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.spec_digest, str) or not _SHA256.fullmatch(self.spec_digest):
+            raise ValueError("spec_digest must be a 64-char sha256 hex string")
+        if not isinstance(self.coverage, Coverage):
+            raise TypeError("coverage must be a Coverage")
+        if not isinstance(self.matches, tuple) or any(
+            not isinstance(item, SourceMatch) for item in self.matches
+        ):
+            raise TypeError("matches must be a tuple of SourceMatch")
+        if not isinstance(self.resolution, Resolution):
+            raise TypeError("resolution must be a Resolution")
+        if not isinstance(self.shelves_searched, tuple) or any(
+            not isinstance(item, tuple) or len(item) != 4 or any(not isinstance(part, str) for part in item)
+            for item in self.shelves_searched
+        ):
+            raise TypeError("shelves_searched must be a tuple of (host, owner, repo, commit_sha)")
+        if list(self.shelves_searched) != sorted(set(self.shelves_searched)):
+            raise ValueError("shelves_searched must be sorted and deduplicated")
+        if not isinstance(self.shelves_excluded, tuple) or any(
+            not isinstance(item, ShelfExclusion) for item in self.shelves_excluded
+        ):
+            raise TypeError("shelves_excluded must be a tuple of ShelfExclusion")
+        excluded_keys = [item.identity for item in self.shelves_excluded]
+        if excluded_keys != sorted(excluded_keys):
+            raise ValueError("shelves_excluded must be sorted by shelf identity")
+        if len(set(excluded_keys)) != len(excluded_keys):
+            raise ValueError("shelves_excluded must not name the same shelf twice")
+        if set(excluded_keys) & set(self.shelves_searched):
+            raise ValueError("a shelf cannot be both searched and excluded")
+        if (
+            not isinstance(self.shelves_declared_total, int)
+            or isinstance(self.shelves_declared_total, bool)
+            or self.shelves_declared_total < 0
+        ):
+            raise TypeError("shelves_declared_total must be a non-negative int")
+        if self.shelves_declared_total != len(self.shelves_searched) + len(self.shelves_excluded):
+            raise ValueError(
+                "shelves_declared_total must equal len(shelves_searched) + len(shelves_excluded)"
+            )
+        if not isinstance(self.corpus_status, CoverageStatus):
+            raise TypeError("corpus_status must be a CoverageStatus")
+        if self.corpus_status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE and (
+            self.shelves_excluded or self.coverage.status is not CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+        ):
+            raise ValueError(
+                "corpus_status cannot claim complete coverage with named exclusions "
+                "or incomplete per-shelf coverage"
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "spec_digest": self.spec_digest,
+            "corpus_status": self.corpus_status.value,
+            "coverage": self.coverage.to_dict(),
+            "matches": [m.to_dict() for m in self.matches],
+            "resolution": self.resolution.to_dict(),
+            "shelves_searched": [
+                {"host": host, "owner": owner, "repo": repo, "commit_sha": commit_sha}
+                for host, owner, repo, commit_sha in self.shelves_searched
+            ],
+            "shelves_excluded": [item.to_dict() for item in self.shelves_excluded],
+            "shelves_declared_total": self.shelves_declared_total,
+        }
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, sort_keys=False)

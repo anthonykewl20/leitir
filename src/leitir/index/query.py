@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections.abc import Iterable
 from pathlib import Path
 from re import _constants as sre_constants  # type: ignore[attr-defined]
@@ -19,17 +20,21 @@ from leitir.matching import document_excluded_ex
 from leitir.materialize import VerificationError, _utc_now
 from leitir.ranking import order_source_matches
 from leitir.search import (
+    CorpusSearchReport,
     Coverage,
     CoverageStatus,
     Predicate,
     PredicateKind,
+    RepoScope,
     Resolution,
     ResolutionStrategy,
     SearchMode,
     SearchReport,
     SearchSpec,
     SearchSpecError,
+    ShelfExclusion,
     SourceMatch,
+    corpus_spec_digest,
 )
 
 
@@ -288,4 +293,189 @@ class IndexedSearcher:
         )
 
 
-__all__ = ["IndexedSearcher", "candidate_ids", "predicate_literal_runs"]
+def _corpus_eligibility(root: Path) -> tuple[tuple[ShelfRef, ...], list[ShelfExclusion]]:
+    """Deterministically split the corpus into search-eligible and excluded shelves.
+
+    Reuses ``shelves_from_corpus`` and ``ineligible_shelf_conditions`` -- the
+    same eligibility contract already enforced by ``leitir index`` -- so a
+    corpus-wide search never invents a parallel notion of "eligible". A shelf
+    on an unsupported host (``ScopedSearcher``'s local-shelf fast path only
+    ever reads ``github.com`` shelves), a registry-derived shelf with no
+    immutable git commit, a drift-parity shelf, a partially-scoped shelf, or
+    a shelf that outright fails load-time verification (tamper) is excluded
+    and named here -- never silently scanned or silently dropped.
+
+    ``shelves_from_corpus`` is called with ``strict=True``: if the catalog
+    itself is corrupt or unreadable, the declared universe cannot be
+    established at all, so this raises ``VerificationError`` rather than
+    silently treating a corruption as an empty corpus (issue #266 P1). That
+    is a materially different situation from a genuinely empty catalog
+    (``FileNotFoundError``, which ``load_sources`` always reports as an
+    honest empty list regardless of ``strict``): the former means real
+    materialized shelves on disk may be getting silently skipped, while the
+    latter means nothing was ever materialized.
+    """
+    from leitir.index.builder import ineligible_shelf_conditions, shelves_from_corpus
+
+    shelves = shelves_from_corpus(root, strict=True)
+    eligible: list[ShelfRef] = []
+    excluded: list[ShelfExclusion] = []
+    for shelf in shelves:
+        if shelf.host != "github.com":
+            excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "unsupported_host"))
+            continue
+        try:
+            conditions = ineligible_shelf_conditions(root, shelf)
+        except Exception:
+            excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "verification_failed"))
+            continue
+        if "source" in conditions:
+            excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "registry_provenance"))
+            continue
+        if "parity" in conditions:
+            excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "drift_parity"))
+            continue
+        if "scope" in conditions:
+            excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "partial_tree_scope"))
+            continue
+        eligible.append(shelf)
+    return tuple(sorted(eligible)), excluded
+
+
+class CorpusSearcher:
+    """Fan a scoped-exhaustive query out across every eligible materialized shelf.
+
+    This is a fan-out plus aggregation layer only (issue #266): matching and
+    ranking are entirely delegated, one shelf at a time, to the same
+    ``ScopedSearcher`` (or ``IndexedSearcher``, with ``use_index=True``) that
+    already backs single-scope ``leitir search``. Nothing here re-implements
+    predicate matching, blob reading, or ranking.
+
+    Coverage honesty (the critical contract): ``corpus_status`` is
+    ``CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE`` only when every shelf in
+    the corpus was both eligible and successfully searched to complete,
+    file-level coverage. Any excluded shelf -- unindexed under
+    ``require_index``, drift-parity, registry-derived, an unsupported host, or
+    failing load-time (tamper) verification -- is reported by name in
+    ``shelves_excluded`` and forces ``PARTIAL``. An empty corpus is reported
+    honestly too: zero shelves searched, zero excluded, no matches -- never an
+    error and never a false "complete" claim about dependencies that were
+    never materialized in the first place.
+    """
+
+    def __init__(
+        self,
+        corpus_root: str | os.PathLike[str],
+        scoped: ScopedSearcher,
+        indexed: IndexedSearcher | None = None,
+        *,
+        use_index: bool = False,
+        require_index: bool = False,
+    ) -> None:
+        if use_index and indexed is None:
+            raise ValueError("use_index requires an IndexedSearcher")
+        self._root = Path(corpus_root).expanduser().absolute()
+        self._scoped = scoped
+        self._indexed = indexed
+        self._use_index = use_index
+        self._require_index = require_index
+
+    def search(
+        self,
+        must: tuple[Predicate, ...],
+        should: tuple[Predicate, ...] = (),
+        must_not: tuple[Predicate, ...] = (),
+        whole_file_must: bool = False,
+    ) -> CorpusSearchReport:
+        digest = corpus_spec_digest(must, should, must_not, whole_file_must)
+        eligible, excluded = _corpus_eligibility(self._root)
+
+        all_matches: list[SourceMatch] = []
+        total_eligible = total_indexed = total_excluded = 0
+        exclusions: dict[str, int] = {}
+        incomplete = False
+        searched: list[tuple[str, str, str, str]] = []
+
+        for shelf in eligible:
+            scope = RepoScope(slug=shelf.slug, commit_sha=shelf.commit)
+            spec = SearchSpec(
+                mode=SearchMode.SCOPED_EXHAUSTIVE,
+                must=must,
+                should=should,
+                must_not=must_not,
+                scopes=(scope,),
+                whole_file_must=whole_file_must,
+            )
+            try:
+                if self._use_index:
+                    assert self._indexed is not None
+                    report = self._indexed.search(spec)
+                else:
+                    report = self._scoped.search(spec)
+            except VerificationError:
+                # Under --require-index this is exactly a shelf with no
+                # verified local index: IndexedSearcher(require_index=True)
+                # fails closed per scope rather than silently falling back to
+                # a full scan. Any other verification failure (including a
+                # tampered shelf discovered only while reading, past the
+                # cheap eligibility pre-check above) lands here too -- either
+                # way the shelf is excluded and named, not dropped silently.
+                reason = "unindexed" if self._use_index and self._require_index else "verification_failed"
+                excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, reason))
+                continue
+            except (OSError, ValueError):
+                excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "verification_failed"))
+                continue
+
+            total_eligible += report.coverage.files_eligible
+            total_indexed += report.coverage.files_indexed
+            total_excluded += report.coverage.files_excluded
+            for reason_key, count in report.coverage.exclusions.items():
+                exclusions[reason_key] = exclusions.get(reason_key, 0) + count
+            if report.coverage.incomplete_results or report.coverage.status is not CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE:
+                incomplete = True
+            all_matches.extend(report.matches)
+            searched.append((shelf.host, shelf.owner, shelf.repo, shelf.commit))
+
+        excluded_sorted = tuple(sorted(excluded, key=lambda item: item.identity))
+        searched_sorted = tuple(sorted(set(searched)))
+        merged = dedupe_source_matches(all_matches)
+        file_status = (
+            CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+            if (total_indexed == total_eligible and not incomplete)
+            else CoverageStatus.PARTIAL
+        )
+        coverage = Coverage(
+            status=file_status,
+            files_eligible=total_eligible,
+            files_indexed=total_indexed,
+            files_excluded=total_excluded,
+            incomplete_results=incomplete,
+            exclusions=exclusions,
+        )
+        corpus_status = (
+            CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE
+            if (not excluded_sorted and file_status is CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE)
+            else CoverageStatus.PARTIAL
+        )
+        return CorpusSearchReport(
+            spec_digest=digest,
+            coverage=coverage,
+            matches=order_source_matches(merged),
+            resolution=Resolution(
+                strategy=ResolutionStrategy.INDEXED_COMMIT if self._use_index else ResolutionStrategy.DECLARED_SCOPE,
+                as_of=_utc_now(),
+            ),
+            shelves_searched=searched_sorted,
+            shelves_excluded=excluded_sorted,
+            shelves_declared_total=len(searched_sorted) + len(excluded_sorted),
+            corpus_status=corpus_status,
+        )
+
+
+__all__ = [
+    "CorpusSearcher",
+    "IndexedSearcher",
+    "candidate_ids",
+    "predicate_literal_runs",
+]

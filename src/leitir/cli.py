@@ -29,7 +29,9 @@ from typing import TYPE_CHECKING, Any, Protocol, TextIO, TypedDict, cast
 
 from .credentials import github_token_from_env
 from .logging import redact
+from .materialize import VerificationError
 from .search import (
+    CorpusSearchReport,
     Predicate,
     PredicateKind,
     RepoScope,
@@ -37,6 +39,7 @@ from .search import (
     SearchReport,
     SearchSpec,
     SearchSpecError,
+    canonical_predicates,
 )
 from .spec import CorpusSpec, SpecParseError, parse_corpus_spec
 
@@ -503,6 +506,14 @@ def build_parser() -> argparse.ArgumentParser:
     info = commands.add_parser("info", help="materialize and describe one dependency")
     info.add_argument("spec")
     info.add_argument("--json", action="store_true", dest="as_json")
+    info.add_argument(
+        "--brief",
+        action="store_true",
+        help=(
+            "smaller payload: provenance, top signatures, one example, bare "
+            "trust score, and a ready-to-paste citation line"
+        ),
+    )
     info_roots = info.add_mutually_exclusive_group()
     info_roots.add_argument("--root", default=None, help="corpus root directory")
     info_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
@@ -518,6 +529,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="require opt-in publisher authentication; never accepts unsigned shelves",
     )
     info.add_argument(
+        "--trusted-keys",
+        default=None,
+        help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
+    )
+    ask = commands.add_parser(
+        "ask",
+        help="one-call task answer: pin a version from the project's lockfile "
+        "and return ranked examples, verified signatures, and citations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "version resolution:\n"
+            "  --pin points at the project directory (or a lockfile inside it)\n"
+            "  whose lockfile supplies the EXACT installed version of --package.\n"
+            "  ask never falls back to the registry 'latest' version and never\n"
+            "  searches the ambient filesystem: an absent, unparseable, or\n"
+            "  non-matching lockfile is rejected outright.\n"
+            "\n"
+            "query compilation:\n"
+            "  The task description is compiled into deterministic search\n"
+            "  predicates (see leitir.ask.compile_task_predicates) -- never by a\n"
+            "  model or embeddings (ADR-001). The compiled predicates are always\n"
+            "  printed, along with a literal 'leitir search' command that\n"
+            "  reproduces them by hand. When no predicate can be compiled with\n"
+            "  reasonable confidence, ask says so and returns the package's\n"
+            "  brief info instead of guessing.\n"
+        ),
+    )
+    ask.add_argument("task", help="free-text description of what you want to do")
+    ask.add_argument("--package", required=True, help="package name")
+    ask.add_argument(
+        "--ecosystem",
+        required=True,
+        choices=("npm", "pypi", "crates", "go"),
+        help="package ecosystem",
+    )
+    ask.add_argument(
+        "--pin",
+        required=True,
+        help="project directory (or a lockfile inside it) to resolve the exact "
+        "version of --package from",
+    )
+    ask.add_argument("--json", action="store_true", dest="as_json")
+    ask_roots = ask.add_mutually_exclusive_group()
+    ask_roots.add_argument("--root", default=None, help="corpus root directory")
+    ask_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    ask.add_argument(
+        "--no-verify", action="store_true", help="skip Git tree verification"
+    )
+    ask.add_argument(
+        "--require-manifest-auth",
+        action="store_true",
+        help="require opt-in publisher authentication; never accepts unsigned shelves",
+    )
+    ask.add_argument(
         "--trusted-keys",
         default=None,
         help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
@@ -542,6 +607,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="out-of-band trusted-keys.json path (default: ~/.leitir/trusted-keys.json)",
     )
+    check = commands.add_parser(
+        "check",
+        help="validate written Python code against a materialized source's API surface",
+    )
+    check.add_argument("path", help="Python source file or directory to check")
+    check.add_argument(
+        "--against",
+        required=True,
+        help="corpus spec of the pinned source to check against, e.g. pypi:flask@3.0.3",
+    )
+    check.add_argument("--json", action="store_true", dest="as_json")
+    check.add_argument(
+        "--cwd", default=None, help="project directory used for lockfile resolution"
+    )
+    check_roots = check.add_mutually_exclusive_group()
+    check_roots.add_argument("--root", default=None, help="corpus root directory")
+    check_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    check.add_argument(
+        "--no-verify", action="store_true", help="skip Git tree verification"
+    )
+
     export = commands.add_parser("export", help="export an immutable corpus snapshot")
     export.add_argument(
         "-o",
@@ -678,12 +764,38 @@ def build_parser() -> argparse.ArgumentParser:
     bts_run.add_argument("--contract-spec", required=True, help="contract-tests JSON")
     bts_run.add_argument("--out", required=True, help="empty artifact output directory")
     bts_run.add_argument("--recipient-package", required=True)
-    bts_run.add_argument("--nsjail-sha256", required=True)
-    bts_run.add_argument("--nsjail-version", required=True)
-    bts_run.add_argument("--nsjail-build-identity", required=True)
-    bts_run.add_argument("--config-schema-digest", required=True)
-    bts_run.add_argument("--rootfs-source", required=True)
-    bts_run.add_argument("--rootfs-digest", required=True)
+    bts_run.add_argument(
+        "--nsjail-sha256", default=None,
+        help="measured sha256:<hex> of /usr/bin/nsjail (default: resolved from --containment-environment)",
+    )
+    bts_run.add_argument(
+        "--nsjail-version", default=None,
+        help="nsjail@<commit> build identity (default: resolved from --containment-environment)",
+    )
+    bts_run.add_argument(
+        "--nsjail-build-identity", default=None,
+        help="derived nsjail release/build identity digest (default: resolved from --containment-environment)",
+    )
+    bts_run.add_argument(
+        "--config-schema-digest", default=None,
+        help="pinned containment config schema digest (default: resolved from --containment-environment)",
+    )
+    bts_run.add_argument(
+        "--rootfs-source", default=None,
+        help="local containment-rootfs-v1 materialization directory (default: $LEITIR_ROOTFS_SOURCE or ~/.leitir/containment-rootfs-v1)",
+    )
+    bts_run.add_argument(
+        "--rootfs-digest", default=None,
+        help="canonical sha256:<hex> tree digest of --rootfs-source (default: resolved from --containment-environment)",
+    )
+    bts_run.add_argument(
+        "--containment-environment", default=None, metavar="ENVIRONMENT.json",
+        help=(
+            "committed, self-verified containment environment descriptor used to resolve any of the five "
+            "containment-substrate flags left unset (default: installed package directory); "
+            "an explicit flag always overrides the descriptor for that field"
+        ),
+    )
     bts_run.add_argument("--emit-packets", default=None, metavar="PACKET_INPUTS.json")
     bts_run.add_argument(
         "--require-manifest-auth",
@@ -726,22 +838,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     usage_cmd = commands.add_parser(
         "usage",
-        help="verify or replay a local usage evidence bundle (fully offline)",
+        help="assemble, verify, or replay a local usage evidence bundle (fully offline)",
     )
     usage_cmd.add_argument(
         "action",
-        choices=["verify", "replay"],
+        choices=["assemble", "verify", "replay"],
         help=(
+            "assemble: build report.json (to --out) from an assemble-plan.json by calling "
+            "assemble_usage_evidence, self-verifying the produced report before it is written; "
             "verify: parse/validate report.json; "
             "replay: also recompute digests against on-disk corpus bytes and confirm each "
             "reference's recorded span (not the whole source file) is byte-identical to what "
             "is on disk"
         ),
     )
-    usage_cmd.add_argument("report", metavar="report.json")
+    usage_cmd.add_argument("report", metavar="report.json", help="report.json for verify/replay; assemble-plan.json for assemble")
     usage_cmd.add_argument(
         "--corpus-root", default=None,
-        help="consumer source root the report's references resolve against (required for replay)",
+        help=(
+            "consumer source root the report's references resolve against (required for replay; "
+            "optional for assemble, where it backs the advisory per-file license scan)"
+        ),
     )
     usage_cmd.add_argument(
         "--requirements", default=None,
@@ -750,6 +867,10 @@ def build_parser() -> argparse.ArgumentParser:
     usage_cmd.add_argument(
         "--times", type=int, default=2,
         help="number of independent replay passes to compare for byte-identical output (replay only, default: 2)",
+    )
+    usage_cmd.add_argument(
+        "--out", default=None,
+        help="output path for the assembled report.json (required for assemble)",
     )
     usage_cmd.add_argument("--json", action="store_true", dest="as_json")
 
@@ -774,6 +895,20 @@ def build_parser() -> argparse.ArgumentParser:
             "not total: output reports pages fetched, matches returned, and "
             "an incomplete flag with the bound that fired (e.g. page cap, "
             "server-side truncation, or a result budget)"
+        ),
+    )
+    scope_group.add_argument(
+        "--corpus",
+        action="store_true",
+        default=False,
+        dest="corpus_search",
+        help=(
+            "search every eligible materialized shelf in the corpus (offline, "
+            "commit- and blob-pinned); a shelf that is unindexed (with "
+            "--require-index), drift-parity, registry-derived, on an "
+            "unsupported host, or fails load-time verification is excluded "
+            "and named in the output, and corpus_status is never reported "
+            "complete when any shelf was excluded"
         ),
     )
 
@@ -902,6 +1037,8 @@ def _configure_logging_from_env(
 def _validate_scope_args(args: argparse.Namespace) -> str | None:
     if args.global_search:
         return None
+    if getattr(args, "corpus_search", False):
+        return None
     if args.repo is not None:
         if args.commit is None:
             return "--repo requires --commit"
@@ -912,7 +1049,7 @@ def _validate_scope_args(args: argparse.Namespace) -> str | None:
         if args.ecosystem is None:
             return "--package requires --ecosystem"
         return None
-    return "one of --repo, --package, or --global is required"
+    return "one of --repo, --package, --global, or --corpus is required"
 
 
 def _build_default_tree_source(token: str | None) -> object:
@@ -2625,12 +2762,47 @@ def _run_corpus_command(
                     scope.commit_sha,
                 )
                 if args.command == "info":
-                    from .info import build_info
+                    from .info import build_brief_info, build_info
 
                     print(
                         f"leitir: ensuring analysis indexes and trust for {raw}",
                         file=err,
                     )
+                    if args.brief:
+                        brief_document = build_brief_info(raw, corpus_root=root)
+                        if args.as_json:
+                            print(
+                                json.dumps(brief_document, indent=2, sort_keys=True),
+                                file=out,
+                            )
+                        else:
+                            brief_provenance = cast(
+                                dict[str, Any], brief_document["provenance"]
+                            )
+                            brief_api = cast(dict[str, Any], brief_document["api"])
+                            brief_examples = cast(
+                                dict[str, Any], brief_document["examples"]
+                            )
+                            print(
+                                f"{raw} {brief_provenance['owner']}/{brief_provenance['repo']}"
+                                f"@{brief_provenance['commit_sha']}",
+                                file=out,
+                            )
+                            for symbol in brief_api["top_symbols"]:
+                                print(
+                                    f"  {symbol['kind']} {symbol['qualified_name']}"
+                                    f"{symbol['signature'] or ''}",
+                                    file=out,
+                                )
+                            if brief_examples["top"]:
+                                example = brief_examples["top"][0]
+                                print(
+                                    f"  example: {example['path']}:{example['line']}",
+                                    file=out,
+                                )
+                            print(f"trust: {brief_document['trust']}/100", file=out)
+                            print(brief_document["citation"], file=out)
+                        continue
                     document = build_info(raw, corpus_root=root)
                     if args.as_json:
                         print(json.dumps(document, indent=2, sort_keys=True), file=out)
@@ -2866,6 +3038,200 @@ def _run_corpus_command(
         return int(ExitCode.CORPUS_FAILURE)
 
 
+def _run_ask_command(
+    args: argparse.Namespace,
+    *,
+    resolver_factory: Callable[[str | None], object],
+    code_search_factory: Callable[[str | None], object],
+    tree_source_factory: Callable[[str | None], object],
+    searcher_factory: Callable[..., object],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Answer a task-shaped query for one package pinned by its lockfile.
+
+    Delegates every materialization, provenance, verified-signature,
+    ranked-example, and citation computation to ``leitir info``'s existing
+    machinery (via :func:`_run_corpus_command`, which calls
+    :func:`leitir.info.build_brief_info`) -- none of it is recomputed here
+    (issue #266 A3). This function only (1) resolves the version strictly
+    from the caller's own project lockfile, never a registry "latest"
+    lookup and never ambient filesystem discovery, and (2) compiles the
+    free-text task into deterministic search predicates
+    (:func:`leitir.ask.compile_task_predicates`) and runs them against the
+    exact shelf ``info`` just materialized.
+    """
+    import io
+
+    from .ask import compile_task_predicates, rerun_search_command
+    from .lockfiles import detect_installed_version_with_source
+
+    pin_input = Path(args.pin).expanduser().absolute()
+    pin_dir = pin_input.parent if pin_input.is_file() else pin_input
+    if not pin_dir.is_dir():
+        print(
+            f"leitir: error: --pin directory not found: {redact(str(pin_dir))}",
+            file=err,
+        )
+        return int(ExitCode.MALFORMED_USAGE)
+
+    detected = detect_installed_version_with_source(args.ecosystem, args.package, pin_dir)
+    if detected is None:
+        print(
+            "leitir: error: could not resolve an exact version of "
+            f"{args.package!r} ({args.ecosystem}) from a lockfile under "
+            f"{redact(str(pin_dir))}; ask requires the project's own lockfile "
+            "to pin the version and never falls back to the registry "
+            "'latest' version or to ambient filesystem discovery",
+            file=err,
+        )
+        return int(ExitCode.CORPUS_FAILURE)
+
+    prefix = {"npm": "npm", "pypi": "pypi", "crates": "crates", "go": "go"}[
+        args.ecosystem
+    ]
+    spec_str = f"{prefix}:{args.package}@{detected.version}"
+
+    info_args = argparse.Namespace(
+        command="info",
+        spec=spec_str,
+        as_json=True,
+        brief=True,
+        root=args.root,
+        local=args.local,
+        cwd=None,
+        no_verify=args.no_verify,
+        require_manifest_auth=args.require_manifest_auth,
+        trusted_keys=args.trusted_keys,
+    )
+    info_out = io.StringIO()
+    info_result = _run_corpus_command(
+        info_args,
+        resolver_factory=resolver_factory,
+        code_search_factory=code_search_factory,
+        out=info_out,
+        err=err,
+    )
+    if info_result != int(ExitCode.SUCCESS):
+        return info_result
+
+    brief_document = json.loads(info_out.getvalue())
+    provenance = cast(dict[str, Any], brief_document["provenance"])
+
+    predicates = compile_task_predicates(args.task)
+    compiled = bool(predicates)
+
+    matches_payload: list[dict[str, Any]] | None = None
+    coverage_payload: dict[str, Any] | None = None
+    search_error: str | None = None
+    if compiled:
+        owner = provenance.get("owner")
+        repo = provenance.get("repo")
+        commit_sha = provenance.get("commit_sha")
+        try:
+            scope = RepoScope(
+                slug=f"{owner}/{repo}", commit_sha=cast(str, commit_sha)
+            )
+            spec = SearchSpec(
+                mode=SearchMode.SCOPED_EXHAUSTIVE,
+                must=predicates,
+                scopes=(scope,),
+            )
+            token = _github_token()
+            tree_source = tree_source_factory(token)
+            corpus_root = _corpus_root(args, err)
+            searcher = cast(
+                _Searcher, searcher_factory(tree_source, corpus_root=corpus_root)
+            )
+            report = searcher.search(spec)
+        except (SearchSpecError, ValueError, VerificationError) as exc:
+            search_error = redact(str(exc))
+        else:
+            matches_payload = [match.to_dict() for match in report.matches]
+            coverage_payload = report.coverage.to_dict()
+
+    rerun_command = (
+        rerun_search_command(
+            package=args.package,
+            version=detected.version,
+            ecosystem=args.ecosystem,
+            predicates=predicates,
+        )
+        if compiled
+        else None
+    )
+    query_compilation: dict[str, Any] = {
+        "compiled": compiled,
+        "reason": (
+            None
+            if compiled
+            else "no quoted literal, call, or identifier-shaped token found in "
+            "the task description"
+        ),
+        "predicates": canonical_predicates(predicates),
+        "rerun_command": rerun_command,
+    }
+    if search_error is not None:
+        query_compilation["search_error"] = search_error
+
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "task": args.task,
+        "package": {
+            "ecosystem": args.ecosystem,
+            "name": args.package,
+            "version": detected.version,
+            "version_source": "lockfile",
+            "lockfile": detected.source,
+            "spec": spec_str,
+        },
+        "provenance": provenance,
+        "citation": brief_document["citation"],
+        "signatures": cast(dict[str, Any], brief_document["api"])["top_symbols"],
+        "examples": cast(dict[str, Any], brief_document["examples"])["top"],
+        "trust": brief_document["trust"],
+        "query_compilation": query_compilation,
+        "matches": matches_payload,
+        "coverage": coverage_payload,
+    }
+
+    if args.as_json:
+        print(json.dumps(document, indent=2, sort_keys=True), file=out)
+    else:
+        print(args.task, file=out)
+        print(f"package: {spec_str} (from {detected.source})", file=out)
+        print(document["citation"], file=out)
+        for symbol in document["signatures"]:
+            print(
+                f"  {symbol['kind']} {symbol['qualified_name']}"
+                f"{symbol['signature'] or ''}",
+                file=out,
+            )
+        if compiled:
+            printed = ", ".join(
+                f"{item['kind']}:{item['value']}"
+                for item in query_compilation["predicates"]
+            )
+            print(f"compiled query: {printed}", file=out)
+            print(f"rerun: {rerun_command}", file=out)
+            if search_error is not None:
+                print(f"search error: {search_error}", file=out)
+            elif matches_payload:
+                print(f"matches: {len(matches_payload)}", file=out)
+                for match in matches_payload[:5]:
+                    source = cast(dict[str, Any], match["source"])
+                    print(f"  {source['permalink']}", file=out)
+            else:
+                print("matches: 0", file=out)
+        else:
+            print(f"query not compiled: {query_compilation['reason']}", file=out)
+        print(f"trust: {document['trust']}/100", file=out)
+
+    if search_error is not None:
+        return int(ExitCode.CORPUS_FAILURE)
+    return int(ExitCode.SUCCESS)
+
+
 def _resolve_scope_via_package(
     resolver: object,
     package: str,
@@ -2964,6 +3330,46 @@ def _write_summary(
             f"score={match.score:.1f} [{kinds}] "
             f"{src.slug}@{src.commit_sha[:12]} "
             f"routing={routing['verdict']}/{routing['reason']}",
+            file=file,
+        )
+    if len(report.matches) > 10:
+        print(f"  ... and {len(report.matches) - 10} more", file=file)
+
+
+def _write_corpus_summary(report: CorpusSearchReport, *, file: TextIO) -> None:
+    """Honest human-readable summary for ``leitir search --corpus``.
+
+    Always names excluded shelves (issue #266): a shelf that is unindexed
+    (under ``--require-index``), drift-parity, registry-derived, on an
+    unsupported host, or fails load-time verification is printed by identity
+    and reason, never folded silently into the numeric coverage line.
+    """
+    cov = report.coverage
+    print(
+        f"corpus_status={report.corpus_status.value} "
+        f"coverage={cov.status.value} "
+        f"shelves_declared_total={report.shelves_declared_total} "
+        f"shelves_searched={len(report.shelves_searched)} "
+        f"shelves_excluded={len(report.shelves_excluded)} "
+        f"eligible={cov.files_eligible} "
+        f"indexed={cov.files_indexed} "
+        f"excluded={cov.files_excluded} "
+        f"matches={len(report.matches)}",
+        file=file,
+    )
+    for exclusion in report.shelves_excluded:
+        print(
+            f"  excluded {exclusion.host}:{exclusion.owner}/{exclusion.repo}"
+            f"@{exclusion.commit_sha[:12]} reason={exclusion.reason}",
+            file=file,
+        )
+    for match in report.matches[:10]:
+        src = match.source
+        kinds = ",".join(k.value for k in match.matched_kinds)
+        print(
+            f"  {src.path}:{src.start_line}-{src.end_line} "
+            f"score={match.score:.1f} [{kinds}] "
+            f"{src.slug}@{src.commit_sha[:12]}",
             file=file,
         )
     if len(report.matches) > 10:
@@ -3262,7 +3668,11 @@ def _main_impl(
                 )
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
             elif args.command == "bts-run":
-                from .bts_cli import SeedSelector
+                from .bts_cli import (
+                    SeedSelector,
+                    resolve_containment_substrate,
+                    write_containment_environment_receipt,
+                )
                 from .pipeline_cli import run_pipeline
 
                 packet_inputs = None
@@ -3275,18 +3685,39 @@ def _main_impl(
                     packet_bytes = read_regular_file(packet_path, maximum_bytes=1 << 20, no_follow=False)
                     packet_inputs = _inputs_from_value(_strict_json(packet_bytes))
                 owner, repo, commit_sha = args.spec
-                pipeline_result = run_pipeline(
-                    _corpus_root(args, err), owner, repo, commit_sha,
-                    seed=SeedSelector(args.seed_module, args.seed_name),
-                    contract_tests_path=Path(args.contract_spec),
-                    out_dir=Path(args.out),
-                    recipient_package=args.recipient_package,
+                # Any of the five containment-substrate flags may be omitted;
+                # each unset field resolves independently from the committed,
+                # self-verified descriptor (ADR-0009 Amendment 1). An explicit
+                # flag always wins for that field. This is a convenience over
+                # the runtime containment verification in exec_sandbox, never
+                # a substitute for it: the resolved values flow unchanged into
+                # the same measured checks an explicit flag goes through today.
+                resolved_substrate = resolve_containment_substrate(
                     nsjail_sha256=args.nsjail_sha256,
                     nsjail_version=args.nsjail_version,
                     nsjail_build_identity=args.nsjail_build_identity,
                     config_schema_digest=args.config_schema_digest,
-                    rootfs_source=Path(args.rootfs_source),
+                    rootfs_source=args.rootfs_source,
                     rootfs_digest=args.rootfs_digest,
+                    descriptor_path=None if args.containment_environment is None else Path(args.containment_environment),
+                )
+                out_dir = Path(args.out)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                # Written before the run so the audit trail of what was
+                # resolved and from where survives even a rejected run.
+                write_containment_environment_receipt(out_dir, resolved_substrate)
+                pipeline_result = run_pipeline(
+                    _corpus_root(args, err), owner, repo, commit_sha,
+                    seed=SeedSelector(args.seed_module, args.seed_name),
+                    contract_tests_path=Path(args.contract_spec),
+                    out_dir=out_dir,
+                    recipient_package=args.recipient_package,
+                    nsjail_sha256=resolved_substrate.nsjail_sha256.value,
+                    nsjail_version=resolved_substrate.nsjail_version.value,
+                    nsjail_build_identity=resolved_substrate.nsjail_build_identity.value,
+                    config_schema_digest=resolved_substrate.config_schema_digest.value,
+                    rootfs_source=Path(resolved_substrate.rootfs_source.value),
+                    rootfs_digest=resolved_substrate.rootfs_digest.value,
                     policy_path=None if args.policy is None else Path(args.policy),
                     emit_packets=packet_inputs,
                 )
@@ -3297,6 +3728,7 @@ def _main_impl(
                     "relocation_digest": pipeline_result.verdict.relocation_digest,
                     "rerun_report_digest": pipeline_result.verdict.rerun_report_digest,
                     "probe_report_digest": pipeline_result.verdict.probe_report_digest,
+                    "containment_environment_resolution": resolved_substrate.receipt(),
                 }
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
             elif args.command == "analysis-architecture":
@@ -3344,7 +3776,13 @@ def _main_impl(
                 )
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
             elif args.command == "usage":
-                from .usage.cli_support import load_report, replay_payload, verify_payload
+                from .usage.cli_support import (
+                    assemble_payload,
+                    load_assemble_plan,
+                    load_report,
+                    replay_payload,
+                    verify_payload,
+                )
 
                 if args.action == "replay" and (args.corpus_root is None or args.requirements is None):
                     print(
@@ -3352,24 +3790,36 @@ def _main_impl(
                         file=err,
                     )
                     return int(ExitCode.MALFORMED_USAGE)
+                if args.action == "assemble" and args.out is None:
+                    print("leitir: error: usage assemble requires --out", file=err)
+                    return int(ExitCode.MALFORMED_USAGE)
                 if args.times < 1:
                     print("leitir: error: --times must be >= 1", file=err)
                     return int(ExitCode.MALFORMED_USAGE)
 
-                usage_report = load_report(Path(args.report))
-                if args.action == "verify":
-                    payload = verify_payload(usage_report)
-                else:
-                    payload = replay_payload(
-                        usage_report,
-                        corpus_root=Path(args.corpus_root),
-                        dependency_path=Path(args.requirements),
-                        times=args.times,
+                if args.action == "assemble":
+                    plan = load_assemble_plan(Path(args.report))
+                    consumer_root = None if args.corpus_root is None else Path(args.corpus_root)
+                    payload = assemble_payload(plan, consumer_root=consumer_root, out_path=Path(args.out))
+                    print(
+                        f"leitir: usage assemble ok report_digest={payload['report_digest']}",
+                        file=err,
                     )
-                print(
-                    f"leitir: usage {args.action} ok report_digest={usage_report.report_digest}",
-                    file=err,
-                )
+                else:
+                    usage_report = load_report(Path(args.report))
+                    if args.action == "verify":
+                        payload = verify_payload(usage_report)
+                    else:
+                        payload = replay_payload(
+                            usage_report,
+                            corpus_root=Path(args.corpus_root),
+                            dependency_path=Path(args.requirements),
+                            times=args.times,
+                        )
+                    print(
+                        f"leitir: usage {args.action} ok report_digest={usage_report.report_digest}",
+                        file=err,
+                    )
                 _write_cli_payload(payload, as_json=args.as_json, out=out)
             else:
                 from .pipeline_cli import occupied_validate
@@ -3383,6 +3833,142 @@ def _main_impl(
             _write_bts_error(exc, as_json=args.as_json, err=err)
             return int(ExitCode.CORPUS_FAILURE)
         return successful()
+
+    if args.command == "check":
+        from .check import (
+            CheckIndexError,
+            UnsupportedLanguageError,
+            discover_python_files,
+            guess_import_root,
+            run_check,
+        )
+        from .corpus import materialize_source
+        from .materialize import MaterializationError, _target_lock, read_valid_manifest
+
+        consumer_path = Path(args.path).expanduser().absolute()
+        try:
+            # Gate on language before any network/materialization work: a
+            # non-Python path must reject fast and offline (issue #266 B3).
+            discover_python_files(consumer_path)
+
+            root = _corpus_root(args, err)
+            token = _github_token()
+            resolver = resolver_factory(token)
+            heads = code_search_factory(token)
+            cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+            parsed = parse_corpus_spec(args.against)
+            resolved, tag, version_source, _detection = _resolve_corpus_spec(
+                parsed, resolver, heads, cwd, err, root
+            )
+            scope = cast(RepoScope, getattr(resolved, "scope", resolved))
+            materialize_host = (
+                parsed.host or "github.com"
+                if parsed.ecosystem is None
+                else getattr(resolved, "host", "github.com")
+            )
+            fetch_options: _FetchOptions = {}
+            if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
+                fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
+            if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
+                fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+            fetch_options["verify"] = not args.no_verify
+
+            def _announce_fetch() -> None:
+                print(f"leitir: materializing {args.against}", file=err)
+
+            target = materialize_source(
+                args.against,
+                resolved,
+                root=root,
+                name=parsed.name,
+                tag=tag,
+                version_source=version_source,
+                host=materialize_host,
+                repository_resolver=(
+                    getattr(resolver, "_repository_resolvers", {}).get(materialize_host)
+                    if materialize_host != "github.com"
+                    else None
+                ),
+                on_fetch=_announce_fetch,
+                **fetch_options,
+            )
+            owner, repo = scope.slug.rsplit("/", 1)
+            if materialize_host == "git.sr.ht" and not owner.startswith("~"):
+                owner = f"~{owner}"
+            with _target_lock(root, target, scope.commit_sha):
+                manifest = read_valid_manifest(
+                    target, owner, repo, scope.commit_sha, host=materialize_host
+                )
+                if manifest is None:
+                    raise VerificationError(
+                        f"materialized source failed load-time verification: {target}"
+                    )
+                recorded_subpath = manifest.get("subpath")
+                scan_path = (
+                    target / recorded_subpath
+                    if isinstance(recorded_subpath, str)
+                    else target
+                )
+                check_report = run_check(
+                    consumer_path=consumer_path,
+                    against=args.against,
+                    package_name=parsed.name,
+                    materialized_root=scan_path,
+                )
+        except (UnsupportedLanguageError, FileNotFoundError, SpecParseError) as exc:
+            print(f"leitir: error: {redact(str(exc))}", file=err)
+            return int(ExitCode.MALFORMED_USAGE)
+        except (CheckIndexError, VerificationError, MaterializationError) as exc:
+            print(f"leitir: error: {redact(str(exc))}", file=err)
+            return int(ExitCode.CORPUS_FAILURE)
+        except Exception as exc:
+            print(f"leitir: error: {redact(str(exc))}", file=err)
+            return int(ExitCode.CORPUS_FAILURE)
+
+        _write_cli_payload(check_report.to_dict(), as_json=args.as_json, out=out)
+        print(
+            f"leitir: check {args.path} against {args.against}: "
+            f"ok={check_report.sites_ok} violations={check_report.sites_violation} "
+            f"unresolved={check_report.sites_unresolved} examined={check_report.sites_examined}",
+            file=err,
+        )
+        if check_report.sites_examined == 0:
+            # P1 fix (defect 2): zero examined sites means nothing was
+            # verified -- it must never read as a clean pass. This most
+            # commonly happens when guess_import_root's normalized-name
+            # guess is simply wrong for a renamed distribution (pillow ->
+            # PIL, beautifulsoup4 -> bs4, PyYAML -> yaml, python-dateutil ->
+            # dateutil, scikit-learn -> sklearn): the resolver then finds no
+            # usage of the guessed import root anywhere in the input, so
+            # there is nothing to examine at all. Reuses ExitCode.
+            # NOTHING_INDEXED -- the same "completed cleanly, but verified
+            # nothing" tier `index` already established -- rather than
+            # inventing a new code for the same shape of outcome.
+            print(
+                f"leitir: check found no usage of {args.against} (looked for "
+                f"import root {guess_import_root(parsed.name)!r}) anywhere in "
+                f"{args.path} -- NOTHING was examined or verified; this is "
+                "exit code 4 (NOTHING_INDEXED), not a passing check",
+                file=err,
+            )
+            return int(ExitCode.NOTHING_INDEXED)
+        if not check_report.passed:
+            return int(ExitCode.CORPUS_FAILURE)
+        return successful()
+
+    if args.command == "ask":
+        result = _run_ask_command(
+            args,
+            resolver_factory=resolver_factory,
+            code_search_factory=code_search_factory,
+            tree_source_factory=tree_source_factory,
+            searcher_factory=searcher_factory,
+            out=out,
+            err=err,
+        )
+        if result == int(ExitCode.SUCCESS):
+            return successful()
+        return result
 
     if args.command in {
         "get",
@@ -3462,8 +4048,40 @@ def _main_impl(
     corpus_root: Path | None = None
 
     coverage_bounds: CoverageBounds | None = None
+    corpus_report: CorpusSearchReport | None = None
+    report: SearchReport | None = None
     try:
-        if args.global_search:
+        if args.corpus_search:
+            from .adapters.registry import build_adapters
+            from .engine import ScopedSearcher
+            from .index.query import CorpusSearcher, IndexedSearcher
+
+            corpus_root = _corpus_root(args, err)
+            tree_source = tree_source_factory(token)
+            scoped = cast(
+                ScopedSearcher,
+                searcher_factory(tree_source, ast_python=args.ast, corpus_root=corpus_root),
+            )
+            indexed: IndexedSearcher | None = None
+            if args.use_index or args.require_index:
+                adapters = build_adapters(ast_python=args.ast)
+                indexed = IndexedSearcher(
+                    corpus_root, scoped, adapters, require_index=args.require_index
+                )
+            corpus_searcher = CorpusSearcher(
+                corpus_root,
+                scoped,
+                indexed,
+                use_index=args.use_index or args.require_index,
+                require_index=args.require_index,
+            )
+            corpus_report = corpus_searcher.search(
+                must=must,
+                should=tuple(args.should),
+                must_not=tuple(args.must_not),
+                whole_file_must=args.whole_file,
+            )
+        elif args.global_search:
             spec = SearchSpec(
                 mode=SearchMode.GLOBAL_DISCOVERY,
                 must=must,
@@ -3556,9 +4174,18 @@ def _main_impl(
     except SearchSpecError as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.MALFORMED_USAGE)
+    except VerificationError as exc:
+        print(f"leitir: error: {redact(str(exc))}", file=err)
+        return int(ExitCode.CORPUS_FAILURE)
     except Exception as exc:
         print(f"leitir: error: {redact(str(exc))}", file=err)
         return int(ExitCode.INFRASTRUCTURE_FAILURE)
+
+    if corpus_report is not None:
+        print(corpus_report.to_json(), file=out)
+        _write_corpus_summary(corpus_report, file=err)
+        return successful()
+    assert report is not None
 
     corpus_routings = _corpus_routings(corpus_root) if corpus_root is not None else None
     try:

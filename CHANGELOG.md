@@ -12,7 +12,13 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ## [Unreleased]
 
+### Added
+- add a docs-truth gate for command, version, and tag claims (`ci`)
+- add the agent-facing code-supply verbs and close two coverage falsifications
+- expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
+
 ### Fixed
+- probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 
 ## [0.1.6]

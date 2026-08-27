@@ -18,6 +18,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed
+- fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 

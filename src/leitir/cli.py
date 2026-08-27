@@ -715,6 +715,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bts_compute.add_argument("--json", action="store_true", dest="as_json")
 
+    bts_port = commands.add_parser(
+        "bts-port-contract",
+        help=(
+            "translate a portable behavioral contract into a non-Python target language "
+            "and build port attribution evidence (ADR-0033); never executes agent code"
+        ),
+    )
+    bts_port.add_argument(
+        "spec", type=_parse_bts_compute_spec, metavar="owner/repo@commit"
+    )
+    bts_port_roots = bts_port.add_mutually_exclusive_group()
+    bts_port_roots.add_argument("--root", default=None, help="corpus root directory")
+    bts_port_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs")
+    bts_port.add_argument(
+        "--lock",
+        default="requirements-tree-sitter.lock",
+        help="tree-sitter requirements lock (resolved from the current directory)",
+    )
+    bts_port.add_argument(
+        "--policy",
+        default=None,
+        help="closed-schema BTS resolution policy JSON for the donor Python BTS computation",
+    )
+    bts_port.add_argument("--seed-module", required=True)
+    bts_port.add_argument("--seed-name", required=True)
+    bts_port.add_argument(
+        "--contract-spec", required=True,
+        help="portable contract suite JSON (leitir-portable-contract-v1)",
+    )
+    bts_port.add_argument(
+        "--target-language", required=True, choices=("go",),
+        help="non-Python target language the contract is translated into",
+    )
+    bts_port.add_argument(
+        "--donor-sources", required=True,
+        help="donor bundled-source manifest JSON used only for license evaluation",
+    )
+    bts_port.add_argument(
+        "--recipient-policy", required=True,
+        help="recipient license policy JSON",
+    )
+    bts_port.add_argument("--out", required=True, help="empty artifact output directory")
+    bts_port.add_argument("--json", action="store_true", dest="as_json")
+
     architecture = commands.add_parser(
         "analysis-architecture",
         help="assess a canonical graph artifact for architecture compatibility",
@@ -3608,6 +3652,7 @@ def _main_impl(
 
     if args.command in {
         "bts-compute",
+        "bts-port-contract",
         "bts-funnel",
         "bts-run",
         "analysis-architecture",
@@ -3660,6 +3705,77 @@ def _main_impl(
                     )
                 if artifacts.result.status is BTSStatus.REJECT and not args.allow_reject:
                     return int(ExitCode.CORPUS_FAILURE)
+            elif args.command == "bts-port-contract":
+                from .bts import BTSStatus
+                from .bts_cli import SeedSelector, run_bts_compute
+                from .bts_errors import BTSError, BTSRejectReason
+                from .license_policy import render_attribution as _render_port_attribution
+                from .port_contract import (
+                    TargetLanguage,
+                    build_port_attribution,
+                    load_donor_sources,
+                    load_portable_contract_suite,
+                    load_recipient_license_policy,
+                    translate_contract,
+                )
+                from .safeio import atomic_write_bytes, read_regular_file
+
+                owner, repo, commit_sha = args.spec
+                compute_artifacts = run_bts_compute(
+                    _corpus_root(args, err),
+                    owner,
+                    repo,
+                    commit_sha,
+                    lock_path=Path(args.lock).expanduser().absolute(),
+                    policy_path=None if args.policy is None else Path(args.policy).expanduser().absolute(),
+                    seed=SeedSelector(args.seed_module, args.seed_name),
+                )
+                bts_result = compute_artifacts.result
+                if bts_result.status is not BTSStatus.COMPLETE:
+                    raise BTSError(
+                        BTSRejectReason.REJECT_HARD_GATE_FAILED,
+                        "only a COMPLETE donor BTS may be ported",
+                        detail_code="bts_port_contract_donor_not_complete_v1",
+                    )
+                contract_bytes = read_regular_file(Path(args.contract_spec), maximum_bytes=1 << 20, no_follow=False)
+                suite = load_portable_contract_suite(contract_bytes)
+                target_language = TargetLanguage(args.target_language)
+                translated = translate_contract(bts_result, suite, target_language)
+                donor_sources_bytes = read_regular_file(Path(args.donor_sources), maximum_bytes=1 << 20, no_follow=False)
+                donor_sources = load_donor_sources(donor_sources_bytes)
+                recipient_policy_bytes = read_regular_file(Path(args.recipient_policy), maximum_bytes=1 << 20, no_follow=False)
+                recipient_policy = load_recipient_license_policy(recipient_policy_bytes)
+                attribution = build_port_attribution(bts_result, suite, translated, donor_sources, recipient_policy)
+
+                out_dir = Path(args.out)
+                if out_dir.exists() or out_dir.is_symlink():
+                    raise ValueError("bts-port-contract requires a nonexistent --out directory")
+                out_dir.mkdir(parents=True)
+                atomic_write_bytes(out_dir / translated.filename, translated.source_bytes)
+                atomic_write_bytes(out_dir / "obligations.json", attribution.obligations.to_bytes())
+                atomic_write_bytes(out_dir / "ATTRIBUTION.md", _render_port_attribution(attribution.obligations))
+                payload: dict[str, object] = {
+                    "schema_version": "leitir-bts-port-contract-cli-v1",
+                    "attribution_mode": attribution.attribution_mode,
+                    "bts_digest": attribution.bts_digest,
+                    "contract_digest": translated.contract_digest,
+                    "contract_filename": translated.filename,
+                    "containment_proof": "not_executed_v1",
+                    "containment_proof_detail": (
+                        "bts-port-contract translates the portable contract and builds attribution "
+                        "evidence only; it never executes agent-written target-language code. Proving an "
+                        "implementation under containment requires a target-language-capable containment "
+                        "rootfs, which ADR-0033 explicitly scopes out of this change."
+                    ),
+                    "obligations_digest": attribution.obligations.obligations_digest,
+                    "suite_digest": attribution.suite_digest,
+                    "target_language": attribution.target_language.value,
+                }
+                atomic_write_bytes(
+                    out_dir / "port-result.json",
+                    (json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8"),
+                )
+                _write_cli_payload(payload, as_json=args.as_json, out=out)
             elif args.command == "bts-funnel":
                 from .funnel_cli import run_funnel
 

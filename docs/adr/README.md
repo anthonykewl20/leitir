@@ -35,6 +35,7 @@ please use [`template.md`](template.md) as the basis.
 | [0028](0028-deterministic-usage-evidence-assembly.md) | Deterministic assembly of bounded, explainable usage evidence | Accepted | 2026-08-25 |
 | [0029](0029-offline-usage-cli-verification-and-replay.md) | Offline usage CLI verification, replay, and opt-in pinned public-source E2E | Accepted | 2026-08-25 |
 | [0030](0030-check-command-conservative-symbol-existence-gate.md) | `leitir check`: a conservative, three-way symbol-existence gate for written code | Accepted | 2026-08-26 |
+| [0033](0033-evidence-assisted-cross-language-port.md) | Evidence-assisted cross-language port | Accepted | 2026-08-27 |
 
 ## Status vocabulary
 

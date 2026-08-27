@@ -14,6 +14,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Added
 - add a docs-truth gate for command, version, and tag claims (`ci`)
+- add evidence-assisted cross-language port (ADR-0033) (`bts`)
 - add the agent-facing code-supply verbs and close two coverage falsifications
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 

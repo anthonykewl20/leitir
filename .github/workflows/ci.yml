@@ -16,11 +16,14 @@ concurrency:
 
 jobs:
   test:
-    # Measured on run 32992045211 (3720 tests collected): ubuntu legs up to
-    # 14:51, macos-latest 14:57, windows-latest breached the old 15 min
-    # ceiling (cancelled at 15:00). 15 min no longer has real margin as the
-    # suite has grown; bumped to 25 min (issue #266).
-    timeout-minutes: 25
+    # Measured green wall-times on run 32992045211 (3720 tests collected):
+    # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
+    # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
+    # variance without masking a genuine hang for 10+ extra minutes the way
+    # 25 did. windows-latest has never completed on this branch (issue
+    # #266) and is not part of this measurement; its hang is a separate,
+    # fixed defect, not a timeout problem.
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

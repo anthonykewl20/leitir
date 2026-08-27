@@ -554,28 +554,58 @@ def test_impact_output_is_hash_seed_independent(tmp_path, _unused):
                 LEITIR_CODELOAD_BASE_URL=server.base_url,
                 LEITIR_HOME=str(root),
             )
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    "import sys; from leitir.cli import main; sys.exit(main())",
-                    "diff",
-                    "pypi:demo@1.2",
-                    "pypi:demo@1.3",
-                    "--impact",
-                    str(app),
-                    "--root",
-                    str(root),
-                    "--json",
-                ],
-                cwd=repo_root,
-                env=environment,
-                capture_output=True,
-                timeout=30,
-                check=False,
-            )
-            assert completed.returncode == ExitCode.SUCCESS, completed.stderr
-            payload = json.loads(completed.stdout)
+            # Redirect to real files instead of capture_output=True: on
+            # Windows, communicate()'s pipe-reader threads can still be
+            # blocked on a read when a handle to the child's stdout/stderr
+            # pipe survives a TerminateProcess kill, so a bare
+            # ``timeout=`` on a piped subprocess.run can hang well past its
+            # nominal deadline. Writing straight to files sidesteps that
+            # reader thread entirely, and the explicit kill/wait fallback
+            # below turns any residual hang into a loud, bounded failure.
+            stdout_path = tmp_path / f"stdout-{seed}.txt"
+            stderr_path = tmp_path / f"stderr-{seed}.txt"
+            with stdout_path.open("wb") as out_f, stderr_path.open("wb") as err_f:
+                proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sys; from leitir.cli import main; sys.exit(main())",
+                        "diff",
+                        "pypi:demo@1.2",
+                        "pypi:demo@1.3",
+                        "--impact",
+                        str(app),
+                        "--root",
+                        str(root),
+                        "--json",
+                    ],
+                    cwd=repo_root,
+                    env=environment,
+                    stdout=out_f,
+                    stderr=err_f,
+                )
+                try:
+                    returncode = proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError(
+                            f"seed {seed} subprocess did not exit within 5s "
+                            "of being killed after a 30s timeout -- genuine "
+                            "hang, not just slowness"
+                        ) from None
+                    raise AssertionError(
+                        f"seed {seed} subprocess exceeded the 30s timeout "
+                        "and was killed"
+                    ) from None
+
+            stdout_bytes = stdout_path.read_bytes()
+            stderr_bytes = stderr_path.read_bytes()
+
+            assert returncode == ExitCode.SUCCESS, stderr_bytes
+            payload = json.loads(stdout_bytes)
             assert payload["impact"]["counts"] == {
                 "removed_total": 1,
                 "sites_examined": 2,
@@ -583,7 +613,7 @@ def test_impact_output_is_hash_seed_independent(tmp_path, _unused):
                 "sites_unresolved": 0,
                 "sites_other": 1,
             }
-            outputs[seed] = completed.stdout
+            outputs[seed] = stdout_bytes
 
     baseline = outputs["0"]
     for seed, stdout in outputs.items():

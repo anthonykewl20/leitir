@@ -21,6 +21,8 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- retire the tree-layout import-root tier as an authority (`check`)
+- stop tier-4 import-root heuristic from guessing multi-root (`check`)
 
 ## [0.1.6]
 

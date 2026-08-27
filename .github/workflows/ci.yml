@@ -62,14 +62,7 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Run offline test suite
         shell: bash
-        env:
-          # TEMPORARY diagnostic for issue #266: --faulthandler-timeout dumps
-          # every thread's stack if a single test exceeds 300s, and -v prints
-          # the last-started test name, to catch the windows-latest hang
-          # in-progress instead of a silent gap to the job's own ceiling.
-          # Revert this env override once the hang is identified/fixed.
-          DIAG_ARGS: ${{ matrix.os == 'windows-latest' && '-v --faulthandler-timeout=300' || '-q' }}
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS --tb=short
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

@@ -53,7 +53,7 @@ SUPPORTED_EVIDENCE_SOURCES = frozenset(
         # Added by issue #269 (see leitir.usage.import_evidence): local
         # evidence kinds derived directly from a materialized *source*
         # tree (as opposed to an installed wheel's dist-info), in
-        # decreasing confidence order. Documented in ADR-0031.
+        # decreasing confidence order. Documented in ADR-0032.
         "setup-cfg-static",
         "pyproject-static",
         "materialized-tree-layout",

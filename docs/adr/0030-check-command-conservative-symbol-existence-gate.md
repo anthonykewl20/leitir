@@ -185,7 +185,7 @@ no site in `ok_sites` may carry a placeholder symbol (`"<module>"` /
 
 ### Why `guess_import_root` was a documented, accepted limitation
 
-**Superseded (2026-08-27, issue #269, [ADR-0031](0031-import-root-evidence-derivation.md)):**
+**Superseded (2026-08-27, issue #269, [ADR-0032](0032-import-root-evidence-derivation.md)):**
 `check.py` no longer decides which import root to look for by normalizing
 the distribution's registry name. It now derives the import root(s) from
 the materialized distribution's own evidence -- a real `top_level.txt`,
@@ -291,7 +291,7 @@ to trust.
   repository.
 - Distribution-to-import-root mapping beyond what
   `leitir.usage.import_evidence` can derive from the materialized tree's
-  own evidence (ADR-0031) -- no out-of-band ADR-0026 *admission* evidence
+  own evidence (ADR-0032) -- no out-of-band ADR-0026 *admission* evidence
   (a pinned consumer repository, an exact-pin `requirements.txt`) is
   invoked or required; only the already-materialized target's own tree is
   consulted.

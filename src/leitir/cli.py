@@ -3941,7 +3941,7 @@ def _main_impl(
             if check_report.import_roots_determinable:
                 # Issue #269: the import root(s) *were* determined from the
                 # materialized distribution's own evidence (see
-                # leitir.usage.import_evidence, ADR-0031); the consumer code
+                # leitir.usage.import_evidence, ADR-0032); the consumer code
                 # simply never used any of them.
                 roots_desc = ", ".join(repr(root) for root in check_report.import_roots) or "<none>"
                 print(

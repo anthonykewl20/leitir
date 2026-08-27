@@ -66,7 +66,7 @@ without a separate indicator a run that checked nothing looks identical to
 a run that checked everything and found it clean. This still happens
 whenever the pinned distribution's import root(s) cannot be determined at
 all from its own evidence (see :mod:`leitir.usage.import_evidence`,
-issue #269, ADR-0031) -- an undeterminable root must fail safe the same
+issue #269, ADR-0032) -- an undeterminable root must fail safe the same
 way a wrong guess used to.
 """
 
@@ -456,7 +456,7 @@ def guess_import_root(package_name: str) -> str:
     issue #269, ``run_check`` derives the actual import root(s) from the
     materialized distribution's own evidence via
     :func:`leitir.usage.import_evidence.resolve_import_roots` (see
-    ADR-0031), which extends ADR-0026's import-catalog machinery instead of
+    ADR-0032), which extends ADR-0026's import-catalog machinery instead of
     guessing from the name. This function is kept only as a display/
     diagnostic helper (e.g. the CLI's "nothing examined" message can still
     show what a name-based guess *would* have been) and is no longer

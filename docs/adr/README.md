@@ -35,7 +35,10 @@ please use [`template.md`](template.md) as the basis.
 | [0028](0028-deterministic-usage-evidence-assembly.md) | Deterministic assembly of bounded, explainable usage evidence | Accepted | 2026-08-25 |
 | [0029](0029-offline-usage-cli-verification-and-replay.md) | Offline usage CLI verification, replay, and opt-in pinned public-source E2E | Accepted | 2026-08-25 |
 | [0030](0030-check-command-conservative-symbol-existence-gate.md) | `leitir check`: a conservative, three-way symbol-existence gate for written code | Accepted | 2026-08-26 |
+| [0031](0031-two-lane-cli-advisory-and-admission.md) | Two CLI lanes: advisory exploration vs. admission gating | Accepted | 2026-08-27 |
 | [0032](0032-import-root-evidence-derivation.md) | Deriving distribution import roots from materialized evidence, not from the name | Accepted | 2026-08-27 |
+| [0034](0034-corpus-catalog-corruption-fail-closed-audit.md) | Fail-closed catalog reads: a per-caller audit of `load_sources`'s corruption recovery | Accepted | 2026-08-27 |
+| [0035](0035-warm-process-invalidation-contract.md) | Warm process mode — the invalidation contract for verified state held in memory | Proposed | 2026-08-27 |
 
 ## Status vocabulary
 

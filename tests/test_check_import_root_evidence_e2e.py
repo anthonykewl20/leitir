@@ -101,11 +101,16 @@ _PIL_IMAGE_MODULE = (
 )
 
 
-def test_pillow_import_root_is_derived_from_src_layout_not_guessed_from_name(tmp_path, monkeypatch):
+def test_pillow_import_root_is_derived_from_top_level_txt_not_guessed_from_name(tmp_path, monkeypatch):
     # guess_import_root("pillow") == "pillow", which never matches "PIL" --
-    # confirmed live in issue #269/#266. The materialized source's own
-    # src-layout tree (src/PIL/*.py, no packaging metadata) must recover
-    # "PIL" as the real import root so real usage is actually examined.
+    # confirmed live in issue #269/#266. Tier 4 (a purely structural scan
+    # of the src-layout tree) was retired as an authority (second
+    # adversarial review round, reviewer-hy3): it could still bind a
+    # *wrong* single root and produce a false violation against correct
+    # code. A real top_level.txt (tier 1, authoritative) is required to
+    # recover "PIL" now; see test_pillow_src_layout_alone_is_undeterminable
+    # below for confirmation that the src-layout shape alone no longer
+    # resolves anything.
     code, out, err = _run_check(
         tmp_path,
         monkeypatch,
@@ -117,6 +122,7 @@ def test_pillow_import_root_is_derived_from_src_layout_not_guessed_from_name(tmp
             "src/PIL/__init__.py": b"",
             "src/PIL/Image.py": _PIL_IMAGE_MODULE,
             "Tests/test_image.py": b"",
+            "Pillow-1.0.dist-info/top_level.txt": b"PIL\n",
         },
     )
     assert code == ExitCode.SUCCESS, err
@@ -138,12 +144,39 @@ def test_pillow_wrong_symbol_is_a_real_violation_now_that_root_is_derived(tmp_pa
         package_files={
             "src/PIL/__init__.py": b"",
             "src/PIL/Image.py": _PIL_IMAGE_MODULE,
+            "Pillow-1.0.dist-info/top_level.txt": b"PIL\n",
         },
     )
     assert code == ExitCode.CORPUS_FAILURE, err
     payload = json.loads(out)
     assert payload["counts"]["sites_violation"] == 1
     assert payload["violations"][0]["symbol"] == "TotallyMadeUp"
+
+
+def test_pillow_src_layout_alone_is_undeterminable(tmp_path, monkeypatch):
+    # Tier 4 retirement, direct e2e confirmation: the exact same src/PIL
+    # layout as above, but with NO top_level.txt/setup.cfg/pyproject.toml
+    # anywhere -- the shape tier 4 used to recover before its retirement.
+    # This must now fail safe rather than guess "PIL" from the layout.
+    code, out, err = _run_check(
+        tmp_path,
+        monkeypatch,
+        distribution="pillow",
+        owner="python-pillow",
+        repo="Pillow",
+        consumer_source="from PIL import Image\n\nImage.open('x.png')\n",
+        package_files={
+            "src/PIL/__init__.py": b"",
+            "src/PIL/Image.py": _PIL_IMAGE_MODULE,
+            "Tests/test_image.py": b"",
+        },
+    )
+    assert code == ExitCode.NOTHING_INDEXED, err
+    payload = json.loads(out)
+    assert payload["status"] == "nothing_examined"
+    assert payload["import_roots_determinable"] is False
+    assert payload["import_roots"] == []
+    assert payload["counts"]["sites_violation"] == 0
 
 
 _YAML_SOURCE = (
@@ -157,6 +190,33 @@ _YAML_SOURCE = (
 
 def test_pyyaml_import_root_is_derived_as_yaml_not_pyyaml(tmp_path, monkeypatch):
     # guess_import_root("pyyaml") == "pyyaml", which never matches "yaml".
+    # A real top_level.txt (tier 1, authoritative) is required to resolve
+    # this now that tier 4 (structural layout scan) is retired -- see
+    # test_pyyaml_root_layout_alone_is_undeterminable below.
+    code, out, err = _run_check(
+        tmp_path,
+        monkeypatch,
+        distribution="pyyaml",
+        owner="yaml",
+        repo="pyyaml",
+        consumer_source="import yaml\n\nyaml.safe_load('a: 1')\n",
+        package_files={
+            "yaml/__init__.py": _YAML_SOURCE,
+            "tests/test_yaml.py": b"",
+            "PyYAML-1.0.dist-info/top_level.txt": b"yaml\n",
+        },
+    )
+    assert code == ExitCode.SUCCESS, err
+    payload = json.loads(out)
+    assert payload["import_roots"] == ["yaml"]
+    assert payload["counts"]["sites_ok"] == 1
+    assert payload["counts"]["sites_violation"] == 0
+
+
+def test_pyyaml_root_layout_alone_is_undeterminable(tmp_path, monkeypatch):
+    # Tier 4 retirement, direct e2e confirmation: the exact same yaml/
+    # layout as above, but with no top_level.txt anywhere -- the shape
+    # tier 4 used to recover before its retirement. Must fail safe now.
     code, out, err = _run_check(
         tmp_path,
         monkeypatch,
@@ -169,11 +229,10 @@ def test_pyyaml_import_root_is_derived_as_yaml_not_pyyaml(tmp_path, monkeypatch)
             "tests/test_yaml.py": b"",
         },
     )
-    assert code == ExitCode.SUCCESS, err
+    assert code == ExitCode.NOTHING_INDEXED, err
     payload = json.loads(out)
-    assert payload["import_roots"] == ["yaml"]
-    assert payload["counts"]["sites_ok"] == 1
-    assert payload["counts"]["sites_violation"] == 0
+    assert payload["status"] == "nothing_examined"
+    assert payload["import_roots_determinable"] is False
 
 
 def test_multi_root_distribution_examines_usage_of_every_declared_root(tmp_path, monkeypatch):
@@ -181,11 +240,11 @@ def test_multi_root_distribution_examines_usage_of_every_declared_root(tmp_path,
     # legitimate, common shape (issue #269 acceptance criteria) -- not
     # ambiguous. Modeled on attrs, which ships both "attr" and "attrs".
     # A real top_level.txt (tier 1, authoritative) is required to resolve
-    # this: tier 4's pure structural scan alone deliberately refuses to
-    # guess that two plausible top-level packages are both genuine roots
-    # (P1 fix, adversarial review) -- see
+    # this: there is no tree-layout tier any more (retired as an
+    # authority, second adversarial review round) to guess that two
+    # plausible top-level packages are both genuine roots -- see
     # tests/test_usage_import_evidence.py::test_multi_root_distribution_via_top_level_txt
-    # and the ambiguous-tier-4-alone counterpart next to it.
+    # and its undeterminable-without-top_level_txt counterpart next to it.
     code, out, err = _run_check(
         tmp_path,
         monkeypatch,
@@ -270,8 +329,8 @@ def test_undeterminable_import_root_fails_safe_never_a_guessed_violation(tmp_pat
 def test_stray_top_level_module_never_produces_a_false_violation(tmp_path, monkeypatch):
     # P1 regression (adversarial review, reviewer-hy3): a donor ships a
     # real package ("widgetlib") plus an unrelated stray top-level helper
-    # module ("constants.py"). Before the fix, tier 4 promoted BOTH names
-    # to import roots bound to --against, so the consumer's own, wholly
+    # module ("constants.py"). Before the fix, the old tier 4 promoted BOTH
+    # names to import roots bound to --against, so the consumer's own, wholly
     # unrelated "constants" module got misattributed to widgetlib the
     # moment it referenced a name that isn't in widgetlib's API index --
     # a false violation against code that is actually correct, exactly
@@ -294,6 +353,45 @@ def test_stray_top_level_module_never_produces_a_false_violation(tmp_path, monke
     assert payload["status"] == "nothing_examined"
     assert payload["counts"]["sites_violation"] == 0
     assert payload["import_roots_determinable"] is False
+
+
+def test_src_layout_vendored_helper_masking_real_root_never_produces_a_false_violation(tmp_path, monkeypatch):
+    # P1 residual regression (second adversarial review round,
+    # reviewer-hy3's exact reproduction): a src/-layout donor whose src/
+    # directory contains ONLY a private/vendored helper package
+    # ("src/buildutils/"), while the tree's REAL, public import root is a
+    # module living OUTSIDE src/ ("reallib.py" at the repository root).
+    #
+    # The now-retired tier 4 preferred src/ unconditionally whenever it
+    # was non-empty, so "reallib.py" was never even considered as a
+    # candidate -- "buildutils" was tier 4's SOLE candidate, and under the
+    # first P1 fix's "exactly one candidate, so resolve it" rule, it
+    # bound to --against as if it were authoritative. The consumer's own,
+    # unrelated local "buildutils.py" module then got misattributed to
+    # the pinned "reallib" distribution the moment it referenced a name
+    # not in reallib's API index -- a false violation against code that
+    # is actually correct, exactly the sad path issue #269 forbids.
+    #
+    # With tier 4 retired entirely (not just narrowed further), this now
+    # correctly fails safe: nothing_examined, exit 4, never a violation.
+    code, out, err = _run_check(
+        tmp_path,
+        monkeypatch,
+        distribution="reallib",
+        owner="acme",
+        repo="reallib",
+        consumer_source="import buildutils\n\nprint(buildutils.UNRELATED_LOCAL_THING)\n",
+        package_files={
+            "src/buildutils/__init__.py": b"INTERNAL = 1\n",
+            "reallib.py": b"def real_api():\n    return 1\n",
+        },
+    )
+    assert code == ExitCode.NOTHING_INDEXED, err
+    payload = json.loads(out)
+    assert payload["status"] == "nothing_examined"
+    assert payload["counts"]["sites_violation"] == 0
+    assert payload["import_roots_determinable"] is False
+    assert payload["import_roots"] == []
 
 
 def test_vendored_subpackage_never_produces_a_false_violation(tmp_path, monkeypatch):

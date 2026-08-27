@@ -45,23 +45,45 @@ is actually present.
    parse of a top-level ``pyproject.toml``'s explicit
    ``[tool.setuptools] packages``/``py-modules``, or Poetry's
    ``[tool.poetry] packages`` (``include=`` entries).
-4. ``materialized-tree-layout`` -- the lowest-confidence tier: a purely
-   structural, algorithmic (never hand-maintained, always regenerable from
-   the algorithm) scan of the tree itself for plausible top-level import
-   roots -- a ``src/`` layout is preferred when present, matching the
-   layout convention the packaging metadata tiers above would otherwise
-   have described. This is the tier that recovers ``pillow`` -> ``PIL`` and
-   ``pyyaml`` -> ``yaml`` when no packaging metadata for the distribution
-   is present in this particular materialization. Because this tier has no
-   authoritative evidence behind it, it can only ever resolve a *single*
-   unambiguous root: a donor tree commonly ships more than one top-level
-   directory/module that is not itself a public import root (a stray
-   ``constants.py`` helper, a vendored ``vendor/__init__.py`` subpackage),
-   and this tier has no way to tell those apart from a genuine additional
-   public root. When it finds more than one candidate, it deliberately
-   does not guess that all of them are real -- see "Multi-root" below.
 
-If *no* tier finds any evidence at all, a single zero-root
+## Tier 4 (``materialized-tree-layout``) was retired as an authority
+
+An earlier version of this module also consulted a fourth,
+lowest-confidence tier: a purely structural scan of the tree's own
+top-level layout (``src/`` preferred when present) for directories with
+``__init__.py`` or top-level ``.py`` files. It was retired (issue #269
+follow-up, adversarial review, reviewer-hy3) because it could still
+originate a *wrong* binding even after being restricted to "exactly one
+candidate": a ``src/``-layout donor whose ``src/`` directory contains only
+a private/vendored helper package, while the tree's real, public import
+root is a module living outside ``src/`` (e.g. a top-level ``reallib.py``
+next to a ``src/buildutils/`` internal helper), resolves tier 4 to the
+*wrong* single "unambiguous" candidate (``buildutils``), because the
+``src/``-preference rule means the real root outside ``src/`` is never
+even considered. That wrong root then binds to ``--against``, and a
+consumer's own, unrelated same-named local import (its own
+``buildutils.py``) gets misattributed to the pinned distribution -- a
+false ``violation`` against code that is actually correct, exactly the
+sad path issue #269 forbids ("a wrong import root must never produce a
+violation against code that is actually correct"). Restricting tier 4 to
+"exactly one candidate" (the earlier P1 fix) closes the *multi-candidate*
+collision shape but not this *single-candidate, wrong-candidate* shape --
+there is no purely structural rule that reliably tells "the one candidate
+tier 4 found" apart from "the one candidate tier 4 found, which happens to
+be wrong" without either executing untrusted build logic (out of scope,
+by design) or hardcoding distribution-specific knowledge (forbidden by
+issue #269). A guess is a guess regardless of how few candidates it had to
+choose from; tiers 1-3 are the distribution's own declarations about
+itself, tier 4 was never more than a guess from directory shape, and a
+guess must not bind a gate whose defining property is "never flag correct
+code". See "Negative Consequences" in ADR-0032 for the resulting,
+accepted coverage limitation: a distribution with no `top_level.txt`/
+``setup.cfg``/``pyproject.toml`` evidence in a given materialization (a
+GitHub-sourced source tree, most commonly) is now reported undeterminable
+rather than resolved from tree shape, even in cases (``pillow`` -> ``PIL``,
+``pyyaml`` -> ``yaml``) tier 4 used to recover.
+
+If no tier (1-3) finds any evidence at all, a single zero-root
 :class:`~leitir.usage.import_catalog.DistributionRecord` is returned, which
 ``build_import_catalog`` types as
 :attr:`~leitir.usage.UnresolvedState.UNSUPPORTED_SYNTAX` ("no local
@@ -82,22 +104,11 @@ both ``attr`` and ``attrs``) is a legitimate resolved mapping, not an
 ambiguity -- this is exactly ``build_import_catalog``'s existing
 multi-root contract (ADR-0026), reused unchanged here.
 
-Tier 4 (the structural fallback) is the one tier this module never lets
-resolve a multi-root mapping on its own: unlike tiers 1-3, it has no
-packaging declaration to trust, only a heuristic scan of what happens to
-be laid out at the top of the tree. If it finds exactly one candidate, it
-resolves that one root normally. If it finds more than one, it emits one
-single-root record *per* candidate instead of a single multi-root record,
-so ``build_import_catalog``'s existing disagreement handling (unmodified)
-types the whole distribution as ambiguous -- ``resolve_import_roots``
-returns ``None`` and ``check`` fails safe. A distribution whose real
-import surface genuinely spans multiple top-level roots must be evidenced
-by tier 1-3 to be resolved as multi-root; tier 4 alone will never bind
-more than one root to ``--against``, precisely because a false extra root
-is not "harmless" -- it can misattribute an unrelated, same-named import
-in the *consumer's own* code to the pinned distribution and produce a
-false ``violation`` against code that is actually correct (the exact sad
-path issue #269 forbids).
+A distribution whose real import surface genuinely spans multiple
+top-level roots (e.g. ``attrs`` shipping both ``attr`` and ``attrs``) must
+therefore be evidenced by tier 1-3 to be resolved as multi-root at all --
+there is no tier 4 to fall back on any more (see "Tier 4 ... was retired
+as an authority" above).
 
 ## Bounds
 
@@ -133,43 +144,6 @@ MAX_EVIDENCE_FILE_BYTES = 1_048_576
 MAX_WALK_DIR_ENTRIES = 20_000
 
 _SPLIT_ON_COMMA_OR_NEWLINE = re.compile(r"[,\n]")
-
-# Generic, cross-ecosystem structural conventions for "this top-level
-# directory/file is not a package", not a per-distribution alias table:
-# every Python source distribution uses some subset of these same names for
-# its own tests/docs/tooling regardless of what it is named or imports as.
-_TREE_LAYOUT_EXCLUDE_DIR_NAMES = frozenset(
-    {
-        "test",
-        "tests",
-        "testing",
-        "doc",
-        "docs",
-        "documentation",
-        "example",
-        "examples",
-        "benchmark",
-        "benchmarks",
-        "script",
-        "scripts",
-        "tool",
-        "tools",
-        "build",
-        "dist",
-        "node_modules",
-        "venv",
-        ".venv",
-        "env",
-        ".git",
-        ".github",
-        ".tox",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        "__pycache__",
-    }
-)
-_TREE_LAYOUT_EXCLUDE_FILE_STEMS = frozenset({"setup", "conftest", "noxfile", "_version", "versioneer"})
 
 
 def _distribution_record(distribution: str, roots: tuple[str, ...], source: str) -> DistributionRecord:
@@ -338,107 +312,42 @@ def _pyproject_records(root: Path, distribution: str) -> tuple[DistributionRecor
 
 
 # --------------------------------------------------------------------------
-# Tier 4: materialized-tree-layout (structural fallback).
-# --------------------------------------------------------------------------
-
-
-def _package_candidates(base: Path) -> tuple[str, ...]:
-    names: set[str] = set()
-    try:
-        entries = sorted(base.iterdir(), key=lambda p: p.name)
-    except OSError:
-        return ()
-    for entry in entries:
-        name = entry.name
-        if name.startswith("."):
-            continue
-        try:
-            is_dir = entry.is_dir()
-            is_file = entry.is_file()
-        except OSError:
-            continue
-        if is_dir:
-            if name.lower() in _TREE_LAYOUT_EXCLUDE_DIR_NAMES:
-                continue
-            if name.endswith((".dist-info", ".egg-info")):
-                continue
-            if not name.isidentifier():
-                continue
-            if (entry / "__init__.py").is_file():
-                names.add(name)
-        elif is_file and entry.suffix == ".py":
-            stem = entry.stem
-            if stem == "__init__" or stem.lower() in _TREE_LAYOUT_EXCLUDE_FILE_STEMS:
-                continue
-            if stem.startswith("test_") or stem.endswith("_test"):
-                continue
-            if not stem.isidentifier():
-                continue
-            names.add(stem)
-    return tuple(sorted(names))
-
-
-def _tree_layout_records(root: Path, distribution: str) -> tuple[DistributionRecord, ...]:
-    candidates: tuple[str, ...] = ()
-    src = root / "src"
-    if src.is_dir():
-        candidates = _package_candidates(src)
-    if not candidates:
-        candidates = _package_candidates(root)
-    if not candidates:
-        return ()
-    if len(candidates) == 1:
-        return (_distribution_record(distribution, candidates, "materialized-tree-layout"),)
-    # P1 fix (adversarial review, reviewer-hy3): tier 4 is a purely
-    # structural heuristic with no authoritative packaging evidence behind
-    # it -- unlike tiers 1-3, it has no way to distinguish a genuine
-    # additional public import root (a real multi-root distribution) from
-    # an unrelated top-level helper module or vendored subpackage the
-    # donor repository simply happens to ship (a stray "constants.py", a
-    # "vendor/__init__.py"). Binding every such candidate to --against
-    # used to let a same-named, wholly unrelated import in the consumer's
-    # own code get misattributed to the pinned distribution -- exactly
-    # the false-violation-against-correct-code shape issue #269 forbids
-    # ("a wrong import root must never produce a violation against code
-    # that is actually correct"). When more than one candidate is found,
-    # this tier can no longer positively resolve a single root, so it
-    # must not guess by binding all of them either: it emits one
-    # single-root record per candidate (never one multi-root record), and
-    # build_import_catalog's existing, unmodified disagreement handling
-    # (distinct declared_roots sets across records for the same
-    # distribution) then correctly types the whole distribution as
-    # UnresolvedState.AMBIGUOUS_BINDING -- resolve_import_roots returns
-    # None, and check.py fails safe (nothing_examined, exit 4) rather than
-    # ever guessing. A genuine multi-root distribution must be evidenced
-    # by an authoritative packaging source (tier 1-3) instead; tier 4
-    # alone can only ever resolve a single, unambiguous top-level root.
-    return tuple(
-        _distribution_record(distribution, (candidate,), "materialized-tree-layout")
-        for candidate in candidates
-    )
-
-
-# --------------------------------------------------------------------------
 # Public entry points.
 # --------------------------------------------------------------------------
 
+# Tier 4 ("materialized-tree-layout", a purely structural scan of the
+# tree's own top-level layout) was retired as an authority -- see the
+# module docstring's "Tier 4 ... was retired as an authority" section and
+# ADR-0032's "Negative Consequences" for why: even restricted to "exactly
+# one candidate", it could still resolve the *wrong* single root (a
+# src/-layout donor whose src/ holds only a vendored helper while the real
+# public root lives outside src/) and bind that wrong root to --against,
+# producing a false violation against a consumer's own, unrelated,
+# same-named local import -- the exact sad path issue #269 forbids. Only
+# tiers 1-3 (the distribution's own packaging declarations about itself)
+# may originate a resolved root; when they are all silent, the outcome is
+# the zero-root fail-safe below, never a guess from directory shape.
 _EVIDENCE_TIERS = (
     _top_level_txt_records,
     _setup_cfg_records,
     _pyproject_records,
-    _tree_layout_records,
 )
 
 
 def derive_distribution_records(materialized_root: Path, distribution: str) -> tuple[DistributionRecord, ...]:
     """Derive import-root evidence for one distribution from its materialized tree.
 
-    Consults each evidence tier in precedence order and returns the first
-    tier's records that found anything at all. If no tier finds any
-    evidence, returns a single zero-root record (source
-    ``"materialized-tree-layout"``) so :func:`~leitir.usage.import_catalog.build_import_catalog`
+    Consults each evidence tier (1-3: ``top_level.txt``, static
+    ``setup.cfg``, static ``pyproject.toml``, in that precedence order) and
+    returns the first tier's records that found anything at all. If no
+    tier finds any evidence, returns a single zero-root record (source
+    ``"materialized-tree-layout"``, the fixed sentinel tag for "no
+    evidence") so :func:`~leitir.usage.import_catalog.build_import_catalog`
     types the outcome as unresolved, matching ADR-0026's contract for
-    missing evidence.
+    missing evidence. There is no structural-tree-layout tier any more
+    (see the module docstring) -- a distribution whose import root is not
+    declared by any of tiers 1-3 in this materialization is always
+    reported undeterminable, never guessed from directory shape.
     """
 
     for tier in _EVIDENCE_TIERS:

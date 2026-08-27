@@ -13,11 +13,14 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ## [Unreleased]
 
 ### Added
+- add --impact to intersect version deltas with real usage (`diff`)
 - add a docs-truth gate for command, version, and tag claims (`ci`)
 - add the agent-facing code-supply verbs and close two coverage falsifications
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed
+- make malformed specs, search flags, and default-root creation legible (`cli`)
+- make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 

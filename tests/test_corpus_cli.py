@@ -62,6 +62,79 @@ def test_unknown_specs_name_supported_forms(raw):
         parse_corpus_spec(raw)
 
 
+def test_bare_spec_falls_back_to_npm_name_not_rejected_up_front():
+    """ADR-0005 D5: a bare token with no ecosystem prefix and no owner/repo
+    shape is a documented, intentional npm-name fallback -- it must not be
+    rejected as malformed usage before any network call (dogfood #266 F1)."""
+
+    parsed = parse_corpus_spec("not-a-spec")
+    assert parsed.ecosystem == "npm"
+    assert parsed.name == "not-a-spec"
+
+
+def test_bare_spec_resolution_failure_names_the_fallback_and_supported_forms(
+    tmp_path,
+):
+    """When the bare-name npm guess (F1) turns out wrong, the resulting
+    resolution failure must name the guess and list the supported spec
+    forms, rather than reading like a bare network error. The exit code and
+    error type are unchanged (still a resolution/corpus failure, not
+    MALFORMED_USAGE) because the fallback itself remains legitimate."""
+
+    from leitir.resolver import ResolutionError
+
+    class _FailingResolver:
+        def latest_version(self, ecosystem, name):
+            raise ResolutionError(f"npm registry lookup failed for {name}: HTTP 404")
+
+        def resolve(self, ref):  # pragma: no cover - must not be reached
+            raise AssertionError("resolve() must not be called before latest_version()")
+
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["get", "not-a-spec", "--root", str(tmp_path)],
+        resolver_factory=lambda _token: _FailingResolver(),
+        stdout=out,
+        stderr=err,
+    )
+    assert code != ExitCode.SUCCESS
+    assert code != ExitCode.MALFORMED_USAGE
+    message = err.getvalue()
+    assert "npm registry lookup failed for not-a-spec: HTTP 404" in message
+    assert "'not-a-spec'" in message
+    assert "bare npm package name" in message
+    assert "supported spec forms are" in message
+    assert "npm:name[@version]" in message
+    assert "owner/repo[@ref|#ref]" in message
+
+
+def test_explicit_npm_prefix_resolution_failure_keeps_original_message(tmp_path):
+    """An explicit ``npm:`` spec is not a guess -- its resolution failure
+    must not gain the bare-fallback hint, which would be misleading."""
+
+    from leitir.resolver import ResolutionError
+
+    class _FailingResolver:
+        def latest_version(self, ecosystem, name):
+            raise ResolutionError(f"npm registry lookup failed for {name}: HTTP 404")
+
+        def resolve(self, ref):  # pragma: no cover - must not be reached
+            raise AssertionError("resolve() must not be called before latest_version()")
+
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["get", "npm:not-a-spec", "--root", str(tmp_path)],
+        resolver_factory=lambda _token: _FailingResolver(),
+        stdout=out,
+        stderr=err,
+    )
+    assert code != ExitCode.SUCCESS
+    message = err.getvalue()
+    assert "npm registry lookup failed for not-a-spec: HTTP 404" in message
+    assert "bare npm package name" not in message
+    assert "supported spec forms are" not in message
+
+
 def test_gitignore_append_is_idempotent_and_preserves_rules(tmp_path):
     ignore = tmp_path / ".gitignore"
     ignore.write_text("dist/\n# keep this\n", encoding="utf-8")
@@ -102,6 +175,76 @@ def test_read_only_local_commands_do_not_modify_gitignore(tmp_path, monkeypatch)
     cli._corpus_root(SimpleNamespace(command="get", local=True, root=None), err_mutating)
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".leitir-refs/\n"
     assert "created" in err_mutating.getvalue()
+
+
+def test_default_corpus_root_notes_first_creation_only(tmp_path, monkeypatch):
+    """L9 (dogfood #266): the first time the fully-defaulted corpus root
+    (no --root, no --local, no LEITIR_HOME) does not yet exist, note the
+    path and how to override it; once it exists, stay silent."""
+
+    from types import SimpleNamespace
+
+    from leitir import cli
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("LEITIR_HOME", raising=False)
+
+    first_err = io.StringIO()
+    root = cli._corpus_root(
+        SimpleNamespace(command="get", local=False, root=None), first_err
+    )
+    assert root == (home / ".leitir").absolute()
+    first_message = first_err.getvalue()
+    assert str(root) in first_message
+    assert "--root" in first_message
+    assert "--local" in first_message
+    assert "LEITIR_HOME" in first_message
+
+    # Simulate what a write command (e.g. get) does after resolving the
+    # root: it actually creates the directory.
+    root.mkdir(parents=True)
+
+    second_err = io.StringIO()
+    cli._corpus_root(SimpleNamespace(command="get", local=False, root=None), second_err)
+    assert second_err.getvalue() == ""
+
+
+def test_explicit_root_never_notes_creation(tmp_path):
+    """An explicitly chosen --root is the user's own decision; it never
+    gets the default-root first-creation note even before it exists."""
+
+    from types import SimpleNamespace
+
+    from leitir import cli
+
+    chosen = tmp_path / "my-corpus"
+    err = io.StringIO()
+    root = cli._corpus_root(
+        SimpleNamespace(command="get", local=False, root=str(chosen)), err
+    )
+    assert root == chosen.absolute()
+    assert err.getvalue() == ""
+
+
+def test_leitir_home_env_never_notes_creation(tmp_path, monkeypatch):
+    """A user-set LEITIR_HOME is an active choice, not the silent default;
+    it never gets the default-root first-creation note."""
+
+    from types import SimpleNamespace
+
+    from leitir import cli
+
+    env_root = tmp_path / "env-corpus"
+    monkeypatch.setenv("LEITIR_HOME", str(env_root))
+    err = io.StringIO()
+    root = cli._corpus_root(
+        SimpleNamespace(command="get", local=False, root=None), err
+    )
+    assert root == env_root.absolute()
+    assert err.getvalue() == ""
 
 
 def _fabricate(root):
@@ -1231,6 +1374,11 @@ def test_diff_reverifies_and_reads_both_targets_under_ordered_locks(
             active.remove(path)
 
     class Report:
+        # DiffReport carries ``impact`` (None unless --impact was passed);
+        # the double mirrors that field so it stays faithful to the type it
+        # stands in for.
+        impact = None
+
         @staticmethod
         def to_json():
             return json.dumps({"schema_version": 1})

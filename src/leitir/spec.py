@@ -47,13 +47,15 @@ _REPOSITORY_HOSTS = {
     "codeberg": "codeberg.org",
     "sourcehut": "git.sr.ht",
 }
-_SUPPORTED_FORMS = (
+SUPPORTED_SPEC_FORMS = (
     "npm:name[@version], pypi:name[@version], crates:name[@version], "
     "go:module[@version], owner/repo[@ref|#ref], "
     "github|bitbucket|codeberg:owner/repo[@ref|#ref], "
     "sourcehut:~user/repo[@ref|#ref], "
     "gitlab:group[/subgroup...]/project[@ref|#ref], or an HTTPS repository URL"
 )
+# Kept for internal call sites that predate the public name.
+_SUPPORTED_FORMS = SUPPORTED_SPEC_FORMS
 
 
 class SpecParseError(ValueError):
@@ -283,4 +285,9 @@ def parse_corpus_spec(raw: str) -> CorpusSpec:
     return _split_package(raw, "npm", raw)
 
 
-__all__ = ["CorpusSpec", "SpecParseError", "parse_corpus_spec"]
+__all__ = [
+    "SUPPORTED_SPEC_FORMS",
+    "CorpusSpec",
+    "SpecParseError",
+    "parse_corpus_spec",
+]

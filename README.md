@@ -42,6 +42,14 @@ flowchart TD
 - Optional hash-locked tree-sitter graph producers for JavaScript, TypeScript,
   Rust, and Go; graph production feeds BTS computation only, while relocation,
   rerun, probes, and donor-line accounting remain Python-only.
+- Evidence-assisted cross-language port (ADR-0033): `leitir bts-port-contract`
+  translates a caller-declared portable behavioural contract for a Python
+  donor into a deterministic Go contract test, fails closed for any case
+  with no faithful Go equivalent (e.g. a raised Python exception), and
+  builds port attribution from the donor's own license evidence. It never
+  translates source code and never executes the agent-written target-language
+  implementation; proof-under-containment for that implementation requires a
+  future Go-capable containment rootfs and is explicitly out of scope today.
 - Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
 - BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3

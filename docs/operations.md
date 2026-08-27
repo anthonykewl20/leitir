@@ -167,6 +167,79 @@ differ only by letter case are deduplicated before materialization; on
 case-insensitive platforms the lock identity is case-normalized as well, so
 aliases cannot enter the same target concurrently.
 
+### Tampered Shelf Bytes: Online Self-Heal, Offline Fail-Closed
+
+What tamper detection covers: at load time every shelf's `materialized_tree_hash`
+is recomputed from the bytes currently on disk and compared against the
+manifest's anchor; manifests written since issue #194 additionally carry a
+flat per-file `materialized_file_digests` map that is checked file-by-file
+against that anchor in one streaming pass. Editing, deleting, or adding a
+single file inside a shelf is detected. This covers file *contents* only —
+manifest metadata fields the digest does not cover (`registry_url`, trust
+fields, and similar strings) are not tamper-evident unless
+`--require-manifest-auth` is used; see "Optional Manifest Authentication
+Keys" above.
+
+A shelf that fails this check is never returned as a usable cache hit. The
+internal read function (`read_valid_manifest`) treats it identically to a
+shelf that was never materialized: it logs `leitir WARNING
+leitir.materialize: load-time integrity verification failed for <path>` to
+stderr (visible by default; log level is WARNING unless `--quiet` or a
+different `LEITIR_LOG_LEVEL` is configured) and returns as if nothing were
+cached there. What happens next depends on what the caller does with that
+"nothing cached" result and whether the origin is reachable:
+
+- **Materializing commands** (`get`, `info`, `fetch`, `api`, `examples`,
+  `diff`, `lock`, and other commands that shelve a source): since the
+  failed-verification shelf reads as absent, materialization proceeds
+  exactly as it would for a first-time fetch — it re-downloads from the
+  pinned commit/tarball/artifact, re-extracts, and atomically installs the
+  freshly re-verified tree over the corrupted one, via the same staging
+  directory + rename used for any normal materialization. The command exits
+  0 with ordinary success output; nothing in that output states that the
+  shelf was corrupted and replaced, only the WARNING line above does. This
+  is intentional rather than incidental: ADR-0024 ("Local-First Cached
+  Resolution") names it as a direct consequence of the "a tampered shelf is
+  never served" rule — online, "skip this unverifiable shelf" and "cache
+  miss" are the same code path, so the normal fetch logic re-materializes it
+  without a separate healing step being written.
+- **Read-only scoped search over an already-materialized corpus**
+  (`leitir search`, `ScopedSearcher`): the same failed verification also
+  makes the shelf unusable for local reads, but search does not rewrite
+  anything on disk. It falls back, per scope, to reading blobs live from the
+  host's tree/blob API for that one search, leaving the corrupted local
+  copy in place. Because nothing is repaired, an offline-first search
+  workflow will keep re-verifying the same shelf against the network on
+  every run until it is actually re-materialized (see below).
+- **Offline, or the origin otherwise unreachable:** the same
+  failed-verification-as-absent path is taken, but the follow-up fetch then
+  fails too — a transport error from the archive download, or (for the
+  scoped-search fallback, or extracted-tree re-verification) a
+  `TreeReadError` such as `GitHub API call failed: ...`. This surfaces as a
+  generic top-level error — `leitir: error: <message>` on stderr and a
+  non-zero exit (`CORPUS_FAILURE` or `INFRASTRUCTURE_FAILURE`, i.e. 1 or 3
+  depending on the command) — that names the transport failure, not the
+  fact that the local shelf was corrupted. A user who only reads that final
+  line has no direct indication the problem is their corpus rather than
+  their network; the actual signal is the `load-time integrity verification
+  failed for <path>` WARNING logged just above it.
+
+If you hit the offline rejection:
+
+1. Look for the `leitir WARNING leitir.materialize: load-time integrity
+   verification failed for <path>` line above the final error. Its presence
+   confirms local corruption rather than an ordinary outage.
+2. Restore connectivity to the origin (GitHub, GitLab, the package
+   registry, etc.) and retry the same command; a failed-verification shelf
+   is re-fetched transparently once materialization can reach the origin
+   again.
+3. If connectivity cannot be restored, do not hand-patch or recompute a
+   digest over the shelf as a repair (`leitir upgrade-cache` recomputes a
+   digest from current bytes and is only for already-trusted legacy caches,
+   never for a shelf that just failed verification). Follow "Interrupted Or
+   Corrupted Materialization" above once the origin is reachable, or restore
+   the shelf from a trusted `leitir export` backup instead.
+
 ## Worked Backup And Restore
 
 The following example uses explicit roots so it is independent of shell

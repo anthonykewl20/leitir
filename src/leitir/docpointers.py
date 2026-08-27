@@ -222,7 +222,21 @@ def regenerate_pointers(
     root: str | os.PathLike[str],
     entries: Sequence[Mapping[str, Any]] | None = None,
 ) -> Path:
-    """Atomically regenerate ``POINTERS.md`` from the corpus index and manifests."""
+    """Atomically regenerate ``POINTERS.md`` from the corpus index and manifests.
+
+    issue #268: the two write-path callers that mutate the catalog
+    (``corpus._upsert``, ``corpus.remove_source``) already load the index
+    themselves with ``strict=True`` and pass the validated ``entries``
+    through explicitly -- this function never re-reads the catalog for
+    them, so it cannot launder a corrupt catalog into an empty
+    ``POINTERS.md`` on those paths. The two remaining callers that pass
+    ``entries=None`` (the ``api``/``get``/``info`` cache-refresh paths in
+    ``cli.py`` and ``info.build_info``) only run *after* the same command
+    already found the one entry it is refreshing in a load of this same
+    catalog moments earlier -- a corrupt catalog would already have failed
+    the command before reaching here. The internal load below is therefore
+    deliberately left non-strict rather than duplicating that guarantee.
+    """
     corpus_root = Path(root)
     corpus_root.mkdir(parents=True, exist_ok=True)
     if entries is None:

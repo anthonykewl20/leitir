@@ -16,9 +16,14 @@ concurrency:
 
 jobs:
   test:
-    # Observed wall-time ≤2:43 (run 32282707805); 15 min ≥ 5× margin
-    # incl. cold uv cache (issue #199).
-    timeout-minutes: 15
+    # Measured green wall-times on run 32992045211 (3720 tests collected):
+    # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
+    # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
+    # variance without masking a genuine hang for 10+ extra minutes the way
+    # 25 did. windows-latest has never completed on this branch (issue
+    # #266) and is not part of this measurement; its hang is a separate,
+    # fixed defect, not a timeout problem.
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

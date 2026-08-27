@@ -151,6 +151,24 @@ class IndexedSearcher:
         return None
 
     def _shelves(self, slug: str, commit: str) -> tuple[ShelfRef, ...]:
+        """Return catalog-recorded shelf identities for one declared scope.
+
+        issue #268 P2 audit (found by independent review, added to the ADR
+        table): deliberately non-strict, distinct from the corpus-wide
+        eligibility path in `_corpus_eligibility` below (which is strict).
+        This backs *scoped* indexed search (`--use-index`/`--require-index`
+        for one `--repo`/`--package` scope, never `--corpus`). A corrupt
+        catalog makes this return an empty set, which `search()` below
+        turns into `fallback_scopes` -- a full, correct, non-indexed scan of
+        that exact pinned commit tree straight from disk, not through the
+        catalog -- with `incomplete=True` honestly reported. Under
+        `--require-index` the empty result instead raises
+        `VerificationError("required index does not cover declared scope")`
+        immediately, already fail-closed. Neither branch claims a false
+        "complete"/indexed result and neither takes a destructive action;
+        the actual content search is still exhaustive and correct either
+        way, so there is nothing here for `strict` to protect against.
+        """
         from leitir.corpus import load_sources
 
         result = {

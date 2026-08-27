@@ -68,12 +68,107 @@ class ReleaseNote:
 
 
 @dataclass(frozen=True, slots=True)
+class ImpactSite:
+    """One consumer usage site examined during ``--impact`` analysis."""
+
+    file: str
+    line: int
+    col: int
+    symbol: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {"file": self.file, "line": self.line, "col": self.col, "symbol": self.symbol}
+
+
+@dataclass(frozen=True, slots=True)
+class ImpactedSymbol:
+    """A removed symbol the consumer provably calls, with its call sites."""
+
+    name: str
+    qualified_name: str
+    sites: tuple[ImpactSite, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "qualified_name": self.qualified_name,
+            "sites": [site.as_dict() for site in self.sites],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ImpactReport:
+    """Intersection of the before/after removed-symbol delta with actual
+    consumer usage, reusing :mod:`leitir.check`'s usage-resolution machinery
+    (ADR-0027 resolver + its best-effort symbol-candidate recovery).
+
+    Mirrors ``check``'s three-way honesty model at the granularity that
+    actually matters for "does this upgrade touch my code":
+
+    - ``impacted`` -- a removed symbol with at least one statically
+      recovered call site. Never a guess.
+    - ``not_impacted`` -- a removed symbol with zero recovered call sites,
+      reported *only* when at least one site was examined at all (see
+      ``status``); otherwise reporting "not impacted" would falsely read as
+      evidence of absence when no evidence was gathered.
+    - ``unresolved_sites`` -- usage sites the resolver attributed to this
+      package but whose accessed symbol name (or whose file) could not be
+      statically pinned down. These can never be ruled out as touching a
+      removed symbol, so they are always counted and surfaced, never folded
+      into "not impacted" and never silently dropped.
+    """
+
+    against: str
+    package_name: str
+    removed_total: int
+    status: str  # "no_sites_examined" | "impact_found" | "clean"
+    sites_examined: int
+    sites_impacted: int
+    sites_unresolved: int
+    sites_other: int
+    impacted: tuple[ImpactedSymbol, ...]
+    not_impacted: tuple[str, ...]
+    unresolved_sites: tuple[ImpactSite, ...]
+
+    def __post_init__(self) -> None:
+        if self.sites_impacted != sum(len(symbol.sites) for symbol in self.impacted):
+            raise ValueError("sites_impacted must equal the sum of impacted call sites")
+        if self.sites_unresolved != len(self.unresolved_sites):
+            raise ValueError("sites_unresolved count mismatch")
+        if self.sites_examined != self.sites_impacted + self.sites_unresolved + self.sites_other:
+            raise ValueError("sites_examined must equal impacted + unresolved + other")
+        if self.status == "no_sites_examined" and self.not_impacted and self.removed_total:
+            # Zero examined sites is loud: we may never claim a removed
+            # symbol is safe ("not impacted") when no evidence was gathered
+            # for it at all.
+            raise ValueError("no_sites_examined must not carry a not_impacted claim")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "against": self.against,
+            "package_name": self.package_name,
+            "status": self.status,
+            "counts": {
+                "removed_total": self.removed_total,
+                "sites_examined": self.sites_examined,
+                "sites_impacted": self.sites_impacted,
+                "sites_unresolved": self.sites_unresolved,
+                "sites_other": self.sites_other,
+            },
+            "impacted": [symbol.as_dict() for symbol in self.impacted],
+            "not_impacted": list(self.not_impacted),
+            "unresolved_sites": [site.as_dict() for site in self.unresolved_sites],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class DiffReport:
     before: VersionIdentity
     after: VersionIdentity
     files: FileDiff
     api: ApiDiff
     release_notes: tuple[ReleaseNote, ...] = ()
+    impact: ImpactReport | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -85,6 +180,8 @@ class DiffReport:
         }
         if self.release_notes:
             payload["release_notes"] = [note.as_dict() for note in self.release_notes]
+        if self.impact is not None:
+            payload["impact"] = self.impact.as_dict()
         return payload
 
     def to_json(self) -> str:
@@ -191,6 +288,16 @@ class _PreparedSource:
 
 
 def _matching_entry(root: Path, target: Path) -> dict[str, Any] | None:
+    """Return the catalog entry for an already-materialized ``target``, if any.
+
+    issue #268: deliberately non-strict. ``target`` was already materialized
+    by this same ``diff`` invocation, so a corrupt catalog only means the
+    optional catalog-recorded pin is unavailable; :func:`_shelf_pin` falls
+    back to the scope that fed the materializer for the exact bytes diffed
+    (see its docstring). ``diff`` never claims to summarize the whole
+    corpus, only the two trees it actually read, so there is no false
+    "complete corpus" claim for a corrupt catalog to falsify here.
+    """
     from leitir.corpus import load_sources
 
     for entry in load_sources(root):
@@ -305,6 +412,180 @@ def _prepare(
     return _PreparedSource(identity, tree, index, getattr(resolved, "tag", None) or tag)
 
 
+def compute_impact(
+    *,
+    before: _PreparedSource,
+    after: _PreparedSource,
+    consumer_path: str | os.PathLike[str],
+) -> ImpactReport:
+    """Intersect the Python symbol removals between ``before`` and ``after``
+    with actual usage in the consumer code at ``consumer_path``.
+
+    Reuses ``leitir.check``'s usage-resolution machinery end to end: the same
+    ADR-0027 ``resolve_consumer`` static resolver, the same best-effort
+    top-level import-table symbol recovery, and the same fail-closed
+    "unverifiable API index" gate (``CheckIndexError``). This module adds no
+    new usage-resolution logic of its own -- see the module docstring premise
+    check.
+
+    The removed-symbol set used here is a *Python-only* extraction of
+    ``before``/``after`` (via ``check.extract_check_index``), independent of
+    the general multi-language ``diff`` symbol delta: the consumer this
+    analyzes is always Python (ADR-0027's resolver is Python-only), so
+    intersecting against a same-named symbol from a non-Python file in the
+    same repository would be a false attribution.
+    """
+
+    from leitir.check import (
+        _build_import_table,
+        _candidate_for_reference,
+        _require_checkable_index,
+        discover_python_files,
+        extract_check_index,
+        guess_import_root,
+    )
+    from leitir.safeio import read_regular_file
+    from leitir.usage.contract import UnresolvedState
+    from leitir.usage.resolver import (
+        MAX_RESOLVER_FILE_BYTES,
+        MAX_RESOLVER_FILES,
+        resolve_consumer,
+    )
+
+    against = before.identity.spec
+    package_name = before.identity.name
+
+    before_index = extract_check_index(before.tree)
+    _require_checkable_index(before_index, against=against)
+    after_index = extract_check_index(after.tree)
+    _require_checkable_index(after_index, against=after.identity.spec)
+
+    removed_symbols = diff_api_indexes(before_index, after_index).removed
+    removed_by_name: dict[str, dict[str, object]] = {}
+    for symbol in removed_symbols:
+        name = symbol.get("name")
+        if isinstance(name, str) and name and name not in removed_by_name:
+            removed_by_name[name] = symbol
+
+    consumer_root, files = discover_python_files(Path(consumer_path))
+
+    impacted_sites: dict[str, list[ImpactSite]] = {}
+    unresolved_sites: list[ImpactSite] = []
+    other_resolved = 0
+
+    if removed_by_name:
+        import ast
+
+        import_root = guess_import_root(package_name)
+        result = resolve_consumer(
+            consumer_root=consumer_root,
+            import_roots={import_root: against},
+            files=files,
+            max_files=MAX_RESOLVER_FILES,
+            max_file_bytes=MAX_RESOLVER_FILE_BYTES,
+        )
+
+        tree_cache: dict[str, ast.Module | None] = {}
+        table_cache: dict[str, Any] = {}
+
+        def _tree_for(relpath: str) -> ast.Module | None:
+            if relpath in tree_cache:
+                return tree_cache[relpath]
+            try:
+                data = read_regular_file(
+                    consumer_root / relpath,
+                    maximum_bytes=MAX_RESOLVER_FILE_BYTES,
+                    no_follow=False,
+                )
+                tree: ast.Module | None = ast.parse(data.decode("utf-8"), filename=relpath)
+            except (OSError, ValueError, UnicodeDecodeError, SyntaxError):
+                tree = None
+            tree_cache[relpath] = tree
+            return tree
+
+        for reference in result.references:
+            relpath = reference.span.file
+            line = reference.span.start_line
+            col = reference.span.start_col
+            tree = _tree_for(relpath)
+            if tree is None:
+                unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<file>"))
+                continue
+            table = table_cache.setdefault(relpath, _build_import_table(tree, import_root))
+            candidate = _candidate_for_reference(tree, table, reference)
+            if candidate.symbol is None:
+                unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<module>"))
+                continue
+            symbol_name = candidate.symbol
+            if symbol_name in removed_by_name:
+                impacted_sites.setdefault(symbol_name, []).append(
+                    ImpactSite(file=relpath, line=line, col=col, symbol=symbol_name)
+                )
+            else:
+                # A resolved usage of a symbol that was not removed is
+                # neither impacted nor unresolved, but it was genuinely
+                # examined -- counted in ``sites_other`` so ``sites_examined``
+                # stays an honest total and a package with real, fully
+                # resolved usage that simply avoids the removed symbols is
+                # never mistaken for "nothing was examined".
+                other_resolved += 1
+
+        for record in result.coverage.records:
+            if record.state is UnresolvedState.RESOLVED:
+                continue
+            unresolved_sites.append(
+                ImpactSite(file=record.file, line=0, col=0, symbol="<file>")
+            )
+        for excluded in result.coverage.exclusions:
+            unresolved_sites.append(
+                ImpactSite(file=excluded, line=0, col=0, symbol="<file>")
+            )
+
+    impacted = tuple(
+        ImpactedSymbol(
+            name=name,
+            qualified_name=str(removed_by_name[name].get("qualified_name") or name),
+            sites=tuple(
+                sorted(impacted_sites[name], key=lambda site: (site.file, site.line, site.col))
+            ),
+        )
+        for name in sorted(impacted_sites)
+    )
+    sites_impacted = sum(len(symbol.sites) for symbol in impacted)
+    unresolved_sites_sorted = tuple(
+        sorted(unresolved_sites, key=lambda site: (site.file, site.line, site.col, site.symbol))
+    )
+    # Honest total: every call site the resolver could attribute to this
+    # package, whether it named a removed symbol, a still-present symbol
+    # (irrelevant to this delta but genuinely examined), or could not be
+    # pinned down at all.
+    sites_examined = sites_impacted + len(unresolved_sites_sorted) + other_resolved
+
+    if not removed_by_name:
+        status = "clean"
+        not_impacted: tuple[str, ...] = ()
+    elif sites_examined == 0:
+        status = "no_sites_examined"
+        not_impacted = ()
+    else:
+        not_impacted = tuple(sorted(name for name in removed_by_name if name not in impacted_sites))
+        status = "impact_found" if impacted else "clean"
+
+    return ImpactReport(
+        against=against,
+        package_name=package_name,
+        removed_total=len(removed_by_name),
+        status=status,
+        sites_examined=sites_examined,
+        sites_impacted=sites_impacted,
+        sites_unresolved=len(unresolved_sites_sorted),
+        sites_other=other_resolved,
+        impacted=impacted,
+        not_impacted=not_impacted,
+        unresolved_sites=unresolved_sites_sorted,
+    )
+
+
 def diff_packages(
     spec_a: str,
     spec_b: str,
@@ -318,6 +599,7 @@ def diff_packages(
     fetch_options: Mapping[str, object] | None = None,
     on_resolve: Callable[[str], None] | None = None,
     on_materialize: Callable[[str], None] | None = None,
+    impact_path: str | os.PathLike[str] | None = None,
 ) -> DiffReport:
     """Resolve, materialize, and compare two source specifications."""
     logger.debug("diff packages before=%s after=%s", spec_a, spec_b)
@@ -350,12 +632,18 @@ def diff_packages(
                     note = None
                 if note is not None:
                     notes.append(note)
+    impact = (
+        compute_impact(before=before, after=after, consumer_path=impact_path)
+        if impact_path is not None
+        else None
+    )
     return DiffReport(
         before=before.identity,
         after=after.identity,
         files=diff_file_trees(before.tree, after.tree),
         api=diff_api_indexes(before.api, after.api),
         release_notes=tuple(notes),
+        impact=impact,
     )
 
 
@@ -363,9 +651,13 @@ __all__ = [
     "DiffReport",
     "FileDiff",
     "GitHubReleaseNotes",
+    "ImpactReport",
+    "ImpactSite",
+    "ImpactedSymbol",
     "ReleaseNote",
     "ReleaseNotesFetcher",
     "VersionIdentity",
+    "compute_impact",
     "diff_file_trees",
     "diff_packages",
 ]

@@ -412,7 +412,11 @@ def _checksums(package: _Package) -> list[tuple[str, str]]:
 
 def _packages(corpus_root: str | Path) -> list[_Package]:
     result: list[_Package] = []
-    for entry, manifest, target in enumerate_shelved_sources(corpus_root):
+    # issue #268: strict, because a corrupt catalog silently read back as
+    # empty here would emit an SBOM that positively asserts the corpus has
+    # zero packages, rather than failing the command that could not
+    # establish what packages exist.
+    for entry, manifest, target in enumerate_shelved_sources(corpus_root, strict=True):
         name = str(entry["name"])
         version = str(manifest.get("version") or entry["commit_sha"])
         ecosystem = manifest.get("ecosystem")

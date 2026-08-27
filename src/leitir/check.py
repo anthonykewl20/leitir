@@ -63,9 +63,11 @@ A ``CheckReport`` additionally exposes ``status`` (``"nothing_examined"``
 / ``"violations_found"`` / ``"clean"``) precisely because zero examined
 sites and zero violating sites both make ``sites_violation == 0`` true --
 without a separate indicator a run that checked nothing looks identical to
-a run that checked everything and found it clean (see the
-``guess_import_root`` limitation below, which can silently produce exactly
-zero examined sites).
+a run that checked everything and found it clean. This still happens
+whenever the pinned distribution's import root(s) cannot be determined at
+all from its own evidence (see :mod:`leitir.usage.import_evidence`,
+issue #269, ADR-0031) -- an undeterminable root must fail safe the same
+way a wrong guess used to.
 """
 
 from __future__ import annotations
@@ -79,6 +81,7 @@ from .apisurface import ApiIndex, extract_api_surface
 from .materialize import VerificationError
 from .safeio import read_regular_file
 from .usage.contract import CodeReference, UnresolvedState
+from .usage.import_evidence import resolve_import_roots
 from .usage.resolver import (
     MAX_RESOLVER_FILE_BYTES,
     MAX_RESOLVER_FILES,
@@ -155,6 +158,8 @@ class CheckReport:
     files_examined: tuple[str, ...]
     files_excluded: tuple[str, ...]
     target_corroboration_capped: bool
+    import_roots: tuple[str, ...]
+    import_roots_determinable: bool
 
     def __post_init__(self) -> None:
         if self.sites_examined != self.sites_ok + self.sites_violation + self.sites_unresolved:
@@ -194,6 +199,8 @@ class CheckReport:
             "files_examined": list(self.files_examined),
             "files_excluded": list(self.files_excluded),
             "target_corroboration_capped": self.target_corroboration_capped,
+            "import_roots": list(self.import_roots),
+            "import_roots_determinable": self.import_roots_determinable,
         }
 
     @property
@@ -381,16 +388,16 @@ class _ImportTable:
     symbol_aliases: dict[str, str]
 
 
-def _build_import_table(tree: ast.Module, import_root: str) -> _ImportTable:
+def _build_import_table(tree: ast.Module, import_roots: frozenset[str]) -> _ImportTable:
     module_names: set[str] = set()
     symbol_aliases: dict[str, str] = {}
     for stmt in tree.body:
         if isinstance(stmt, ast.Import):
             for alias in stmt.names:
-                if alias.name.split(".")[0] == import_root:
+                if alias.name.split(".")[0] in import_roots:
                     module_names.add(alias.asname or alias.name.split(".")[0])
         elif isinstance(stmt, ast.ImportFrom):
-            if stmt.level == 0 and stmt.module and stmt.module.split(".")[0] == import_root:
+            if stmt.level == 0 and stmt.module and stmt.module.split(".")[0] in import_roots:
                 for alias in stmt.names:
                     if alias.name == "*":
                         continue
@@ -440,20 +447,20 @@ def _candidate_for_reference(
 
 
 def guess_import_root(package_name: str) -> str:
-    """Best-effort normalization of a registry distribution name to its
-    top-level Python import root.
+    """Best-effort normalization of a registry distribution name.
 
-    KNOWN LIMITATION: this assumes the import root equals the normalized
-    distribution name (lowercase, non-identifier characters replaced with
-    ``_``) -- true for the common case (``flask`` -> ``flask``, ``numpy`` ->
-    ``numpy``) but false for renamed distributions (``beautifulsoup4`` ->
-    ``bs4``, ``PyYAML`` -> ``yaml``). There is no local, static, network-free
-    distribution-to-import-root catalog available to this command (that is
-    the admitted-consumer pipeline of ADR-0026, which requires out-of-band
-    admission evidence this command does not have). When the guess is
-    wrong, no reference is ever falsely emitted (the resolver simply finds
-    no usage of the guessed root), so the practical effect is under-checking
-    (silently 0 sites examined), never a false violation.
+    HISTORICAL NOTE (superseded by issue #269): this was previously the
+    *only* source ``run_check`` used to decide which import root to look
+    for, which is wrong for any renamed distribution (``beautifulsoup4`` ->
+    ``bs4``, ``PyYAML`` -> ``yaml``, ``pillow`` -> ``PIL``, ...). As of
+    issue #269, ``run_check`` derives the actual import root(s) from the
+    materialized distribution's own evidence via
+    :func:`leitir.usage.import_evidence.resolve_import_roots` (see
+    ADR-0031), which extends ADR-0026's import-catalog machinery instead of
+    guessing from the name. This function is kept only as a display/
+    diagnostic helper (e.g. the CLI's "nothing examined" message can still
+    show what a name-based guess *would* have been) and is no longer
+    consulted to decide what the resolver looks for.
     """
 
     normalized = re.sub(r"[^0-9a-zA-Z_]", "_", package_name).lower()
@@ -482,10 +489,22 @@ def run_check(
     index_names = _index_symbol_names(index)
     target_text = _read_target_text(materialized_root)
 
-    import_root = guess_import_root(package_name)
+    # Issue #269: derive the import root(s) from the materialized
+    # distribution's own evidence (leitir.usage.import_evidence, extending
+    # ADR-0026's import-catalog machinery) rather than guessing it from the
+    # registry name. ``None`` means the evidence was absent or ambiguous --
+    # this must fail safe (zero import roots => the resolver finds no
+    # reference to check => sites_examined stays 0 => status
+    # "nothing_examined", never a guessed violation and never a silent
+    # "ok"). A resolved mapping may legitimately name more than one root
+    # (a multi-root distribution); every resolved root maps to the same
+    # ``against`` target.
+    resolved_roots = resolve_import_roots(materialized_root, package_name)
+    import_roots_determinable = resolved_roots is not None
+    import_roots = tuple(sorted(resolved_roots)) if resolved_roots else ()
     result = resolve_consumer(
         consumer_root=consumer_root,
-        import_roots={import_root: against},
+        import_roots={root: against for root in import_roots},
         files=files,
         max_files=MAX_RESOLVER_FILES,
         max_file_bytes=MAX_RESOLVER_FILE_BYTES,
@@ -528,7 +547,7 @@ def run_check(
                 )
             )
             continue
-        table = table_cache.setdefault(relpath, _build_import_table(tree, import_root))
+        table = table_cache.setdefault(relpath, _build_import_table(tree, frozenset(import_roots)))
         candidate = _candidate_for_reference(tree, table, reference)
         line = reference.span.start_line
         col = reference.span.start_col
@@ -652,6 +671,8 @@ def run_check(
         files_examined=files_examined,
         files_excluded=files_excluded,
         target_corroboration_capped=target_text.capped,
+        import_roots=import_roots,
+        import_roots_determinable=import_roots_determinable,
     )
 
 

@@ -5,6 +5,8 @@
 - Date: 2026-08-27
 - Implementation: not-started
 - Related: issue #272 (A5, split out of #266), issue #271 (C4, callable Python API — blocking dependency),
+  issue #279 (a distinct, cold-path defect this ADR's own measurement uncovered: `info`/`get`/`api`/`examples`/`trust`
+  pay O(catalog) re-verification to resolve a single-shelf spec, with no warm process involved — see the framing note below),
   [ADR-0006](0006-load-time-tree-verification.md) (load-time tree verification),
   [ADR-0018](0018-manifest-authenticity.md) (manifest authenticity),
   `docs/evidence/warm-mode-premise-2026-08-27.md` (measured premise report backing this decision)
@@ -25,6 +27,25 @@ narrowing to the shelf(s) the spec names. `mcp/bridge.py` pays this cost on
 every tool call because it shells out to a fresh `python -m leitir.cli`
 subprocess per call, with no in-process entry point available (that gap is
 issue #271).
+
+That O(catalog) re-verification-per-call cost is filed and tracked
+separately as **issue #279**, because it is a cold-path defect that exists
+today with no warm process anywhere in the picture — a single-shelf `info`
+call pays it on the very first, uncached invocation, which no amount of
+warm-mode caching changes for that first call. It directly contradicts the
+premise ADR-0031's advisory-lane split and #266 A2's `info --brief`
+recommendation are built on: that these are the *cheap* verbs an agent
+calls freely and often. Warm mode (this ADR) and issue #279 are related but
+distinct: #279 is about not doing O(catalog) work *within one call* in the
+first place; this ADR is about not repeating O(one-shelf) verification
+*across calls* within a session once #279's fix (or the unfixed status quo)
+has produced a verified result. A warm-mode cache built only on top of
+today's `find_materialized_sources` would still pay #279's full-catalog
+cost on every session's first touch of any spec; fixing #279 shrinks what
+this ADR's session cache needs to hold, but does not remove the need for
+it — repeated touches of the *same* shelf across a session still benefit
+from not re-verifying every time, even once #279 makes a single touch
+verify only the shelves it needs.
 
 A warm process — one that stays alive across an agent's ten-to-twenty
 consultations in a single task and avoids repeating this work — is an
@@ -320,6 +341,7 @@ implement these, only to leave room):
 
 - Issue [#272](https://github.com/anthonykewl20/leitir/issues/272) (A5: warm process mode)
 - Issue [#271](https://github.com/anthonykewl20/leitir/issues/271) (C4: callable Python API — blocking dependency)
+- Issue [#279](https://github.com/anthonykewl20/leitir/issues/279) — the O(catalog) re-verification-per-call defect this ADR's premise measurement uncovered; a distinct, cold-path bug tracked separately, not fixed by warm mode
 - [ADR-0006](0006-load-time-tree-verification.md) — load-time materialized-tree verification (the security property this ADR must not weaken)
 - [ADR-0018](0018-manifest-authenticity.md) — manifest authenticity (the detached-signature layer this ADR does not touch)
 - `docs/evidence/warm-mode-premise-2026-08-27.md` — the measured premise report backing this decision

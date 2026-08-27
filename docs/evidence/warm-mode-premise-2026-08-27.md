@@ -86,6 +86,20 @@ become a re-verify-on-demand, invalidation-tracked structure, or every
 single-shelf command pays full-corpus cost regardless of what warm mode does
 for search specifically.
 
+This finding is bigger than #272 on its own and is filed separately as
+**[issue #279](https://github.com/anthonykewl20/leitir/issues/279)**: doing
+O(catalog) verification work to resolve a single-shelf spec is a cold-path
+performance defect today, independent of any warm process. It directly
+contradicts ADR-0031's advisory-lane premise and #266 A2's `info --brief`
+recommendation, both of which sell `info`/`search`/`ask`/`examples`/`api` as
+cheap, frequently-callable verbs — the token cost of `info --brief` was
+measured and reduced (56%, #266 A2), but its latency was never measured
+until this report, and it turns out to scale with corpus size, not with
+work actually done. Fixing #279 is a prerequisite for the advisory lane's
+premise being true; it is not a substitute for the warm-mode session cache
+ADR-0035 decides, since even a corrected single-call resolution still repeats
+per-call verification of the *same* shelf across a multi-call session.
+
 ## Finding 3 — hot-function breakdown of verification cost
 
 By self time (`tottime`) across the same profile, verification cost is
@@ -162,4 +176,5 @@ fan-out, it is inherent to spec resolution against a growing catalog. Any
 warm-mode cache that only memoizes per-search-scope state, and not the
 catalog-enumeration path, will still leave every single-shelf command paying
 full-corpus cost. See ADR-0035 for what this means for what is cached and
-how it is invalidated.
+how it is invalidated, and see issue #279 for the cold-path defect (O(catalog)
+work per call, independent of warm mode) this same measurement surfaced.

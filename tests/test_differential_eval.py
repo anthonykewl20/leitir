@@ -238,12 +238,22 @@ def _demo_tarball() -> bytes:
     import io
     import tarfile
 
+    # Issue #269 follow-up: tier 4 (a purely structural directory-layout
+    # scan) was retired as an authority (ADR-0032, "Tier 4 was retired as
+    # an authority") -- it could still bind a wrong root and produce a
+    # false violation. A real top_level.txt (tier 1, authoritative) is
+    # now required for check to resolve "demo" as the import root at all.
     source = b"def Known(x):\n    return x\n"
+    files = {
+        "demo/__init__.py": source,
+        "demo.egg-info/top_level.txt": b"demo\n",
+    }
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
-        member = tarfile.TarInfo(f"demo-{_SHA}/demo/__init__.py")
-        member.size = len(source)
-        archive.addfile(member, io.BytesIO(source))
+        for name, content_bytes in files.items():
+            member = tarfile.TarInfo(f"demo-{_SHA}/{name}")
+            member.size = len(content_bytes)
+            archive.addfile(member, io.BytesIO(content_bytes))
     return data.getvalue()
 
 

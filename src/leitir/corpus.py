@@ -71,10 +71,14 @@ def load_sources(
 
     ``strict=True`` is for callers where "the declared universe could not be
     established" must never be indistinguishable from "the declared universe
-    is empty" (issue #266 P1: corpus-wide search fail-closed). In that mode
-    a corrupt or unreadable catalog raises ``VerificationError`` instead of
-    being silently swallowed -- the ``.bak`` rename is no longer the only
-    record that something went wrong.
+    is empty" (issue #266 P1: corpus-wide search fail-closed; issue #268:
+    audited every other write/artefact/policy caller). In that mode a
+    corrupt or unreadable catalog raises ``VerificationError`` instead of
+    being silently swallowed -- no ``.bak`` rename happens (there was no
+    silent recovery), and the exception message names the corrupt file, the
+    corpus root, and a concrete recovery step (restore from backup, or run
+    a non-strict command once to reset the catalog and re-add sources) so a
+    fail-closed rejection is never a dead end (see ADR-0034).
     """
     corpus_root = resolve_root(root)
     index = corpus_root / INDEX_NAME
@@ -95,9 +99,22 @@ def load_sources(
         return []
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         if strict:
+            # issue #268: name the corrupt file, the corpus root, and a
+            # concrete way out -- a fail-closed path with no stated
+            # recovery is a bricked tool. Materialized shelf bytes under
+            # ``corpus_root / "repos"`` are never touched by this failure.
             raise VerificationError(
-                f"corpus catalog is corrupt or unreadable, the declared universe "
-                f"cannot be established: {index}"
+                f"corpus catalog is corrupt or unreadable, the declared "
+                f"universe cannot be established: {index}\n"
+                f"recovery: restore {index.name} in {corpus_root} from a "
+                f"backup if you have one. Otherwise, run a non-strict "
+                f"command such as `leitir list --root {corpus_root}` once "
+                f"-- it will back up the corrupt file to {INDEX_NAME}.bak "
+                f"in {corpus_root} and reset the catalog to empty -- then "
+                f"re-run `leitir get <spec>` for each source you had under "
+                f"{corpus_root / 'repos'} to re-add it to the rebuilt "
+                f"catalog; the materialized shelf bytes themselves were "
+                f"never touched by this failure."
             ) from exc
         corpus_root.mkdir(parents=True, exist_ok=True)
         if index.exists():

@@ -111,11 +111,79 @@ never the *only* record of corruption on any path, strict or not (issue
 - `get`/`install`/`lock`/`diff` now fail an entire materialize when the
   catalog is corrupt, rather than degrading. This is the intended blast
   radius: a write that cannot see the corpus's existing state must not
-  proceed as if it saw an empty one.
+  proceed as if it saw an empty one. See "Recovery" below: this is not a
+  dead end for the user.
+
+## Recovery when a strict caller rejects a corrupt catalog
+
+Before this change, a corrupt catalog self-healed on the very next command:
+`load_sources`'s non-strict path renamed it to `sources.json.bak` and
+returned `[]`, so `get` (for example) would just quietly rebuild the
+catalog from scratch. Making the write path (`_upsert`) and the other
+adopted callers `strict=True` removes that self-heal for them by design --
+but a fail-closed path with no stated way out is a bricked tool, not a
+safety improvement. The `VerificationError` raised by `load_sources(...,
+strict=True)` therefore now names, in the message itself:
+
+1. The exact corrupt file path and the corpus root.
+2. That a backup of `sources.json`, if the user has one, can simply be
+   restored in place -- the fastest, least lossy recovery.
+3. The concrete self-heal step otherwise: run any non-strict command (the
+   message suggests `leitir list --root <root>`) once. That performs the
+   same `.bak` rename and empty-catalog reset that used to happen
+   automatically, after which `leitir get <spec>` re-run for each
+   previously-catalogued source re-adds it to the freshly rebuilt catalog.
+4. That the materialized shelf bytes under `<root>/repos` were never
+   touched by this failure -- only the catalog's *record* of them was
+   unreadable, not the bytes themselves.
+
+This keeps the fail-closed behavior (a corrupt catalog is never silently
+treated as authoritative for a write or an artefact) while making the
+degradation recoverable rather than a dead end. Pinned by
+`test_strict_verification_error_names_recovery_path` in
+`tests/test_load_sources_strict_callers.py`.
+
+## Amended contract: the write-path self-heal test
+
+`tests/test_materialize_e2e.py::test_corrupt_index_is_backed_up_and_rebuilt`
+predates this issue and pinned exactly the behavior issue #268 reports as
+the bug on the write path. Quoting the contract it pinned, in full, before
+this change:
+
+```python
+def test_corrupt_index_is_backed_up_and_rebuilt(tmp_path):
+    tmp_path.joinpath("sources.json").write_text("not json")
+    with scripted_server([(200, {}, _tarball())]) as server:
+        _add(tmp_path, server)
+
+    assert (tmp_path / "sources.json.bak").read_text() == "not json"
+    assert len(load_sources(tmp_path)) == 1
+```
+
+That is: materializing a new source against a corrupt catalog silently
+backed up the corrupt file and proceeded as if the corpus held nothing but
+the one source just materialized -- the exact "destructive false success"
+this ADR's audit adopts `strict=True` for in `corpus._upsert` (see the
+table above). The test was not exercising some other, acceptable
+degradation; it was asserting the specific silent-recovery-on-write
+behavior that is the defect.
+
+**Decision**: this contract is consciously amended, not weakened. The test
+is renamed to `test_corrupt_index_fails_closed_instead_of_silently_rebuilding`
+and now asserts the opposite: `_add` (which calls `materialize_source` ->
+`_upsert`) raises `VerificationError`, the corrupt `sources.json` is left
+exactly as it was (no `.bak` rename -- under `strict`, the rename that used
+to signal "silent recovery happened" never happens, because there was no
+silent recovery), and the new source was not added. This is reviewable
+without reading the diff: the old contract asserted `_upsert` self-heals a
+corrupt catalog and treats it as empty; the new contract asserts `_upsert`
+refuses to write against a catalog it cannot read, and directs the caller
+to the recovery path above instead.
 
 ## Links
 
 - Issue #268
 - Issue #266, PR #267 (the corpus-search precedent this audit follows)
 - `src/leitir/corpus.py` (`load_sources`, `_upsert`, `remove_source`, `enumerate_shelved_sources`, `find_materialized_sources`)
-- `tests/test_load_sources_strict_callers.py`
+- `tests/test_load_sources_strict_callers.py` (per-caller regressions and `test_strict_verification_error_names_recovery_path`)
+- `tests/test_materialize_e2e.py::test_corrupt_index_fails_closed_instead_of_silently_rebuilding` (the amended write-path contract)

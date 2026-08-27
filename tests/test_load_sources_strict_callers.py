@@ -122,6 +122,34 @@ def test_sbom_cli_corrupt_catalog_fails_closed_not_empty_sbom(tmp_path):
     assert "corrupt" in err or "cannot be established" in err
 
 
+def test_strict_verification_error_names_recovery_path(tmp_path):
+    """issue #268 (coordinator review): a fail-closed path with no stated
+    recovery is a bricked tool. A user whose catalog is corrupt can no
+    longer materialize anything (``_upsert`` is strict), so the error must
+    name the corrupt file, the corpus root, and a concrete way out --
+    not just "corrupt, cannot be established".
+    """
+    make_corpus(tmp_path)
+    _corrupt_catalog(tmp_path)
+
+    with pytest.raises(VerificationError) as excinfo:
+        load_sources(tmp_path, strict=True)
+    message = str(excinfo.value)
+
+    # Names the corrupt file and the corpus root.
+    assert str(tmp_path / "sources.json") in message
+    assert str(tmp_path) in message
+    # States a concrete recovery step: restore from backup, or reset via a
+    # non-strict command and re-add sources -- never just "it's broken".
+    assert "recovery:" in message
+    assert "backup" in message
+    assert "sources.json.bak" in message
+    assert "leitir list" in message
+    assert "leitir get" in message
+    # Reassures the user the materialized shelf bytes were not touched.
+    assert "repos" in message
+
+
 def test_require_all_shelves_authenticated_corrupt_catalog_fails_closed(tmp_path):
     """Under `--require-manifest-auth`, a corrupt catalog must not be read
     back as zero shelves and thus vacuously "every shelf is authenticated".

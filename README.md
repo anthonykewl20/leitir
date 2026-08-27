@@ -346,7 +346,13 @@ except when interrupted:
   and `doctor` instead fail closed with `CORPUS_FAILURE`/a failing check,
   since a false-empty read there would produce a false success or a
   destructive action; `list` and a handful of best-effort lookups remain
-  benign by design. See [ADR-0031](docs/adr/0031-corpus-catalog-corruption-fail-closed-audit.md)
+  benign by design. A fail-closed rejection names the corrupt file, the
+  corpus root, and the recovery step in the error itself: restore
+  `sources.json` from a backup if you have one, or run a non-strict command
+  (e.g. `leitir list`) once to reset the catalog to empty and re-run
+  `leitir get <spec>` for each source to re-add it -- materialized shelf
+  bytes under `<root>/repos` are never touched by the failure. See
+  [ADR-0034](docs/adr/0034-corpus-catalog-corruption-fail-closed-audit.md)
   for the full per-command audit. A genuinely absent catalog (nothing ever
   materialized) is always the honest empty corpus, never treated as corruption.
 

@@ -41,10 +41,15 @@ from .search import (
     SearchSpecError,
     canonical_predicates,
 )
-from .spec import CorpusSpec, SpecParseError, parse_corpus_spec
+from .spec import (
+    SUPPORTED_SPEC_FORMS,
+    CorpusSpec,
+    SpecParseError,
+    parse_corpus_spec,
+)
 
 if TYPE_CHECKING:
-    from .diff import DiffReport
+    from .diff import DiffReport, ImpactReport
     from .discovery_search import CoverageBounds
     from .parity import ArtifactInfo as ArtifactInfoLike
     from .resolver import Ecosystem, ResolvedPackage, _CorpusResolver, _HeadResolver
@@ -292,6 +297,22 @@ def build_parser() -> argparse.ArgumentParser:
             "  If a diff against grep looks like leitir is 'missing' matches on a non-Python\n"
             "  file, check whether they are inside a comment or string literal first --\n"
             "  that is expected, by-design behavior. See docs/search-capabilities.md.\n"
+            "\n"
+            "output streams:\n"
+            "  Unlike every other verb, `search` always writes its full machine-readable\n"
+            "  report to stdout and the human summary to stderr -- this is not conditional\n"
+            "  on any flag. `--json` is accepted for shape-compatibility with other verbs\n"
+            "  but is a no-op: output is identical with or without it.\n"
+        ),
+    )
+    search.add_argument(
+        "--json",
+        action="store_true",
+        dest="search_json_noop",
+        help=(
+            "accepted for flag-shape compatibility with other verbs; has no effect. "
+            "search always writes its machine-readable report to stdout and the human "
+            "summary to stderr, regardless of this flag"
         ),
     )
     index_command = commands.add_parser(
@@ -593,6 +614,17 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("--json", action="store_true", dest="as_json")
     diff.add_argument(
         "--cwd", default=None, help="project directory used for lockfile resolution"
+    )
+    diff.add_argument(
+        "--impact",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Python consumer source file or directory: intersect the "
+            "removed/changed symbol delta with actual usage and report "
+            "which removals affect it (additive; default diff output is "
+            "unchanged without this flag)"
+        ),
     )
     diff_roots = diff.add_mutually_exclusive_group()
     diff_roots.add_argument("--root", default=None, help="corpus root directory")
@@ -1262,7 +1294,27 @@ def _corpus_root(args: argparse.Namespace, err: TextIO) -> Path:
         else:
             print(f"leitir: {_ensure_local_gitignore(cwd)}", file=err)
         return (cwd / ".leitir-refs").absolute()
-    return resolve_root(getattr(args, "root", None))
+    explicit_root = getattr(args, "root", None)
+    root = resolve_root(explicit_root)
+    # L9 (dogfood #266): the fully-defaulted root (no --root, no
+    # LEITIR_HOME) is ``~/.leitir`` and is created with no indication,
+    # so a user following the quickstart verbatim writes into their home
+    # before learning about --root/--local/LEITIR_HOME. Note it once, the
+    # first time the default root does not yet exist -- an existing root
+    # (this call or a later one, after some command has created it) never
+    # repeats the note.
+    if (
+        explicit_root is None
+        and os.environ.get("LEITIR_HOME") is None
+        and not root.exists()
+    ):
+        print(
+            f"leitir: note: using default corpus root {root} "
+            "(created on first write); to use a different location, pass "
+            "--root PATH, --local, or set LEITIR_HOME",
+            file=err,
+        )
+    return root
 
 
 _LOCAL_FIRST_ECOSYSTEMS = frozenset({"pypi", "npm", "crates"})
@@ -1627,7 +1679,7 @@ def _resolve_corpus_spec(
     ``announce`` is deliberately positional so test seams that replace this
     function with ``lambda *_args: ...`` keep working.
     """
-    from .resolver import resolve_corpus_spec
+    from .resolver import ResolutionError, resolve_corpus_spec
 
     # Issue #245: exact ecosystem pins resolve local-first when the
     # corpus already holds the verified shelf, so cached pins stay
@@ -1657,12 +1709,32 @@ def _resolve_corpus_spec(
                 None,
                 None,
             )
-    resolved, tag, version_source, detection_source = resolve_corpus_spec(
-        parsed,
-        cast("_CorpusResolver", resolver),
-        cast("_HeadResolver", heads),
-        cwd,
-    )
+    try:
+        resolved, tag, version_source, detection_source = resolve_corpus_spec(
+            parsed,
+            cast("_CorpusResolver", resolver),
+            cast("_HeadResolver", heads),
+            cwd,
+        )
+    except ResolutionError as exc:
+        # A bare token with no ecosystem prefix and no owner/repo shape
+        # (``leitir get not-a-spec``) falls back to being treated as an
+        # npm package name (see ``spec.parse_corpus_spec``'s final
+        # ``_split_package(raw, "npm", raw)`` branch) -- this fallback is
+        # intentional and documented (ADR-0005 D5: bare-name npm lookup),
+        # so it must not be rejected up front. But when that guess turns
+        # out wrong, a bare registry lookup failure ("npm registry lookup
+        # failed for not-a-spec: HTTP 404") reads as a network problem
+        # rather than a likely typo'd spec. Name the guess and list the
+        # supported forms, without changing the error type or exit code
+        # (dogfood #266 F1/L1).
+        if type(exc) is ResolutionError and parsed.ecosystem == "npm" and ":" not in parsed.raw:
+            raise ResolutionError(
+                f"{exc} ({parsed.raw!r} has no ecosystem prefix or owner/repo shape, "
+                f"so it was looked up as a bare npm package name; if that is not what "
+                f"you intended, supported spec forms are: {SUPPORTED_SPEC_FORMS})"
+            ) from exc
+        raise
     _announce_degraded_resolution(parsed, resolved, announce)
     if announce is not None and parsed.ecosystem is None and parsed.ref_kind == "branch":
         scope = cast(RepoScope, getattr(resolved, "scope", resolved))
@@ -1703,6 +1775,53 @@ def _write_diff_human(report: DiffReport, out: TextIO) -> None:
         for note in report.release_notes:
             print(f"  {note.tag}: {note.url}", file=out)
             print(note.body, file=out)
+    if report.impact is not None:
+        _write_impact_human(report.impact, out)
+
+
+def _write_impact_human(impact: ImpactReport, out: TextIO) -> None:
+    print(
+        f"Impact against {impact.against} "
+        f"({len(impact.impacted)} of {impact.removed_total} removed symbols used):",
+        file=out,
+    )
+    for symbol in impact.impacted:
+        print(f"  {symbol.qualified_name} ({len(symbol.sites)} call sites):", file=out)
+        for site in symbol.sites:
+            print(f"    {site.file}:{site.line}:{site.col}", file=out)
+    if impact.not_impacted:
+        print(f"  not used ({len(impact.not_impacted)}):", file=out)
+        for name in impact.not_impacted:
+            print(f"    {name}", file=out)
+    print(
+        f"  sites: examined={impact.sites_examined} unresolved={impact.sites_unresolved}",
+        file=out,
+    )
+    if impact.status == "no_sites_examined":
+        print(
+            "  WARNING: 0 sites examined -- impact could not be determined "
+            "for this package (see known import-root-mismatch limitation, "
+            "issue #269); this is NOT evidence that no removed symbol is used",
+            file=out,
+        )
+
+
+def _print_diff_impact_summary(impact: ImpactReport, err: TextIO) -> None:
+    print(
+        f"leitir: impact against {impact.against}: "
+        f"removed={impact.removed_total} impacted={len(impact.impacted)} "
+        f"not_impacted={len(impact.not_impacted)} sites_examined={impact.sites_examined} "
+        f"sites_unresolved={impact.sites_unresolved} status={impact.status}",
+        file=err,
+    )
+    if impact.status == "no_sites_examined":
+        print(
+            f"leitir: WARNING: 0 sites examined for {impact.package_name!r} "
+            "-- impact could not be determined (import root mismatch? see "
+            "issue #269's known limitation for renamed distributions); "
+            "this is NOT evidence that no removed symbol is used",
+            file=err,
+        )
 
 
 def root_for_bts(args: argparse.Namespace) -> Path:
@@ -2261,6 +2380,7 @@ def _run_corpus_command(
                     )
             return int(ExitCode.SUCCESS)
         if args.command == "diff":
+            from .check import CheckIndexError, UnsupportedLanguageError
             from .corpus import materialize_source
             from .diff import GitHubReleaseNotes, diff_packages
             from .materialize import _target_lock, read_valid_manifest
@@ -2269,6 +2389,11 @@ def _run_corpus_command(
             resolver = resolver_factory(token)
             heads = code_search_factory(token)
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
+            impact_path = (
+                Path(args.impact).expanduser().absolute()
+                if getattr(args, "impact", None)
+                else None
+            )
             fetch_options: _FetchOptions = {}
             if os.environ.get("LEITIR_CODELOAD_BASE_URL"):
                 fetch_options["base_url"] = os.environ["LEITIR_CODELOAD_BASE_URL"]
@@ -2283,20 +2408,30 @@ def _run_corpus_command(
             # seam and may not consume shelf bytes at all. Only the built-in
             # implementation needs leitir's target-lock orchestration.
             if diff_packages.__module__ != "leitir.diff":
-                report = diff_packages(
-                    args.spec_a,
-                    args.spec_b,
-                    corpus_root=root,
-                    resolver=resolver,
-                    heads=heads,
-                    cwd=cwd,
-                    release_notes=GitHubReleaseNotes(token, **notes_options),
-                    fetch_options=fetch_options,
-                )
+                try:
+                    report = diff_packages(
+                        args.spec_a,
+                        args.spec_b,
+                        corpus_root=root,
+                        resolver=resolver,
+                        heads=heads,
+                        cwd=cwd,
+                        release_notes=GitHubReleaseNotes(token, **notes_options),
+                        fetch_options=fetch_options,
+                        impact_path=impact_path,
+                    )
+                except (UnsupportedLanguageError, FileNotFoundError) as exc:
+                    print(f"leitir: error: {redact(str(exc))}", file=err)
+                    return int(ExitCode.MALFORMED_USAGE)
+                except CheckIndexError as exc:
+                    print(f"leitir: error: {redact(str(exc))}", file=err)
+                    return int(ExitCode.CORPUS_FAILURE)
                 if args.as_json:
                     print(report.to_json(), file=out)
                 else:
                     _write_diff_human(report, out)
+                if report.impact is not None:
+                    _print_diff_impact_summary(report.impact, err)
                 return int(ExitCode.SUCCESS)
             prepared: dict[str, tuple[Path, RepoScope, str]] = {}
             pinned_resolutions: dict[tuple[str, str, str], object] = {}
@@ -2388,28 +2523,38 @@ def _run_corpus_command(
                 ) -> Path:
                     return prepared[raw][0]
 
-                report = diff_packages(
-                    args.spec_a,
-                    args.spec_b,
-                    corpus_root=root,
-                    resolver=(
-                        _CachedFirstResolverFacade(resolver, pinned_resolutions)
-                        if pinned_resolutions
-                        else resolver
-                    ),
-                    heads=heads,
-                    cwd=cwd,
-                    materializer=locked_materializer,
-                    release_notes=GitHubReleaseNotes(token, **notes_options),
-                    fetch_options=fetch_options,
-                    on_resolve=lambda spec: print(
-                        f"leitir: resolving {spec} (cwd={cwd})", file=err
-                    ),
-                )
+                try:
+                    report = diff_packages(
+                        args.spec_a,
+                        args.spec_b,
+                        corpus_root=root,
+                        resolver=(
+                            _CachedFirstResolverFacade(resolver, pinned_resolutions)
+                            if pinned_resolutions
+                            else resolver
+                        ),
+                        heads=heads,
+                        cwd=cwd,
+                        materializer=locked_materializer,
+                        release_notes=GitHubReleaseNotes(token, **notes_options),
+                        fetch_options=fetch_options,
+                        on_resolve=lambda spec: print(
+                            f"leitir: resolving {spec} (cwd={cwd})", file=err
+                        ),
+                        impact_path=impact_path,
+                    )
+                except (UnsupportedLanguageError, FileNotFoundError) as exc:
+                    print(f"leitir: error: {redact(str(exc))}", file=err)
+                    return int(ExitCode.MALFORMED_USAGE)
+                except CheckIndexError as exc:
+                    print(f"leitir: error: {redact(str(exc))}", file=err)
+                    return int(ExitCode.CORPUS_FAILURE)
             if args.as_json:
                 print(report.to_json(), file=out)
             else:
                 _write_diff_human(report, out)
+            if report.impact is not None:
+                _print_diff_impact_summary(report.impact, err)
             return int(ExitCode.SUCCESS)
         if args.command == "remove":
             parsed = parse_corpus_spec(args.spec)

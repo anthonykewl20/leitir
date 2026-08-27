@@ -251,9 +251,42 @@ Track the generated-code diff between Step 5 attempts so evaluators can see whet
 
 ### 6.1 Benchmark Tasks
 
-The benchmark contains 50 version-sensitive or API-breaking-change tasks: 20 Rust, 15 Go, and 15 Python. Each task records its target dependency version and evidence date.
+**Decision (issue #266 E6, as of 2026-08-26):** the paragraph below described
+a planned 50-task code-generation benchmark. It was never built in that
+shape. What shipped instead, and is what actually runs today, is
+`src/leitir/benchmarks/search-v1/` (`manifest.json` + `qrels.json`):
+**32 tasks across 8 pinned real repositories** (`fmtlib/fmt`,
+`google/gson`, `microsoft/TypeScript`, `python/cpython`, `redis/redis`,
+`serde-rs/serde`, `stretchr/testify`, `tj/commander.js` -- 4 tasks per
+repository, one repository per supported adapter language: C, C++, Go,
+Java, JavaScript, Python, Rust, TypeScript). It is a different kind of
+benchmark by design, not a smaller version of the same one: each task is a
+**predicate-based retrieval** query (a scoped-exhaustive search spec of
+`must`/`must_not`/`should` predicates against a pinned commit) scored
+against **graded relevance judgments (qrels)**, not a code-generation task
+scored by a hidden test suite. `leitir bench` runs it with fixed tasks and
+a strict output shape; `docs/scoring.md` documents its role in the Output
+Effectiveness scoring dimension.
 
-Each task ships with a Dockerfile and a hidden `eval_test` suite that is unavailable during generation. The suite is revealed only to the evaluation harness during Step 5.
+The qrels carry `judgments_complete: false` for every task (all 32, by
+construction -- the judged set is not exhaustive over every repository).
+This is correct handling, not a defect: the scorer suppresses
+`precision_at_5`, `precision_at_10`, and `average_precision_at_10` (`None`)
+because precision is unsound when retrieved-but-unjudged items cannot be
+scored, while `recall_at_10` and `ndcg_at_10` remain valid -- recall's
+denominator is the known judged-relevant set, which unjudged items do not
+inflate, and nDCG treats unjudged results as zero gain while preserving
+rank position. See `tests/test_score_retrieval.py` and `docs/scoring.md`
+for the pinned behavior.
+
+The originally planned **50-task, version-sensitive or API-breaking-change
+benchmark (20 Rust / 15 Go / 15 Python, each task shipping a Dockerfile and
+a hidden `eval_test` suite revealed only during Step 5)** remains an unbuilt
+future item, not a current capability. The closest existing analog to a
+code-generation, hidden-test-suite benchmark is the offline differential
+eval harness in `benchmarks/differential/` (see 6.2), which reads its own,
+separate, five-donor `benchmarks/exit-corpus/` task source and has never
+been run against a real model.
 
 ### 6.2 Key Performance Indicators
 
@@ -265,6 +298,50 @@ Each task ships with a Dockerfile and a hidden `eval_test` suite that is unavail
 | Self-Correction Convergence Rate (SCCR) | Tasks that fail the first valid Step 5 attempt but pass within the next three repair loops ÷ tasks with a valid first-pass failure. Infrastructure failures are excluded and reported separately. | `SCCR > 0.85` within three loops |
 
 **STATUS (as of 2026-08-26):** The metrics above remain **UNMEASURED**. No implementation of SER, DRI, FPCR, SCCR, or the 0%-hallucinated-parameters target exists in `src/`. These targets define required evidence but are not yet scored in production or on any benchmark run. Issue #266 items E1, E2, and E5 track either implementing these metrics or formally retiring them if they are superseded by the evidence-scoring engine in [ADR-0002](adr/0002-deterministic-evidence-scoring-engine.md) S4.
+
+**Decision (issue #266 E5, as of 2026-08-26):** SER and DRI are not being
+implemented now, and are not being deleted from this table. Both require
+orchestrator-level instrumentation that does not exist anywhere in this
+repository and is out of scope for the current work:
+
+- **SER** needs retained-vs-total *retrieval evidence token* accounting from
+  a real orchestrator's Step 3/4 -- which chunks were produced by discovery
+  and which were actually retained in the first synthesis prompt. No
+  orchestrator that produces this split exists yet.
+- **DRI** needs four-tier evidence-provenance records -- which door (Tier
+  1-4) actually resolved each accepted solution -- attached to a real run.
+  No component records door provenance yet.
+
+The offline differential eval harness in `benchmarks/differential/` (issue
+#266 E2/E3) makes this explicit rather than approximating around it: its
+`README.md` ("What is and is not measurable yet") and `report.py` mark SER
+and DRI as `Unavailable` by construction, with the missing instrumentation
+named above, rather than backing into a number from a proxy. The harness
+already computes, with a real model runner plugged in (it has so far only
+been exercised against `stub_runner.DeterministicStubRunner`'s canned,
+non-model output, and **no evaluation has been run**):
+
+- **FPCR** and **SCCR**, exactly as defined in this section, from real
+  contract-test pass/fail results (`contract_exec.py`).
+- **Token/step cost**, the cost input SER would need but not SER itself
+  (the harness's `tokens_used` is a prompt-length stand-in for a provider
+  `usage` value, not retrieval-evidence accounting).
+- A **hallucinated-symbol rate**, via `leitir check` (`check_bridge.py`,
+  never reimplementing `check`'s API-surface logic). This approximates the
+  0%-hallucinated-parameters target -- it is `check`'s site-level
+  verification, not a per-parameter audit -- so it is reported under its own
+  name, not folded into the PRD's exact wording.
+- The **C-minus-B** (`leitir`-assisted vs. raw web/GitHub search) delta for
+  all of the above, each `Unavailable` rather than fabricated when either
+  arm lacks enough measured data.
+
+**None of the five numeric targets in the KPI table above -- `SER > 0.25`,
+`DRI` >= 80% at Tier 1/2, `FPCR > 0.70`, `SCCR > 0.85`, and 0%
+hallucinated parameters -- has been measured.** Wiring a real model runner
+into `benchmarks/differential/` would make FPCR, SCCR, and the
+hallucinated-symbol rate measurable; it would still leave SER and DRI
+uninstrumented until the orchestrator-level accounting described above
+exists.
 
 SER measures retained retrieval evidence, not tokens in the generated source file. This distinction makes selection efficiency measurable independently of code verbosity.
 

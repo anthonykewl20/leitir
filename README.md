@@ -292,6 +292,24 @@ flowchart LR
 
 ## Commands
 
+Commands split into two lanes with different stakes. **Advisory** commands
+look something up: `doctor`, `search`, `index`, `bench`, `get`, `fetch`,
+`list`, `upgrade-cache`, `trust`, `remove`, `clean`, `lock`, `sbom`, `api`,
+`examples`, `info`, `ask`, `diff`, `export`, `gc`. They materialize and
+verify bytes at load time like everything else, but they render no verdict
+another process is expected to trust — a wrong answer costs a few tokens and
+is visible in the output immediately, so run them freely. **Admission**
+commands render a verdict — accept/reject, complete/partial,
+valid/tampered, ok/violation — that something is entitled to enter a
+recipient project or a ratified corpus: `bts-compute`, `bts-run`,
+`bts-funnel`, `analysis-architecture`, `analysis-lineage`,
+`occupied-validate`, `exit-gate-validate`, `exit-gate-run`, `check`,
+`import`, `usage`. These keep full fail-closed behaviour, containment,
+ratification, and provenance receipts, because a wrong answer here is a
+silent, expensive correctness failure rather than a cheap, visible one. If
+`info` or `search` looks lighter-weight than `bts-run`, that's by design,
+not an inconsistency — see [ADR-0031](docs/adr/0031-two-lane-cli-advisory-and-admission.md).
+
 Every subcommand exits with one of the stable `ExitCode` values (`src/leitir/cli.py`),
 except when interrupted:
 

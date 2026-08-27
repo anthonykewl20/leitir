@@ -6,9 +6,11 @@ import io
 import json
 import tarfile
 
+import pytest
 from _http_server import scripted_server
 
 from leitir.corpus import load_sources, materialize_source, remove_source, resolve_root
+from leitir.materialize import VerificationError
 from leitir.search import RepoScope
 
 SHA = "b" * 40
@@ -71,13 +73,24 @@ def test_materialize_updates_atomic_index_and_leaves_no_temp_file(tmp_path):
     assert not list(tmp_path.glob(".sources.json.tmp-*"))
 
 
-def test_corrupt_index_is_backed_up_and_rebuilt(tmp_path):
+def test_corrupt_index_fails_closed_instead_of_silently_rebuilding(tmp_path):
+    """issue #268: the write path (materialize -> `_upsert`) is strict.
+
+    A corrupt catalog previously meant "the corpus has this one source now"
+    was silently written over an unknown prior state -- exactly the
+    destructive false-success this issue's audit closed. Materializing
+    against a corrupt catalog must instead abort before the catalog is
+    touched, leaving the corrupt file exactly as it was for a human or
+    `doctor` to find (no `.bak` rename happens under `strict`, since the
+    rename is what silent recovery used to look like).
+    """
     tmp_path.joinpath("sources.json").write_text("not json")
     with scripted_server([(200, {}, _tarball())]) as server:
-        _add(tmp_path, server)
+        with pytest.raises(VerificationError):
+            _add(tmp_path, server)
 
-    assert (tmp_path / "sources.json.bak").read_text() == "not json"
-    assert len(load_sources(tmp_path)) == 1
+    assert not (tmp_path / "sources.json.bak").exists()
+    assert (tmp_path / "sources.json").read_text() == "not json"
 
 
 def test_structurally_corrupt_index_is_backed_up(tmp_path):

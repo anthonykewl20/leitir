@@ -339,6 +339,16 @@ except when interrupted:
 - `clean`: clear corpus metadata and cached materialization.
 - `gc`: remove abandoned repository staging and obsolete backups under target locks;
   a sole `.old-` generation is left in place when its target is absent.
+- A corrupt or unreadable `sources.json` is backed up to `sources.json.bak` and,
+  by default, read back as an empty catalog (with a `RuntimeWarning` so that
+  backup file is never the only record). `get`/`lock`/`diff` (the catalog
+  write path), `remove`, `export`, `sbom`, `index --require-manifest-auth`,
+  and `doctor` instead fail closed with `CORPUS_FAILURE`/a failing check,
+  since a false-empty read there would produce a false success or a
+  destructive action; `list` and a handful of best-effort lookups remain
+  benign by design. See [ADR-0031](docs/adr/0031-corpus-catalog-corruption-fail-closed-audit.md)
+  for the full per-command audit. A genuinely absent catalog (nothing ever
+  materialized) is always the honest empty corpus, never treated as corruption.
 
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.

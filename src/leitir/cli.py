@@ -1307,6 +1307,11 @@ def _resolve_from_cached_shelf(
     from .corpus import load_sources
     from .materialize import read_valid_manifest
 
+    # issue #268: deliberately non-strict -- this is a best-effort local-
+    # cache shortcut with an explicit, safe fallback. A corrupt catalog
+    # yields zero candidates, which falls through to ordinary live
+    # resolution below exactly as a genuine cache miss would; it never
+    # reports a cache hit it doesn't have.
     candidates = [
         entry
         for entry in load_sources(root)
@@ -1750,7 +1755,11 @@ def _require_all_shelves_authenticated(
     from .corpus import load_sources
     from .materialize import read_valid_manifest
 
-    for entry in load_sources(root):
+    # issue #268: strict. A corrupt catalog read back as empty would make
+    # this loop iterate zero times and return normally -- a false "every
+    # shelf is authenticated" verdict (vacuously true over nothing) for a
+    # policy whose whole point is to hold over the entire corpus.
+    for entry in load_sources(root, strict=True):
         target = root / entry["path"]
         manifest = read_valid_manifest(
             target,
@@ -1809,6 +1818,13 @@ def _corpus_list(
     from .info import source_routing
     from .materialize import read_valid_manifest
 
+    # issue #268: deliberately non-strict. `list`'s whole job is to show a
+    # human what the corpus currently contains; a corrupt catalog rendered
+    # as an empty list is exactly what a human inspecting the corpus needs
+    # to see next, and `load_sources` already surfaces a `RuntimeWarning`
+    # plus the `sources.json.bak` file as a forensic trail. Unlike
+    # export/sbom/index, nothing here is asserted as a complete or
+    # authoritative artefact -- there is no destructive action downstream.
     entries = load_sources(root)
     rendered = []
     filtered = 0
@@ -2134,6 +2150,14 @@ def _run_corpus_command(
                 shelves_from_corpus,
             )
 
+            # issue #268: deliberately not `strict=True` here. A corrupt
+            # catalog makes `shelves_from_corpus` return an empty tuple,
+            # which the very next line already turns into a raised
+            # `ValueError` -- the command fails either way (never a false
+            # success), this only affects the wording of the error. Left
+            # as the existing default rather than duplicating the check
+            # `_require_all_shelves_authenticated` below already performs
+            # strictly when `--require-manifest-auth` is set.
             shelves = shelves_from_corpus(root, tuple(args.scopes))
             if not shelves:
                 raise ValueError("the corpus has no materialized shelves to index")
@@ -2465,7 +2489,15 @@ def _run_corpus_command(
             from .sbom import generate_sbom
 
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
-            entries = load_sources(root)
+            # issue #268: strict, and deliberately the *first* read of this
+            # invocation. A non-strict read here would silently rename a
+            # corrupt catalog to `sources.json.bak` and return `[]`; the
+            # unlocked re-read below would then see a genuinely missing
+            # file (FileNotFoundError, always benign) and compare equal to
+            # this `entries`, laundering the corruption into an honest-
+            # looking "index unchanged, zero sources" SBOM. Failing here
+            # first is what makes that laundering impossible.
+            entries = load_sources(root, strict=True)
             targets: dict[str, tuple[Path, str]] = {}
             for entry in entries:
                 relative = Path(entry["path"])
@@ -2501,6 +2533,14 @@ def _run_corpus_command(
                 for _identity, (target, commit_sha) in sorted(targets.items()):
                     sbom_locks.enter_context(_target_lock(root, target, commit_sha))
                 sbom_locks.enter_context(_file_lock(root / ".sources.lock"))
+                # Deliberately non-strict: this re-read only ever feeds an
+                # equality check against the already-validated `entries`
+                # above. If the catalog were to become corrupt in the
+                # narrow window between the two reads, the non-strict
+                # recovery still returns `[]`, which differs from the
+                # non-empty `entries` and trips the mismatch check below --
+                # corruption here is caught by the comparison, not by
+                # `strict`.
                 if load_sources(root) != entries:
                     raise ValueError(
                         "corpus index changed while acquiring SBOM read locks"
@@ -2864,6 +2904,15 @@ def _run_corpus_command(
                     from .apisurface import extract_api_surface
                     from .corpus import load_sources, read_api_index, write_api_index
 
+                    # issue #268: deliberately non-strict. `path` was
+                    # produced moments earlier in this same command by
+                    # `materialize_source`, which always ends by upserting
+                    # into the catalog with `strict=True` -- a corrupt
+                    # catalog would already have aborted the command before
+                    # reaching here. If it were somehow corrupted in the
+                    # narrow window since, `next()` raises `StopIteration`
+                    # (no entry can match an empty list), which still fails
+                    # the command rather than succeeding falsely.
                     entry = next(
                         entry
                         for entry in load_sources(root)
@@ -3255,6 +3304,11 @@ def _corpus_routings(root: Path) -> dict[tuple[str, str], dict[str, str]]:
     Keyed by ``(owner/repo, commit_sha)`` — the identity a search match
     carries — so the search rendering can attach corpus-derived license
     routing instead of the fail-closed undetermined default.
+
+    issue #268: deliberately non-strict. A corrupt catalog yields an empty
+    mapping, and every lookup miss already falls back to the fail-closed
+    ``license-undetermined`` routing described above -- there is no
+    "complete corpus" claim made here for corruption to falsify.
     """
 
     from .corpus import load_sources

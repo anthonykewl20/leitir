@@ -140,7 +140,12 @@ def export_corpus(
     corpus_root = resolve_root(root)
     lock_path = Path(output).expanduser().absolute()
     tarball_path = _tarball_path(lock_path)
-    sources = enumerate_shelved_sources(corpus_root)
+    # issue #268: strict, because a corrupt catalog silently read back as
+    # empty here would produce an immutable, byte-identical-to-genuine
+    # "empty corpus" snapshot that a later `import` would happily rehydrate
+    # as complete -- worse than a false success in the moment, since the
+    # falsified state gets persisted and can be replayed.
+    sources = enumerate_shelved_sources(corpus_root, strict=True)
     for _entry, _manifest, target in sources:
         if lock_path.is_relative_to(target) or tarball_path.is_relative_to(target):
             raise SnapshotError("snapshot output cannot be inside a shelved source")

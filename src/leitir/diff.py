@@ -191,6 +191,16 @@ class _PreparedSource:
 
 
 def _matching_entry(root: Path, target: Path) -> dict[str, Any] | None:
+    """Return the catalog entry for an already-materialized ``target``, if any.
+
+    issue #268: deliberately non-strict. ``target`` was already materialized
+    by this same ``diff`` invocation, so a corrupt catalog only means the
+    optional catalog-recorded pin is unavailable; :func:`_shelf_pin` falls
+    back to the scope that fed the materializer for the exact bytes diffed
+    (see its docstring). ``diff`` never claims to summarize the whole
+    corpus, only the two trees it actually read, so there is no false
+    "complete corpus" claim for a corrupt catalog to falsify here.
+    """
     from leitir.corpus import load_sources
 
     for entry in load_sources(root):

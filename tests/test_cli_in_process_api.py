@@ -92,3 +92,31 @@ def test_call_json_raises_with_exit_code_and_message_on_failure(tmp_path):
         call_json(["get", "not-a-spec", "--root", str(tmp_path), "--json"])
     assert excinfo.value.exit_code != 0
     assert excinfo.value.argv == ["get", "not-a-spec", "--root", str(tmp_path), "--json"]
+
+
+def test_call_json_reports_handler_level_malformed_usage_with_a_message():
+    """A rejection raised inside a verb's own dispatch code (not argparse
+    itself) prints through the captured stderr buffer, so the caller gets
+    a non-empty, actionable message alongside the exit code."""
+    with pytest.raises(LeitirCallError) as excinfo:
+        call_json(["search"])
+    assert excinfo.value.exit_code == 2
+    assert "one of --repo, --package, --global, or --corpus is required" in str(excinfo.value)
+    assert excinfo.value.stderr.strip() != ""
+
+
+def test_call_json_argparse_level_error_has_correct_exit_code_but_empty_message(capsys):
+    """Documented limitation: argparse's own parser-level errors (an
+    unrecognized flag here) write to the real process stderr rather than
+    the io.StringIO buffer call_json passes as main()'s stderr, since
+    build_parser() does not redirect argparse's own error()/print_help()
+    output. The exit code is still correct and no SystemExit escapes;
+    only the captured message is empty for this specific error class."""
+    with pytest.raises(LeitirCallError) as excinfo:
+        call_json(["search", "--this-flag-does-not-exist"])
+    assert excinfo.value.exit_code == 2
+    assert excinfo.value.stderr == ""
+    # The real message did go somewhere: argparse's own usage/error text
+    # landed on the actual process stderr, not silently lost.
+    captured = capsys.readouterr()
+    assert "unrecognized arguments" in captured.err

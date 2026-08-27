@@ -6,15 +6,76 @@ resource wiring, corpus-root resolution, credential wiring) into per-verb
 module functions -- ``leitir.cli_corpus.run()``, ``leitir.cli_ask.run()``,
 ``leitir.cli_search.run()``, and friends -- called from a thin
 ``leitir.cli._main_impl`` dispatcher. This module is the first concrete
-consumer of that split: a small, stable, in-process call surface that
-returns the CLI's own structured JSON without spawning a subprocess.
+consumer of that split, and it is deliberately a small first step, not a
+typed handler API: :func:`call_json` calls :func:`leitir.cli.main` with an
+argv list exactly as the command line would, captures stdout/stderr into
+in-memory buffers instead of piping them across a process boundary, and
+parses the resulting JSON text back into a dict. It removes the OS
+process-spawn cost (fork/exec, fresh interpreter start, argv/stdout transfer
+through OS pipes) of ``leitir.mcp.bridge``'s current
+``subprocess.run([sys.executable, "-m", "leitir.cli", ...])`` path. It does
+**not** remove the per-call work every verb still repeats from scratch on
+every invocation -- corpus-root resolution, manifest re-verification,
+resolver/searcher construction via the default factories -- because each
+call to :func:`call_json` still runs a full, independent ``main()`` parse +
+dispatch with no state retained between calls. No verb yet exposes a typed
+handler that returns a result object directly; every result still round-trips
+through ``print(json.dumps(...))`` and back through ``json.loads()``, exactly
+as it does across the subprocess boundary today.
 
-``leitir.mcp.bridge`` still shells out to ``python -m leitir.cli <cmd>
---json`` today (a correctness-by-construction choice made when there was no
-clean Python entry point -- see issue #271's motivation) rather than calling
-this module; :func:`call_json` is what a future revision of the bridge could
-call directly to remove that subprocess boundary, once its own review cycle
-signs off on the change (out of scope for this purely structural refactor).
+Concretely, for a caller weighing this against ``leitir.mcp.bridge`` or a
+future warm-mode entry point (issue #272 / ADR-0035):
+
+- **Stdout/stderr capture**: ``call_json`` passes fresh ``io.StringIO()``
+  buffers as ``main()``'s ``stdout``/``stderr`` parameters; verb handlers
+  print to those, not to the real ``sys.stdout``/``sys.stderr``, so this part
+  is safe to call from multiple threads without cross-talk. **One exception**:
+  argparse's own parser-level errors (an unrecognized flag, ``--help``,
+  ``--version``) call ``ArgumentParser.error()``/``print_help()``, which
+  write to the *real* process ``sys.stderr``/``sys.stdout`` by default --
+  ``build_parser()`` does not redirect them. For that argv-parse-error class
+  specifically, the process exit code (2, i.e. ``ExitCode.MALFORMED_USAGE``)
+  is still correctly reported through ``LeitirCallError.exit_code``, but
+  ``LeitirCallError``'s message/``stderr`` attribute will be **empty**
+  (measured: ``call_json(["search", "--bad-flag"])`` raises
+  ``LeitirCallError(exit_code=2, stderr="")`` while argparse's real usage
+  text lands on the process's actual stderr). Every error *inside* a verb's
+  own dispatch code -- the overwhelming majority of failures, since argparse
+  usage errors are rare in a programmatic caller -- prints through the
+  captured buffer normally and appears in the message as expected (measured:
+  ``call_json(["search"])`` -> ``LeitirCallError(exit_code=2, stderr="leitir:
+  error: one of --repo, --package, --global, or --corpus is required")``).
+- **Reentrancy/thread safety**: sequential calls (including recursive ones)
+  are safe. Concurrent calls from separate threads are **not** currently
+  guaranteed isolated: ``_configure_logging_from_env`` (called at the top of
+  every ``main()`` invocation) installs a ``logging.StreamHandler`` onto the
+  shared ``"leitir"`` logger, first removing any existing handler it
+  previously installed -- two overlapping in-flight calls can race on that
+  shared, process-global handler list, so a warning logged by one call could
+  in principle be routed to another call's captured buffer. This is a
+  pre-existing property of ``_configure_logging_from_env`` (unchanged by
+  #271's move into ``leitir.cli_support``), not something new to
+  ``call_json`` -- but it does mean ``call_json`` is not yet safe to treat as
+  a fully isolated, concurrency-ready API without a fix in a follow-up.
+- **``SystemExit``**: does not escape ``call_json``. ``leitir.cli._main_impl``
+  already wraps ``parser.parse_args(argv)`` in
+  ``except SystemExit as exc: return int(exc.code)``, so the only place
+  argparse's own ``SystemExit`` (raised by ``--help``, ``--version``, or a
+  parse error) could occur is already converted to a plain integer before
+  ``call_json`` ever sees it; a non-zero exit tier surfaces to the caller as
+  a raised ``LeitirCallError`` (never a bare exit code, and never an
+  uncaught ``SystemExit``).
+
+``call_json`` therefore satisfies the issue's literal acceptance bar --
+"at least one verb demonstrably callable in-process, returning a structured
+result without a subprocess" -- but it is **not** the typed, warm-state-aware
+entry point issue #272's ADR-0035 (warm mode) is blocked on. That would need
+handler functions that accept a pre-built, reusable resolver/tree-source/
+corpus-root context across calls instead of rebuilding it via the default
+factories every time, and that return a typed result object rather than a
+JSON string to re-parse. This refactor makes that follow-up addressable (each
+verb group now has one clean function to give a second, typed entry point to)
+but does not itself deliver it.
 """
 
 from __future__ import annotations
@@ -47,12 +108,27 @@ def call_json(argv: list[str]) -> dict[str, Any]:
     """Run one ``leitir`` CLI invocation in-process and return its parsed JSON.
 
     Calls :func:`leitir.cli.main` directly in the current interpreter,
-    capturing stdout/stderr in memory instead of spawning
-    ``python -m leitir.cli`` -- no subprocess, no cold interpreter start, no
-    shelf re-verification across a process boundary. Raises
-    :class:`LeitirCallError` if the command exits non-zero or its stdout is
-    not a JSON object, so a caller never silently receives an empty or
-    partial result.
+    capturing stdout/stderr into fresh, call-local ``io.StringIO()`` buffers
+    instead of spawning ``python -m leitir.cli`` -- no subprocess, no cold
+    interpreter start, no OS pipe to move argv/stdout across a process
+    boundary. It does **not** remove the per-call resolution/verification
+    work every verb still repeats from scratch (see the module docstring);
+    only the process-spawn cost is removed. Raises :class:`LeitirCallError`
+    if the command exits non-zero or its stdout is not a JSON object, so a
+    caller never silently receives an empty or partial result; no
+    ``SystemExit`` escapes this function (see the module docstring for why).
+
+    **Safe for sequential in-process use (including recursive calls); NOT
+    yet safe for concurrent calls from separate threads.** Every call's
+    stdout/stderr capture is call-local and does not cross-talk, but
+    ``_configure_logging_from_env`` (invoked at the top of every ``main()``
+    call) installs its warning handler onto the single, process-global
+    ``"leitir"`` logger -- two overlapping calls race on that shared handler,
+    so a warning logged during one call's window can leak into another
+    call's captured buffer, or vanish from the call that actually produced
+    it. Tracked as a required fix before issue #272's warm mode (ADR-0035),
+    which implies concurrent request handling, can build on this function --
+    see issue #281.
 
     This performs no argument validation of its own: ``argv`` is forwarded
     verbatim to :func:`leitir.cli.main`, exactly as ``leitir.mcp.bridge``

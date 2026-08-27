@@ -20,7 +20,7 @@ spec-resolution cluster) and one module per verb group:
 ``leitir.cli_diagnostics`` (doctor, bench, check), ``leitir.cli_corpus``
 (get/fetch, list, upgrade-cache, trust, remove, clean, lock, sbom, api,
 examples, info, diff, export, import, gc, index), ``leitir.cli_ask`` (ask),
-``leitir.cli_bts`` (bts-compute, bts-run, bts-funnel, analysis-architecture,
+``leitir.cli_bts`` (bts-compute, bts-port-contract, bts-run, bts-funnel, analysis-architecture,
 analysis-lineage, exit-gate-validate, exit-gate-run, occupied-validate,
 usage), and ``leitir.cli_search`` (search).
 
@@ -41,7 +41,7 @@ from collections.abc import Callable, Sequence
 from typing import TextIO, cast
 
 from . import cli_ask, cli_bts, cli_corpus, cli_diagnostics, cli_search
-from .cli_corpus import _corpus_list, _gc_abandoned_staging
+from .cli_corpus import _corpus_list, _gc_abandoned_staging, _require_all_shelves_authenticated
 from .cli_search import _corpus_routings, _write_summary
 from .cli_support import (
     _SIGINT_EXIT_CODE,
@@ -93,6 +93,7 @@ _REEXPORTED_FOR_TEST_COMPATIBILITY = (
     _CachedFirstResolverFacade,
     _configure_logging_from_env,
     _corpus_list,
+    _require_all_shelves_authenticated,
     _corpus_root,
     _corpus_routings,
     _ensure_local_gitignore,
@@ -159,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     cli_corpus.register_export_import(commands)
     cli_corpus.register_gc(commands)
     cli_bts.register_bts_compute(commands)
+    cli_bts.register_bts_port_contract(commands)
     cli_bts.register_architecture(commands)
     cli_bts.register_lineage(commands)
     cli_bts.register_exit_gate_validate(commands)

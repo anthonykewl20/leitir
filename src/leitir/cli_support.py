@@ -524,6 +524,11 @@ def _resolve_from_cached_shelf(
     from .corpus import load_sources
     from .materialize import read_valid_manifest
 
+    # issue #268: deliberately non-strict -- this is a best-effort local-
+    # cache shortcut with an explicit, safe fallback. A corrupt catalog
+    # yields zero candidates, which falls through to ordinary live
+    # resolution below exactly as a genuine cache miss would; it never
+    # reports a cache hit it doesn't have.
     candidates = [
         entry
         for entry in load_sources(root)

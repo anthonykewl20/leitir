@@ -253,6 +253,11 @@ def _corpus_routings(root: Path) -> dict[tuple[str, str], dict[str, str]]:
     Keyed by ``(owner/repo, commit_sha)`` — the identity a search match
     carries — so the search rendering can attach corpus-derived license
     routing instead of the fail-closed undetermined default.
+
+    issue #268: deliberately non-strict. A corrupt catalog yields an empty
+    mapping, and every lookup miss already falls back to the fail-closed
+    ``license-undetermined`` routing described above -- there is no
+    "complete corpus" claim made here for corruption to falsify.
     """
 
     from .corpus import load_sources

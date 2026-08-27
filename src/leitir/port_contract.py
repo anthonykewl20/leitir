@@ -30,6 +30,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from leitir.bts import BTS, BTSResult, BTSStatus, _digest
+from leitir.bts_cli import load_donor_snapshot
 from leitir.bts_errors import BTSError, BTSEvidence, BTSRejectReason
 from leitir.license_policy import (
     DEFAULT_LICENSE_POLICY,
@@ -810,21 +811,43 @@ def build_port_attribution(
     bts_result: BTSResult,
     suite: PortableContractSuite,
     translated: TranslatedContract,
-    source_root: Path,
+    root: Path,
     recipient_policy: RecipientLicensePolicy,
     license_policy: LicensePolicy = DEFAULT_LICENSE_POLICY,
+    *,
+    host: str = "github.com",
 ) -> PortAttributionEvidence:
     """Build port attribution evidence, or raise the same fail-closed license rejection a reuse packet would.
 
-    ``source_root`` must be the ``source_root`` of a snapshot already loaded
-    through ``bts_cli.load_donor_snapshot`` for this exact donor commit --
-    the same trust boundary ``_validated_bts`` places on its ``BTSResult``
-    argument (re-derived and checked here, but not re-fetched from a host).
-    This function never accepts donor source bytes as a parameter: the only
-    bytes it evaluates a license over are read directly from that
-    materialization by :func:`load_donor_sources_from_snapshot`, closing the
-    caller-controlled-blob gap a reviewer found in an earlier design (see
-    that function's docstring).
+    ``root`` is a corpus root directory, exactly the argument
+    ``bts_cli.run_bts_compute`` itself takes -- not a pre-loaded snapshot or
+    a bare, trust-me ``source_root``. An earlier revision of this function
+    took ``source_root: Path`` directly and merely documented, in prose,
+    that the caller must have already run ``bts_cli.load_donor_snapshot``
+    on it; a reviewer called the function directly with an unverified,
+    from-scratch directory containing the same forged-header attack this
+    ADR's donor-bytes fix closes at the CLI, and it silently accepted,
+    because nothing in the function itself checked the precondition its own
+    docstring asserted. That was reachable only by deliberately bypassing
+    the CLI -- but ``build_port_attribution`` is also an exported library
+    function, and #271 aims to make Leitir's internals directly callable
+    in-process, so "the CLI happens to always verify first" was never going
+    to stay true on its own.
+
+    This function now performs that verification itself, unconditionally.
+    Donor identity is first independently re-derived from the BTS's own
+    members (:func:`_require_bound_donor_identity`, never from anything the
+    caller typed), and that -- not a caller-supplied path label -- is what
+    selects which shelf gets loaded: ``bts_cli.load_donor_snapshot(root,
+    owner, repo, commit_sha, host=host)`` is called here, with
+    ``owner``/``repo``/``commit_sha`` taken from the already-verified
+    identity, not from an unchecked argument. ``load_donor_snapshot``
+    performs the real, load-time tree-hash verification
+    (``materialize.read_valid_manifest`` / ADR-0006) before returning
+    anything; there is no remaining path into this function where donor
+    bytes can be evaluated for a license without that verification having
+    just happened, in this call, regardless of what the caller passed or
+    skipped.
     """
 
     artifact = _validated_bts(bts_result)
@@ -841,7 +864,15 @@ def build_port_attribution(
             "port_contract_attribution_suite_digest_v1",
         )
     _require_bound_donor_identity(artifact, suite.donor)
-    donor_sources = load_donor_sources_from_snapshot(source_root, artifact)
+    owner, _, repo = suite.donor.slug.partition("/")
+    if not owner or not repo or "/" in repo:
+        raise _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"donor slug {suite.donor.slug!r} is not a single-level owner/repo identity",
+            "port_contract_donor_slug_shape_v1",
+        )
+    snapshot = load_donor_snapshot(root, owner, repo, suite.donor.commit_sha, host=host)
+    donor_sources = load_donor_sources_from_snapshot(snapshot.source_root, artifact)
     decision = evaluate_license_policy(donor_sources, recipient_policy, license_policy)
     if not decision.accepted:
         assert decision.reason is not None

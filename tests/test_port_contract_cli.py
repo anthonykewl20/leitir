@@ -41,15 +41,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from leitir import cli
 from leitir.bts_cli import SeedSelector, run_bts_compute
+from leitir.bts_errors import BTSError, BTSRejectReason
 from leitir.materialize import manifest_digest_fields, target_path
 from leitir.port_contract import (
     OutcomeKind,
     PortableCase,
     PortableValue,
     PortableValueKind,
+    TargetLanguage,
     _canonical,
+    build_port_attribution,
+    load_portable_contract_suite,
+    load_recipient_license_policy,
+    translate_contract,
 )
 from leitir.treehash import compute_materialized_tree_hash
 
@@ -208,6 +216,45 @@ def test_translates_donor_behaviour_into_go_contract_and_attribution(tmp_path: P
 
     result_on_disk = json.loads((out_dir / "port-result.json").read_text(encoding="utf-8"))
     assert result_on_disk == payload
+
+
+def test_build_port_attribution_verifies_root_itself_not_just_the_cli_caller(tmp_path: Path) -> None:
+    """reviewer-hy3 round-3 non-blocking finding, fixed: build_port_attribution must not merely
+    document that its ``root`` argument needs pre-verification -- it must verify it itself.
+    Called directly (bypassing the CLI and load_donor_snapshot entirely) with a from-scratch
+    ``root`` containing a forged donor file and no manifest at all, it must reject rather than
+    silently accept (the round-1/round-2 outcome the reviewer reproduced through this exact
+    direct-API path before this fix)."""
+
+    genuine_root = tmp_path / "genuine-root"
+    mth, _real_bytes = _shelf(genuine_root, fixture=_MIT_FIXTURE)
+    bts_digest = _bts_digest(genuine_root)
+
+    contract_bytes = _contract_json(genuine_root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string")
+    suite = load_portable_contract_suite(contract_bytes)
+
+    artifacts = run_bts_compute(
+        genuine_root, "owner", "donor", _SHA,
+        seed=SeedSelector("package.policy", "package.policy.normalize_contract"),
+    )
+    bts_result = artifacts.result
+    translated = translate_contract(bts_result, suite, TargetLanguage.GO)
+    recipient_policy = load_recipient_license_policy(_recipient_policy_json())
+
+    # A completely separate root that was never through _shelf()/load_donor_snapshot:
+    # no leitir-manifest.json, no verified tree hash -- just a forged file an
+    # attacker placed directly, calling the library function without the CLI.
+    fake_root = tmp_path / "fake-root"
+    fake_target = target_path(fake_root, "owner", "donor", _SHA) / "package"
+    fake_target.mkdir(parents=True)
+    (fake_target / "policy.py").write_bytes(
+        b"# SPDX-License-Identifier: MIT\ndef normalize_contract(value):\n    return value\n"
+    )
+
+    with pytest.raises(BTSError) as caught:
+        build_port_attribution(bts_result, suite, translated, fake_root, recipient_policy)
+    assert caught.value.reason is BTSRejectReason.REJECT_PROVENANCE_MISMATCH
+    assert caught.value.evidence.detail_code == "bts_cli_shelf_unverified_v1"
 
 
 def test_unlicensed_donor_fails_closed_with_no_donor_sources_flag_to_forge(tmp_path: Path) -> None:

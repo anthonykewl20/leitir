@@ -211,30 +211,59 @@ The actual fix removes the caller-controlled blob entirely, rather than
 verifying more of it. **There is no `--donor-sources` flag any more.**
 `leitir.port_contract.load_donor_sources_from_snapshot` builds every
 `BundledSource` passed to `evaluate_license_policy` by reading the exact
-files BTS members reference directly from `source_root` -- the same
-donor materialization `bts_cli.load_donor_snapshot` already loaded and
-whose *entire* tree (not merely a span within one file) was hash-verified
-against the pinned commit before BTS computation ever began
-(`verify_materialized_tree_hash`, ADR-0006/ADR-0008). `build_port_attribution`
-no longer accepts a `donor_sources` parameter at all; it takes
-`source_root: Path` (the caller's already-loaded snapshot's `source_root`,
-the same trust boundary `_validated_bts` places on its `BTSResult`
-argument) and reads the bytes itself. `_verify_donor_sources_against_bts`
-is retained as a redundant, defense-in-depth sanity assertion inside
-`load_donor_sources_from_snapshot` -- since every byte it checks was just
-read from a verified tree, it should always pass and exists only to trip a
-future regression rather than to provide the actual guarantee. The actual
-guarantee is structural: reading the file *is* the verification, and there
-is no remaining step where a caller declares bytes Leitir merely inspects.
+files BTS members reference directly from a verified `source_root` -- a
+donor materialization whose *entire* tree (not merely a span within one
+file) was hash-verified against the pinned commit before BTS computation
+ever began (`verify_materialized_tree_hash`, ADR-0006/ADR-0008).
+`_verify_donor_sources_against_bts` is retained as a redundant,
+defense-in-depth sanity assertion inside `load_donor_sources_from_snapshot`
+-- since every byte it checks was just read from a verified tree, it
+should always pass and exists only to trip a future regression rather
+than to provide the actual guarantee. The actual guarantee is structural:
+reading the file *is* the verification.
+
+*Round 3 (non-blocking, fixed anyway).* The round-2 fix left one gap: it
+verified *what bytes get read*, but not *that `source_root` itself was
+ever verified in the first place*. `build_port_attribution` took
+`source_root: Path` directly and only documented, in prose, that the
+caller must have already run `bts_cli.load_donor_snapshot` on it. A
+reviewer called `build_port_attribution` directly -- bypassing the CLI and
+`load_donor_snapshot` entirely -- with a from-scratch, unverified
+directory containing the same forged-header attack, and it silently
+accepted. This was not reachable through the shipped CLI (which always
+derives `source_root` from a real `load_donor_snapshot` call before
+calling this function), so it did not block approval on its own. It was
+fixed anyway, for two reasons stated directly in the review: it is the
+third instance in this one PR of an invariant asserted in a docstring but
+not enforced in code, and issue #271 (in flight concurrently) aims to make
+Leitir's internals directly callable in-process without a subprocess --
+the moment that lands, "unreachable except through the CLI" stops being
+true for any exported function, and `build_port_attribution` and
+`load_donor_sources_from_snapshot` are both in this module's `__all__`.
+
+`build_port_attribution` no longer accepts `source_root: Path` at all. It
+takes `root: Path` -- a corpus root directory, exactly what
+`bts_cli.run_bts_compute` itself takes, not a pre-loaded snapshot or a
+bare trust-me path -- and calls `bts_cli.load_donor_snapshot(root, owner,
+repo, commit_sha, host=host)` itself, using `owner`/`repo`/`commit_sha`
+taken from the donor identity the function has *already* independently
+re-derived from the BTS's own members (`_require_bound_donor_identity`,
+Decision 2 round 1), never from an unchecked caller argument. There is now
+no remaining path into this function -- CLI or direct API call -- where
+donor bytes can be evaluated for a license without real, load-time
+tree-hash verification having just happened, in that same call.
 
 `tests/test_port_contract_cli.py` carries regression tests for the
-round-1 donor-identity probe, and for the round-2 exact repro (identical
+round-1 donor-identity probe, for the round-2 exact repro (identical
 member span, mutated surrounding bytes, injected SPDX header, line count
-preserved) -- which now fails closed at the pre-existing
-load-time tree-verification gate (`materialize.read_valid_manifest`,
-ADR-0006), before BTS computation or license evaluation ever runs, because
-there is no separate caller-declared-bytes channel left for the forged
-blob to travel through.
+preserved), and for the round-3 finding
+(`test_build_port_attribution_verifies_root_itself_not_just_the_cli_caller`,
+which calls `build_port_attribution` directly with an unverified `root`
+and asserts it now rejects). The round-2 and round-3 cases fail closed at
+the pre-existing load-time tree-verification gate
+(`materialize.read_valid_manifest`, ADR-0006), before BTS computation or
+license evaluation ever runs, because there is no separate
+caller-declared-bytes channel left for the forged blob to travel through.
 
 The resulting `PortAttributionEvidence.attribution_mode` is a new,
 explicit tag, `"behavioral_descent"` -- distinct from ADR-0011's reuse-line
@@ -345,6 +374,12 @@ byte-identical across four `PYTHONHASHSEED` values):
   the same file -- is rejected at the pre-existing load-time tree
   verification (ADR-0006), before BTS computation or license evaluation
   ever runs.
+- Self-verification, not caller discipline: `build_port_attribution`
+  performs its own `load_donor_snapshot` call using donor identity it has
+  already independently re-derived from the BTS, so calling it directly
+  with an unverified `root` -- bypassing the CLI entirely -- rejects
+  exactly as the CLI path does, rather than trusting an unenforced
+  precondition.
 - Go declaration-namespace safety: two case names that would render to the
   same Go identifier, or a `target_function_name` colliding with a
   generated test declaration, are rejected

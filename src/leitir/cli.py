@@ -3703,7 +3703,7 @@ def _main_impl(
                     return int(ExitCode.CORPUS_FAILURE)
             elif args.command == "bts-port-contract":
                 from .bts import BTSStatus
-                from .bts_cli import SeedSelector, load_donor_snapshot, run_bts_compute
+                from .bts_cli import SeedSelector, run_bts_compute
                 from .bts_errors import BTSError, BTSRejectReason
                 from .license_policy import render_attribution as _render_port_attribution
                 from .port_contract import (
@@ -3739,12 +3739,13 @@ def _main_impl(
                 translated = translate_contract(bts_result, suite, target_language)
                 recipient_policy_bytes = read_regular_file(Path(args.recipient_policy), maximum_bytes=1 << 20, no_follow=False)
                 recipient_policy = load_recipient_license_policy(recipient_policy_bytes)
-                # Donor license evidence is read directly from the same
-                # verified, tree-hash-checked materialization the BTS was
-                # computed from -- never from a caller-supplied manifest.
-                # See leitir.port_contract.load_donor_sources_from_snapshot.
-                donor_snapshot = load_donor_snapshot(port_root, owner, repo, commit_sha)
-                attribution = build_port_attribution(bts_result, suite, translated, donor_snapshot.source_root, recipient_policy)
+                # build_port_attribution performs its own load_donor_snapshot
+                # call (tree-hash verification included) using donor identity
+                # it has already independently re-derived from the BTS -- it
+                # no longer trusts a caller-supplied, pre-verified path. See
+                # leitir.port_contract.load_donor_sources_from_snapshot and
+                # build_port_attribution's docstring.
+                attribution = build_port_attribution(bts_result, suite, translated, port_root, recipient_policy)
 
                 out_dir = Path(args.out)
                 if out_dir.exists() or out_dir.is_symlink():

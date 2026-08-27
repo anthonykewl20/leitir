@@ -16,9 +16,11 @@ concurrency:
 
 jobs:
   test:
-    # Observed wall-time ≤2:43 (run 32282707805); 15 min ≥ 5× margin
-    # incl. cold uv cache (issue #199).
-    timeout-minutes: 15
+    # Measured on run 32992045211 (3720 tests collected): ubuntu legs up to
+    # 14:51, macos-latest 14:57, windows-latest breached the old 15 min
+    # ceiling (cancelled at 15:00). 15 min no longer has real margin as the
+    # suite has grown; bumped to 25 min (issue #266).
+    timeout-minutes: 25
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -57,7 +58,7 @@ def resolve_root(root: str | os.PathLike[str] | None = None) -> Path:
 def load_sources(
     root: str | os.PathLike[str] | None = None, *, strict: bool = False
 ) -> list[dict[str, Any]]:
-    """Load the index, backing up corruption and treating it as empty.
+    """Load the index, treating a corrupt catalog as empty but never hiding it.
 
     A missing catalog (``FileNotFoundError``) is always a genuinely empty
     corpus -- nothing has ever been materialized -- and is reported as an
@@ -65,15 +66,34 @@ def load_sources(
 
     By default (``strict=False``, unchanged for every existing caller --
     list/export/sbom/snapshot/gc/etc.), a *corrupt or unreadable* catalog is
-    silently recovered: the bad file is backed up to ``sources.json.bak``
-    and an empty list is returned, exactly as before.
+    read as empty for this call, but the file itself is left exactly as it
+    was on disk -- no rename, no rewrite. This is a deliberate change from
+    the original silent-recovery contract (issue #268 P1, independent
+    review of PR #276): that contract renamed the corrupt file to
+    ``sources.json.bak`` on first read, which converted "corrupt" into
+    "absent" on disk. A later ``strict=True`` call -- in the same process,
+    or in the next one, since ``leitir`` is a per-invocation CLI process
+    with no way to remember what an earlier process saw -- would then
+    observe a plain ``FileNotFoundError`` and honestly (and wrongly) treat
+    it as an honest empty corpus, silently rewriting the catalog and
+    discarding every previously catalogued source whose shelf bytes were
+    still on disk. A process-lifetime memo cannot fix this: the on-disk
+    evidence of corruption (the original file, in its original name) is
+    what every subsequent read -- same process or a fresh one -- needs to
+    see, and renaming it destroys exactly that evidence. Leaving the
+    corrupt file in place instead means every subsequent read, by any
+    process, keeps re-detecting the same corruption honestly; there is
+    nothing to launder because nothing is destroyed.
 
     ``strict=True`` is for callers where "the declared universe could not be
     established" must never be indistinguishable from "the declared universe
-    is empty" (issue #266 P1: corpus-wide search fail-closed). In that mode
-    a corrupt or unreadable catalog raises ``VerificationError`` instead of
-    being silently swallowed -- the ``.bak`` rename is no longer the only
-    record that something went wrong.
+    is empty" (issue #266 P1: corpus-wide search fail-closed; issue #268:
+    audited every other write/artefact/policy caller). In that mode a
+    corrupt or unreadable catalog raises ``VerificationError`` instead of
+    being silently swallowed, and the exception message names the corrupt
+    file, the corpus root, and a concrete recovery step (restore from
+    backup, or move the corrupt file aside yourself and re-add sources) so
+    a fail-closed rejection is never a dead end (see ADR-0034).
     """
     corpus_root = resolve_root(root)
     index = corpus_root / INDEX_NAME
@@ -94,13 +114,42 @@ def load_sources(
         return []
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         if strict:
+            # issue #268: name the corrupt file, the corpus root, and a
+            # concrete way out -- a fail-closed path with no stated
+            # recovery is a bricked tool. Materialized shelf bytes under
+            # ``corpus_root / "repos"`` are never touched by this failure.
+            # No ``.bak`` rename is offered as an automated step here (see
+            # the module docstring above): the recovery is an explicit,
+            # deliberate user action, not something any command performs
+            # as a side effect of an unrelated read.
             raise VerificationError(
-                f"corpus catalog is corrupt or unreadable, the declared universe "
-                f"cannot be established: {index}"
+                f"corpus catalog is corrupt or unreadable, the declared "
+                f"universe cannot be established: {index}\n"
+                f"recovery: restore {index.name} in {corpus_root} from a "
+                f"backup if you have one. Otherwise move the corrupt file "
+                f"aside yourself, for example "
+                f"`mv {index} {index}.bak`, which resets the catalog to "
+                f"empty -- then re-run `leitir get <spec>` for each source "
+                f"you had under {corpus_root / 'repos'} to re-add it to "
+                f"the rebuilt catalog; the materialized shelf bytes "
+                f"themselves were never touched by this failure."
             ) from exc
-        corpus_root.mkdir(parents=True, exist_ok=True)
-        if index.exists():
-            os.replace(index, corpus_root / f"{INDEX_NAME}.bak")
+        # issue #268: even a caller that has deliberately chosen non-strict
+        # (benign) recovery must leave a record of the corruption that
+        # outlives this call -- and, per the P1 finding above, must leave
+        # the corrupt file itself untouched so the record is durable across
+        # process boundaries, not just visible in this process's stderr.
+        warnings.warn(
+            f"leitir: corpus catalog corrupt or unreadable, treating as "
+            f"empty for this read: {index}. The file was left in place "
+            f"(not renamed) so every subsequent read, including from a "
+            f"different process, keeps detecting the corruption honestly "
+            f"instead of seeing a laundered, genuinely-missing file; move "
+            f"it aside yourself (e.g. `mv {index} {index}.bak`) once "
+            f"you're ready to rebuild the catalog.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return []
 
 
@@ -116,12 +165,19 @@ def write_sources(
 
 
 def enumerate_shelved_sources(
-    root: str | os.PathLike[str] | None = None,
+    root: str | os.PathLike[str] | None = None, *, strict: bool = False
 ) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
-    """Return indexed sources with their validated manifests and paths."""
+    """Return indexed sources with their validated manifests and paths.
+
+    ``strict`` is forwarded to :func:`load_sources` unchanged. Callers that
+    turn this list directly into an artefact asserting the corpus's contents
+    (an SBOM, an export snapshot) must pass ``strict=True`` (issue #268): a
+    corrupt catalog must never be silently read back as "zero packages" or
+    "zero sources" and then written out as a successful, immutable result.
+    """
     corpus_root = resolve_root(root)
     result: list[tuple[dict[str, Any], dict[str, object], Path]] = []
-    for entry in load_sources(corpus_root):
+    for entry in load_sources(corpus_root, strict=strict):
         relative = Path(entry["path"])
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"invalid shelved source path: {entry['path']!r}")
@@ -147,7 +203,17 @@ def enumerate_shelved_sources(
 def find_materialized_sources(
     spec: str, root: str | os.PathLike[str] | None = None
 ) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
-    """Return all shelved sources matching a parsed, resolved identity."""
+    """Return all shelved sources matching a parsed, resolved identity.
+
+    Deliberately non-strict (issue #268 audit): a corrupt catalog makes this
+    return no matches, but both callers (``record_trust`` and
+    ``info._source``, backing ``trust``/``get``/``info``/``api``/``examples``)
+    already raise ``ValueError("source is not materialized: ...")`` on an
+    empty result -- the command fails either way, it just fails for the
+    wrong stated reason under corruption. That is a misleading diagnostic,
+    not a false success or a destructive action, so it is out of this
+    issue's adoption criteria.
+    """
     from leitir.spec import parse_corpus_spec
 
     parsed = parse_corpus_spec(spec)
@@ -418,7 +484,16 @@ def _key(entry: dict[str, Any]) -> tuple[object, object, object, object]:
 
 def _upsert(root: Path, entry: dict[str, Any]) -> None:
     with _file_lock(root / ".sources.lock"):
-        entries = load_sources(root)
+        # issue #268: this is the corpus-wide *write* path -- reached at the
+        # end of every materialize. A corrupt catalog silently read back as
+        # empty here does not just report something wrong, it acts on it:
+        # `write_sources` below would replace the whole index with only the
+        # one entry being upserted, permanently discarding the record of
+        # every other previously catalogued source while their shelves sit
+        # untouched on disk. Strict, so that corruption aborts the write
+        # instead of laundering it into "the corpus only ever had this one
+        # source".
+        entries = load_sources(root, strict=True)
         wanted = _key(entry)
         result: list[dict[str, Any]] = []
         found = False
@@ -818,11 +893,19 @@ def remove_source(
     if host == "gitlab.com":
         parts = f"{owner}/{repo}".split("/")
         owner, repo = "/".join(parts[:-1]), parts[-1]
+    # issue #268: read (and validate) the catalog *before* deleting
+    # anything on disk. A corrupt catalog read back as empty here would
+    # both rewrite the index as if this were the only source ever
+    # catalogued and regenerate POINTERS.md as if the corpus were empty --
+    # a destructive false success reported as `removed: true`/`not found:
+    # false` with no hint that anything else was wrong. Strict, and read
+    # first, so corruption aborts the whole removal instead of being
+    # discovered only after the shelf bytes are already gone.
+    entries = load_sources(corpus_root, strict=True)
     existed = removal_path.exists()
     if existed:
         shutil.rmtree(removal_path)
 
-    entries = load_sources(corpus_root)
     kept = [
         entry
         for entry in entries

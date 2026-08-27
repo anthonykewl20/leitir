@@ -19,10 +19,15 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed
+- close the strict-defeating laundering gap and audit IndexedSearcher (P1/P2 review findings) (`corpus`)
+- fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
+- finish the ADR renumber and recovery-guidance content (previous commit only captured the rename) (`corpus`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
 
 ## [0.1.6]
 

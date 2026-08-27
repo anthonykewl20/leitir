@@ -314,7 +314,11 @@ def check_registered_shelves(root: Path) -> Check:
     it correctly", which is exactly what a missing or truncated manifest fails.
     """
     try:
-        entries = load_sources(root)
+        # issue #268: strict, so a corrupt catalog is reported as the
+        # "error" check below instead of silently read back as "pass: no
+        # registered corpus entries" -- doctor exists to catch exactly this
+        # kind of corruption, not to certify a clean bill of health over it.
+        entries = load_sources(root, strict=True)
     except Exception as exc:
         return Check("cache.registered_shelves", "error",
                      "failed to read the corpus source index (sources.json)",

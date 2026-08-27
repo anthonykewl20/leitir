@@ -357,6 +357,28 @@ except when interrupted:
 - `clean`: clear corpus metadata and cached materialization.
 - `gc`: remove abandoned repository staging and obsolete backups under target locks;
   a sole `.old-` generation is left in place when its target is absent.
+- A corrupt or unreadable `sources.json` is, by default, read back as an
+  empty catalog for that one call (with a `RuntimeWarning` so that's never
+  the only record) -- but the file itself is left on disk exactly as it
+  was, never renamed or rewritten, so every later read, in this process or
+  a fresh one, keeps detecting the same corruption honestly instead of
+  seeing a laundered, genuinely-missing file. `get`/`lock`/`diff` (the
+  catalog write path), `remove`, `export`, `sbom`,
+  `index --require-manifest-auth`, and `doctor` instead fail closed with
+  `CORPUS_FAILURE`/a failing check, since a false-empty read there would
+  produce a false success or a destructive action; `list` and a handful of
+  best-effort lookups remain benign by design. A fail-closed rejection
+  names the corrupt file, the corpus root, and the recovery step in the
+  error itself: restore `sources.json` from a backup if you have one, or
+  move the corrupt file aside yourself (e.g. `mv sources.json
+  sources.json.bak`) to reset the catalog to empty and re-run `leitir get
+  <spec>` for each source to re-add it -- materialized shelf bytes under
+  `<root>/repos` are never touched by the failure. See
+  [ADR-0034](docs/adr/0034-corpus-catalog-corruption-fail-closed-audit.md)
+  for the full per-command audit and why the recovery is a deliberate user
+  action rather than something a command performs automatically. A
+  genuinely absent catalog (nothing ever materialized) is always the
+  honest empty corpus, never treated as corruption.
 
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.

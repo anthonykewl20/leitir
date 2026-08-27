@@ -1,13 +1,16 @@
 """User-level intent tests for ``leitir bts-port-contract`` (ADR-0033, issue #270).
 
 Drives the public CLI end to end: donor behaviour (a COMPLETE Python BTS
-computed from the same fixture shelf ``tests/test_bts_cli.py`` uses) ->
-translated Go contract -> port attribution evidence. Also covers the two
-sad paths issue #270 requires: a contract that cannot be faithfully
-translated must reject rather than degrade, and missing/incompatible
-attribution evidence must fail closed exactly as it does for same-language
-reuse today. This module never executes agent-written code and never claims
-a containment proof: ``bts-port-contract`` translates and attributes only,
+computed from a fixture shelf) -> translated Go contract -> port
+attribution evidence. Also covers the sad paths issue #270 requires: a
+contract that cannot be faithfully translated must reject rather than
+degrade, missing/incompatible attribution evidence must fail closed exactly
+as it does for same-language reuse today, and -- following the reviewer-hy3
+P1 finding on the original PR -- neither the donor's license evidence nor
+its identity may be taken on the caller's word: both are cross-checked
+against the independently re-derived BTS itself, and forging either fails
+closed. This module never executes agent-written code and never claims a
+containment proof: ``bts-port-contract`` translates and attributes only,
 and says so in its own JSON output (``containment_proof``).
 """
 
@@ -36,12 +39,16 @@ from leitir.port_contract import (
 from leitir.treehash import compute_materialized_tree_hash
 
 _SHA = "a" * 40
-_FIXTURE = Path(__file__).parent / "fixtures" / "bts_cli" / "donor"
+_FIXTURES = Path(__file__).parent / "fixtures" / "bts_cli"
+_UNLICENSED_FIXTURE = "donor"
+_MIT_FIXTURE = "donor-mit"
 
 
-def _shelf(root: Path) -> str:
+def _shelf(root: Path, *, fixture: str = _UNLICENSED_FIXTURE) -> tuple[str, bytes]:
+    """Materialize a verified donor shelf and return (materialized_tree_hash, real on-disk policy.py bytes)."""
+
     target = target_path(root, "owner", "donor", _SHA)
-    shutil.copytree(_FIXTURE, target)
+    shutil.copytree(_FIXTURES / fixture, target)
     digest, scope = compute_materialized_tree_hash(target)
     manifest = {
         "commit_sha": _SHA,
@@ -60,7 +67,8 @@ def _shelf(root: Path) -> str:
     }
     manifest.update(manifest_digest_fields(digest, scope=scope))
     (target / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return manifest["materialized_tree_hash"]
+    real_bytes = (target / "package" / "policy.py").read_bytes()
+    return manifest["materialized_tree_hash"], real_bytes
 
 
 def _bts_digest(root: Path) -> str:
@@ -71,11 +79,20 @@ def _bts_digest(root: Path) -> str:
     return artifacts.result.bts.bts_digest
 
 
-def _contract_json(root: Path, mth: str, *, bts_digest: str, case: PortableCase, return_kind: str | None) -> bytes:
+def _contract_json(
+    root: Path,
+    mth: str,
+    *,
+    bts_digest: str,
+    case: PortableCase,
+    return_kind: str | None,
+    donor_slug: str = "owner/donor",
+    donor_commit_sha: str = _SHA,
+) -> bytes:
     payload = {
         "bts_digest": bts_digest,
         "cases": [case._payload()],
-        "donor": {"commit_sha": _SHA, "materialized_tree_hash": mth, "slug": "owner/donor", "source": "git-commit"},
+        "donor": {"commit_sha": donor_commit_sha, "materialized_tree_hash": mth, "slug": donor_slug, "source": "git-commit"},
         "function_qualified_name": "package.policy.normalize_contract",
         "parameter_kinds": ["string"],
         "return_kind": return_kind,
@@ -105,18 +122,18 @@ def _raises_case() -> PortableCase:
     )
 
 
-_DONOR_SOURCE_BYTES = b"# SPDX-License-Identifier: MIT\ndef normalize_contract(value):\n    return value\n"
+def _donor_sources_json(source_bytes: bytes, *, source_path: str = "package/policy.py") -> bytes:
+    """Build a ``--donor-sources`` manifest that (unless a test deliberately forges it) carries
+    the exact bytes actually materialized on disk for the donor shelf."""
 
-
-def _donor_sources_json() -> bytes:
     payload = {
         "schema_version": "leitir-port-donor-sources-v1",
         "sources": [
             {
                 "source_record_id": "src1",
                 "packet_path": "package/policy.py",
-                "source_path": "package/policy.py",
-                "source_bytes_base64": base64.b64encode(_DONOR_SOURCE_BYTES).decode("ascii"),
+                "source_path": source_path,
+                "source_bytes_base64": base64.b64encode(source_bytes).decode("ascii"),
                 "package_scope": ".",
                 "verified_files": [],
                 "contributing_source_record_ids": [],
@@ -165,13 +182,13 @@ def _base_argv(root: Path, contract: Path, donor_sources: Path, recipient_policy
 
 def test_translates_donor_behaviour_into_go_contract_and_attribution(tmp_path: Path) -> None:
     root = tmp_path / "root"
-    mth = _shelf(root)
+    mth, real_bytes = _shelf(root, fixture=_MIT_FIXTURE)
     bts_digest = _bts_digest(root)
 
     contract = tmp_path / "contract.json"
     contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string"))
     donor_sources = tmp_path / "donor_sources.json"
-    donor_sources.write_bytes(_donor_sources_json())
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
     recipient_policy = tmp_path / "recipient_policy.json"
     recipient_policy.write_bytes(_recipient_policy_json())
     out_dir = tmp_path / "out"
@@ -207,13 +224,13 @@ def test_raises_contract_rejects_instead_of_approximating(tmp_path: Path) -> Non
     """The issue's own illustrative case: a Python exception has no faithful Go equivalent."""
 
     root = tmp_path / "root"
-    mth = _shelf(root)
+    mth, real_bytes = _shelf(root)
     bts_digest = _bts_digest(root)
 
     contract = tmp_path / "contract.json"
     contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_raises_case(), return_kind=None))
     donor_sources = tmp_path / "donor_sources.json"
-    donor_sources.write_bytes(_donor_sources_json())
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
     recipient_policy = tmp_path / "recipient_policy.json"
     recipient_policy.write_bytes(_recipient_policy_json())
     out_dir = tmp_path / "out"
@@ -231,13 +248,13 @@ def test_incompatible_recipient_license_policy_fails_closed(tmp_path: Path) -> N
     """Missing/incompatible attribution evidence must fail closed, as it does for same-language reuse."""
 
     root = tmp_path / "root"
-    mth = _shelf(root)
+    mth, real_bytes = _shelf(root, fixture=_MIT_FIXTURE)
     bts_digest = _bts_digest(root)
 
     contract = tmp_path / "contract.json"
     contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string"))
     donor_sources = tmp_path / "donor_sources.json"
-    donor_sources.write_bytes(_donor_sources_json())
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
     recipient_policy = tmp_path / "recipient_policy.json"
     # The recipient explicitly does not allow MIT: this must reject, not
     # silently drop the license gate that a same-language reuse packet
@@ -254,14 +271,14 @@ def test_incompatible_recipient_license_policy_fails_closed(tmp_path: Path) -> N
 
 def test_bts_digest_mismatch_rejects(tmp_path: Path) -> None:
     root = tmp_path / "root"
-    mth = _shelf(root)
+    mth, real_bytes = _shelf(root)
     _bts_digest(root)  # computed for parity with other tests; unused here
 
     contract = tmp_path / "contract.json"
     forged_digest = "sha256:" + "0" * 64
     contract.write_bytes(_contract_json(root, mth, bts_digest=forged_digest, case=_return_case(), return_kind="string"))
     donor_sources = tmp_path / "donor_sources.json"
-    donor_sources.write_bytes(_donor_sources_json())
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
     recipient_policy = tmp_path / "recipient_policy.json"
     recipient_policy.write_bytes(_recipient_policy_json())
     out_dir = tmp_path / "out"
@@ -273,15 +290,102 @@ def test_bts_digest_mismatch_rejects(tmp_path: Path) -> None:
     assert not out_dir.exists()
 
 
-def test_translated_contract_is_hash_seed_independent(tmp_path: Path) -> None:
+def test_forged_donor_source_bytes_reject_instead_of_laundering_a_fake_license(tmp_path: Path) -> None:
+    """reviewer-hy3 P1 probe 1: a caller-supplied ``--donor-sources`` manifest whose bytes do not
+    match the real, on-disk donor file must reject, never launder a fabricated license header into
+    a clean attribution for a donor that in reality carries no resolvable license evidence."""
+
     root = tmp_path / "root"
-    mth = _shelf(root)
+    mth, real_bytes = _shelf(root)  # the unlicensed fixture: no SPDX marker on disk at all
+    bts_digest = _bts_digest(root)
+    assert b"SPDX-License-Identifier" not in real_bytes
+
+    contract = tmp_path / "contract.json"
+    contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string"))
+
+    forged_bytes = (
+        b"# SPDX-License-Identifier: MIT\n"
+        b"# (c) Totally Fabricated Corp, this is NOT the real donor source\n"
+        b"def normalize_contract(value):\n"
+        b"    return value * 999\n"
+    )
+    donor_sources = tmp_path / "donor_sources.json"
+    donor_sources.write_bytes(_donor_sources_json(forged_bytes))
+    recipient_policy = tmp_path / "recipient_policy.json"
+    recipient_policy.write_bytes(_recipient_policy_json())
+    out_dir = tmp_path / "out"
+
+    code, payload, err = _run(_base_argv(root, contract, donor_sources, recipient_policy, out_dir))
+
+    assert code == 1
+    assert "reject_provenance_mismatch" in err
+    assert "port_contract_donor_source_span" in err
+    # No clean, MIT-laundered attribution was ever produced.
+    assert not out_dir.exists()
+
+
+def test_donor_source_manifest_missing_the_referenced_member_path_rejects(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    mth, real_bytes = _shelf(root, fixture=_MIT_FIXTURE)
     bts_digest = _bts_digest(root)
 
     contract = tmp_path / "contract.json"
     contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string"))
     donor_sources = tmp_path / "donor_sources.json"
-    donor_sources.write_bytes(_donor_sources_json())
+    # The manifest carries real bytes, but under a path no BTS member actually
+    # references -- the member's real path is never covered.
+    donor_sources.write_bytes(_donor_sources_json(real_bytes, source_path="package/unrelated.py"))
+    recipient_policy = tmp_path / "recipient_policy.json"
+    recipient_policy.write_bytes(_recipient_policy_json())
+    out_dir = tmp_path / "out"
+
+    code, payload, err = _run(_base_argv(root, contract, donor_sources, recipient_policy, out_dir))
+
+    assert code == 1
+    assert "port_contract_donor_source_missing_v1" in err
+    assert not out_dir.exists()
+
+
+def test_donor_identity_unbound_from_the_computed_commit_rejects(tmp_path: Path) -> None:
+    """reviewer-hy3 P1 probe 2: the portable contract's declared donor identity must be bound to
+    the BTS actually computed, never merely a caller-declared label."""
+
+    root = tmp_path / "root"
+    mth, real_bytes = _shelf(root, fixture=_MIT_FIXTURE)
+    bts_digest = _bts_digest(root)
+
+    contract = tmp_path / "contract.json"
+    # The BTS was genuinely computed from owner/donor@_SHA, but the suite
+    # claims a different donor slug entirely.
+    contract.write_bytes(
+        _contract_json(
+            root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string",
+            donor_slug="attacker/stolen-repo",
+        )
+    )
+    donor_sources = tmp_path / "donor_sources.json"
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
+    recipient_policy = tmp_path / "recipient_policy.json"
+    recipient_policy.write_bytes(_recipient_policy_json())
+    out_dir = tmp_path / "out"
+
+    code, payload, err = _run(_base_argv(root, contract, donor_sources, recipient_policy, out_dir))
+
+    assert code == 1
+    assert "port_contract_donor_identity_mismatch_v1" in err
+    assert "reject_provenance_mismatch" in err
+    assert not out_dir.exists()
+
+
+def test_translated_contract_is_hash_seed_independent(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    mth, real_bytes = _shelf(root, fixture=_MIT_FIXTURE)
+    bts_digest = _bts_digest(root)
+
+    contract = tmp_path / "contract.json"
+    contract.write_bytes(_contract_json(root, mth, bts_digest=bts_digest, case=_return_case(), return_kind="string"))
+    donor_sources = tmp_path / "donor_sources.json"
+    donor_sources.write_bytes(_donor_sources_json(real_bytes))
     recipient_policy = tmp_path / "recipient_policy.json"
     recipient_policy.write_bytes(_recipient_policy_json())
 

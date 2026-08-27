@@ -19,6 +19,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed
+- bind port attribution to measured BTS evidence, not caller claims (`bts`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 

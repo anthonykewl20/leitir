@@ -155,14 +155,61 @@ apply -- not because attribution is skipped, but because its precondition
 What **does** still apply, unchanged: donor license admissibility.
 `build_port_attribution` calls `leitir.license_policy.evaluate_license_policy`
 -- the exact same function a reuse packet calls, with no modification --
-over the donor's own BTS member source bytes (the behaviour actually read
-to author the portable contract). If that resolution is missing, ambiguous,
-or recipient-incompatible, `build_port_attribution` raises the same
+over donor source bytes. If that resolution is missing, ambiguous, or
+recipient-incompatible, `build_port_attribution` raises the same
 `BTSRejectReason` (`REJECT_LICENSE_UNKNOWN` /
 `REJECT_LICENSE_INCOMPATIBLE` / `REJECT_LICENSE_OBLIGATION_MISSING`) a
 reuse packet would raise today. A port is never admitted on a donor whose
 license Leitir cannot resolve, even though no donor bytes leave the
 pipeline.
+
+**Both halves of that sentence -- "donor's own" and "BTS member source
+bytes" -- are load-bearing, and an independent review of the original PR
+(reviewer-hy3, https://github.com/anthonykewl20/leitir/pull/275) found the
+first implementation did not actually enforce either one.** `--donor-sources`
+is a caller-supplied JSON manifest; nothing checked its `source_bytes`
+against the BTS actually computed, and nothing checked the portable
+contract's declared `donor.slug`/`donor.commit_sha` against the commit
+`run_bts_compute` actually used. A caller could therefore attribute a real
+port to a fabricated donor identity, or launder an invented license header
+past `evaluate_license_policy` for a donor file that on disk carries no
+resolvable license evidence at all -- both reproduced end to end through
+the public CLI, both silent (exit 0, a clean `ATTRIBUTION.md`). This is now
+fixed, mirroring the exact discipline `transplant.py`'s reuse-packet
+boundary already applies to bundled member bytes (`expected_members` /
+`actual_members`, matched by `source_bytes_sha256`):
+
+- **Donor identity is derived, not declared.** `_derive_donor_identity`
+  reads the `(slug, commit_sha)` every BTS member's own `SourceRef` already
+  carries -- stamped at graph-extraction time from the verified donor
+  snapshot (`bts_cli.load_donor_snapshot` -> `DonorSnapshot.slug`/
+  `commit_sha` -> every `SourceRef` the Python graph provider emits), never
+  from anything the caller typed. `_require_bound_donor_identity` rejects
+  (`REJECT_PROVENANCE_MISMATCH`, `port_contract_donor_identity_mismatch_v1`)
+  if `PortableContractSuite.donor` disagrees with it. `translate_contract`
+  enforces this before rendering any Go source, and `build_port_attribution`
+  re-enforces it independently, so no caller of either function -- CLI or
+  direct API -- can embed or attribute to an unbound donor identity.
+- **Donor source bytes are verified against the BTS's own member spans, not
+  merely asserted.** `_verify_donor_sources_against_bts` requires exactly
+  one `--donor-sources` entry for every distinct donor path a BTS member
+  references, then slices that entry's bytes at the member's own
+  byte-precise span (`leitir.relocate._span`, the same span-extraction
+  logic `bts.py` used to compute `source_bytes_sha256` in the first place)
+  and requires the result to reproduce that hash exactly. A missing entry
+  rejects with `port_contract_donor_source_missing_v1`; a span that is
+  out-of-bounds for the supplied bytes rejects with
+  `port_contract_donor_source_span_invalid_v1`; a span that is in-bounds
+  but does not hash-match rejects with
+  `port_contract_donor_source_span_mismatch_v1`. `evaluate_license_policy`
+  only ever runs over bytes that have passed this check, so the resulting
+  license evidence is evidence about the donor, not about whatever bytes a
+  caller happened to type.
+
+`tests/test_port_contract_cli.py` carries regression tests for both
+reviewer-found probes (forged donor-source bytes with an invented MIT
+header; a donor identity unbound from the commit actually computed), plus
+the missing-member-path case.
 
 The resulting `PortAttributionEvidence.attribution_mode` is a new,
 explicit tag, `"behavioral_descent"` -- distinct from ADR-0011's reuse-line
@@ -259,9 +306,23 @@ byte-identical across four `PYTHONHASHSEED` values):
   `BTSRejectReason` and no output directory is left behind -- never
   approximated.
 - Port attribution: `evaluate_license_policy` runs unmodified over donor
-  source bytes; an incompatible recipient license policy fails closed with
+  source bytes that are independently verified against the BTS's own member
+  spans (`_verify_donor_sources_against_bts`, see Decision 2); an
+  incompatible recipient license policy fails closed with
   `REJECT_LICENSE_INCOMPATIBLE`, exactly as it would for a same-language
   reuse packet.
+- Donor identity binding: `PortableContractSuite.donor` is rejected
+  (`port_contract_donor_identity_mismatch_v1`) unless it matches the
+  identity every BTS member's own source actually carries; forged or
+  fabricated donor-source bytes are rejected
+  (`port_contract_donor_source_span_mismatch_v1` /
+  `_span_invalid_v1` / `_missing_v1`) rather than silently accepted.
+- Go declaration-namespace safety: two case names that would render to the
+  same Go identifier, or a `target_function_name` colliding with a
+  generated test declaration, are rejected
+  (`port_contract_case_identifier_collision_v1` /
+  `_target_function_collision_v1`) before any `.go` file is emitted, rather
+  than emitting a file Go cannot compile.
 - Cross-digest integrity: a portable contract whose `bts_digest` does not
   match the recomputed donor BTS is rejected with
   `REJECT_PROVENANCE_MISMATCH`.

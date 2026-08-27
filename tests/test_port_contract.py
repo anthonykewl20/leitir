@@ -23,6 +23,8 @@ from leitir.port_contract import (
     PortableValueKind,
     TargetLanguage,
     _canonical,
+    _go_case_identifier,
+    _validate_go_identifier_namespace,
     classify_case,
 )
 
@@ -32,10 +34,16 @@ _DONOR = DonorIdentity("owner/donor", _SHA, _TREE_HASH, "git-commit")
 _BTS_DIGEST = "sha256:" + "b" * 64
 
 
-def _suite(cases: tuple[PortableCase, ...], *, return_kind: PortableValueKind | None = PortableValueKind.STRING) -> PortableContractSuite:
+def _suite(
+    cases: tuple[PortableCase, ...],
+    *,
+    return_kind: PortableValueKind | None = PortableValueKind.STRING,
+    target_function_name: str = "Fn",
+) -> PortableContractSuite:
+    ordered_cases = tuple(sorted(cases, key=lambda item: item.name))
     payload = {
         "bts_digest": _BTS_DIGEST,
-        "cases": [item._payload() for item in cases],
+        "cases": [item._payload() for item in ordered_cases],
         "donor": {
             "commit_sha": _DONOR.commit_sha,
             "materialized_tree_hash": _DONOR.materialized_tree_hash,
@@ -46,12 +54,12 @@ def _suite(cases: tuple[PortableCase, ...], *, return_kind: PortableValueKind | 
         "parameter_kinds": ["string"],
         "return_kind": None if return_kind is None else return_kind.value,
         "schema_version": "leitir-portable-contract-v1",
-        "target_function_name": "Fn",
+        "target_function_name": target_function_name,
     }
     digest = "sha256:" + hashlib.sha256(_canonical(payload)).hexdigest()
     return PortableContractSuite(
         payload["schema_version"], _DONOR, payload["bts_digest"], payload["function_qualified_name"],
-        payload["target_function_name"], (PortableValueKind.STRING,), return_kind, cases, digest,
+        target_function_name, (PortableValueKind.STRING,), return_kind, ordered_cases, digest,
     )
 
 
@@ -135,3 +143,56 @@ def test_go_string_literal_escapes_control_and_special_characters() -> None:
 
     assert _go_string_literal('a"b\\c\nd\te') == '"a\\"b\\\\c\\nd\\te"'
     assert _go_string_literal("\x01") == '"\\u0001"'
+
+
+def test_go_case_identifiers_are_non_injective_by_construction() -> None:
+    """Documents the raw collision `_validate_go_identifier_namespace` exists to catch."""
+
+    assert _go_case_identifier("a_b") == _go_case_identifier("a__b") == "AB"
+
+
+def test_colliding_case_identifiers_reject_instead_of_emitting_a_duplicate_go_func() -> None:
+    """reviewer-hy3 P2: two distinct, schema-valid case names that render to the same Go
+    identifier must reject, not silently emit a `.go` file with a duplicate declaration."""
+
+    case_a = PortableCase(
+        "a_b", (PortableValue(PortableValueKind.STRING, string_value="x"),), OutcomeKind.RETURN,
+        expected=PortableValue(PortableValueKind.STRING, string_value="x"),
+    )
+    case_b = PortableCase(
+        "a__b", (PortableValue(PortableValueKind.STRING, string_value="y"),), OutcomeKind.RETURN,
+        expected=PortableValue(PortableValueKind.STRING, string_value="y"),
+    )
+    suite = _suite((case_a, case_b))
+    with pytest.raises(BTSError) as caught:
+        _validate_go_identifier_namespace(suite)
+    assert caught.value.reason is BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT
+    assert caught.value.evidence.detail_code == "port_contract_case_identifier_collision_v1"
+
+
+def test_target_function_name_colliding_with_a_generated_test_name_rejects() -> None:
+    """reviewer-hy3 P3: `target_function_name` literally equaling a generated
+    `TestPortableContract_<Ident>` declaration must reject."""
+
+    case = PortableCase(
+        "foo", (PortableValue(PortableValueKind.STRING, string_value="x"),), OutcomeKind.RETURN,
+        expected=PortableValue(PortableValueKind.STRING, string_value="x"),
+    )
+    suite = _suite((case,), target_function_name="TestPortableContract_Foo")
+    with pytest.raises(BTSError) as caught:
+        _validate_go_identifier_namespace(suite)
+    assert caught.value.reason is BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT
+    assert caught.value.evidence.detail_code == "port_contract_target_function_collision_v1"
+
+
+def test_non_colliding_suite_passes_identifier_namespace_validation() -> None:
+    case_a = PortableCase(
+        "identity_one", (PortableValue(PortableValueKind.STRING, string_value="x"),), OutcomeKind.RETURN,
+        expected=PortableValue(PortableValueKind.STRING, string_value="x"),
+    )
+    case_b = PortableCase(
+        "identity_two", (PortableValue(PortableValueKind.STRING, string_value="y"),), OutcomeKind.RETURN,
+        expected=PortableValue(PortableValueKind.STRING, string_value="y"),
+    )
+    suite = _suite((case_a, case_b))
+    _validate_go_identifier_namespace(suite)  # must not raise

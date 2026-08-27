@@ -42,6 +42,7 @@ from leitir.license_policy import (
     evaluate_license_policy,
     render_attribution,
 )
+from leitir.relocate import _span
 
 PORTABLE_CONTRACT_SCHEMA_VERSION = "leitir-portable-contract-v1"
 TRANSLATED_CONTRACT_SCHEMA_VERSION = "leitir-translated-contract-v1"
@@ -481,6 +482,97 @@ def _validated_bts(result: BTSResult) -> BTS:
     return artifact
 
 
+def _derive_donor_identity(artifact: BTS) -> tuple[str, str]:
+    """Return the (slug, commit_sha) every BTS member's own source actually carries.
+
+    Every donor-origin ``SourceRef`` is stamped with the verified donor
+    snapshot's ``slug``/``commit_sha`` at graph-extraction time
+    (``bts_cli.load_donor_snapshot`` -> ``DonorSnapshot.slug``/``commit_sha``
+    -> every ``SourceRef`` the Python graph provider emits). A BTS with no
+    members, or whose members disagree on donor identity, cannot be COMPLETE
+    under a sound graph and is rejected rather than trusted.
+    """
+
+    identities = {(member.source.slug, member.source.commit_sha) for member in artifact.members}
+    if len(identities) != 1:
+        raise _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            "BTS members do not carry exactly one consistent donor identity",
+            "port_contract_bts_member_identity_v1",
+        )
+    return next(iter(identities))
+
+
+def _require_bound_donor_identity(artifact: BTS, donor: DonorIdentity) -> None:
+    """Reject a caller-declared donor identity that the BTS's own members do not corroborate.
+
+    This is the fix for the reviewer-found forgery: nothing about
+    ``PortableContractSuite.donor`` was previously cross-checked against the
+    BTS actually computed, so a caller could attribute a real port to any
+    donor slug/commit it liked. Identity is now derived from the
+    independently re-derived BTS itself (see :func:`_derive_donor_identity`),
+    never merely asserted by the caller.
+    """
+
+    expected_slug, expected_commit_sha = _derive_donor_identity(artifact)
+    if donor.slug != expected_slug or donor.commit_sha != expected_commit_sha:
+        raise _reject(
+            BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+            f"declared donor {donor.slug}@{donor.commit_sha} does not match the BTS's own "
+            f"donor identity {expected_slug}@{expected_commit_sha}",
+            "port_contract_donor_identity_mismatch_v1",
+        )
+
+
+def _verify_donor_sources_against_bts(artifact: BTS, donor_sources: tuple[BundledSource, ...]) -> None:
+    """Bind caller-supplied donor source bytes to the independently re-derived BTS.
+
+    Mirrors the reuse-packet member-payload check at
+    ``transplant.py``'s packet-payload boundary (``expected_members`` /
+    ``actual_members``, matched by exact ``source_bytes_sha256``): a reuse
+    packet must contain every exact BTS member span, verified against the
+    member's own hash, never merely asserted by the packet's own labels. A
+    port's ``--donor-sources`` manifest gets the identical treatment here --
+    every donor source path a BTS member actually references must be
+    present in exactly one manifest entry, and slicing that entry's file
+    bytes at the member's own byte-precise span (:func:`leitir.relocate._span`)
+    must reproduce ``member.source_bytes_sha256`` exactly. Without this, the
+    license evidence :func:`evaluate_license_policy` resolves is evidence
+    about whatever bytes the caller typed, not about the donor.
+    """
+
+    by_path: dict[str, list[BundledSource]] = {}
+    for source in donor_sources:
+        by_path.setdefault(source.source_path, []).append(source)
+    member_paths = sorted({member.source.path for member in artifact.members})
+    for path in member_paths:
+        candidates = by_path.get(path, [])
+        if len(candidates) != 1:
+            raise _reject(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                f"donor sources manifest does not contain exactly one entry for BTS member path {path!r}",
+                "port_contract_donor_source_missing_v1",
+            )
+        entry = candidates[0]
+        for member in artifact.members:
+            if member.source.path != path:
+                continue
+            try:
+                span = _span(entry.source_bytes, member)
+            except BTSError as exc:
+                raise _reject(
+                    BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                    f"donor sources entry for {path!r} does not contain a valid BTS member span",
+                    "port_contract_donor_source_span_invalid_v1",
+                ) from exc
+            if _sha(span) != member.source_bytes_sha256:
+                raise _reject(
+                    BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                    f"donor sources entry for {path!r} does not reproduce the verified BTS member bytes",
+                    "port_contract_donor_source_span_mismatch_v1",
+                )
+
+
 def _go_type(kind: PortableValueKind, element_kind: PortableValueKind | None = None) -> str:
     if kind is PortableValueKind.BOOL:
         return "bool"
@@ -537,6 +629,42 @@ def _go_case_identifier(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
+def _validate_go_identifier_namespace(suite: PortableContractSuite) -> None:
+    """Reject a suite whose generated Go top-level declarations cannot coexist.
+
+    ``_go_case_identifier``'s capitalize-and-join is not injective (``"a_b"``
+    and ``"a__b"`` both render to ``AB``), and nothing about
+    ``PortableContractSuite`` construction rejects two schema-valid, distinct
+    case names that collide this way -- only exact-string duplicates are
+    rejected there. A collision would emit two identically named
+    ``func TestPortableContract_<Ident>`` declarations in the same package,
+    which Go refuses to compile; the gate this ADR is centered on would then
+    never run. This also rejects ``target_function_name`` literally equaling
+    one of those generated test-function names, which would collide with the
+    agent's own implementation declaration once added to the same package.
+    """
+
+    seen: dict[str, str] = {}
+    for case in suite.cases:
+        identifier = _go_case_identifier(case.name)
+        test_function_name = f"TestPortableContract_{identifier}"
+        if identifier in seen:
+            raise _reject(
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                f"case {case.name!r} and {seen[identifier]!r} both render to the Go declaration "
+                f"{test_function_name!r}, which cannot be declared twice",
+                "port_contract_case_identifier_collision_v1",
+            )
+        seen[identifier] = case.name
+        if suite.target_function_name == test_function_name:
+            raise _reject(
+                BTSRejectReason.REJECT_UNSUPPORTED_CONSTRUCT,
+                f"target_function_name {suite.target_function_name!r} collides with the generated "
+                f"test declaration for case {case.name!r}",
+                "port_contract_target_function_collision_v1",
+            )
+
+
 def classify_case(case: PortableCase, target: TargetLanguage) -> None:
     """Raise a typed, actionable rejection for a case with no faithful equivalent.
 
@@ -579,8 +707,10 @@ def translate_contract(bts_result: BTSResult, suite: PortableContractSuite, targ
             "portable contract suite does not bind the supplied BTS",
             "port_contract_bts_digest_mismatch_v1",
         )
+    _require_bound_donor_identity(artifact, suite.donor)
     for case in suite.cases:
         classify_case(case, target)
+    _validate_go_identifier_namespace(suite)
 
     lines = [
         "// Code generated by leitir bts-port-contract from a translated behavioral",
@@ -698,6 +828,10 @@ def build_port_attribution(
             "translated contract does not bind the supplied portable contract suite",
             "port_contract_attribution_suite_digest_v1",
         )
+    _require_bound_donor_identity(artifact, suite.donor)
+    if not isinstance(donor_sources, tuple) or not all(isinstance(item, BundledSource) for item in donor_sources):
+        raise TypeError("donor_sources must be a tuple of BundledSource")
+    _verify_donor_sources_against_bts(artifact, donor_sources)
     decision = evaluate_license_policy(donor_sources, recipient_policy, license_policy)
     if not decision.accepted:
         assert decision.reason is not None

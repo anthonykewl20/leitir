@@ -93,12 +93,31 @@ def test_corrupt_index_fails_closed_instead_of_silently_rebuilding(tmp_path):
     assert (tmp_path / "sources.json").read_text() == "not json"
 
 
-def test_structurally_corrupt_index_is_backed_up(tmp_path):
+def test_structurally_corrupt_index_reads_empty_without_being_renamed_away(tmp_path):
+    """Amended contract (issue #268 P1, independent review of PR #276).
+
+    This test used to be `test_structurally_corrupt_index_is_backed_up` and
+    asserted the old contract: a non-strict read of a structurally corrupt
+    catalog renamed it to `sources.json.bak` and returned `[]`. That rename
+    is exactly what let a corrupt catalog get laundered into "genuinely
+    absent" for a later reader -- including a `strict=True` reader in the
+    very next CLI invocation, which has no way to know a previous process's
+    non-strict read is why the file is now missing. So the rename itself
+    was the defect's root cause, not a safe side effect of the old
+    non-strict recovery.
+
+    The new contract: a non-strict read of a corrupt catalog still returns
+    `[]` (unchanged), but leaves the corrupt file exactly where it was, byte
+    for byte, so every subsequent reader -- this process or any other --
+    keeps re-detecting the same corruption honestly instead of seeing a
+    plain `FileNotFoundError`.
+    """
     malformed = '[{"name": "missing provenance"}]\n'
     tmp_path.joinpath("sources.json").write_text(malformed)
 
     assert load_sources(tmp_path) == []
-    assert (tmp_path / "sources.json.bak").read_text() == malformed
+    assert not (tmp_path / "sources.json.bak").exists()
+    assert tmp_path.joinpath("sources.json").read_text() == malformed
 
 
 def test_two_specs_for_same_repo_sha_are_deduplicated(tmp_path):

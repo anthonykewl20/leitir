@@ -60,9 +60,12 @@ paths had never been individually judged; issue #268 required that audit.
 ## Decision Outcome
 
 Chosen option: **B**. `load_sources`'s non-strict recovery path now always
-raises a `RuntimeWarning` before returning `[]`, so the `.bak` rename is
-never the *only* record of corruption on any path, strict or not (issue
-#268's explicit requirement). Each caller was then judged individually:
+raises a `RuntimeWarning` before returning `[]`. The corrupt file itself is
+also left on disk, untouched, rather than renamed to `sources.json.bak` --
+see "Superseded" below for why the original design renamed it, why that
+was wrong, and why leaving it in place is what actually makes corruption
+detectable by every later reader, not just the current process. Each
+caller was then judged individually:
 
 | Caller (file:function) | Command(s) | Corrupt catalog would otherwise produce | Adopted |
 |---|---|---|---|
@@ -70,7 +73,7 @@ never the *only* record of corruption on any path, strict or not (issue
 | `corpus.remove_source` | `remove` | **Destructive**: `regenerate_pointers` would rewrite `POINTERS.md` as if the corpus were empty; reordered to validate the catalog *before* deleting the target shelf bytes | `strict=True`, and read moved before the delete |
 | `corpus.enumerate_shelved_sources` → `snapshot.export_corpus` | `export` | **False success**: an immutable, successful-looking snapshot asserting zero sources, replayable later via `import` | `strict=True` |
 | `corpus.enumerate_shelved_sources` → `sbom._packages` | `sbom` | **False success**: an SBOM asserting the corpus has zero packages | `strict=True` |
-| `cli._corpus_list`'s direct `load_sources` (the `sbom` command's own pre-lock read) | `sbom` | Same false-success SBOM; additionally, if left non-strict here specifically, the rename would happen on this first read and the second (lock-verification) read would then see `FileNotFoundError` and pass an unchanged-index check, laundering the corruption into a silent pass even with `sbom._packages` fixed | `strict=True` |
+| `cli._corpus_list`'s direct `load_sources` (the `sbom` command's own pre-lock read) | `sbom` | Same false-success SBOM if left non-strict: a corrupt catalog would read back as `[]` and the command would proceed as though the corpus were empty before ever reaching `sbom._packages`. Must be strict, and specifically the *first* read of the invocation, so nothing downstream is built from an already-laundered empty result | `strict=True` |
 | `cli._require_all_shelves_authenticated` | `export`, `sbom`, `index` with `--require-manifest-auth` | **False success**: zero iterations reads as "every shelf is authenticated" (vacuously true) | `strict=True` |
 | `doctor.check_registered_shelves` | `doctor` | **False success**: reports `pass: no registered corpus entries` instead of catching exactly the corruption doctor exists to catch; already wrapped in `except Exception` that reports `status: error`, so this was a one-line change | `strict=True` |
 | `cli._corpus_list` (the `list` command itself) | `list` | Benign: an empty list is what a human reads and investigates next; nothing downstream asserts completeness or acts destructively | Left non-strict, documented at the call site |
@@ -102,12 +105,13 @@ never the *only* record of corruption on any path, strict or not (issue
   radius: a write that cannot see the corpus's existing state must not
   proceed as if it saw an empty one. See "Recovery" below: this is not a
   dead end for the user.
-- A per-process module-level memo (`corpus._observed_corrupt_roots`, see
-  below) is now permanent state carried for the lifetime of one CLI
-  invocation. It is small (one `Path` per corpus root actually observed
-  corrupt) and never persisted or shared across processes, but it is a new
-  piece of global mutable state in a module that otherwise reads/writes
-  the filesystem statelessly per call.
+- A corrupt catalog no longer self-heals on the next command the way it
+  used to (see "Superseded" below): the corrupt `sources.json` now stays on
+  disk, corrupt, until a human (or a script following the recovery
+  guidance) explicitly moves it aside. This is a deliberate trade: the old
+  automatic self-heal was also the mechanism that laundered corruption into
+  an honest-looking absence for a later reader, which is the defect this
+  ADR exists to close.
 
 ## Superseded: the ordering gap between a non-strict and a strict read
 
@@ -129,58 +133,138 @@ pypi:<pin>` (equally `diff`/`remove`/`check` for any pinned `pypi:`/`npm:`/
 `crates:` spec). `_resolve_from_cached_shelf` runs first, is non-strict by
 design (see its row in the audit table -- a best-effort local-cache
 shortcut with a safe live-resolution fallback), and on a corrupt catalog
-performs the `.bak` rename and returns no candidates. The subsequent
+performed the `.bak` rename and returned no candidates. The subsequent
 `materialize_source` call reaches `corpus._upsert`'s `strict=True` read,
-which -- before this fix -- saw a plain `FileNotFoundError` and proceeded
-exactly as if the corpus had always been empty, defeating the destructive-
-write protection this ADR's whole table exists to provide. This was not a
-rare edge case: it is the normal shape of the `get` command for any pinned
-ecosystem spec, i.e. the primary path issue #268 is about. The prior
-framing understated this, and is corrected here rather than left standing.
+which -- before either fix described below -- saw a plain
+`FileNotFoundError` and proceeded exactly as if the corpus had always been
+empty, defeating the destructive-write protection this ADR's whole table
+exists to provide. This was not a rare edge case: it is the normal shape of
+the `get` command for any pinned ecosystem spec, i.e. the primary path
+issue #268 is about. The prior framing understated this, and is corrected
+here rather than left standing.
 
-**Fix**: `load_sources` now carries a process-lifetime memo,
-`_observed_corrupt_roots: set[Path]`, populated the moment *any* call
-(strict or not) for a given corpus root hits the corrupt-catalog exception
-branch. A `strict=True` call that then encounters `FileNotFoundError` for
-a root already in that set refuses to treat it as honest-empty and raises
-`VerificationError` instead (see `load_sources` in `src/leitir/corpus.py`).
-A root that was never observed corrupt in the current process is
-completely unaffected -- `FileNotFoundError` still means honest-empty
-there, exactly as required by this issue's sad path. The two states
-("genuinely never existed" vs. "existed, was corrupt, and something
-upstream in this same run already recovered from it") are kept distinct by
-construction: only the second is remembered, and only for the process that
-observed it.
+### First fix attempted, and why it did not close the gap
 
-Of the three options considered for closing this gap -- (a) an early,
-process-lifetime corruption memo consulted by every strict caller,
-(b) making the non-strict recovery record corruption somewhere a strict
-caller must consult, (c) making the `.bak` rename itself the durable,
-checkable signal -- (a) was chosen. (c) was rejected because a stale
-`.bak` file can legitimately outlive its corruption (e.g. `clean` unlinks
-`sources.json` but not `sources.json.bak`, so a later, entirely unrelated
-absence in a *fresh* process would be misread as still-corrupt); a
-process-scoped memo does not have that false-positive-across-processes
-failure mode, because it is discarded the moment the process exits, and
-every corruption event it records was independently observed by this same
-`load_sources` in this same run. (b) collapses into (a) once the "somewhere"
-is process memory rather than the filesystem -- the two are the same idea
-with (b) alone leaving unstated where the record lives.
+An earlier revision of this PR closed the single-process reproduction above
+with a process-lifetime memo, `_observed_corrupt_roots: set[Path]`,
+populated the moment *any* `load_sources` call (strict or not) for a given
+corpus root hit the corrupt-catalog exception branch. A `strict=True` call
+that then encountered `FileNotFoundError` for a root already in that set
+refused to treat it as honest-empty. This ADR previously stated, of that
+design:
 
-Regression test: `tests/test_load_sources_strict_callers.py::test_upsert_protection_survives_laundering_through_the_ordinary_get_cli_path`
-drives the real `get` CLI command end to end (real HTTP-served tarball via
-`routed_server`, no injected fakes for `load_sources`) with a real,
-previously-materialized shelf, a corrupted catalog, and a second `get` of
-the same pinned spec, and asserts `CORPUS_FAILURE` -- not a silently
-rebuilt, one-entry catalog.
+> A root that was never observed corrupt in the current process is
+> completely unaffected -- `FileNotFoundError` still means honest-empty
+> there, exactly as required by this issue's sad path. The two states
+> ("genuinely never existed" vs. "existed, was corrupt, and something
+> upstream in this same run already recovered from it") are kept distinct
+> by construction: only the second is remembered, and only for the process
+> that observed it.
+
+That claim -- that the memo closed the gap -- was wrong, and a second round
+of independent review (same PR) demonstrated it directly: `leitir` is a
+`console_scripts` entry point, so every command a user runs is its own
+fresh interpreter. The memo is a bare module-level `set()`, populated in
+memory and discarded the instant the process exits -- which is to say,
+discarded after *every single CLI invocation*. The review ran the identical
+scenario as two genuinely separate Python processes against the same
+on-disk state process 1 had left behind (`sources.json` gone, renamed to
+`sources.json.bak` by process 1's own non-strict cache-shortcut read):
+process 2, a fresh interpreter with an empty `_observed_corrupt_roots`,
+saw a plain missing file, correctly-by-its-own-logic treated it as honest
+empty, and silently rewrote `sources.json` to contain only its own new
+entry -- discarding the catalog entries for the shelves process 1 had
+already materialized, whose bytes remained on disk, now uncatalogued. This
+is exactly the "**Destructive**: silently rewrites the index to contain
+only the new entry" row the audit table exists to prevent, reached in two
+ordinary, unremarkable commands (a retry, or simply a different pinned
+spec run afterward) -- no race or adversary required. The memo narrowed the
+vulnerability window from "any two `load_sources` calls" to "any two
+`load_sources` calls sharing one OS process", which does not describe how
+the tool is actually invoked. **A regression test built from two `main()`
+calls inside one pytest test function cannot detect this**, because pytest
+itself is one process and so shares the same memo the production defect
+does -- which is why the original regression test for this gap passed while
+the gap remained open.
+
+### The actual fix: stop renaming, don't try to remember
+
+The root cause the memo worked around, rather than removed, is that **the
+non-strict path's silent rename is what converts "corrupt" into "absent"**
+on disk. Once that rename happens, the only true statement left on the
+filesystem is "no catalog here" -- indistinguishable from a corpus that
+never had one. No amount of in-memory bookkeeping can survive that,
+because the bookkeeping and the destroyed evidence live in different
+places with different lifetimes (memory vs. disk, one process vs. every
+process to come).
+
+The fix actually adopted: **`load_sources`'s non-strict path no longer
+renames the corrupt file at all.** It still returns `[]` for that one call
+(unchanged behavior for every existing non-strict caller) and still raises
+the `RuntimeWarning`, but the corrupt `sources.json` is left on disk,
+byte-for-byte, under its original name. Every subsequent read of that
+root -- by the same call site retried, by a different caller in the same
+process, or by an entirely fresh process -- parses the same bytes and
+re-detects the same corruption honestly, strict or not, with no memo of
+any kind. `_observed_corrupt_roots` is removed entirely; there is nothing
+left for it to compensate for.
+
+This also resolves `FileNotFoundError`'s status cleanly: it is *unconditionally*
+an honest empty corpus now, `strict` or not, with no memoized-root
+exception carved out of that rule -- because a non-strict read can no
+longer manufacture a `FileNotFoundError` out of a corrupt file. The
+"genuinely never existed" and "existed, was corrupt" cases stay distinct
+by construction, without runtime state: the former has no `sources.json`
+at all; the latter still does, and it still fails to parse.
+
+Of the options considered for closing this gap -- (a) the process-lifetime
+memo above (superseded), (b) keeping the rename but writing a *durable*
+(on-disk) corruption signal with a defined writer/clearer/lifecycle that
+every strict caller consults, (c) not renaming on the non-strict path at
+all -- **(c) was chosen**. It is the smallest change (removes code and
+state rather than adding more), and it removes the laundering class at its
+source instead of building a second detection mechanism to guard against
+it. (b) was rejected: the "Negative Consequences" section already recorded
+that a stale `.bak` file can legitimately outlive its corruption (`clean`
+unlinks `sources.json` but not `sources.json.bak`), which is precisely why
+reusing `.bak` itself as a durable signal is unsound -- and a *new*,
+purpose-built durable marker (a sentinel file, a timestamp, a lock) would
+need its own writer, its own clearing rule, and its own interaction with
+`clean`, adding a second piece of on-disk state to reason about for no
+benefit over simply not destroying the first piece of on-disk state that
+already told the truth. (a) is documented above for the record, but no
+longer describes the shipped behavior.
+
+Regression tests:
+- `tests/test_load_sources_strict_callers.py::test_upsert_protection_survives_laundering_through_the_ordinary_get_cli_path`
+  drives the real `get` CLI command end to end (real HTTP-served tarball
+  via `routed_server`, no injected fakes for `load_sources`) with a real,
+  previously-materialized shelf, a corrupted catalog, and a second `get` of
+  the same pinned spec, within a single process -- confirming the fix holds
+  even without the memo.
+- `tests/test_load_sources_strict_callers.py::test_three_successive_processes_never_launder_a_corrupt_catalog`
+  is the test the P1 review explicitly required and the one that would have
+  caught the original gap: it drives the real installed `leitir` console
+  script as three genuinely separate `subprocess.run` invocations (not
+  three `main()` calls in one pytest process) against the same on-disk
+  corpus root -- two ordinary `get`s that each materialize a real shelf,
+  then a corrupted catalog, then a third `get` for an unrelated pinned
+  spec -- and asserts the third process fails closed, the corrupt catalog
+  bytes are never silently overwritten (no rename to `.bak`, no rebuild
+  containing only the third spec), and both earlier shelves' materialized
+  bytes are still present on disk.
 
 ## Recovery when a strict caller rejects a corrupt catalog
 
 Before this change, a corrupt catalog self-healed on the very next command:
 `load_sources`'s non-strict path renamed it to `sources.json.bak` and
 returned `[]`, so `get` (for example) would just quietly rebuild the
-catalog from scratch. Making the write path (`_upsert`) and the other
-adopted callers `strict=True` removes that self-heal for them by design --
+catalog from scratch. That automatic self-heal is exactly the mechanism
+the "Superseded" section above identifies as the root cause of the
+laundering gap, so it is gone: no command performs it as a side effect
+any more, non-strict or otherwise. Making the write path (`_upsert`) and
+the other adopted callers `strict=True`, combined with removing the
+automatic rename, means a corrupt catalog no longer self-heals at all --
 but a fail-closed path with no stated way out is a bricked tool, not a
 safety improvement. The `VerificationError` raised by `load_sources(...,
 strict=True)` therefore now names, in the message itself:
@@ -188,11 +272,14 @@ strict=True)` therefore now names, in the message itself:
 1. The exact corrupt file path and the corpus root.
 2. That a backup of `sources.json`, if the user has one, can simply be
    restored in place -- the fastest, least lossy recovery.
-3. The concrete self-heal step otherwise: run any non-strict command (the
-   message suggests `leitir list --root <root>`) once. That performs the
-   same `.bak` rename and empty-catalog reset that used to happen
-   automatically, after which `leitir get <spec>` re-run for each
-   previously-catalogued source re-adds it to the freshly rebuilt catalog.
+3. The concrete manual step otherwise: move the corrupt file aside
+   yourself (the message gives the literal command, e.g. `mv sources.json
+   sources.json.bak`), which resets the catalog to empty; then re-run
+   `leitir get <spec>` for each previously-catalogued source to re-add it
+   to the rebuilt catalog. This is now a deliberate, explicit user action
+   rather than something any command does automatically as a side effect
+   of an unrelated read -- that automaticity is what made the corruption
+   launderable in the first place.
 4. That the materialized shelf bytes under `<root>/repos` were never
    touched by this failure -- only the catalog's *record* of them was
    unreadable, not the bytes themselves.
@@ -245,5 +332,10 @@ to the recovery path above instead.
 - Issue #268
 - Issue #266, PR #267 (the corpus-search precedent this audit follows)
 - `src/leitir/corpus.py` (`load_sources`, `_upsert`, `remove_source`, `enumerate_shelved_sources`, `find_materialized_sources`)
-- `tests/test_load_sources_strict_callers.py` (per-caller regressions and `test_strict_verification_error_names_recovery_path`)
+- `tests/test_load_sources_strict_callers.py` (per-caller regressions,
+  `test_strict_verification_error_names_recovery_path`, and
+  `test_three_successive_processes_never_launder_a_corrupt_catalog`, the
+  three-genuinely-separate-processes regression required by the second
+  round of independent review)
 - `tests/test_materialize_e2e.py::test_corrupt_index_fails_closed_instead_of_silently_rebuilding` (the amended write-path contract)
+- `tests/test_materialize_e2e.py::test_structurally_corrupt_index_reads_empty_without_being_renamed_away` (the amended non-strict-read contract: no `.bak` rename)

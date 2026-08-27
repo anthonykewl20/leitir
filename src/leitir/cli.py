@@ -1822,7 +1822,8 @@ def _corpus_list(
     # human what the corpus currently contains; a corrupt catalog rendered
     # as an empty list is exactly what a human inspecting the corpus needs
     # to see next, and `load_sources` already surfaces a `RuntimeWarning`
-    # plus the `sources.json.bak` file as a forensic trail. Unlike
+    # and -- since #268 P1 -- leaves the corrupt file itself in place as a
+    # durable forensic trail, rather than renaming it away. Unlike
     # export/sbom/index, nothing here is asserted as a complete or
     # authoritative artefact -- there is no destructive action downstream.
     entries = load_sources(root)
@@ -2490,13 +2491,13 @@ def _run_corpus_command(
 
             cwd = Path(args.cwd or Path.cwd()).expanduser().absolute()
             # issue #268: strict, and deliberately the *first* read of this
-            # invocation. A non-strict read here would silently rename a
-            # corrupt catalog to `sources.json.bak` and return `[]`; the
-            # unlocked re-read below would then see a genuinely missing
-            # file (FileNotFoundError, always benign) and compare equal to
-            # this `entries`, laundering the corruption into an honest-
-            # looking "index unchanged, zero sources" SBOM. Failing here
-            # first is what makes that laundering impossible.
+            # invocation. A non-strict read here would silently treat a
+            # corrupt catalog as `[]` and let the command proceed as if
+            # the corpus were empty. Failing here first (before any SBOM
+            # content is assembled) is what rules that out; the unlocked
+            # non-strict re-read below is a *different*, narrower use (see
+            # its own comment) that relies on equality-comparison, not on
+            # `strict`, to catch corruption in the lock-acquisition window.
             entries = load_sources(root, strict=True)
             targets: dict[str, tuple[Path, str]] = {}
             for entry in entries:

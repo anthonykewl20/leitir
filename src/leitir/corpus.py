@@ -55,54 +55,45 @@ def resolve_root(root: str | os.PathLike[str] | None = None) -> Path:
     return Path(selected).expanduser().absolute()
 
 
-# issue #268 P1 (independent review of PR #276): a non-strict `load_sources`
-# call earlier in the same process can rename a corrupt catalog to
-# `sources.json.bak` and return `[]`; a *later* `strict=True` call for the
-# same root then sees a genuinely missing file (`FileNotFoundError`) and,
-# without this memo, would treat that as an honest empty corpus -- silently
-# laundering the exact corruption `strict` exists to catch. This process-
-# lifetime memo (reset only by interpreter restart, i.e. once per CLI
-# invocation) records every corpus root where corruption was actually
-# observed, so a strict caller can tell "genuinely never existed" apart
-# from "existed, was corrupt, and something upstream in this same run
-# already recovered from it". A genuinely absent catalog for a root that
-# was never observed corrupt in this process is untouched by this and
-# stays an honest empty corpus, `strict` or not.
-_observed_corrupt_roots: set[Path] = set()
-
-
 def load_sources(
     root: str | os.PathLike[str] | None = None, *, strict: bool = False
 ) -> list[dict[str, Any]]:
-    """Load the index, backing up corruption and treating it as empty.
+    """Load the index, treating a corrupt catalog as empty but never hiding it.
 
-    A missing catalog (``FileNotFoundError``) is a genuinely empty corpus
-    -- nothing has ever been materialized -- and is reported as an empty
-    list regardless of ``strict``, *unless* a corrupt catalog was already
-    observed for this root earlier in the current process (see
-    ``_observed_corrupt_roots`` above): in that one case a ``strict`` call
-    refuses to treat the now-missing file as honest-empty, because an
-    earlier non-strict call in this same invocation is very likely why it
-    is missing (issue #268 P1 review finding: without this, a corrupt
-    catalog could be silently laundered into "absent" partway through a
-    single ``get``/``diff``/``remove``/``check`` invocation, defeating
-    every ``strict`` protection downstream of that earlier call).
+    A missing catalog (``FileNotFoundError``) is always a genuinely empty
+    corpus -- nothing has ever been materialized -- and is reported as an
+    empty list regardless of ``strict``.
 
     By default (``strict=False``, unchanged for every existing caller --
     list/export/sbom/snapshot/gc/etc.), a *corrupt or unreadable* catalog is
-    silently recovered: the bad file is backed up to ``sources.json.bak``
-    and an empty list is returned, exactly as before.
+    read as empty for this call, but the file itself is left exactly as it
+    was on disk -- no rename, no rewrite. This is a deliberate change from
+    the original silent-recovery contract (issue #268 P1, independent
+    review of PR #276): that contract renamed the corrupt file to
+    ``sources.json.bak`` on first read, which converted "corrupt" into
+    "absent" on disk. A later ``strict=True`` call -- in the same process,
+    or in the next one, since ``leitir`` is a per-invocation CLI process
+    with no way to remember what an earlier process saw -- would then
+    observe a plain ``FileNotFoundError`` and honestly (and wrongly) treat
+    it as an honest empty corpus, silently rewriting the catalog and
+    discarding every previously catalogued source whose shelf bytes were
+    still on disk. A process-lifetime memo cannot fix this: the on-disk
+    evidence of corruption (the original file, in its original name) is
+    what every subsequent read -- same process or a fresh one -- needs to
+    see, and renaming it destroys exactly that evidence. Leaving the
+    corrupt file in place instead means every subsequent read, by any
+    process, keeps re-detecting the same corruption honestly; there is
+    nothing to launder because nothing is destroyed.
 
     ``strict=True`` is for callers where "the declared universe could not be
     established" must never be indistinguishable from "the declared universe
     is empty" (issue #266 P1: corpus-wide search fail-closed; issue #268:
     audited every other write/artefact/policy caller). In that mode a
     corrupt or unreadable catalog raises ``VerificationError`` instead of
-    being silently swallowed -- no ``.bak`` rename happens (there was no
-    silent recovery), and the exception message names the corrupt file, the
-    corpus root, and a concrete recovery step (restore from backup, or run
-    a non-strict command once to reset the catalog and re-add sources) so a
-    fail-closed rejection is never a dead end (see ADR-0034).
+    being silently swallowed, and the exception message names the corrupt
+    file, the corpus root, and a concrete recovery step (restore from
+    backup, or move the corrupt file aside yourself and re-add sources) so
+    a fail-closed rejection is never a dead end (see ADR-0034).
     """
     corpus_root = resolve_root(root)
     index = corpus_root / INDEX_NAME
@@ -120,52 +111,42 @@ def load_sources(
             raise ValueError("sources index must be a list of objects")
         return payload
     except FileNotFoundError:
-        if strict and corpus_root in _observed_corrupt_roots:
-            raise VerificationError(
-                f"corpus catalog is missing at {index}, but a corrupt "
-                f"catalog was observed for {corpus_root} earlier in this "
-                f"invocation -- its silent-recovery rename is very likely "
-                f"why it is missing now, so this is refused rather than "
-                f"treated as an honest empty corpus.\n"
-                f"recovery: restore {index.name} in {corpus_root} from a "
-                f"backup if you have one. Otherwise this process's earlier "
-                f"non-strict read already performed the reset: re-run "
-                f"`leitir get <spec>` for each source you had under "
-                f"{corpus_root / 'repos'} to re-add it to the now-empty "
-                f"catalog; the materialized shelf bytes themselves were "
-                f"never touched by this failure."
-            ) from None
         return []
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        _observed_corrupt_roots.add(corpus_root)
         if strict:
             # issue #268: name the corrupt file, the corpus root, and a
             # concrete way out -- a fail-closed path with no stated
             # recovery is a bricked tool. Materialized shelf bytes under
             # ``corpus_root / "repos"`` are never touched by this failure.
+            # No ``.bak`` rename is offered as an automated step here (see
+            # the module docstring above): the recovery is an explicit,
+            # deliberate user action, not something any command performs
+            # as a side effect of an unrelated read.
             raise VerificationError(
                 f"corpus catalog is corrupt or unreadable, the declared "
                 f"universe cannot be established: {index}\n"
                 f"recovery: restore {index.name} in {corpus_root} from a "
-                f"backup if you have one. Otherwise, run a non-strict "
-                f"command such as `leitir list --root {corpus_root}` once "
-                f"-- it will back up the corrupt file to {INDEX_NAME}.bak "
-                f"in {corpus_root} and reset the catalog to empty -- then "
-                f"re-run `leitir get <spec>` for each source you had under "
-                f"{corpus_root / 'repos'} to re-add it to the rebuilt "
-                f"catalog; the materialized shelf bytes themselves were "
-                f"never touched by this failure."
+                f"backup if you have one. Otherwise move the corrupt file "
+                f"aside yourself, for example "
+                f"`mv {index} {index}.bak`, which resets the catalog to "
+                f"empty -- then re-run `leitir get <spec>` for each source "
+                f"you had under {corpus_root / 'repos'} to re-add it to "
+                f"the rebuilt catalog; the materialized shelf bytes "
+                f"themselves were never touched by this failure."
             ) from exc
-        corpus_root.mkdir(parents=True, exist_ok=True)
-        if index.exists():
-            os.replace(index, corpus_root / f"{INDEX_NAME}.bak")
         # issue #268: even a caller that has deliberately chosen non-strict
         # (benign) recovery must leave a record of the corruption that
-        # outlives the renamed file -- the `.bak` rename alone is not
-        # discoverable by a command that only inspects stdout/exit code.
+        # outlives this call -- and, per the P1 finding above, must leave
+        # the corrupt file itself untouched so the record is durable across
+        # process boundaries, not just visible in this process's stderr.
         warnings.warn(
-            f"leitir: corpus catalog corrupt or unreadable, recovered by "
-            f"renaming to {INDEX_NAME}.bak and treating as empty: {index}",
+            f"leitir: corpus catalog corrupt or unreadable, treating as "
+            f"empty for this read: {index}. The file was left in place "
+            f"(not renamed) so every subsequent read, including from a "
+            f"different process, keeps detecting the corruption honestly "
+            f"instead of seeing a laundered, genuinely-missing file; move "
+            f"it aside yourself (e.g. `mv {index} {index}.bak`) once "
+            f"you're ready to rebuild the catalog.",
             RuntimeWarning,
             stacklevel=2,
         )

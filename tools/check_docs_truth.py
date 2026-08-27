@@ -251,6 +251,37 @@ def extract_registered_verbs(cli_source: str) -> frozenset[str]:
     return frozenset(verbs)
 
 
+def extract_registered_verbs_from_cli_modules(cli_dir: Path) -> frozenset[str]:
+    """Union of :func:`extract_registered_verbs` over every ``cli*.py`` module.
+
+    Issue #271 split ``cli.py``'s per-verb ``argparse`` construction out into
+    sibling modules -- ``cli_corpus.py``, ``cli_bts.py``, ``cli_ask.py``,
+    ``cli_search.py``, and ``cli_diagnostics.py`` each own a slice of the
+    ``add_parser()`` calls that used to all live in ``cli.py``, which is now
+    a thin registry that calls into them instead of calling
+    ``add_parser()`` itself. The authoritative verb list is therefore the
+    union across every ``src/leitir/cli*.py`` file, not just ``cli.py``
+    alone. A module with zero ``add_parser()`` calls (``cli.py`` itself,
+    post-#271; ``cli_support.py``, which owns no parser construction at all)
+    is skipped rather than treated as an error -- only an empty union across
+    every matching file is a real problem.
+    """
+    verbs: set[str] = set()
+    matched_any = False
+    for path in sorted(cli_dir.glob("cli*.py")):
+        try:
+            file_verbs = extract_registered_verbs(path.read_text(encoding="utf-8"))
+        except CliParseError:
+            continue
+        verbs.update(file_verbs)
+        matched_any = True
+    if not matched_any:
+        raise CliParseError(
+            f"no add_parser(...) calls found in any {cli_dir}/cli*.py module"
+        )
+    return frozenset(verbs)
+
+
 def _iter_doc_files(readme: Path, agents: Path, docs_dir: Path) -> list[Path]:
     files = [p for p in (readme, agents) if p.is_file()]
     if docs_dir.is_dir():
@@ -477,7 +508,7 @@ def run_checks(
     repo_root: Path = REPO_ROOT,
     cli_path: Path = CLI_PATH,
 ) -> list[Finding]:
-    registered_verbs = extract_registered_verbs(cli_path.read_text(encoding="utf-8"))
+    registered_verbs = extract_registered_verbs_from_cli_modules(cli_path.parent)
     docs_dir = repo_root / "docs"
     doc_files = _iter_doc_files(repo_root / "README.md", repo_root / "AGENTS.md", docs_dir)
     real_version = read_pyproject_version(repo_root / "pyproject.toml")

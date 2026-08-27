@@ -63,9 +63,25 @@ class TestExtractRegisteredVerbs:
             docs_truth.extract_registered_verbs("x = 1\n")
 
     def test_matches_real_cli_verb_set(self) -> None:
-        """Ground truth: the real cli.py must parse and yield known verbs."""
+        """Ground truth: cli.py alone now registers no verbs directly."""
         real_cli = (REPO_ROOT / "src" / "leitir" / "cli.py").read_text(encoding="utf-8")
-        verbs = docs_truth.extract_registered_verbs(real_cli)
+        # Post-#271, cli.py itself is a thin registry that calls into
+        # per-verb-group modules (cli_corpus.py, cli_bts.py, cli_ask.py,
+        # cli_search.py, cli_diagnostics.py) rather than calling
+        # add_parser() directly, so extract_registered_verbs() on cli.py
+        # alone now finds nothing (and raises, per its own no-verbs-found
+        # contract) -- see test_matches_real_cli_verb_set_across_cli_modules
+        # below for the tree-wide ground truth this test used to assert
+        # directly.
+        with pytest.raises(docs_truth.CliParseError):
+            docs_truth.extract_registered_verbs(real_cli)
+
+    def test_matches_real_cli_verb_set_across_cli_modules(self) -> None:
+        """Ground truth: the real cli*.py modules must parse and yield known
+        verbs, unioned across every verb-group module (issue #271)."""
+        verbs = docs_truth.extract_registered_verbs_from_cli_modules(
+            REPO_ROOT / "src" / "leitir"
+        )
         for expected in ("search", "doctor", "get", "fetch", "bench", "usage"):
             assert expected in verbs
         # The historically-removed command must not resurface.
@@ -194,8 +210,8 @@ class TestRealRepoTree:
         """The motivating example: docs/smoke-evaluation.md documents the
         removed `leitir eval` command but must not be flagged, because it
         both self-marks as archived and guards its one runnable line."""
-        registered = docs_truth.extract_registered_verbs(
-            (REPO_ROOT / "src" / "leitir" / "cli.py").read_text(encoding="utf-8")
+        registered = docs_truth.extract_registered_verbs_from_cli_modules(
+            REPO_ROOT / "src" / "leitir"
         )
         doc = REPO_ROOT / "docs" / "smoke-evaluation.md"
         dead = docs_truth.check_dead_commands([doc], REPO_ROOT / "docs", registered)

@@ -183,7 +183,24 @@ irreducibly-undecidable usage, not an unused import being penalized.
 no site in `ok_sites` may carry a placeholder symbol (`"<module>"` /
 `"<file>"`) or an empty symbol name.
 
-### Why `guess_import_root` is a documented, accepted limitation
+### Why `guess_import_root` was a documented, accepted limitation
+
+**Superseded (2026-08-27, issue #269, [ADR-0032](0032-import-root-evidence-derivation.md)):**
+`check.py` no longer decides which import root to look for by normalizing
+the distribution's registry name. It now derives the import root(s) from
+the materialized distribution's own evidence -- a real `top_level.txt`,
+static `setup.cfg`/`pyproject.toml` packaging metadata, or (lowest
+confidence, and the tier that actually recovers the cases named below) the
+materialized tree's own layout -- via `leitir.usage.import_evidence`,
+extending ADR-0026's import-catalog machinery rather than adding a second
+lookup mechanism. `guess_import_root` itself still exists, but only as a
+diagnostic display helper; it is no longer consulted to build the
+resolver's `import_roots`. `pypi:pillow`, `pypi:pyyaml`, and multi-root
+distributions are now actually examined; an import root that still cannot
+be determined from any evidence tier (or whose evidence disagrees) still
+fails safe exactly as this section originally described -- `nothing_examined`,
+exit 4, never a guessed `violation` or a guessed `ok`. The original
+limitation text is kept below for history.
 
 There is no local, static, network-free distribution-name-to-import-root
 catalog available to this command without the full admitted-consumer
@@ -272,8 +289,12 @@ to trust.
   by the same closed vocabulary ADR-0027 already established.
 - Non-Python consumer code, or non-Python symbols in a polyglot pinned
   repository.
-- Distribution-to-import-root mapping beyond the normalized-name guess
-  (no ADR-0026 admission pipeline is invoked).
+- Distribution-to-import-root mapping beyond what
+  `leitir.usage.import_evidence` can derive from the materialized tree's
+  own evidence (ADR-0032) -- no out-of-band ADR-0026 *admission* evidence
+  (a pinned consumer repository, an exact-pin `requirements.txt`) is
+  invoked or required; only the already-materialized target's own tree is
+  consulted.
 - Instance/attribute chains past the first resolved symbol (`flask.Flask`
   is checked; `app.route` on an instance `app = Flask(__name__)` is not --
   that requires runtime type information no static tool has).

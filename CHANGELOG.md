@@ -17,6 +17,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add a docs-truth gate for command, version, and tag claims (`ci`)
 - add evidence-assisted cross-language port (ADR-0033) (`bts`)
 - add the agent-facing code-supply verbs and close two coverage falsifications
+- derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed
@@ -24,14 +25,18 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - close the strict-defeating laundering gap and audit IndexedSearcher (P1/P2 review findings) (`corpus`)
 - fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
 - finish the ADR renumber and recovery-guidance content (previous commit only captured the rename) (`corpus`)
+- give the check-bridge demo fixture a real top_level.txt (`bench`)
 - have build_port_attribution verify its own source root (`bts`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
+- pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- retire the tree-layout import-root tier as an authority (`check`)
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
+- stop tier-4 import-root heuristic from guessing multi-root (`check`)
 
 ## [0.1.6]
 

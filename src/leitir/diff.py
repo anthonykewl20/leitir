@@ -511,7 +511,7 @@ def compute_impact(
             if tree is None:
                 unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<file>"))
                 continue
-            table = table_cache.setdefault(relpath, _build_import_table(tree, import_root))
+            table = table_cache.setdefault(relpath, _build_import_table(tree, frozenset({import_root})))
             candidate = _candidate_for_reference(tree, table, reference)
             if candidate.symbol is None:
                 unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<module>"))

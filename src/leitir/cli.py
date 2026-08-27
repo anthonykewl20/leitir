@@ -4250,23 +4250,41 @@ def _main_impl(
         )
         if check_report.sites_examined == 0:
             # P1 fix (defect 2): zero examined sites means nothing was
-            # verified -- it must never read as a clean pass. This most
-            # commonly happens when guess_import_root's normalized-name
-            # guess is simply wrong for a renamed distribution (pillow ->
-            # PIL, beautifulsoup4 -> bs4, PyYAML -> yaml, python-dateutil ->
-            # dateutil, scikit-learn -> sklearn): the resolver then finds no
-            # usage of the guessed import root anywhere in the input, so
-            # there is nothing to examine at all. Reuses ExitCode.
-            # NOTHING_INDEXED -- the same "completed cleanly, but verified
-            # nothing" tier `index` already established -- rather than
-            # inventing a new code for the same shape of outcome.
-            print(
-                f"leitir: check found no usage of {args.against} (looked for "
-                f"import root {guess_import_root(parsed.name)!r}) anywhere in "
-                f"{args.path} -- NOTHING was examined or verified; this is "
-                "exit code 4 (NOTHING_INDEXED), not a passing check",
-                file=err,
-            )
+            # verified -- it must never read as a clean pass. Reuses
+            # ExitCode.NOTHING_INDEXED -- the same "completed cleanly, but
+            # verified nothing" tier `index` already established -- rather
+            # than inventing a new code for the same shape of outcome.
+            if check_report.import_roots_determinable:
+                # Issue #269: the import root(s) *were* determined from the
+                # materialized distribution's own evidence (see
+                # leitir.usage.import_evidence, ADR-0032); the consumer code
+                # simply never used any of them.
+                roots_desc = ", ".join(repr(root) for root in check_report.import_roots) or "<none>"
+                print(
+                    f"leitir: check found no usage of {args.against} (looked for "
+                    f"import root(s) {roots_desc}, derived from the materialized "
+                    f"source's own evidence) anywhere in {args.path} -- NOTHING "
+                    "was examined or verified; this is exit code 4 "
+                    "(NOTHING_INDEXED), not a passing check",
+                    file=err,
+                )
+            else:
+                # The import root could not be determined at all from the
+                # materialized source's own evidence (no top_level.txt,
+                # setup.cfg/pyproject.toml packaging metadata, or
+                # recognizable package layout) -- fail safe, never a guessed
+                # violation and never a silent "ok" (issue #269).
+                print(
+                    f"leitir: check could not determine {args.against}'s import "
+                    "root from its materialized source (no top_level.txt, "
+                    "setup.cfg/pyproject.toml packaging metadata, or "
+                    f"recognizable package layout was found; a name-based guess "
+                    f"would have been {guess_import_root(parsed.name)!r}, but "
+                    "that guess was not used) -- NOTHING was examined or "
+                    f"verified in {args.path}; this is exit code 4 "
+                    "(NOTHING_INDEXED), not a passing check",
+                    file=err,
+                )
             return int(ExitCode.NOTHING_INDEXED)
         if not check_report.passed:
             return int(ExitCode.CORPUS_FAILURE)

@@ -24,9 +24,25 @@ _REPO_ROOT = Path(__file__).parents[1]
 
 
 def _tarball(files: dict[str, bytes]) -> bytes:
+    # Issue #269 follow-up: tier 4 (a purely structural scan of the tree's
+    # own directory layout) was retired as an authority -- it could still
+    # bind a wrong root and produce a false violation (ADR-0032, "Tier 4
+    # was retired as an authority"). This file's fixtures always model the
+    # "demo" distribution with import root "demo", so every tarball built
+    # here carries a real top_level.txt (tier 1, authoritative) declaring
+    # it, unless the caller already supplied its own packaging metadata or
+    # is deliberately testing an evidence-free tree (empty-index fixtures
+    # with no demo/ package at all still resolve to an empty API index and
+    # fail closed for that reason, independent of root determinability).
+    complete_files = dict(files)
+    if "demo/__init__.py" in complete_files and not any(
+        name.endswith((".dist-info/top_level.txt", ".egg-info/top_level.txt"))
+        for name in complete_files
+    ):
+        complete_files["demo.egg-info/top_level.txt"] = b"demo\n"
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
-        for name, content in files.items():
+        for name, content in complete_files.items():
             member = tarfile.TarInfo(f"demo-{SHA}/{name}")
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))

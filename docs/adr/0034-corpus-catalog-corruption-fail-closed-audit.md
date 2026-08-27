@@ -81,6 +81,8 @@ never the *only* record of corruption on any path, strict or not (issue
 | `corpus.find_materialized_sources` (backing `record_trust`, `info._source`) | `trust`, `get`, `info`, `api`, `examples` | Neither false success nor destructive: both callers already raise `ValueError("source is not materialized")` on an empty result, so the command fails either way -- just with a misleading stated reason under corruption | Left non-strict, documented |
 | `index.builder.shelves_from_corpus` (as called by the `index` command) | `index` | Neither: `if not shelves: raise ValueError(...)` already turns an empty result into a failure; only the error message is misleading under corruption | Left non-strict, documented (the same helper already forwards `strict` for `index.query`'s adoption) |
 | `index.query._corpus_eligibility` | `search --corpus` | Already fixed by PR #267 | Unchanged (`strict=True`) |
+| `index.query.IndexedSearcher._shelves` | `search --use-index`/`--require-index` for one scoped `--repo`/`--package` (never `--corpus`) | Neither false success nor destructive (found by independent review, added here): an empty result under `--require-index` already raises `VerificationError("required index does not cover declared scope")`; under plain `--use-index` it falls back to a full, correct, non-indexed scan of the exact pinned commit tree straight from disk (not through the catalog) with `incomplete=True` honestly reported, downgrading `coverage.status` away from `COMPLETE_FOR_DECLARED_UNIVERSE`. The actual search results are complete and correct either way | Left non-strict, documented |
+| `_gc_abandoned_staging` (the `gc` CLI command) | `gc` | **No dependency**: `gc` never calls `load_sources` at all -- it walks `<root>/repos` on disk for `.tmp-`/`.old-` staging and backup directories under target locks. The issue's opening sad-path list named `gc` as a suspected destructive caller ("`gc` over an empty catalog may be actively dangerous depending on what it considers unreferenced"); verified false on inspection of the actual command, not merely left silent | N/A -- no catalog read to make strict |
 
 ### Positive Consequences
 
@@ -95,24 +97,82 @@ never the *only* record of corruption on any path, strict or not (issue
 
 ### Negative Consequences
 
-- **Known, accepted gap**: a non-strict `load_sources` call that runs
-  *before* a strict one in the same process (e.g. `_resolve_from_cached_shelf`
-  during ecosystem-spec resolution for `remove`) will already have
-  performed the `.bak` rename and returned `[]`. The later strict call then
-  reads a genuinely missing file (`FileNotFoundError`), which is defined --
-  correctly, per this issue's explicit sad-path requirement -- as always
-  benign, even under `strict`. In that narrow interleaving the corruption
-  is laundered into an honest-looking absence for the rest of that single
-  invocation. This is not silent: the `RuntimeWarning` from the first read
-  and the `sources.json.bak` file are still both left behind. Fully closing
-  this gap would require a corpus-root-scoped "already observed corrupt in
-  this process" memo, which is a materially larger change than "adopt
-  `strict` per caller" and is out of this issue's scope.
 - `get`/`install`/`lock`/`diff` now fail an entire materialize when the
   catalog is corrupt, rather than degrading. This is the intended blast
   radius: a write that cannot see the corpus's existing state must not
   proceed as if it saw an empty one. See "Recovery" below: this is not a
   dead end for the user.
+- A per-process module-level memo (`corpus._observed_corrupt_roots`, see
+  below) is now permanent state carried for the lifetime of one CLI
+  invocation. It is small (one `Path` per corpus root actually observed
+  corrupt) and never persisted or shared across processes, but it is a new
+  piece of global mutable state in a module that otherwise reads/writes
+  the filesystem statelessly per call.
+
+## Superseded: the ordering gap between a non-strict and a strict read
+
+An earlier revision of this ADR described the following as a "known,
+accepted gap", out of scope for this issue:
+
+> A non-strict `load_sources` call that runs *before* a strict one in the
+> same process (e.g. `_resolve_from_cached_shelf` during ecosystem-spec
+> resolution for `remove`) will already have performed the `.bak` rename
+> and returned `[]`. The later strict call then reads a genuinely missing
+> file (`FileNotFoundError`), which is defined -- correctly, per this
+> issue's explicit sad-path requirement -- as always benign, even under
+> `strict`. In that narrow interleaving the corruption is laundered into
+> an honest-looking absence for the rest of that single invocation.
+
+Independent review of PR #276 reproduced this with real materialized
+shelves through the ordinary, primary path the issue is about: `leitir get
+pypi:<pin>` (equally `diff`/`remove`/`check` for any pinned `pypi:`/`npm:`/
+`crates:` spec). `_resolve_from_cached_shelf` runs first, is non-strict by
+design (see its row in the audit table -- a best-effort local-cache
+shortcut with a safe live-resolution fallback), and on a corrupt catalog
+performs the `.bak` rename and returns no candidates. The subsequent
+`materialize_source` call reaches `corpus._upsert`'s `strict=True` read,
+which -- before this fix -- saw a plain `FileNotFoundError` and proceeded
+exactly as if the corpus had always been empty, defeating the destructive-
+write protection this ADR's whole table exists to provide. This was not a
+rare edge case: it is the normal shape of the `get` command for any pinned
+ecosystem spec, i.e. the primary path issue #268 is about. The prior
+framing understated this, and is corrected here rather than left standing.
+
+**Fix**: `load_sources` now carries a process-lifetime memo,
+`_observed_corrupt_roots: set[Path]`, populated the moment *any* call
+(strict or not) for a given corpus root hits the corrupt-catalog exception
+branch. A `strict=True` call that then encounters `FileNotFoundError` for
+a root already in that set refuses to treat it as honest-empty and raises
+`VerificationError` instead (see `load_sources` in `src/leitir/corpus.py`).
+A root that was never observed corrupt in the current process is
+completely unaffected -- `FileNotFoundError` still means honest-empty
+there, exactly as required by this issue's sad path. The two states
+("genuinely never existed" vs. "existed, was corrupt, and something
+upstream in this same run already recovered from it") are kept distinct by
+construction: only the second is remembered, and only for the process that
+observed it.
+
+Of the three options considered for closing this gap -- (a) an early,
+process-lifetime corruption memo consulted by every strict caller,
+(b) making the non-strict recovery record corruption somewhere a strict
+caller must consult, (c) making the `.bak` rename itself the durable,
+checkable signal -- (a) was chosen. (c) was rejected because a stale
+`.bak` file can legitimately outlive its corruption (e.g. `clean` unlinks
+`sources.json` but not `sources.json.bak`, so a later, entirely unrelated
+absence in a *fresh* process would be misread as still-corrupt); a
+process-scoped memo does not have that false-positive-across-processes
+failure mode, because it is discarded the moment the process exits, and
+every corruption event it records was independently observed by this same
+`load_sources` in this same run. (b) collapses into (a) once the "somewhere"
+is process memory rather than the filesystem -- the two are the same idea
+with (b) alone leaving unstated where the record lives.
+
+Regression test: `tests/test_load_sources_strict_callers.py::test_upsert_protection_survives_laundering_through_the_ordinary_get_cli_path`
+drives the real `get` CLI command end to end (real HTTP-served tarball via
+`routed_server`, no injected fakes for `load_sources`) with a real,
+previously-materialized shelf, a corrupted catalog, and a second `get` of
+the same pinned spec, and asserts `CORPUS_FAILURE` -- not a silently
+rebuilt, one-entry catalog.
 
 ## Recovery when a strict caller rejects a corrupt catalog
 

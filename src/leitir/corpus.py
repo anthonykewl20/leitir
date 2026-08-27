@@ -55,14 +55,38 @@ def resolve_root(root: str | os.PathLike[str] | None = None) -> Path:
     return Path(selected).expanduser().absolute()
 
 
+# issue #268 P1 (independent review of PR #276): a non-strict `load_sources`
+# call earlier in the same process can rename a corrupt catalog to
+# `sources.json.bak` and return `[]`; a *later* `strict=True` call for the
+# same root then sees a genuinely missing file (`FileNotFoundError`) and,
+# without this memo, would treat that as an honest empty corpus -- silently
+# laundering the exact corruption `strict` exists to catch. This process-
+# lifetime memo (reset only by interpreter restart, i.e. once per CLI
+# invocation) records every corpus root where corruption was actually
+# observed, so a strict caller can tell "genuinely never existed" apart
+# from "existed, was corrupt, and something upstream in this same run
+# already recovered from it". A genuinely absent catalog for a root that
+# was never observed corrupt in this process is untouched by this and
+# stays an honest empty corpus, `strict` or not.
+_observed_corrupt_roots: set[Path] = set()
+
+
 def load_sources(
     root: str | os.PathLike[str] | None = None, *, strict: bool = False
 ) -> list[dict[str, Any]]:
     """Load the index, backing up corruption and treating it as empty.
 
-    A missing catalog (``FileNotFoundError``) is always a genuinely empty
-    corpus -- nothing has ever been materialized -- and is reported as an
-    empty list regardless of ``strict``.
+    A missing catalog (``FileNotFoundError``) is a genuinely empty corpus
+    -- nothing has ever been materialized -- and is reported as an empty
+    list regardless of ``strict``, *unless* a corrupt catalog was already
+    observed for this root earlier in the current process (see
+    ``_observed_corrupt_roots`` above): in that one case a ``strict`` call
+    refuses to treat the now-missing file as honest-empty, because an
+    earlier non-strict call in this same invocation is very likely why it
+    is missing (issue #268 P1 review finding: without this, a corrupt
+    catalog could be silently laundered into "absent" partway through a
+    single ``get``/``diff``/``remove``/``check`` invocation, defeating
+    every ``strict`` protection downstream of that earlier call).
 
     By default (``strict=False``, unchanged for every existing caller --
     list/export/sbom/snapshot/gc/etc.), a *corrupt or unreadable* catalog is
@@ -96,8 +120,24 @@ def load_sources(
             raise ValueError("sources index must be a list of objects")
         return payload
     except FileNotFoundError:
+        if strict and corpus_root in _observed_corrupt_roots:
+            raise VerificationError(
+                f"corpus catalog is missing at {index}, but a corrupt "
+                f"catalog was observed for {corpus_root} earlier in this "
+                f"invocation -- its silent-recovery rename is very likely "
+                f"why it is missing now, so this is refused rather than "
+                f"treated as an honest empty corpus.\n"
+                f"recovery: restore {index.name} in {corpus_root} from a "
+                f"backup if you have one. Otherwise this process's earlier "
+                f"non-strict read already performed the reset: re-run "
+                f"`leitir get <spec>` for each source you had under "
+                f"{corpus_root / 'repos'} to re-add it to the now-empty "
+                f"catalog; the materialized shelf bytes themselves were "
+                f"never touched by this failure."
+            ) from None
         return []
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        _observed_corrupt_roots.add(corpus_root)
         if strict:
             # issue #268: name the corrupt file, the corpus root, and a
             # concrete way out -- a fail-closed path with no stated

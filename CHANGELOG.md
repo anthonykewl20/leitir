@@ -19,7 +19,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 
 ### Fixed
 - fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
+- finish the ADR renumber and recovery-guidance content (previous commit only captured the rename) (`corpus`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 
 ## [0.1.6]

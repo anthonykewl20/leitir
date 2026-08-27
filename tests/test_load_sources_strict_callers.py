@@ -16,8 +16,11 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import tarfile
+from pathlib import Path
 
 import pytest
+from _http_server import json_body, routed_server
 from test_snapshot import SHA_A, make_corpus
 
 from leitir.cli import ExitCode, _require_all_shelves_authenticated, main
@@ -26,6 +29,36 @@ from leitir.docpointers import POINTERS_NAME
 from leitir.doctor import run_doctor
 from leitir.materialize import VerificationError
 from leitir.snapshot import export_corpus
+
+_PIN_SHA = "d" * 40
+
+
+def _pypi_tarball(commit_sha: str = _PIN_SHA) -> bytes:
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        content = b"pinned\n"
+        member = tarfile.TarInfo(f"demo-{commit_sha}/README.md")
+        member.size = len(content)
+        archive.addfile(member, io.BytesIO(content))
+    return data.getvalue()
+
+
+def _pypi_routes() -> dict[str, object]:
+    return {
+        "/pypi/demo/1.2/json": (
+            200,
+            {},
+            json_body(
+                {"info": {"project_urls": {"Source": "https://github.com/acme/demo"}}}
+            ),
+        ),
+        "/repos/acme/demo/git/ref/tags/v1.2": (
+            200,
+            {},
+            json_body({"object": {"type": "commit", "sha": _PIN_SHA}}),
+        ),
+        f"/acme/demo/tar.gz/{_PIN_SHA}": (200, {}, _pypi_tarball()),
+    }
 
 
 def _corrupt_catalog(root) -> None:
@@ -206,3 +239,67 @@ def test_file_not_found_catalog_remains_honest_empty_under_every_strict_caller(t
     code, payload, _err = _run(["sbom", "--root", str(tmp_path)])
     assert code == ExitCode.SUCCESS
     assert payload["packages"] == []
+
+
+
+def test_upsert_protection_survives_laundering_through_the_ordinary_get_cli_path(
+    tmp_path, monkeypatch
+):
+    """Independent review of PR #276 (P1): reproduce the defeat through the
+    *ordinary* `get` CLI path, not a synthetic direct call to `_upsert`.
+
+    `get pypi:<pin>` resolves local-first: `_resolve_from_cached_shelf`
+    reads the catalog non-strict *before* `materialize_source` ever reaches
+    `_upsert`'s strict read. Before the process-lifetime corruption memo,
+    that earlier non-strict read would rename the corrupt catalog to
+    `sources.json.bak` and return no candidates; `_upsert`'s later strict
+    read would then see a plain, laundered `FileNotFoundError` and silently
+    rebuild the catalog as if the corpus had always been empty -- exactly
+    the destructive false success this issue targets, reached through the
+    primary path the issue is about (any pinned `pypi:`/`npm:`/`crates:`
+    spec via `get`/`diff`/`remove`/`check`), not an edge case.
+    """
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+    out, err = io.StringIO(), io.StringIO()
+
+    with routed_server(_pypi_routes()) as server:
+        monkeypatch.setenv("LEITIR_PYPI_BASE_URL", server.base_url + "/pypi")
+        monkeypatch.setenv("LEITIR_GITHUB_API_BASE_URL", server.base_url)
+        monkeypatch.setenv("LEITIR_CODELOAD_BASE_URL", server.base_url)
+
+        # First, a real, honest materialize: a genuine catalogued shelf on
+        # disk, exactly as any user's corpus accumulates one.
+        code = main(
+            ["get", "pypi:demo@1.2", "--root", str(tmp_path), "--no-verify"],
+            stdout=out,
+            stderr=err,
+        )
+        assert code == ExitCode.SUCCESS, err.getvalue()
+        materialized_path = out.getvalue().strip()
+        assert (tmp_path / "repos").exists()
+        entries_before = load_sources(tmp_path)
+        assert len(entries_before) == 1
+
+        # Corrupt the catalog in place -- garbage bytes, not valid JSON.
+        _corrupt_catalog(tmp_path)
+
+        # Re-run the exact same `get`. `_resolve_from_cached_shelf` reads
+        # the corrupt catalog first (non-strict, by design); without the
+        # fix, `_upsert`'s strict read would then see a laundered
+        # `FileNotFoundError` and rebuild the catalog from scratch,
+        # reporting SUCCESS.
+        out2, err2 = io.StringIO(), io.StringIO()
+        code2 = main(
+            ["get", "pypi:demo@1.2", "--root", str(tmp_path), "--no-verify"],
+            stdout=out2,
+            stderr=err2,
+        )
+
+    assert code2 == ExitCode.CORPUS_FAILURE, err2.getvalue()
+    # The catalog was never silently rewritten as a fresh, one-entry index.
+    assert not (tmp_path / "sources.json").exists()
+    assert (tmp_path / "sources.json.bak").exists()
+    # The genuinely materialized shelf from the first, honest `get` is
+    # untouched on disk -- only the catalog's *record* of it was corrupt.
+    assert Path(materialized_path).exists()
+    assert (Path(materialized_path) / "leitir-manifest.json").exists()

@@ -20,8 +20,6 @@ instance of the issue's own illustrative example.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
 import json
 import math
@@ -29,6 +27,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
+from pathlib import Path
 
 from leitir.bts import BTS, BTSResult, BTSStatus, _digest
 from leitir.bts_errors import BTSError, BTSEvidence, BTSRejectReason
@@ -38,11 +37,11 @@ from leitir.license_policy import (
     LicensePolicy,
     Obligations,
     RecipientLicensePolicy,
-    VerifiedBytes,
     evaluate_license_policy,
     render_attribution,
 )
 from leitir.relocate import _span
+from leitir.safeio import read_regular_file
 
 PORTABLE_CONTRACT_SCHEMA_VERSION = "leitir-portable-contract-v1"
 TRANSLATED_CONTRACT_SCHEMA_VERSION = "leitir-translated-contract-v1"
@@ -525,20 +524,22 @@ def _require_bound_donor_identity(artifact: BTS, donor: DonorIdentity) -> None:
 
 
 def _verify_donor_sources_against_bts(artifact: BTS, donor_sources: tuple[BundledSource, ...]) -> None:
-    """Bind caller-supplied donor source bytes to the independently re-derived BTS.
+    """Assert every BTS member path is covered by exactly one source entry whose bytes
+    reproduce that member's exact byte span.
 
-    Mirrors the reuse-packet member-payload check at
-    ``transplant.py``'s packet-payload boundary (``expected_members`` /
-    ``actual_members``, matched by exact ``source_bytes_sha256``): a reuse
-    packet must contain every exact BTS member span, verified against the
-    member's own hash, never merely asserted by the packet's own labels. A
-    port's ``--donor-sources`` manifest gets the identical treatment here --
-    every donor source path a BTS member actually references must be
-    present in exactly one manifest entry, and slicing that entry's file
-    bytes at the member's own byte-precise span (:func:`leitir.relocate._span`)
-    must reproduce ``member.source_bytes_sha256`` exactly. Without this, the
-    license evidence :func:`evaluate_license_policy` resolves is evidence
-    about whatever bytes the caller typed, not about the donor.
+    This check alone is **not** sufficient to admit ``donor_sources`` into
+    license evaluation -- an earlier design relied on it as the sole guard
+    and a reviewer found it bypassable: it verifies only the span inside
+    each entry's ``source_bytes``, and says nothing about bytes outside
+    that span, which :func:`evaluate_license_policy`'s header scan reads
+    from anyway. The actual guarantee now lives in
+    :func:`load_donor_sources_from_snapshot`, which builds every
+    ``BundledSource.source_bytes`` from a direct, no-follow read of an
+    already tree-hash-verified materialization -- there is no caller-typed
+    byte in the whole-file content for this check to fail to reach. This
+    function is retained and still called there purely as a redundant,
+    fail-closed sanity assertion (see its call site's comment), not as the
+    security boundary.
     """
 
     by_path: dict[str, list[BundledSource]] = {}
@@ -809,11 +810,22 @@ def build_port_attribution(
     bts_result: BTSResult,
     suite: PortableContractSuite,
     translated: TranslatedContract,
-    donor_sources: tuple[BundledSource, ...],
+    source_root: Path,
     recipient_policy: RecipientLicensePolicy,
     license_policy: LicensePolicy = DEFAULT_LICENSE_POLICY,
 ) -> PortAttributionEvidence:
-    """Build port attribution evidence, or raise the same fail-closed license rejection a reuse packet would."""
+    """Build port attribution evidence, or raise the same fail-closed license rejection a reuse packet would.
+
+    ``source_root`` must be the ``source_root`` of a snapshot already loaded
+    through ``bts_cli.load_donor_snapshot`` for this exact donor commit --
+    the same trust boundary ``_validated_bts`` places on its ``BTSResult``
+    argument (re-derived and checked here, but not re-fetched from a host).
+    This function never accepts donor source bytes as a parameter: the only
+    bytes it evaluates a license over are read directly from that
+    materialization by :func:`load_donor_sources_from_snapshot`, closing the
+    caller-controlled-blob gap a reviewer found in an earlier design (see
+    that function's docstring).
+    """
 
     artifact = _validated_bts(bts_result)
     if suite.bts_digest != artifact.bts_digest or translated.bts_digest != artifact.bts_digest:
@@ -829,9 +841,7 @@ def build_port_attribution(
             "port_contract_attribution_suite_digest_v1",
         )
     _require_bound_donor_identity(artifact, suite.donor)
-    if not isinstance(donor_sources, tuple) or not all(isinstance(item, BundledSource) for item in donor_sources):
-        raise TypeError("donor_sources must be a tuple of BundledSource")
-    _verify_donor_sources_against_bts(artifact, donor_sources)
+    donor_sources = load_donor_sources_from_snapshot(source_root, artifact)
     decision = evaluate_license_policy(donor_sources, recipient_policy, license_policy)
     if not decision.accepted:
         assert decision.reason is not None
@@ -873,86 +883,76 @@ def build_port_attribution(
     )
 
 
-DONOR_SOURCES_SCHEMA_VERSION = "leitir-port-donor-sources-v1"
+def load_donor_sources_from_snapshot(source_root: Path, artifact: BTS) -> tuple[BundledSource, ...]:
+    """Build donor ``BundledSource`` evidence strictly from the verified materialization.
 
+    This replaces an earlier, reviewer-found-forgeable design
+    (``load_donor_sources``, removed) that accepted a caller-declared JSON
+    manifest of donor bytes. That design's flaw was structural, not a
+    missing check: ``_verify_donor_sources_against_bts`` hash-verified only
+    the exact BTS member *span* inside a caller-supplied blob, while
+    :func:`leitir.license_policy.evaluate_license_policy`'s header scan
+    reads the *entire* blob -- so a forged license header placed outside the
+    verified span, with the surrounding line count preserved so the span's
+    line/col addressing still resolved, passed the span check and still
+    reached license evaluation unverified. No amount of additional slicing
+    checks closes that gap while a caller-controlled blob wider than the
+    verified span still exists.
 
-def _bytes_field(value: object, name: str) -> bytes:
-    if not isinstance(value, str):
-        raise ValueError(f"{name} must be a base64 string")
-    try:
-        return base64.b64decode(value, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise ValueError(f"{name} is not valid base64") from exc
+    This function removes that blob entirely. Every byte handed to
+    ``evaluate_license_policy`` is read directly from ``source_root``, which
+    the caller must already have loaded through
+    ``bts_cli.load_donor_snapshot`` -- i.e. an existing shelf whose *entire*
+    materialized tree, not merely a span within one file, was hash-verified
+    against the pinned commit before this function is ever reached
+    (``verify_materialized_tree_hash``, ADR-0006/ADR-0008). There is no
+    remaining step where a caller declares donor bytes Leitir merely spot
+    checks: reading the file *is* the verification.
 
-
-def _verified_bytes_from_json(value: object) -> VerifiedBytesInput:
-    if not isinstance(value, dict) or set(value) != {"path", "content_base64", "package_scope"}:
-        raise ValueError("verified file entry has invalid fields")
-    return VerifiedBytesInput(value["path"], _bytes_field(value["content_base64"], "content_base64"), value["package_scope"])
-
-
-@dataclass(frozen=True, slots=True)
-class VerifiedBytesInput:
-    path: str
-    content: bytes
-    package_scope: str
-
-
-def load_donor_sources(data: str | bytes) -> tuple[BundledSource, ...]:
-    """Load an offline-supplied donor bundled-source manifest for license evaluation.
-
-    This manifest never carries donor bytes into a port artifact; it exists
-    only so :func:`build_port_attribution` can run the same
-    ``evaluate_license_policy`` the reuse-packet path uses, over the donor's
-    actual source bytes, without this module depending on corpus loading.
+    v1 reads exactly the files BTS members reference (the header-evidence
+    tier); REUSE.toml/dep5/adjacent-``.license`` sidecar tiers are not yet
+    wired here and remain future work -- safe to add later by reading more
+    paths from the same verified ``source_root``, never by accepting more
+    caller-declared bytes.
     """
 
-    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        seen: dict[str, object] = {}
-        for key, value in pairs:
-            if key in seen:
-                raise ValueError(f"duplicate JSON key: {key}")
-            seen[key] = value
-        return seen
-
-    try:
-        decoded = json.loads(data, object_pairs_hook=reject_duplicates)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError("invalid donor sources JSON") from exc
-    if not isinstance(decoded, dict) or set(decoded) != {"schema_version", "sources"}:
-        raise ValueError("donor sources manifest has invalid fields")
-    if decoded["schema_version"] != DONOR_SOURCES_SCHEMA_VERSION:
-        raise ValueError("unsupported donor sources schema")
-    sources = decoded["sources"]
-    if not isinstance(sources, list) or not sources:
-        raise ValueError("donor sources manifest must declare at least one source")
+    if not isinstance(source_root, Path):
+        raise TypeError("source_root must be a Path")
+    resolved_root = source_root.resolve()
+    member_paths = sorted({member.source.path for member in artifact.members})
     built: list[BundledSource] = []
-    for item in sources:
-        if not isinstance(item, dict) or set(item) != {
-            "source_record_id", "packet_path", "source_path", "source_bytes_base64",
-            "package_scope", "verified_files", "contributing_source_record_ids", "modified_from_sha256",
-        }:
-            raise ValueError("donor source entry has invalid fields")
-        verified_files = item["verified_files"]
-        if not isinstance(verified_files, list):
-            raise ValueError("verified_files must be a list")
-        contributing = item["contributing_source_record_ids"]
-        if not isinstance(contributing, list):
-            raise ValueError("contributing_source_record_ids must be a list")
-        parsed = tuple(_verified_bytes_from_json(entry) for entry in verified_files)
+    for index, path in enumerate(member_paths, start=1):
+        if not (resolved_root / path).resolve().is_relative_to(resolved_root):
+            raise _reject(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                f"BTS member path {path!r} escapes the donor materialization root",
+                "port_contract_donor_source_path_escape_v1",
+            )
+        try:
+            data = read_regular_file(source_root / path, maximum_bytes=1 << 20, no_follow=True)
+        except OSError as exc:
+            raise _reject(
+                BTSRejectReason.REJECT_PROVENANCE_MISMATCH,
+                f"cannot read verified donor source at {path!r}",
+                "port_contract_donor_source_read_v1",
+            ) from exc
         built.append(
             BundledSource.create(
-                source_record_id=item["source_record_id"],
-                packet_path=item["packet_path"],
-                source_path=item["source_path"],
-                source_bytes=_bytes_field(item["source_bytes_base64"], "source_bytes_base64"),
-                verified_files=tuple(VerifiedBytes.create(entry.path, entry.content, entry.package_scope) for entry in parsed),
-                package_scope=item["package_scope"],
-                contributing_source_record_ids=tuple(contributing),
-                modified_from_sha256=item["modified_from_sha256"],
+                source_record_id=f"donor-member-{index}",
+                packet_path=path,
+                source_path=path,
+                source_bytes=data,
             )
         )
-    return tuple(built)
+    sources = tuple(built)
+    # Defense in depth, not the primary guarantee: since `data` was just
+    # read from the same verified materialization the BTS was computed
+    # from, this should always hold. It stays here so a future refactor
+    # that reintroduces any caller-influenced byte source on this path
+    # trips this check rather than silently reopening the reviewer-found
+    # gap.
+    _verify_donor_sources_against_bts(artifact, sources)
+    return sources
 
 
 def load_recipient_license_policy(data: str | bytes) -> RecipientLicensePolicy:
@@ -988,7 +988,6 @@ def load_recipient_license_policy(data: str | bytes) -> RecipientLicensePolicy:
 
 __all__ = [
     "ATTRIBUTION_MODE_BEHAVIORAL_DESCENT",
-    "DONOR_SOURCES_SCHEMA_VERSION",
     "PORTABLE_CONTRACT_SCHEMA_VERSION",
     "PORT_ATTRIBUTION_SCHEMA_VERSION",
     "TRANSLATED_CONTRACT_SCHEMA_VERSION",
@@ -1003,7 +1002,7 @@ __all__ = [
     "TranslatedContract",
     "build_port_attribution",
     "classify_case",
-    "load_donor_sources",
+    "load_donor_sources_from_snapshot",
     "load_portable_contract_suite",
     "load_recipient_license_policy",
     "translate_contract",

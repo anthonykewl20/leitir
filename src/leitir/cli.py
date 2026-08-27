@@ -749,10 +749,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="non-Python target language the contract is translated into",
     )
     bts_port.add_argument(
-        "--donor-sources", required=True,
-        help="donor bundled-source manifest JSON used only for license evaluation",
-    )
-    bts_port.add_argument(
         "--recipient-policy", required=True,
         help="recipient license policy JSON",
     )
@@ -3707,13 +3703,12 @@ def _main_impl(
                     return int(ExitCode.CORPUS_FAILURE)
             elif args.command == "bts-port-contract":
                 from .bts import BTSStatus
-                from .bts_cli import SeedSelector, run_bts_compute
+                from .bts_cli import SeedSelector, load_donor_snapshot, run_bts_compute
                 from .bts_errors import BTSError, BTSRejectReason
                 from .license_policy import render_attribution as _render_port_attribution
                 from .port_contract import (
                     TargetLanguage,
                     build_port_attribution,
-                    load_donor_sources,
                     load_portable_contract_suite,
                     load_recipient_license_policy,
                     translate_contract,
@@ -3721,8 +3716,9 @@ def _main_impl(
                 from .safeio import atomic_write_bytes, read_regular_file
 
                 owner, repo, commit_sha = args.spec
+                port_root = _corpus_root(args, err)
                 compute_artifacts = run_bts_compute(
-                    _corpus_root(args, err),
+                    port_root,
                     owner,
                     repo,
                     commit_sha,
@@ -3741,11 +3737,14 @@ def _main_impl(
                 suite = load_portable_contract_suite(contract_bytes)
                 target_language = TargetLanguage(args.target_language)
                 translated = translate_contract(bts_result, suite, target_language)
-                donor_sources_bytes = read_regular_file(Path(args.donor_sources), maximum_bytes=1 << 20, no_follow=False)
-                donor_sources = load_donor_sources(donor_sources_bytes)
                 recipient_policy_bytes = read_regular_file(Path(args.recipient_policy), maximum_bytes=1 << 20, no_follow=False)
                 recipient_policy = load_recipient_license_policy(recipient_policy_bytes)
-                attribution = build_port_attribution(bts_result, suite, translated, donor_sources, recipient_policy)
+                # Donor license evidence is read directly from the same
+                # verified, tree-hash-checked materialization the BTS was
+                # computed from -- never from a caller-supplied manifest.
+                # See leitir.port_contract.load_donor_sources_from_snapshot.
+                donor_snapshot = load_donor_snapshot(port_root, owner, repo, commit_sha)
+                attribution = build_port_attribution(bts_result, suite, translated, donor_snapshot.source_root, recipient_policy)
 
                 out_dir = Path(args.out)
                 if out_dir.exists() or out_dir.is_symlink():

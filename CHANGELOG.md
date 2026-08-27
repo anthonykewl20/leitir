@@ -21,6 +21,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Fixed
 - bind port attribution to measured BTS evidence, not caller claims (`bts`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- remove the caller-controlled donor-bytes channel entirely (`bts`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 
 ## [0.1.6]

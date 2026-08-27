@@ -15,6 +15,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 ### Added
 - add a docs-truth gate for command, version, and tag claims (`ci`)
 - add the agent-facing code-supply verbs and close two coverage falsifications
+- derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 
 ### Fixed

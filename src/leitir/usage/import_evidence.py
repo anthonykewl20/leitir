@@ -52,7 +52,14 @@ is actually present.
    layout convention the packaging metadata tiers above would otherwise
    have described. This is the tier that recovers ``pillow`` -> ``PIL`` and
    ``pyyaml`` -> ``yaml`` when no packaging metadata for the distribution
-   is present in this particular materialization.
+   is present in this particular materialization. Because this tier has no
+   authoritative evidence behind it, it can only ever resolve a *single*
+   unambiguous root: a donor tree commonly ships more than one top-level
+   directory/module that is not itself a public import root (a stray
+   ``constants.py`` helper, a vendored ``vendor/__init__.py`` subpackage),
+   and this tier has no way to tell those apart from a genuine additional
+   public root. When it finds more than one candidate, it deliberately
+   does not guess that all of them are real -- see "Multi-root" below.
 
 If *no* tier finds any evidence at all, a single zero-root
 :class:`~leitir.usage.import_catalog.DistributionRecord` is returned, which
@@ -68,12 +75,29 @@ records are passed through, and disagreement resolves to
 
 ## Multi-root
 
-A single coherent tier declaring more than one root (e.g. a distribution
-that ships both ``attr`` and ``attrs``, or ``opencv-python`` shipping
-``cv2`` alongside a namespace-style ``cv2.data`` helper package) is a
-legitimate resolved mapping, not an ambiguity -- this is exactly
-``build_import_catalog``'s existing multi-root contract (ADR-0026), reused
-unchanged here.
+A single coherent, *authoritative* piece of evidence (tier 1-3: a real
+``top_level.txt``, or explicit ``setup.cfg``/``pyproject.toml`` packaging
+metadata) declaring more than one root (e.g. a distribution that ships
+both ``attr`` and ``attrs``) is a legitimate resolved mapping, not an
+ambiguity -- this is exactly ``build_import_catalog``'s existing
+multi-root contract (ADR-0026), reused unchanged here.
+
+Tier 4 (the structural fallback) is the one tier this module never lets
+resolve a multi-root mapping on its own: unlike tiers 1-3, it has no
+packaging declaration to trust, only a heuristic scan of what happens to
+be laid out at the top of the tree. If it finds exactly one candidate, it
+resolves that one root normally. If it finds more than one, it emits one
+single-root record *per* candidate instead of a single multi-root record,
+so ``build_import_catalog``'s existing disagreement handling (unmodified)
+types the whole distribution as ambiguous -- ``resolve_import_roots``
+returns ``None`` and ``check`` fails safe. A distribution whose real
+import surface genuinely spans multiple top-level roots must be evidenced
+by tier 1-3 to be resolved as multi-root; tier 4 alone will never bind
+more than one root to ``--against``, precisely because a false extra root
+is not "harmless" -- it can misattribute an unrelated, same-named import
+in the *consumer's own* code to the pinned distribution and produce a
+false ``violation`` against code that is actually correct (the exact sad
+path issue #269 forbids).
 
 ## Bounds
 
@@ -228,22 +252,32 @@ def _setup_cfg_records(root: Path, distribution: str) -> tuple[DistributionRecor
     parser = configparser.ConfigParser()
     try:
         parser.read_string(text)
-    except configparser.Error:
-        return ()
-    if not parser.has_section("options"):
-        return ()
-    roots: set[str] = set()
-    packages_raw = parser.get("options", "packages", fallback="").strip()
-    if packages_raw and not packages_raw.lower().startswith("find"):
-        for entry in _SPLIT_ON_COMMA_OR_NEWLINE.split(packages_raw):
+        if not parser.has_section("options"):
+            return ()
+        roots: set[str] = set()
+        packages_raw = parser.get("options", "packages", fallback="").strip()
+        if packages_raw and not packages_raw.lower().startswith("find"):
+            for entry in _SPLIT_ON_COMMA_OR_NEWLINE.split(packages_raw):
+                name = entry.strip()
+                if name:
+                    roots.add(name.split(".")[0])
+        modules_raw = parser.get("options", "py_modules", fallback="").strip()
+        for entry in _SPLIT_ON_COMMA_OR_NEWLINE.split(modules_raw):
             name = entry.strip()
             if name:
-                roots.add(name.split(".")[0])
-    modules_raw = parser.get("options", "py_modules", fallback="").strip()
-    for entry in _SPLIT_ON_COMMA_OR_NEWLINE.split(modules_raw):
-        name = entry.strip()
-        if name:
-            roots.add(name)
+                roots.add(name)
+    except configparser.Error:
+        # P2 fix (adversarial review, reviewer-hy3): configparser.Error is
+        # the base of every interpolation error configparser can raise
+        # (InterpolationDepthError, InterpolationMissingOptionError,
+        # InterpolationSyntaxError), not only parse errors -- a
+        # self-referencing "%(x)s" value in setup.cfg (an attacker-
+        # influenceable, materialized donor artifact) previously escaped
+        # this handler because only ``read_string`` was wrapped, not the
+        # subsequent ``.get()`` calls that actually perform interpolation.
+        # Any failure here means this tier found nothing usable -- fail
+        # closed the same way a parse failure already does, never raise.
+        return ()
     if not roots:
         return ()
     return (_distribution_record(distribution, tuple(sorted(roots)), "setup-cfg-static"),)
@@ -263,7 +297,13 @@ def _pyproject_records(root: Path, distribution: str) -> tuple[DistributionRecor
         return ()
     try:
         doc = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
+    except (tomllib.TOMLDecodeError, RecursionError):
+        # P2 fix (adversarial review, reviewer-hy3): a deeply nested TOML
+        # structure (an attacker-influenceable, materialized donor
+        # artifact) can make tomllib's recursive-descent parser raise
+        # RecursionError rather than TOMLDecodeError. Either way, this
+        # tier simply found nothing usable -- fail closed, never let a
+        # raw exception escape this module's boundary.
         return ()
     roots: set[str] = set()
     tool = doc.get("tool")
@@ -347,7 +387,35 @@ def _tree_layout_records(root: Path, distribution: str) -> tuple[DistributionRec
         candidates = _package_candidates(root)
     if not candidates:
         return ()
-    return (_distribution_record(distribution, candidates, "materialized-tree-layout"),)
+    if len(candidates) == 1:
+        return (_distribution_record(distribution, candidates, "materialized-tree-layout"),)
+    # P1 fix (adversarial review, reviewer-hy3): tier 4 is a purely
+    # structural heuristic with no authoritative packaging evidence behind
+    # it -- unlike tiers 1-3, it has no way to distinguish a genuine
+    # additional public import root (a real multi-root distribution) from
+    # an unrelated top-level helper module or vendored subpackage the
+    # donor repository simply happens to ship (a stray "constants.py", a
+    # "vendor/__init__.py"). Binding every such candidate to --against
+    # used to let a same-named, wholly unrelated import in the consumer's
+    # own code get misattributed to the pinned distribution -- exactly
+    # the false-violation-against-correct-code shape issue #269 forbids
+    # ("a wrong import root must never produce a violation against code
+    # that is actually correct"). When more than one candidate is found,
+    # this tier can no longer positively resolve a single root, so it
+    # must not guess by binding all of them either: it emits one
+    # single-root record per candidate (never one multi-root record), and
+    # build_import_catalog's existing, unmodified disagreement handling
+    # (distinct declared_roots sets across records for the same
+    # distribution) then correctly types the whole distribution as
+    # UnresolvedState.AMBIGUOUS_BINDING -- resolve_import_roots returns
+    # None, and check.py fails safe (nothing_examined, exit 4) rather than
+    # ever guessing. A genuine multi-root distribution must be evidenced
+    # by an authoritative packaging source (tier 1-3) instead; tier 4
+    # alone can only ever resolve a single, unambiguous top-level root.
+    return tuple(
+        _distribution_record(distribution, (candidate,), "materialized-tree-layout")
+        for candidate in candidates
+    )
 
 
 # --------------------------------------------------------------------------

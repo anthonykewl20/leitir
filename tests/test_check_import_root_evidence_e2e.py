@@ -180,6 +180,12 @@ def test_multi_root_distribution_examines_usage_of_every_declared_root(tmp_path,
     # A distribution that ships more than one top-level import root is a
     # legitimate, common shape (issue #269 acceptance criteria) -- not
     # ambiguous. Modeled on attrs, which ships both "attr" and "attrs".
+    # A real top_level.txt (tier 1, authoritative) is required to resolve
+    # this: tier 4's pure structural scan alone deliberately refuses to
+    # guess that two plausible top-level packages are both genuine roots
+    # (P1 fix, adversarial review) -- see
+    # tests/test_usage_import_evidence.py::test_multi_root_distribution_via_top_level_txt
+    # and the ambiguous-tier-4-alone counterpart next to it.
     code, out, err = _run_check(
         tmp_path,
         monkeypatch,
@@ -195,6 +201,7 @@ def test_multi_root_distribution_examines_usage_of_every_declared_root(tmp_path,
         package_files={
             "attr/__init__.py": b"def Known(x):\n    return x\n",
             "attrs/__init__.py": b"def Known(x):\n    return x\n",
+            "attrs.egg-info/top_level.txt": b"attr\nattrs\n",
             "tests/test_attr.py": b"",
         },
     )
@@ -217,6 +224,7 @@ def test_multi_root_distribution_can_still_report_a_real_violation(tmp_path, mon
         package_files={
             "attr/__init__.py": b"def Known(x):\n    return x\n",
             "attrs/__init__.py": b"def Known(x):\n    return x\n",
+            "attrs.egg-info/top_level.txt": b"attr\nattrs\n",
         },
     )
     assert code == ExitCode.CORPUS_FAILURE, err
@@ -257,3 +265,59 @@ def test_undeterminable_import_root_fails_safe_never_a_guessed_violation(tmp_pat
     # clean pass or a guessed match.
     assert "could not determine" in err
     assert "NOTHING" in err or "nothing" in err
+
+
+def test_stray_top_level_module_never_produces_a_false_violation(tmp_path, monkeypatch):
+    # P1 regression (adversarial review, reviewer-hy3): a donor ships a
+    # real package ("widgetlib") plus an unrelated stray top-level helper
+    # module ("constants.py"). Before the fix, tier 4 promoted BOTH names
+    # to import roots bound to --against, so the consumer's own, wholly
+    # unrelated "constants" module got misattributed to widgetlib the
+    # moment it referenced a name that isn't in widgetlib's API index --
+    # a false violation against code that is actually correct, exactly
+    # the sad path issue #269 forbids. The undeterminable root must now
+    # fail safe instead: nothing_examined, exit 4, never a violation.
+    code, out, err = _run_check(
+        tmp_path,
+        monkeypatch,
+        distribution="widgetlib",
+        owner="acme",
+        repo="widgetlib",
+        consumer_source="import constants\n\nprint(constants.UNRELATED_LOCAL_THING)\n",
+        package_files={
+            "widgetlib/__init__.py": b"def real_api():\n    return 1\n",
+            "constants.py": b"SOME_INTERNAL_CONSTANT = 1\n",
+        },
+    )
+    assert code == ExitCode.NOTHING_INDEXED, err
+    payload = json.loads(out)
+    assert payload["status"] == "nothing_examined"
+    assert payload["counts"]["sites_violation"] == 0
+    assert payload["import_roots_determinable"] is False
+
+
+def test_vendored_subpackage_never_produces_a_false_violation(tmp_path, monkeypatch):
+    # P1 regression (adversarial review, reviewer-hy3), second reproduced
+    # shape: a donor uses a src/-layout with a real package plus a
+    # vendored subpackage that itself has __init__.py ("src/vendor/"). The
+    # consumer's own, unrelated top-level "vendor" module must never be
+    # misattributed to the pinned distribution.
+    code, out, err = _run_check(
+        tmp_path,
+        monkeypatch,
+        distribution="reallib",
+        owner="acme",
+        repo="reallib",
+        consumer_source="import vendor\n\nprint(vendor.UNRELATED_LOCAL_THING)\n",
+        package_files={
+            "src/reallib/__init__.py": b"def real_api():\n    return 1\n",
+            "src/vendor/__init__.py": b"VENDORED = True\n",
+        },
+    )
+    assert code == ExitCode.NOTHING_INDEXED, err
+    payload = json.loads(out)
+    assert payload["status"] == "nothing_examined"
+    assert payload["counts"]["sites_violation"] == 0
+    assert payload["import_roots_determinable"] is False
+
+

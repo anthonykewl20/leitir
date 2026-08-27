@@ -137,17 +137,64 @@ def test_tree_layout_pyyaml_root_layout(tmp_path):
     assert roots == ("yaml",)
 
 
-def test_tree_layout_multi_root_distribution(tmp_path):
-    # A distribution that ships more than one top-level import root (this
-    # is common -- e.g. "attrs" ships both "attr" and "attrs"). One
-    # coherent piece of evidence declaring multiple roots is a legitimate
-    # resolved multi-root mapping, not an ambiguity (ADR-0026's existing
-    # multi-root contract, reused unchanged).
+def test_tree_layout_ambiguous_multi_candidate_is_undeterminable_not_multi_root(tmp_path):
+    # P1 fix (adversarial review, reviewer-hy3): tier 4 has no
+    # authoritative packaging evidence behind it, so it cannot tell a
+    # genuine additional public import root apart from an unrelated
+    # top-level module the donor tree just happens to ship. Two plausible
+    # top-level packages found by structural scanning alone (with no
+    # top_level.txt/setup.cfg/pyproject.toml corroborating either) must
+    # resolve to undeterminable, never to a guessed multi-root mapping --
+    # see test_multi_root_distribution_via_top_level_txt below for how a
+    # *genuine* multi-root distribution is actually resolved.
     _write(tmp_path, "attr/__init__.py", "")
     _write(tmp_path, "attrs/__init__.py", "")
     _write(tmp_path, "tests/test_attr.py", "")
     roots = resolve_import_roots(tmp_path, "attrs")
+    assert roots is None
+
+
+def test_multi_root_distribution_via_top_level_txt(tmp_path):
+    # A genuine multi-root distribution (attrs ships both "attr" and
+    # "attrs") IS resolved -- but only when an authoritative evidence tier
+    # (here, a real top_level.txt) actually declares both roots together,
+    # not from tier 4's structural guess alone.
+    _write(tmp_path, "attr/__init__.py", "")
+    _write(tmp_path, "attrs/__init__.py", "")
+    _write(tmp_path, "attrs-1.0.dist-info/top_level.txt", "attr\nattrs\n")
+    roots = resolve_import_roots(tmp_path, "attrs")
     assert roots == ("attr", "attrs")
+
+
+# --------------------------------------------------------------------------
+# P1 regression (adversarial review, reviewer-hy3): a wrong, over-inclusive
+# tier-4 root must never produce a false violation against code that is
+# correct. Reproduced directly against resolve_import_roots below (the
+# e2e shape -- a full leitir check run producing a false violation and
+# then not producing one after the fix -- is covered in
+# tests/test_check_import_root_evidence_e2e.py).
+# --------------------------------------------------------------------------
+
+
+def test_stray_top_level_module_does_not_get_promoted_to_a_root(tmp_path):
+    # A donor ships a real package plus an unrelated stray top-level
+    # helper module. Before the fix, both "widgetlib" and "constants"
+    # became roots bound to the target -- a consumer's own, unrelated
+    # "constants" import would then be misattributed to this distribution.
+    _write(tmp_path, "widgetlib/__init__.py", "def real_api():\n    return 1\n")
+    _write(tmp_path, "constants.py", "SOME_INTERNAL_CONSTANT = 1\n")
+    roots = resolve_import_roots(tmp_path, "widgetlib")
+    assert roots is None
+
+
+def test_vendored_subpackage_does_not_get_promoted_to_a_root(tmp_path):
+    # A donor uses a src/-layout with a real package plus a vendored
+    # subpackage that itself has __init__.py -- also a real, ordinary
+    # shape (a project vendoring a dependency under vendor/__init__.py).
+    _write(tmp_path, "src/reallib/__init__.py", "def real_api():\n    return 1\n")
+    _write(tmp_path, "src/vendor/__init__.py", "VENDORED = True\n")
+    roots = resolve_import_roots(tmp_path, "reallib")
+    assert roots is None
 
 
 def test_tree_layout_single_top_level_module_file(tmp_path):
@@ -216,3 +263,46 @@ def test_too_many_tree_layout_roots_is_undeterminable(tmp_path):
         _write(tmp_path, f"pkg{index}/__init__.py", "")
     roots = resolve_import_roots(tmp_path, "toomany")
     assert roots is None
+
+
+# --------------------------------------------------------------------------
+# P2 regression (adversarial review, reviewer-hy3): malformed/adversarial
+# evidence files (an attacker-influenceable materialized donor artifact)
+# must fail closed at this module's own boundary -- never raise a raw,
+# untyped exception -- rather than relying on an incidental blanket
+# ``except Exception`` elsewhere (e.g. the CLI) to paper over it.
+# --------------------------------------------------------------------------
+
+
+def test_deeply_nested_pyproject_toml_recursion_error_fails_closed(tmp_path):
+    # tomllib's recursive-descent parser raises RecursionError (not
+    # tomllib.TOMLDecodeError) on a sufficiently deeply nested array --
+    # this must not propagate out of resolve_import_roots/
+    # derive_distribution_records; it must be treated the same as any
+    # other unparsable pyproject.toml (this tier found nothing usable).
+    depth = 3000
+    nested = "x = " + "[" * depth + "]" * depth + "\n"
+    _write(tmp_path, "pyproject.toml", nested)
+    _write(tmp_path, "yaml/__init__.py", "")
+    roots = resolve_import_roots(tmp_path, "pyyaml")
+    assert roots == ("yaml",)  # falls through to the tree-layout tier
+    records = derive_distribution_records(tmp_path, "pyyaml")
+    assert records[0].source == "materialized-tree-layout"
+
+
+def test_self_referencing_setup_cfg_interpolation_error_fails_closed(tmp_path):
+    # A self-referencing "%(a)s" interpolation makes configparser raise
+    # InterpolationDepthError (a subclass of configparser.Error) from
+    # .get(), not from read_string -- this must not propagate uncaught
+    # either; it must be treated the same as any other unparsable
+    # setup.cfg (this tier found nothing usable).
+    _write(
+        tmp_path,
+        "setup.cfg",
+        "[options]\na = %(a)s\npackages = %(a)s\n",
+    )
+    _write(tmp_path, "yaml/__init__.py", "")
+    roots = resolve_import_roots(tmp_path, "pyyaml")
+    assert roots == ("yaml",)  # falls through to the tree-layout tier
+    records = derive_distribution_records(tmp_path, "pyyaml")
+    assert records[0].source == "materialized-tree-layout"

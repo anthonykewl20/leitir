@@ -80,25 +80,40 @@ without weakening the fail-safe contract ADR-0030 already established?
 - **Derive `leitir.usage.import_catalog.DistributionRecord` evidence
   directly from the materialized target's own tree, in a precedence-
   ordered sequence of increasingly-structural evidence tiers, and feed it
-  through the existing, unmodified `build_import_catalog` (chosen).**
+  through the existing `build_import_catalog` (chosen).**
 
 ## Decision Outcome
 
 Chosen option: extend ADR-0026's import-catalog machinery with a new
 evidence-derivation module, `leitir.usage.import_evidence`, that builds
 `DistributionRecord`s from the materialized distribution's own tree and
-hands them to the existing, unmodified `build_import_catalog`. `check.py`
-now calls `leitir.usage.import_evidence.resolve_import_roots(materialized_root,
+hands them to the existing `build_import_catalog`. `check.py` now calls
+`leitir.usage.import_evidence.resolve_import_roots(materialized_root,
 package_name)` in place of `guess_import_root`, and uses whatever set of
 roots (zero, one, or many) that resolves to.
 
-This was the only option that satisfies every driver simultaneously:
-`build_import_catalog` already has the exact typed-unresolved vocabulary
+**Precision, corrected after adversarial review (2026-08-27):** `build_import_catalog`'s
+*resolution and ambiguity logic* was not touched -- every disagreement,
+cap, and multi-root decision below is exactly its pre-existing behavior,
+reused as-is. What *was* modified in `import_catalog.py` is the
+`SUPPORTED_EVIDENCE_SOURCES` allow-list: this issue adds the three new
+evidence-source kinds this module produces (`setup-cfg-static`,
+`pyproject-static`, `materialized-tree-layout`) to it. Without that
+addition, `build_import_catalog` would reject every `DistributionRecord`
+this module builds as an unsupported packaging shape (its own, correct,
+unmodified behavior for a `source` value it doesn't recognize). An
+earlier version of this ADR and the originating PR description both
+overstated this as "unmodified" without qualification; that was
+inaccurate and is corrected here.
+
+This was the closest option to satisfying every driver simultaneously:
+`build_import_catalog` already had the exact typed-unresolved vocabulary
 (`AMBIGUOUS_BINDING` / `UNSUPPORTED_SYNTAX`) and multi-root contract this
 problem needs, so no new resolution semantics had to be invented -- only a
-new, local way to *produce* the `DistributionRecord` evidence it consumes,
-derived from a materialized source tree rather than out-of-band admission
-data.
+new, local way to *produce* the `DistributionRecord` evidence it consumes
+(derived from a materialized source tree rather than out-of-band admission
+data), plus the one-line allow-list extension needed for that evidence to
+be accepted at all.
 
 ### Evidence sources, in precedence order
 
@@ -142,12 +157,36 @@ actually present.
    `conftest.py`, and similar). **This exclude set is not a distribution
    alias table** -- it names generic filesystem conventions, not any
    specific package's import root, and is the same fixed handful of names
-   for every distribution checked. It is intentionally small and
-   over-inclusive rather than precise: an extra false-positive candidate
-   root (e.g. a `tools/` directory that happens to contain an
-   `__init__.py` and was not excluded) is harmless, because a real
-   consumer's code will simply never import it, and the resolver only
-   examines roots a consumer file actually references.
+   for every distribution checked.
+
+   **Corrected after adversarial review (2026-08-27, P1):** an earlier
+   version of this tier bound *every* surviving candidate to `--against`
+   as a resolved multi-root mapping, on the theory that an extra
+   false-positive candidate (e.g. a stray top-level `constants.py` helper,
+   or a vendored `vendor/__init__.py` subpackage the donor repo happens to
+   ship) was harmless because a real consumer would simply never import
+   it. That claim was independently falsified: reviewer-hy3 reproduced,
+   directly against `run_check`, a consumer file whose *own, unrelated*
+   local module happened to share the extra candidate's name (a project's
+   own `constants.py`, or its own `vendor.py`) -- `check` then
+   misattributed every reference in that file to the pinned distribution
+   and reported a false `violation` the moment an accessed name wasn't in
+   the target's index. This is exactly the sad path issue #269 forbids
+   ("a wrong import root must never produce a violation against code that
+   is actually correct"), and common generic module names (`constants`,
+   `utils`, `config`, `types`, `cli`, `client`, `models`, `base`,
+   `exceptions`, `vendor`) make the collision an ordinary, not adversarial,
+   occurrence. Tier 4 has no authoritative packaging declaration behind it
+   -- unlike tiers 1-3, it cannot actually tell a genuine additional public
+   root apart from an unrelated name the donor tree happens to also
+   contain. The fix: tier 4 now resolves a root only when it finds
+   *exactly one* candidate. When it finds more than one, it does not bind
+   any of them to `--against`; instead it emits one single-root
+   `DistributionRecord` per candidate (see "Multi-root" below), so the
+   existing, unmodified `build_import_catalog` disagreement handling types
+   the whole distribution `AMBIGUOUS_BINDING` and `resolve_import_roots`
+   returns `None` -- fail safe, per issue #269's explicit requirement,
+   rather than guessing.
 
 If every tier finds nothing at all, `import_evidence.py` returns a single
 zero-root `DistributionRecord` (source `"materialized-tree-layout"`),
@@ -159,27 +198,42 @@ parallel one.
 
 ### Multi-root
 
-A single, coherent evidence tier that declares more than one root (e.g.
-`attr` and `attrs` both discovered by the tree-layout tier for a single
-distribution) resolves to one `ImportMapping` naming every declared root --
-this is ADR-0026's existing multi-root contract, reused completely
-unmodified. `check.py` maps every resolved root to the same `--against`
-target when building the resolver's `import_roots` dict, so a consumer
-file using any (or all) of the declared roots is examined.
+A single, coherent, *authoritative* evidence tier (1-3: a real
+`top_level.txt`, or an explicit `setup.cfg`/`pyproject.toml` packaging
+declaration) that declares more than one root resolves to one
+`ImportMapping` naming every declared root -- this is ADR-0026's existing
+multi-root contract, reused unmodified. `check.py` maps every resolved
+root to the same `--against` target when building the resolver's
+`import_roots` dict, so a consumer file using any (or all) of the declared
+roots is examined.
+
+Tier 4 (structural fallback) is deliberately **not** a source of resolved
+multi-root mappings (see the P1 correction above): when it finds more than
+one candidate, each becomes its own single-root record, which
+`build_import_catalog`'s disagreement logic types as ambiguous rather than
+as a multi-root mapping. A distribution that genuinely ships more than one
+top-level import root (e.g. `attrs` shipping both `attr` and `attrs`) is
+therefore only resolved as multi-root when an authoritative tier (1-3)
+actually declares the roots together -- tier 4 alone can resolve at most a
+single root.
 
 ### Undeterminable root: still fail-safe
 
-Two situations make `resolve_import_roots` return `None` (never a guess):
+Three situations make `resolve_import_roots` return `None` (never a guess):
 
 - **No evidence at all** -- every tier found nothing. Typed
   `UNSUPPORTED_SYNTAX` by `build_import_catalog`, as above.
 - **Ambiguous evidence** -- the tier that found something produced more
   than one disagreeing candidate root set (e.g. two `top_level.txt` files
-  under different `*.dist-info` directories that disagree), or the
-  resolved root count exceeds the existing
-  `MAX_IMPORT_ROOTS_PER_MAPPING` cap (ADR-0026/#255). Typed
-  `AMBIGUOUS_BINDING` (or the cap-exceeded `UNSUPPORTED_SYNTAX` case),
-  again reusing ADR-0026's existing logic unmodified.
+  under different `*.dist-info` directories that disagree, or tier 4
+  finding more than one plausible top-level candidate with no
+  authoritative tier corroborating either), or the resolved root count
+  exceeds the existing `MAX_IMPORT_ROOTS_PER_MAPPING` cap (ADR-0026/#255).
+  Typed `AMBIGUOUS_BINDING` (or the cap-exceeded `UNSUPPORTED_SYNTAX`
+  case), again reusing ADR-0026's existing logic unmodified.
+- **A malformed or adversarial evidence file** -- `setup.cfg`/
+  `pyproject.toml` come from the materialized donor artifact, which is not
+  trusted content. See "Fail-closed parsing" below.
 
 `check.py` treats `None` exactly like ADR-0030's existing "wrong guess"
 outcome: the resolver's `import_roots` dict is built with zero entries, so
@@ -204,6 +258,38 @@ either names the derived root(s) that were searched for, or explains that
 no evidence tier could determine a root at all (and, only in that
 diagnostic message, still shows what a name-based guess *would* have been,
 clearly labeled as unused).
+
+### Fail-closed parsing (P2 correction, adversarial review)
+
+`setup.cfg` and `pyproject.toml` are read out of the materialized donor
+artifact, which this module's own docstring already frames as
+attacker-influenceable, untrusted content -- the same threat model the
+rest of leitir applies to any materialized tree. Two failures were found
+where a malformed file could escape this module as a raw, untyped
+exception instead of the documented "this tier found nothing usable"
+outcome:
+
+- `tomllib.loads` raises `RecursionError` (not `tomllib.TOMLDecodeError`)
+  on a sufficiently deeply nested TOML structure. `_pyproject_records` now
+  catches `(tomllib.TOMLDecodeError, RecursionError)` around the parse
+  call.
+- `configparser`'s interpolation (triggered by `.get()`, not by
+  `read_string`) raises `configparser.InterpolationDepthError` on a
+  self-referencing value (`a = %(a)s`) -- a subclass of
+  `configparser.Error`, but one that was previously unguarded because only
+  `read_string` was wrapped. `_setup_cfg_records` now wraps the whole
+  parse-and-extract block (`read_string` plus every `.get()` call) in the
+  same `except configparser.Error`.
+
+Both failures previously reached a direct in-process caller of
+`resolve_import_roots`/`derive_distribution_records` as a raw traceback;
+only the CLI's own outer blanket `except Exception` (`cli.py`, pre-existing,
+unrelated to this module) happened to mask them end-to-end. This module's
+own boundary now upholds its documented contract without depending on that
+incidental catch-all, matching AGENTS.md's "match existing error taxonomy"
+and fail-closed conventions: a parse failure here is treated exactly like
+an unparsable file (this tier found nothing), never a crash and never a
+guess.
 
 ### `guess_import_root` is retained, but demoted
 
@@ -237,8 +323,10 @@ cap already uses.
   documented and accepted.
 - No new resolution semantics were invented: ADR-0026's existing
   `build_import_catalog` ambiguity/unsupported-shape handling and
-  multi-root contract are reused completely unmodified, so this change is
-  additive to that machinery rather than a parallel implementation of it.
+  multi-root *logic* are reused completely unmodified (only its
+  `SUPPORTED_EVIDENCE_SOURCES` allow-list was extended, per the
+  precision correction above), so this change is additive to that
+  machinery rather than a parallel implementation of it.
 - No hardcoded distribution-name alias table exists anywhere in leitir
   after this change; every derived root is either read verbatim from an
   artifact the distribution itself shipped, or produced by a fixed,
@@ -257,10 +345,16 @@ cap already uses.
   like `docs` (unlikely, but not impossible) would have that root excluded
   and fall through toward the undeterminable outcome -- the accepted,
   deliberate cost of the same false-positive-avoidance trade-off ADR-0030
-  already made elsewhere (this module is over-inclusive on the *harmless*
-  direction -- an extra false candidate is silently unused -- but
-  conservative on the *exclusion* direction, which can under-detect a
-  genuinely oddly-named real package).
+  already made elsewhere.
+- Tier 4 refusing to resolve more than one candidate root (the P1
+  correction) means a genuine multi-root distribution with *no* tier 1-3
+  packaging evidence at all in this particular materialization (a
+  GitHub-sourced source tree with no `top_level.txt`/`setup.cfg`/
+  `pyproject.toml` declaring its roots) is now reported undeterminable
+  rather than guessed -- real, accepted under-coverage in the same safe
+  direction as every other undeterminable case, and strictly preferable
+  to the false-violation risk the earlier, more permissive version of
+  this tier carried.
 - `setup.cfg`'s `find:`/`find_namespace:` directive and any dynamic
   `setup.py`-only packaging logic are never trusted, by design (running
   either would mean executing untrusted, materialized code) -- a
@@ -281,5 +375,8 @@ cap already uses.
 - [ADR-0030](0030-check-command-conservative-symbol-existence-gate.md) --
   the `leitir check` command this fixes a documented limitation of.
 - [ADR-0026](0026-conservative-admission-and-import-catalog.md) -- the
-  import-catalog machinery this ADR extends, reused unmodified.
+  import-catalog machinery this ADR extends. Its resolution/ambiguity
+  logic (`build_import_catalog`) is reused unmodified; its
+  `SUPPORTED_EVIDENCE_SOURCES` allow-list is extended with the three new
+  evidence-source kinds this ADR introduces.
 - Issue #269, issue #266 task B3, PR #267.

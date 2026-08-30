@@ -281,7 +281,12 @@ def _failure_detail(exc: BaseException) -> str:
     return _http.describe_failure(exc)
 
 
-def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
+def _write_manifest(
+    path: Path,
+    manifest: Mapping[str, object],
+    *,
+    staging_directory: Path | None = None,
+) -> None:
     """Write a manifest atomically, including upgrades of cached manifests."""
     data = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(data) > MANIFEST_MAX_BYTES:
@@ -292,7 +297,24 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
             "digest map would be unreadable at load time"
         )
     logger.debug("writing manifest path=%s", path)
-    atomic_write_bytes(path, data)
+    # A shelf manifest is excluded from its own tree hash, but a temp file in
+    # the shelf is not. Stage alongside the shelf (issue #282) so lock-free
+    # verification never sees the transient file; its unchanged universe scan
+    # still rejects any hostile or crashed-process debris inside the shelf.
+    staging_prefix: str | None = None
+    if path.name == MANIFEST_NAME:
+        if staging_directory is None and path.parent.parent != path.parent:
+            # Root-level paths have no distinct sibling staging directory.
+            staging_directory = path.parent.parent
+            # Match _sweep_target_debris's established per-commit sibling
+            # convention, so an interrupted writer cannot strand debris.
+            staging_prefix = f".{path.parent.name}.tmp-manifest-"
+    atomic_write_bytes(
+        path,
+        data,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    )
 
 
 def _manifest_has_file_map(payload: Mapping[str, object]) -> bool:
@@ -343,7 +365,10 @@ def verify_materialized_integrity(
 
 
 def update_manifest(
-    target: str | os.PathLike[str], fields: Mapping[str, object]
+    target: str | os.PathLike[str],
+    fields: Mapping[str, object],
+    *,
+    staging_directory: Path | None = None,
 ) -> dict[str, object]:
     """Verify a shelf, then atomically merge fields into its manifest.
 
@@ -445,17 +470,22 @@ def update_manifest(
             ) from exc
         payload.update(manifest_digest_fields(tree_digest, scope=tree_scope))
     payload.update(fields)
-    _write_manifest(path, payload)
+    _write_manifest(path, payload, staging_directory=staging_directory)
     return payload
 
 
-def _refresh_license_manifest(target: Path, manifest: dict[str, object]) -> dict[str, object]:
+def _refresh_license_manifest(
+    target: Path,
+    manifest: dict[str, object],
+    *,
+    staging_directory: Path | None = None,
+) -> dict[str, object]:
     from leitir.sbom import license_manifest_fields
 
     fields = license_manifest_fields(manifest, target)
     if all(manifest.get(key) == value for key, value in fields.items()):
         return manifest
-    return update_manifest(target, fields)
+    return update_manifest(target, fields, staging_directory=staging_directory)
 
 
 def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
@@ -1532,8 +1562,9 @@ def _materialize_hosted_repo_locked(
         # aggregate that anchors it; load-time verification is full-coverage
         # for shelves of any size within the archive limits (issue #194).
         manifest.update(full_coverage_manifest_fields(staging))
-        _write_manifest(staging / MANIFEST_NAME, manifest)
-        _refresh_license_manifest(staging, manifest)
+        # This unpublished, disposable tree is never load-time verified.
+        _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+        _refresh_license_manifest(staging, manifest, staging_directory=staging)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, commit_sha, host=host)
@@ -1697,8 +1728,9 @@ def materialize_go_module_zip(
             # One scan yields the per-file digest map plus the full-scope
             # aggregate anchoring it (issue #194).
             manifest.update(full_coverage_manifest_fields(staging))
-            _write_manifest(staging / MANIFEST_NAME, manifest)
-            _refresh_license_manifest(staging, manifest)
+            # This unpublished, disposable tree is never load-time verified.
+            _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+            _refresh_license_manifest(staging, manifest, staging_directory=staging)
             if target.exists():
                 backup = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent))
                 backup.rmdir()
@@ -1862,8 +1894,9 @@ def _materialize_artifact_locked(
         # One scan yields the per-file digest map plus the full-scope
         # aggregate anchoring it (issue #194).
         manifest.update(full_coverage_manifest_fields(staging))
-        _write_manifest(staging / MANIFEST_NAME, manifest)
-        _refresh_license_manifest(staging, manifest)
+        # This unpublished, disposable tree is never load-time verified.
+        _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+        _refresh_license_manifest(staging, manifest, staging_directory=staging)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, scope.commit_sha)

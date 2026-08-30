@@ -83,6 +83,8 @@ complete.
 
 ### Amendment — full-coverage load-time verification via the per-file digest map (2026-08-19; issue #194)
 
+2026-08-30 (issue #282): manifest writers stage beside, not inside, verified shelves; the verification universe itself is unchanged. A shelf mountpoint, bind-mount, or symlinked alternate filesystem that produces EXDEV now fails the rewrite loudly rather than staging in-tree. `upgrade-cache` now takes the same per-target writer lock before its rewrite, with that rewrite opportunistically reclaiming sibling staging debris under the same lock while `--dry-run` remains side-effect-free.
+
 The caps above bounded not only computation but *trust*: an above-cap shelf's
 load-time anchor was a sampled aggregate, so most bytes on disk were
 unanchored at load. Since issue #194 every newly materialized manifest also

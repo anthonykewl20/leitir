@@ -588,7 +588,7 @@ def _upgrade_cache(
     root: Path, *, dry_run: bool, recompute_git_parity: bool, out: TextIO
 ) -> int:
     """Backfill integrity anchors; parity recomputation can downgrade exact to drift."""
-    from .materialize import MANIFEST_NAME, _write_manifest
+    from .materialize import MANIFEST_NAME, _target_lock, _write_manifest
     from .treehash import (
         TreeHashError,
         compute_materialized_tree_hash,
@@ -620,7 +620,11 @@ def _upgrade_cache(
         upgraded += 1
         if not dry_run:
             payload.update(manifest_digest_fields(digest, scope=scope))
-            _write_manifest(manifest_path, payload)
+            # ADR-0006/#282: serialize this published-shelf rewrite with the
+            # target sweep that owns its sibling manifest staging debris.
+            # `target.name` (not a commit SHA) makes `_sweep_target_debris`'s `.{name}.tmp-*` glob agree with the manifest staging prefix `.{name}.tmp-manifest-` for non-canonical shelf directory names.
+            with _target_lock(root, target, target.name):
+                _write_manifest(manifest_path, payload)
     print(
         f"Upgraded {upgraded} shelves, skipped {skipped} (already had digest), "
         f"failed {failed} (see warnings)",

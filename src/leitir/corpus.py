@@ -9,7 +9,10 @@ import tempfile
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from leitir.spec import CorpusSpec
 
 from leitir.materialize import (
     MANIFEST_NAME,
@@ -213,6 +216,26 @@ def find_materialized_sources(
     wrong stated reason under corruption. That is a misleading diagnostic,
     not a false success or a destructive action, so it is out of this
     issue's adoption criteria.
+
+    Resolution is two-phase (issue #279): candidate identity is resolved
+    against the catalog entries alone, and only candidate shelves pay the
+    ADR-0006 load-time manifest/tree verification (:func:`read_valid_manifest`).
+    Verification cost therefore scales with the number of shelves the spec
+    can plausibly name -- exactly one for an unambiguous ``owner/repo@sha``
+    spec -- not with the size of the catalog. The entry-only prefilter is a
+    conservative superset of the full predicate: an entry is excluded only
+    when a field the full predicate reads from the *entry* provably cannot
+    match. Wherever the full predicate consults the *manifest* (ecosystem
+    override, version, tag, branch), the entry stays a candidate, so the
+    result set is identical to a verify-everything-then-filter pass. Two
+    documented deltas remain, both confined to shelves the command does not
+    serve: a manifest that is invalid on a non-candidate shelf no longer
+    fails the whole lookup (it never affected the served result), and a
+    hand-written ``ecosystem`` manifest override contradicting the entry's
+    registry host no longer matches (the catalog/manifest disagreement is
+    itself corruption, and can no longer turn an otherwise-unambiguous
+    lookup ambiguous). Whatever a call *serves* is still fully verified,
+    exactly as before.
     """
     from leitir.spec import parse_corpus_spec
 
@@ -224,38 +247,107 @@ def find_materialized_sources(
         and parsed.name == spec
     )
 
-    def matches_identity(item: tuple[dict[str, Any], dict[str, object], Path]) -> bool:
-        entry, manifest, _target = item
-        if is_bare_name:
-            return entry.get("name") == parsed.name
-        if parsed.ecosystem is not None:
-            ecosystem = manifest.get("ecosystem") or (
-                entry.get("host")
-                if entry.get("host") in {"npm", "pypi", "crates", "go"}
-                else None
-            )
-            if ecosystem != parsed.ecosystem or entry.get("name") != parsed.name:
-                return False
-            return parsed.version is None or parsed.version in {
-                manifest.get("version"),
-                manifest.get("tag"),
-                manifest.get("commit_sha"),
-            }
+    corpus_root = resolve_root(root)
+    candidates: list[tuple[dict[str, Any], Path]] = []
+    for entry in load_sources(corpus_root, strict=False):
+        relative = Path(entry["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"invalid shelved source path: {entry['path']!r}")
+        target = corpus_root / relative
+        _assert_target_confinement(corpus_root, target)
+        if _entry_may_match_identity(entry, parsed, is_bare_name=is_bare_name):
+            candidates.append((entry, target))
 
-        slug = f"{entry.get('owner')}/{entry.get('repo')}"
-        if entry.get("host") != parsed.host or slug != parsed.name:
+    matches: list[tuple[dict[str, Any], dict[str, object], Path]] = []
+    for entry, target in candidates:
+        manifest = read_valid_manifest(
+            target,
+            entry["owner"],
+            entry["repo"],
+            entry["commit_sha"],
+            host=entry["host"],
+        )
+        if manifest is None:
+            raise ValueError(
+                "source has no valid manifest (run 'leitir upgrade-cache' to "
+                f"migrate legacy shelves): {entry['path']}"
+            )
+        if _identity_matches(entry, manifest, parsed, is_bare_name=is_bare_name):
+            matches.append((dict(entry), manifest, target))
+    matches.sort(key=lambda item: tuple(str(part) for part in _key(item[0])))
+    return matches
+
+
+def _identity_matches(
+    entry: dict[str, Any],
+    manifest: dict[str, object],
+    parsed: CorpusSpec,
+    *,
+    is_bare_name: bool,
+) -> bool:
+    """Return whether a verified (entry, manifest) pair matches ``parsed``."""
+    if is_bare_name:
+        return entry.get("name") == parsed.name
+    if parsed.ecosystem is not None:
+        ecosystem = manifest.get("ecosystem") or (
+            entry.get("host")
+            if entry.get("host") in {"npm", "pypi", "crates", "go"}
+            else None
+        )
+        if ecosystem != parsed.ecosystem or entry.get("name") != parsed.name:
             return False
-        if parsed.ref is None:
-            return True
-        if parsed.ref_kind == "sha":
-            return entry.get("commit_sha") == parsed.ref
-        return parsed.ref in {
+        return parsed.version is None or parsed.version in {
+            manifest.get("version"),
             manifest.get("tag"),
-            manifest.get("branch"),
             manifest.get("commit_sha"),
         }
 
-    return [item for item in enumerate_shelved_sources(root) if matches_identity(item)]
+    slug = f"{entry.get('owner')}/{entry.get('repo')}"
+    if entry.get("host") != parsed.host or slug != parsed.name:
+        return False
+    if parsed.ref is None:
+        return True
+    if parsed.ref_kind == "sha":
+        return entry.get("commit_sha") == parsed.ref
+    return parsed.ref in {
+        manifest.get("tag"),
+        manifest.get("branch"),
+        manifest.get("commit_sha"),
+    }
+
+
+def _entry_may_match_identity(
+    entry: dict[str, Any], parsed: CorpusSpec, *, is_bare_name: bool
+) -> bool:
+    """Conservative entry-only superset of :func:`_identity_matches`.
+
+    Excludes an entry only on fields the full predicate reads from the entry
+    itself; any decision that needs the manifest keeps the entry as a
+    candidate, so no true match is ever filtered out before verification.
+    """
+    if is_bare_name:
+        return entry.get("name") == parsed.name
+    if parsed.ecosystem is not None:
+        if entry.get("name") != parsed.name:
+            return False
+        host = entry.get("host")
+        # A manifest-level ``ecosystem`` override can out-vote the host for
+        # hosts outside the registry set, so only a registry host itself
+        # contradicts the requested ecosystem.
+        return not (
+            host in {"npm", "pypi", "crates", "go"} and host != parsed.ecosystem
+        )
+    if entry.get("host") != parsed.host:
+        return False
+    if f"{entry.get('owner')}/{entry.get('repo')}" != parsed.name:
+        return False
+    if parsed.ref is None:
+        return True
+    if parsed.ref_kind == "sha":
+        return entry.get("commit_sha") == parsed.ref
+    # Tag/branch refs resolve against manifest fields the catalog does not
+    # carry, so the identity match stays a candidate.
+    return True
 
 
 def record_trust(

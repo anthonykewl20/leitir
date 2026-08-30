@@ -47,6 +47,15 @@ it — repeated touches of the *same* shelf across a session still benefit
 from not re-verifying every time, even once #279 makes a single touch
 verify only the shelves it needs.
 
+*(Update 2026-08-30, issue #279 fix: `find_materialized_sources` now resolves
+candidate identity against the catalog entries and pays
+`read_valid_manifest`/ADR-0006 verification only for candidates, so a
+single-shelf spec no longer re-verifies the catalog on first touch — measured
+107.7s → 2.0s on the real corpus, `docs/evidence/single-shelf-resolution-2026-08-30.md`.
+This ADR's contract is unchanged and still needed: first-touch of each shelf
+still verifies it in full, and *repeat* touches within a session are what
+this ADR's per-shelf memoization addresses.)*
+
 A warm process — one that stays alive across an agent's ten-to-twenty
 consultations in a single task and avoids repeating this work — is an
 obvious answer to the latency problem. It is also, if built carelessly, a

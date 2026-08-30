@@ -180,7 +180,11 @@ one:
   verification result. Closing that gap — making the advisory lane cheap in
   wall-clock time, not just in ceremony — is tracked as issue #266 item A5
   and is unbuilt as of this ADR. Until then, "advisory" describes what a
-  verb *risks*, not yet how fast it *feels*.
+  verb *risks*, not yet how fast it *feels*. *(Update 2026-08-30: the
+  worst slice of that cost — single-shelf spec resolution re-verifying the
+  entire catalog — is fixed as issue #279, measured 107.7s → 2.0s in
+  `docs/evidence/single-shelf-resolution-2026-08-30.md`; the session-level
+  caching half remains #272/ADR-0035.)*
 - A two-lane taxonomy is a simplification. A few verbs (`analysis-*`,
   `usage`) required the reasoning above to place confidently; a reader
   skimming only the verb lists, without the placement rule, could

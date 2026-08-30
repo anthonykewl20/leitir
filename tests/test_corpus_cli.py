@@ -15,7 +15,12 @@ import pytest
 from _http_server import json_body, routed_server
 
 from leitir.cli import ExitCode, _ensure_local_gitignore, main, parse_corpus_spec
-from leitir.corpus import record_trust, remove_source, write_sources
+from leitir.corpus import (
+    find_materialized_sources,
+    record_trust,
+    remove_source,
+    write_sources,
+)
 from leitir.materialize import materialize_github_repo, update_manifest
 from leitir.search import RepoScope
 from leitir.treehash import compute_materialized_tree_hash, manifest_digest_fields
@@ -557,6 +562,111 @@ def test_record_trust_matches_repo_tag(tmp_path, fake_trust):
 
     assert matched == entry
     assert target == source
+
+
+def test_find_materialized_sources_verifies_only_the_matching_shelf(
+    tmp_path, monkeypatch
+):
+    """Issue #279: resolving one shelf must not re-verify the whole catalog.
+
+    ADR-0006 load-time verification applies to whatever the command actually
+    serves -- not to every shelf the corpus happens to hold. The identity
+    prefilter resolves candidates against the catalog entries alone, so an
+    exact ``owner/repo@sha`` spec pays exactly one manifest verification no
+    matter how many shelves are materialized.
+    """
+    import leitir.corpus as corpus_mod
+
+    shas = [f"{chr(ord('a') + index) * 40}" for index in range(6)]
+    entries = [_fabricate_repo(tmp_path, sha=sha)[1] for sha in shas]
+    write_sources(tmp_path, entries)
+
+    verified: list[str] = []
+    real_read_valid_manifest = corpus_mod.read_valid_manifest
+
+    def counting_read_valid_manifest(target, owner, repo, commit_sha, *, host):
+        verified.append(commit_sha)
+        return real_read_valid_manifest(
+            target, owner, repo, commit_sha, host=host
+        )
+
+    monkeypatch.setattr(
+        corpus_mod, "read_valid_manifest", counting_read_valid_manifest
+    )
+
+    matches = find_materialized_sources(f"owner/repo@{shas[3]}", tmp_path)
+
+    assert len(matches) == 1
+    assert matches[0][0]["commit_sha"] == shas[3]
+    assert verified == [shas[3]]
+
+
+def test_find_materialized_sources_still_rejects_tampered_match(tmp_path):
+    """Issue #279's constraint: skipping catalog-wide verification must not
+    weaken ADR-0006 on the shelf actually served. A shelf whose bytes were
+    mutated after materialization fails load-time verification and is never
+    returned."""
+    source, entry = _fabricate_repo(tmp_path)
+    write_sources(tmp_path, [entry])
+    (source / "module.py").write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no valid manifest"):
+        find_materialized_sources(f"owner/repo@{SHA}", tmp_path)
+
+
+def test_find_materialized_sources_skips_unrelated_invalid_shelf(tmp_path):
+    """Issue #279's documented delta: a manifest that is invalid on a shelf
+    the spec does not name no longer fails the whole lookup. It never
+    affected the served result; the served shelf is still fully verified."""
+    good_source, good_entry = _fabricate_repo(tmp_path)
+    bad_source, bad_entry = _fabricate_repo(tmp_path, sha="b" * 40)
+    write_sources(tmp_path, [good_entry, bad_entry])
+    (bad_source / "module.py").write_text("tampered\n", encoding="utf-8")
+
+    matches = find_materialized_sources(f"owner/repo@{SHA}", tmp_path)
+
+    assert len(matches) == 1
+    assert matches[0][2] == good_source
+
+
+def test_find_materialized_sources_still_rejects_non_candidate_path_escape(tmp_path):
+    """Catalog path validation stays whole-corpus: an entry whose path
+    escapes the corpus root raises even when the spec names a different,
+    well-formed shelf. (Pins the invariant so the candidate prefilter is
+    never moved ahead of the confinement check.)"""
+    good_source, good_entry = _fabricate_repo(tmp_path)
+    _bad_source, bad_entry = _fabricate_repo(tmp_path, sha="b" * 40)
+    bad_entry["path"] = f"repos/../../{SHA}/escape"
+    write_sources(tmp_path, [good_entry, bad_entry])
+
+    with pytest.raises(ValueError, match="invalid shelved source path"):
+        find_materialized_sources(f"owner/repo@{SHA}", tmp_path)
+
+
+def test_find_materialized_sources_registry_host_contradiction_is_not_a_match(
+    tmp_path,
+):
+    """Issue #279's second documented delta: an entry whose catalog host is a
+    registry (here ``npm``) while its manifest claims a different ecosystem
+    (``pypi``) no longer matches a ``pypi:`` spec, so it cannot turn an
+    unambiguous lookup ambiguous. The catalog/manifest disagreement is
+    itself corruption; the consistent shelf is served and fully verified."""
+    consistent_source, consistent_entry = _fabricate_package(tmp_path)
+    contradictory_source, contradictory_entry = _fabricate_package(
+        tmp_path, sha="b" * 40
+    )
+    contradictory_entry["host"] = "npm"
+    contradictory_manifest_path = contradictory_source / "leitir-manifest.json"
+    manifest = json.loads(contradictory_manifest_path.read_text(encoding="utf-8"))
+    manifest["ecosystem"] = "pypi"
+    contradictory_manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    write_sources(tmp_path, [consistent_entry, contradictory_entry])
+
+    matches = find_materialized_sources("pypi:six@1.17.0", tmp_path)
+
+    assert len(matches) == 1
+    assert matches[0][0]["commit_sha"] == consistent_entry["commit_sha"]
+    assert matches[0][2] == consistent_source
 
 
 def test_record_trust_missing_repo_raises(tmp_path, fake_trust):

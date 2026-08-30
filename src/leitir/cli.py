@@ -245,8 +245,43 @@ def _main_impl(
     except SystemExit as exc:
         return int(cast(int, exc.code))
 
-    _configure_logging_from_env(args, err)
+    # Issue #281: _configure_logging_from_env binds this invocation's
+    # per-thread log route; the teardown restores the previous binding when
+    # the dispatch below finishes, so nested in-process calls never leave
+    # the outer call's route pointing at the inner call's buffer.
+    restore_logging_route = _configure_logging_from_env(args, err)
+    try:
+        return _dispatch_command(
+            args,
+            out=out,
+            err=err,
+            stdout=stdout,
+            tree_source_factory=tree_source_factory,
+            resolver_factory=resolver_factory,
+            searcher_factory=searcher_factory,
+            code_search_factory=code_search_factory,
+            global_searcher_factory=global_searcher_factory,
+            benchmark_runner_factory=benchmark_runner_factory,
+            _exit_windows_doctor_success=_exit_windows_doctor_success,
+        )
+    finally:
+        restore_logging_route()
 
+
+def _dispatch_command(
+    args: argparse.Namespace,
+    *,
+    out: TextIO,
+    err: TextIO,
+    stdout: TextIO | None,
+    tree_source_factory: Callable[..., object],
+    resolver_factory: Callable[[str | None], object],
+    searcher_factory: Callable[..., object],
+    code_search_factory: Callable[[str | None], object],
+    global_searcher_factory: Callable[..., object],
+    benchmark_runner_factory: Callable[[object], object],
+    _exit_windows_doctor_success: bool,
+) -> int:
     from ._update_check import maybe_start_update_check
 
     maybe_start_update_check(

@@ -14,7 +14,10 @@ line.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -120,3 +123,134 @@ def test_call_json_argparse_level_error_has_correct_exit_code_but_empty_message(
     # landed on the actual process stderr, not silently lost.
     captured = capsys.readouterr()
     assert "unrecognized arguments" in captured.err
+
+
+def test_call_json_captures_warnings_per_call_under_concurrency(tmp_path, monkeypatch):
+    """Issue #281: concurrent ``call_json`` calls must each capture their own
+    ``logging`` warnings.
+
+    ``_configure_logging_from_env`` once installed a single shared
+    ``StreamHandler`` on the process-global ``"leitir"`` logger and swapped it
+    per call, so two overlapping in-flight calls raced on that handler: a
+    warning logged during one call's window could be routed into another
+    call's captured buffer, or vanish from the call that logged it. The fix
+    routes records through a thread-routed handler -- each invocation binds
+    its own ``(stream, level)`` route for its calling thread -- so this test
+    drives genuinely concurrent calls (a barrier aligns their windows) and
+    asserts each call's captured stderr contains exactly its own warning and
+    error, and no other call's.
+    """
+    import itertools
+
+    import leitir.corpus as corpus_mod
+
+    _corpus(tmp_path)
+    sequence = itertools.count()
+    tokens: list[str] = []
+
+    def recording_record_trust(spec, root):
+        # Stand-in for the trust verb's work: emit the call's warning through
+        # the "leitir" logger, then fail the call so the captured stderr
+        # surfaces in LeitirCallError. The real record_trust is deliberately
+        # not invoked here -- it rewrites the manifest inside the shelf, and
+        # a concurrent reader's load-time tree verification transiently sees
+        # the writer's staging temp file (a separate, pre-existing race,
+        # unrelated to log routing).
+        token = f"sentinel-{next(sequence):04d}"
+        logging.getLogger("leitir").warning("attributable warning %s", token)
+        tokens.append(token)
+        raise RuntimeError(f"stop after warning {token}")
+
+    monkeypatch.setattr(corpus_mod, "record_trust", recording_record_trust)
+    argv = ["trust", f"acme/widget@{SHA}", "--root", str(tmp_path), "--json"]
+
+    rounds = 6
+    workers = 8
+    for _ in range(rounds):
+        start = threading.Barrier(workers)
+        failures: list[LeitirCallError] = []
+
+        def one_call() -> None:
+            start.wait()
+            try:
+                call_json(argv)
+            except LeitirCallError as exc:
+                failures.append(exc)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(one_call) for _ in range(workers)]
+            for future in futures:
+                future.result()
+
+        assert len(failures) == workers
+        for exc in failures:
+            own = [token for token in tokens if token in exc.stderr]
+            assert len(own) == 1, (
+                f"call captured {own!r}, expected exactly its own sentinel"
+            )
+            assert "attributable warning" in exc.stderr
+            assert f"leitir: error: stop after warning {own[0]}" in exc.stderr
+            others = [token for token in tokens if token != own[0] and token in exc.stderr]
+            assert not others, f"call captured another call's warning: {others!r}"
+
+
+def test_concurrent_calls_with_different_levels_gate_per_route(tmp_path, monkeypatch):
+    """A ``--debug`` call and a default-level call running concurrently must
+    each get their own requested verbosity: the debug call's DEBUG records
+    reach its buffer; the default call's DEBUG records are gated by its own
+    route level, never leaking into either buffer."""
+    import leitir.corpus as corpus_mod
+
+    _corpus(tmp_path)
+
+    def level_probe_record_trust(spec, root):
+        logger = logging.getLogger("leitir")
+        logger.debug("debug probe for %s", spec)
+        logger.warning("warning probe for %s", spec)
+        raise RuntimeError("probe done")
+
+    monkeypatch.setattr(corpus_mod, "record_trust", level_probe_record_trust)
+    spec = f"acme/widget@{SHA}"
+    debug_argv = ["--debug", "trust", spec, "--root", str(tmp_path), "--json"]
+    plain_argv = ["trust", spec, "--root", str(tmp_path), "--json"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        debug_call = pool.submit(call_json, debug_argv)
+        plain_call = pool.submit(call_json, plain_argv)
+        with pytest.raises(LeitirCallError) as debug_error:
+            debug_call.result()
+        with pytest.raises(LeitirCallError) as plain_error:
+            plain_call.result()
+
+    assert "debug probe" in debug_error.value.stderr
+    assert "warning probe" in debug_error.value.stderr
+    assert "debug probe" not in plain_error.value.stderr
+    assert "warning probe" in plain_error.value.stderr
+
+
+def test_nested_call_restores_the_outer_call_logging_route(tmp_path, monkeypatch):
+    """A nested in-process call must hand the logging route back to the outer
+    call when it finishes: the outer call's later warnings return to the
+    outer buffer, and the inner call's captured stderr stays its own."""
+    import leitir.corpus as corpus_mod
+
+    _corpus(tmp_path)
+
+    def nesting_record_trust(spec, root):
+        logger = logging.getLogger("leitir")
+        logger.warning("outer before inner")
+        with pytest.raises(LeitirCallError) as inner_error:
+            call_json(["get", "not-a-spec", "--root", str(root), "--json"])
+        assert "not-a-spec" in inner_error.value.stderr
+        assert "outer before inner" not in inner_error.value.stderr
+        logger.warning("outer after inner")
+        raise RuntimeError("outer done")
+
+    monkeypatch.setattr(corpus_mod, "record_trust", nesting_record_trust)
+
+    with pytest.raises(LeitirCallError) as outer_error:
+        call_json(["trust", f"acme/widget@{SHA}", "--root", str(tmp_path), "--json"])
+
+    assert "outer before inner" in outer_error.value.stderr
+    assert "outer after inner" in outer_error.value.stderr
+    assert "not-a-spec" not in outer_error.value.stderr

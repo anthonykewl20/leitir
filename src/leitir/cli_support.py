@@ -182,8 +182,27 @@ def _github_token() -> str | None:
 
 def _configure_logging_from_env(
     args: argparse.Namespace, stderr: TextIO = sys.stderr
-) -> None:
-    """Route warnings to CLI stderr and enable diagnostics when requested."""
+) -> Callable[[], None]:
+    """Route this invocation's log records to its own ``stderr`` stream.
+
+    Records are captured per call without cross-talk even when several
+    invocations run concurrently in one process (``leitir.api.call_json``
+    from multiple threads, issue #281): the namespace logger carries a single
+    thread-routed handler whose per-thread ``(stream, level)`` routes send
+    each record to the stream bound by the thread that logged it. The
+    namespace logger's level is the minimum across every live invocation's
+    requested level, so one call requesting DEBUG never starves another
+    call's requested verbosity; each thread's own route level still gates
+    what that thread actually emits. (The level deliberately never ratchets
+    back up: route gating after the redaction filter keeps emitted output
+    identical, and `Logger.isEnabledFor` caching makes re-raising per call
+    pure overhead.)
+
+    Returns the invocation's logging teardown: call it when the invocation
+    finishes to restore the calling thread's previous binding (nested
+    in-process calls restore the outer call's route; a top-level call
+    unbinds, returning the thread to the no-CLI-invocation baseline).
+    """
     debug_env = os.environ.get("LEITIR_DEBUG", "").casefold() in {
         "1",
         "true",
@@ -203,21 +222,25 @@ def _configure_logging_from_env(
     )
     invalid_level = configured_level is None
     level = logging.WARNING if configured_level is None else configured_level
-    from .logging import configure_logging
+    from .logging import configure_logging, get_or_install_routed_handler
 
     namespace_logger = logging.getLogger("leitir")
-    for existing in tuple(namespace_logger.handlers):
-        if getattr(existing, "_leitir_cli_handler", False):
-            namespace_logger.removeHandler(existing)
-    handler = logging.StreamHandler(stderr)
-    handler._leitir_cli_handler = True  # type: ignore[attr-defined]
-    handler.setLevel(level)
+    handler = get_or_install_routed_handler(namespace_logger)
     handler.setFormatter(
         logging.Formatter("leitir %(levelname)s %(name)s: %(message)s")
     )
-    configure_logging(level, handler=handler)
+    previous_route = handler.bind_thread(stderr, level)
+
+    def _restore_logging_route() -> None:
+        handler.restore_thread(previous_route)
+
+    configure_logging(
+        min((*handler.registered_levels(), namespace_logger.getEffectiveLevel())),
+        handler=handler,
+    )
     if invalid_level:
         logger.warning("ignoring unknown LEITIR_LOG_LEVEL=%r", level_value)
+    return _restore_logging_route
 
 
 def _validate_scope_args(args: argparse.Namespace) -> str | None:

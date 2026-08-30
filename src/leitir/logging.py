@@ -7,7 +7,7 @@ import re
 import threading
 import traceback
 from collections.abc import Mapping
-from typing import Any
+from typing import IO, Any, NamedTuple
 
 REDACTED = "[REDACTED]"
 
@@ -185,3 +185,112 @@ def configure_logging(
             logger.addHandler(handler)
     install_redaction(logger)
     return logger
+
+
+class _ThreadRoute(NamedTuple):
+    stream: IO[str]
+    level: int
+
+
+class ThreadRoutedStreamHandler(logging.Handler):
+    """Emit each record to the stream registered by the thread that logged it.
+
+    The CLI configures logging once per invocation. When several invocations
+    run concurrently in one process -- ``leitir.api.call_json`` called from
+    multiple threads (issue #281) -- a single shared ``StreamHandler`` would
+    route a record to whichever invocation swapped its stream in last, so a
+    warning logged by one call could land in (or vanish from) the wrong call's
+    captured buffer. This handler keeps a per-thread ``(stream, level)``
+    route instead: a record is emitted only to the stream bound by the
+    logging thread itself, and only when the record's level reaches that
+    thread's configured level. Threads with no bound route emit nothing --
+    a record is never written to a stream it was not addressed to.
+    """
+
+    terminator = "\n"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._routes_lock = threading.Lock()
+        self._routes: dict[int, _ThreadRoute] = {}
+
+    def bind_thread(self, stream: IO[str], level: int) -> _ThreadRoute | None:
+        """Bind the calling thread's route, pruning routes of dead threads.
+
+        Returns the route it replaced, so a nested invocation can restore
+        the outer invocation's binding when it finishes.
+        """
+        ident = threading.get_ident()
+        with self._routes_lock:
+            self._prune_dead_threads_locked()
+            previous = self._routes.get(ident)
+            self._routes[ident] = _ThreadRoute(stream, level)
+            return previous
+
+    def restore_thread(self, route: _ThreadRoute | None) -> None:
+        """Reinstate a previous binding for the calling thread, or unbind."""
+        ident = threading.get_ident()
+        with self._routes_lock:
+            if route is None:
+                self._routes.pop(ident, None)
+            else:
+                self._routes[ident] = route
+
+    def registered_levels(self) -> tuple[int, ...]:
+        """Return the levels of every currently bound thread's route."""
+        with self._routes_lock:
+            return tuple(route.level for route in self._routes.values())
+
+    def _prune_dead_threads_locked(self) -> None:
+        live = {
+            thread.ident for thread in threading.enumerate() if thread.ident is not None
+        }
+        for ident in tuple(self._routes):
+            if ident not in live:
+                del self._routes[ident]
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with self._routes_lock:
+            route = self._routes.get(threading.get_ident())
+        if route is None or record.levelno < route.level:
+            return
+        try:
+            message = self.format(record)
+            stream = route.stream
+            self.acquire()
+            try:
+                stream.write(message + self.terminator)
+                stream.flush()
+            finally:
+                self.release()
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
+
+_ROUTED_HANDLER_INSTALL_LOCK = threading.Lock()
+
+
+def get_or_install_routed_handler(logger: logging.Logger) -> ThreadRoutedStreamHandler:
+    """Return the namespace logger's routed handler, installing one if absent.
+
+    Also removes any other previously installed CLI-tagged handler so at most
+    one routed handler serves the namespace: module reimports in long-lived
+    in-process callers could otherwise leave a stale duplicate behind whose
+    bindings no future invocation would refresh (issue #281).
+    """
+    with _ROUTED_HANDLER_INSTALL_LOCK:
+        for existing in tuple(logger.handlers):
+            if isinstance(existing, ThreadRoutedStreamHandler) and getattr(
+                existing, "_leitir_cli_handler", False
+            ):
+                return existing
+        for existing in tuple(logger.handlers):
+            if getattr(existing, "_leitir_cli_handler", False):
+                logger.removeHandler(existing)
+        handler = ThreadRoutedStreamHandler()
+        handler._leitir_cli_handler = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+        install_redaction(logger)
+        return handler

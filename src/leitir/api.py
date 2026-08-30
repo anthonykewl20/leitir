@@ -46,17 +46,18 @@ future warm-mode entry point (issue #272 / ADR-0035):
   ``call_json(["search"])`` -> ``LeitirCallError(exit_code=2, stderr="leitir:
   error: one of --repo, --package, --global, or --corpus is required")``).
 - **Reentrancy/thread safety**: sequential calls (including recursive ones)
-  are safe. Concurrent calls from separate threads are **not** currently
-  guaranteed isolated: ``_configure_logging_from_env`` (called at the top of
-  every ``main()`` invocation) installs a ``logging.StreamHandler`` onto the
-  shared ``"leitir"`` logger, first removing any existing handler it
-  previously installed -- two overlapping in-flight calls can race on that
-  shared, process-global handler list, so a warning logged by one call could
-  in principle be routed to another call's captured buffer. This is a
-  pre-existing property of ``_configure_logging_from_env`` (unchanged by
-  #271's move into ``leitir.cli_support``), not something new to
-  ``call_json`` -- but it does mean ``call_json`` is not yet safe to treat as
-  a fully isolated, concurrency-ready API without a fix in a follow-up.
+  are safe, and so are concurrent calls from separate threads (issue #281).
+  Each call's stdout/stderr capture is call-local, and ``_configure_logging_from_env``
+  routes ``logging`` records through a single, process-wide *thread-routed*
+  handler on the shared ``"leitir"`` logger: every invocation binds its own
+  ``(stream, level)`` route for its calling thread, so a warning logged
+  during one call's window is written to that call's captured ``err`` buffer
+  and never to another call's. The namespace logger's level is the minimum
+  across all live invocations so no call's requested verbosity is starved;
+  each thread's route level still gates what that thread emits. Records
+  logged from threads with no bound route (no in-flight CLI invocation) are
+  dropped -- the same silence a fresh process exhibits before any CLI call
+  configures a handler.
 - **``SystemExit``**: does not escape ``call_json``. ``leitir.cli._main_impl``
   already wraps ``parser.parse_args(argv)`` in
   ``except SystemExit as exc: return int(exc.code)``, so the only place
@@ -118,17 +119,15 @@ def call_json(argv: list[str]) -> dict[str, Any]:
     caller never silently receives an empty or partial result; no
     ``SystemExit`` escapes this function (see the module docstring for why).
 
-    **Safe for sequential in-process use (including recursive calls); NOT
-    yet safe for concurrent calls from separate threads.** Every call's
-    stdout/stderr capture is call-local and does not cross-talk, but
+    **Safe for sequential in-process use (including recursive calls) and for
+    concurrent calls from separate threads** (issue #281). Every call's
+    stdout/stderr capture is call-local and does not cross-talk:
     ``_configure_logging_from_env`` (invoked at the top of every ``main()``
-    call) installs its warning handler onto the single, process-global
-    ``"leitir"`` logger -- two overlapping calls race on that shared handler,
-    so a warning logged during one call's window can leak into another
-    call's captured buffer, or vanish from the call that actually produced
-    it. Tracked as a required fix before issue #272's warm mode (ADR-0035),
-    which implies concurrent request handling, can build on this function --
-    see issue #281.
+    call) binds each invocation's warning route per *thread* on a single,
+    process-wide thread-routed handler, so a warning logged during one call's
+    window lands in that call's captured buffer and never in another call's.
+    This is the property issue #272's warm mode (ADR-0035) needs to serve
+    concurrent in-process calls against one warm process.
 
     This performs no argument validation of its own: ``argv`` is forwarded
     verbatim to :func:`leitir.cli.main`, exactly as ``leitir.mcp.bridge``

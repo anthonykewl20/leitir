@@ -39,6 +39,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)
 
 ### Security
+- stage manifest rewrites outside the verified shelf tree and lock upgrade-cache rewrites (#282) (`materialize`)
 - capture concurrent call_json warnings per thread (#281) (`api`)
 - resolve single-shelf specs against the catalog before verifying (#279) (`corpus`)
 

@@ -38,6 +38,9 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)
 
+### Security
+- capture concurrent call_json warnings per thread (#281) (`api`)
+
 ## [0.1.6]
 
 ### Added

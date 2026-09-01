@@ -83,9 +83,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from .cli import main
+from .warm import WarmSession
 
 
 class LeitirCallError(ValueError):
@@ -103,6 +107,32 @@ class LeitirCallError(ValueError):
         super().__init__(
             f"leitir {' '.join(argv)} failed (exit {exit_code}): {stderr.strip()}"
         )
+
+
+def _call_json(
+    argv: list[str], *, session: WarmSession | None = None
+) -> dict[str, Any]:
+    """Run one JSON CLI call with an optional task-scoped warm session."""
+    out = io.StringIO()
+    err = io.StringIO()
+    exit_code = main(list(argv), stdout=out, stderr=err, session=session)
+    if exit_code != 0:
+        raise LeitirCallError(argv=list(argv), exit_code=exit_code, stderr=err.getvalue())
+    try:
+        document = json.loads(out.getvalue())
+    except json.JSONDecodeError as exc:
+        raise LeitirCallError(
+            argv=list(argv),
+            exit_code=exit_code,
+            stderr=f"exited 0 but stdout was not valid JSON: {exc}",
+        ) from exc
+    if not isinstance(document, dict):
+        raise LeitirCallError(
+            argv=list(argv),
+            exit_code=exit_code,
+            stderr="leitir CLI JSON output was not an object",
+        )
+    return document
 
 
 def call_json(argv: list[str]) -> dict[str, Any]:
@@ -135,26 +165,58 @@ def call_json(argv: list[str]) -> dict[str, Any]:
     subprocess -- the CLI's own parser and dispatch remain the single
     source of truth for what is valid.
     """
-    out = io.StringIO()
-    err = io.StringIO()
-    exit_code = main(list(argv), stdout=out, stderr=err)
-    if exit_code != 0:
-        raise LeitirCallError(argv=list(argv), exit_code=exit_code, stderr=err.getvalue())
+    return _call_json(argv)
+
+
+class WarmJsonCaller:
+    """Callable JSON API bound to one optional task-scoped warm session.
+
+    A caller obtained from :func:`warm_call` has the same call contract as
+    :func:`call_json`.  ``stats()`` makes optimization evidence observable
+    without exposing the session's mutable manifest cache.
+    """
+
+    def __init__(self, session: WarmSession | None) -> None:
+        self._session = session
+
+    def __call__(self, argv: list[str]) -> dict[str, Any]:
+        return _call_json(argv, session=self._session)
+
+    def stats(self) -> dict[str, int]:
+        """Return the active session's counters, or zeroes after cold fallback."""
+        if self._session is None:
+            return {
+                "hits": 0,
+                "misses": 0,
+                "revalidations": 0,
+                "sticky_rejects": 0,
+                "cold_fallbacks": 0,
+            }
+        return self._session.stats()
+
+
+@contextmanager
+def warm_call(root: str | os.PathLike[str]) -> Iterator[WarmJsonCaller]:
+    """Yield a task-bounded, corpus-root-scoped JSON caller.
+
+    Session construction is purely an optimization.  If it cannot be
+    established, the yielded caller uses the exact :func:`call_json` cold
+    path.  Once established, the session is closed when this context exits;
+    each call is bracketed by the CLI dispatcher's ``WarmSession.call`` window.
+    """
     try:
-        document = json.loads(out.getvalue())
-    except json.JSONDecodeError as exc:
-        raise LeitirCallError(
-            argv=list(argv),
-            exit_code=exit_code,
-            stderr=f"exited 0 but stdout was not valid JSON: {exc}",
-        ) from exc
-    if not isinstance(document, dict):
-        raise LeitirCallError(
-            argv=list(argv),
-            exit_code=exit_code,
-            stderr="leitir CLI JSON output was not an object",
-        )
-    return document
+        session = WarmSession(root)
+        session.__enter__()
+    except Exception:
+        # ADR-0035: establishment failure must never select a partial or
+        # unverified path.  Do not catch BaseException so interrupts retain
+        # their normal control-flow semantics.
+        yield WarmJsonCaller(None)
+        return
+    try:
+        yield WarmJsonCaller(session)
+    finally:
+        session.close()
 
 
-__all__ = ["LeitirCallError", "call_json"]
+__all__ = ["LeitirCallError", "WarmJsonCaller", "call_json", "warm_call"]

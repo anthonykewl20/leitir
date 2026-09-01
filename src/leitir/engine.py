@@ -15,7 +15,10 @@ import stat
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from leitir.warm import WarmSession
 
 from leitir.adapters import LanguageAdapter, SpanMatch
 from leitir.adapters.languages import canonicalize_language
@@ -406,12 +409,15 @@ class ScopedSearcher:
         adapters: tuple[LanguageAdapter, ...],
         max_blob_size: int = MAX_BLOB_SIZE,
         corpus_root: str | os.PathLike[str] | None = None,
+        *,
+        session: WarmSession | None = None,
     ) -> None:
         self._tree = tree_source
         self._adapters = adapters
         self._max_blob_size = max_blob_size
         selected_root = corpus_root or os.environ.get("LEITIR_HOME") or "~/.leitir"
         self._corpus_root = Path(selected_root).expanduser().absolute()
+        self._session = session
         retry = getattr(tree_source, "_retry", None)
         self._retry: Callable[
             [Callable[[], tuple[list[SourceMatch], bool]]],
@@ -657,10 +663,39 @@ class ScopedSearcher:
         if not target.exists() or target.is_symlink():
             yield None
             return
-        with _target_lock(self._corpus_root, target, commit_sha):
+        if self._session is None:
+            with _target_lock(self._corpus_root, target, commit_sha):
+                manifest = read_valid_manifest(
+                    target, owner, repo, commit_sha, host="github.com"
+                )
+                if manifest is None:
+                    yield None
+                    return
+                yield _LocalShelfReader(target, manifest)
+            return
+
+        # ``call`` is reentrant, so a callable-API owner can bracket a whole
+        # tool call while direct engine callers still get a safe one-shelf
+        # window.  WarmSession owns the held lock; layering _target_lock here
+        # would let the outer lock release while the session still believed it
+        # was continuous.
+        with self._session.call():
             manifest = read_valid_manifest(
-                target, owner, repo, commit_sha, host="github.com"
+                target,
+                owner,
+                repo,
+                commit_sha,
+                host="github.com",
+                session=self._session,
             )
+            if self._session.degraded:
+                # A degraded session's cold fallback does not own this path's
+                # historical engine lock.  Re-run the unchanged locked cold
+                # gate before serving so degradation cannot weaken it.
+                with _target_lock(self._corpus_root, target, commit_sha):
+                    manifest = read_valid_manifest(
+                        target, owner, repo, commit_sha, host="github.com"
+                    )
             if manifest is None:
                 yield None
                 return

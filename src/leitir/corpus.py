@@ -8,11 +8,13 @@ import shutil
 import tempfile
 import warnings
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from leitir.spec import CorpusSpec
+    from leitir.warm import WarmSession
 
 from leitir.materialize import (
     MANIFEST_NAME,
@@ -168,7 +170,10 @@ def write_sources(
 
 
 def enumerate_shelved_sources(
-    root: str | os.PathLike[str] | None = None, *, strict: bool = False
+    root: str | os.PathLike[str] | None = None,
+    *,
+    strict: bool = False,
+    session: WarmSession | None = None,
 ) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
     """Return indexed sources with their validated manifests and paths.
 
@@ -180,31 +185,45 @@ def enumerate_shelved_sources(
     """
     corpus_root = resolve_root(root)
     result: list[tuple[dict[str, Any], dict[str, object], Path]] = []
-    for entry in load_sources(corpus_root, strict=strict):
-        relative = Path(entry["path"])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"invalid shelved source path: {entry['path']!r}")
-        target = corpus_root / relative
-        _assert_target_confinement(corpus_root, target)
-        manifest = read_valid_manifest(
-            target,
-            entry["owner"],
-            entry["repo"],
-            entry["commit_sha"],
-            host=entry["host"],
-        )
-        if manifest is None:
-            raise ValueError(
-                "source has no valid manifest (run 'leitir upgrade-cache' to "
-                f"migrate legacy shelves): {entry['path']}"
-            )
-        result.append((dict(entry), manifest, target))
+    with session.call() if session is not None else nullcontext():
+        for entry in load_sources(corpus_root, strict=strict):
+            relative = Path(entry["path"])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"invalid shelved source path: {entry['path']!r}")
+            target = corpus_root / relative
+            _assert_target_confinement(corpus_root, target)
+            if session is None:
+                manifest = read_valid_manifest(
+                    target,
+                    entry["owner"],
+                    entry["repo"],
+                    entry["commit_sha"],
+                    host=entry["host"],
+                )
+            else:
+                manifest = read_valid_manifest(
+                    target,
+                    entry["owner"],
+                    entry["repo"],
+                    entry["commit_sha"],
+                    host=entry["host"],
+                    session=session,
+                )
+            if manifest is None:
+                raise ValueError(
+                    "source has no valid manifest (run 'leitir upgrade-cache' to "
+                    f"migrate legacy shelves): {entry['path']}"
+                )
+            result.append((dict(entry), manifest, target))
     result.sort(key=lambda item: tuple(str(part) for part in _key(item[0])))
     return result
 
 
 def find_materialized_sources(
-    spec: str, root: str | os.PathLike[str] | None = None
+    spec: str,
+    root: str | os.PathLike[str] | None = None,
+    *,
+    session: WarmSession | None = None,
 ) -> list[tuple[dict[str, Any], dict[str, object], Path]]:
     """Return all shelved sources matching a parsed, resolved identity.
 
@@ -259,21 +278,32 @@ def find_materialized_sources(
             candidates.append((entry, target))
 
     matches: list[tuple[dict[str, Any], dict[str, object], Path]] = []
-    for entry, target in candidates:
-        manifest = read_valid_manifest(
-            target,
-            entry["owner"],
-            entry["repo"],
-            entry["commit_sha"],
-            host=entry["host"],
-        )
-        if manifest is None:
-            raise ValueError(
-                "source has no valid manifest (run 'leitir upgrade-cache' to "
-                f"migrate legacy shelves): {entry['path']}"
-            )
-        if _identity_matches(entry, manifest, parsed, is_bare_name=is_bare_name):
-            matches.append((dict(entry), manifest, target))
+    with session.call() if session is not None else nullcontext():
+        for entry, target in candidates:
+            if session is None:
+                manifest = read_valid_manifest(
+                    target,
+                    entry["owner"],
+                    entry["repo"],
+                    entry["commit_sha"],
+                    host=entry["host"],
+                )
+            else:
+                manifest = read_valid_manifest(
+                    target,
+                    entry["owner"],
+                    entry["repo"],
+                    entry["commit_sha"],
+                    host=entry["host"],
+                    session=session,
+                )
+            if manifest is None:
+                raise ValueError(
+                    "source has no valid manifest (run 'leitir upgrade-cache' to "
+                    f"migrate legacy shelves): {entry['path']}"
+                )
+            if _identity_matches(entry, manifest, parsed, is_bare_name=is_bare_name):
+                matches.append((dict(entry), manifest, target))
     matches.sort(key=lambda item: tuple(str(part) for part in _key(item[0])))
     return matches
 
@@ -351,34 +381,43 @@ def _entry_may_match_identity(
 
 
 def record_trust(
-    spec: str, root: str | os.PathLike[str] | None = None
+    spec: str,
+    root: str | os.PathLike[str] | None = None,
+    *,
+    session: WarmSession | None = None,
 ) -> tuple[dict[str, Any], object, Path]:
     """Compute and persist trust for one uniquely matching shelved source."""
     from leitir.trust import compute_trust
 
-    matches = find_materialized_sources(spec, root)
-    if not matches:
-        raise ValueError(f"source is not materialized: {spec}")
-    if len(matches) != 1:
-        raise ValueError(f"source spec is ambiguous: {spec}")
-    entry, _manifest, target = matches[0]
-    corpus_root = resolve_root(root)
-    with _target_lock(corpus_root, target, str(entry["commit_sha"])):
-        manifest = read_valid_manifest(
-            target,
-            str(entry["owner"]),
-            str(entry["repo"]),
-            str(entry["commit_sha"]),
-            host=str(entry["host"]),
-        )
-        if manifest is None:
-            raise ValueError(f"source changed during trust verification: {spec}")
-        from leitir.sbom import license_manifest_fields
+    with session.call() if session is not None else nullcontext():
+        matches = find_materialized_sources(spec, root, session=session)
+        if not matches:
+            raise ValueError(f"source is not materialized: {spec}")
+        if len(matches) != 1:
+            raise ValueError(f"source spec is ambiguous: {spec}")
+        entry, _manifest, target = matches[0]
+        corpus_root = resolve_root(root)
+        if session is not None:
+            # Writers never consume or retain a verification memo.  Forget the
+            # read used to locate this shelf before the write transaction, even
+            # if that transaction later fails after changing on-disk state.
+            session.invalidate(target)
+        with _target_lock(corpus_root, target, str(entry["commit_sha"])):
+            manifest = read_valid_manifest(
+                target,
+                str(entry["owner"]),
+                str(entry["repo"]),
+                str(entry["commit_sha"]),
+                host=str(entry["host"]),
+            )
+            if manifest is None:
+                raise ValueError(f"source changed during trust verification: {spec}")
+            from leitir.sbom import license_manifest_fields
 
-        license_fields = license_manifest_fields(manifest, target)
-        manifest.update(license_fields)
-        result = compute_trust(manifest, target)
-        update_manifest(target, {**license_fields, **result.as_dict()})
+            license_fields = license_manifest_fields(manifest, target)
+            manifest.update(license_fields)
+            result = compute_trust(manifest, target)
+            update_manifest(target, {**license_fields, **result.as_dict()})
     return entry, result, target
 
 
@@ -618,6 +657,7 @@ def materialize_source(
     repository_resolver: object | None = None,
     on_fetch: Callable[[], None] | None = None,
     parity_fetcher: object | None = None,
+    session: WarmSession | None = None,
     **fetch_options: object,
 ) -> Path:
     """Ensure a resolved source is materialized and indexed exactly once."""
@@ -668,6 +708,13 @@ def materialize_source(
         manifest_fields["published_at"] = published_at
 
     owner, repo = scope.slug.split("/", 1)
+    if session is not None:
+        # A materializer can replace or amend an existing shelf before it
+        # reports success.  Discard any old fact before starting the writer,
+        # rather than risk retaining it if a later writer step raises.
+        session.invalidate(
+            target_path(corpus_root, owner, repo, scope.commit_sha, host=host)
+        )
     artifact = None
     if isinstance(resolved, ResolvedPackage):
         from leitir.parity import ArtifactInfo
@@ -751,11 +798,19 @@ def materialize_source(
     # generation. A writer that won the release/reacquire race is therefore
     # observed and updated rather than swallowing these metadata writes.
     with _target_lock(corpus_root, target, scope.commit_sha):
+        if session is not None:
+            # The returned path is authoritative for all materializer kinds.
+            # Repeat invalidation in case it differed from the projected path.
+            session.invalidate(target)
         manifest_owner = (
             f"~{owner}" if host == "git.sr.ht" and not owner.startswith("~") else owner
         )
         manifest = read_valid_manifest(
-            target, manifest_owner, repo, scope.commit_sha, host=host
+            target,
+            manifest_owner,
+            repo,
+            scope.commit_sha,
+            host=host,
         )
         if manifest is None:
             raise RuntimeError(

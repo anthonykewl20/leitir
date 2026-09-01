@@ -20,10 +20,9 @@ jobs:
     # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
     # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
     # variance without masking a genuine hang for 10+ extra minutes the way
-    # 25 did. windows-latest has never completed on this branch (issue
-    # #266) and is not part of this measurement; its hang is a separate,
-    # fixed defect, not a timeout problem.
-    timeout-minutes: 20
+    # 25 did. The differential module takes 12:07 locally after the Windows
+    # child-environment fix; retain headroom for the slower Windows runner.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 20 }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,12 +64,7 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Run offline test suite
         shell: bash
-        env:
-          # Diagnostic for issue #285: -v keeps the last-started test name in the
-          # log through cancellation, and the faulthandler timeout dumps all thread stacks if a
-          # single test exceeds 120s.
-          DIAG_ARGS: "${{ matrix.os == 'windows-latest' && '-v --tb=long -o faulthandler_timeout=120' || '-q' }}"
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

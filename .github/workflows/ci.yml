@@ -67,11 +67,10 @@ jobs:
         shell: bash
         env:
           # Diagnostic for issue #285: -v keeps the last-started test name in the
-          # log through cancellation, -x stops at the first failure with a full
-          # traceback, and the faulthandler timeout dumps all thread stacks if a
+          # log through cancellation, and the faulthandler timeout dumps all thread stacks if a
           # single test exceeds 120s.
-          DIAG_ARGS: "${{ matrix.os == 'windows-latest' && '-v -x --tb=long -o faulthandler_timeout=120' || '-q' }}"
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS --tb=short
+          DIAG_ARGS: "${{ matrix.os == 'windows-latest' && '-v --tb=long -o faulthandler_timeout=120' || '-q' }}"
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

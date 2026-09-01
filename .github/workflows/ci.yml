@@ -65,7 +65,16 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Run offline test suite
         shell: bash
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
+        env:
+          # TEMPORARY diagnostic for issue #285: the windows leg times out with
+          # -q, losing the failing/hanging test names. -v keeps the
+          # last-started test name in the log through any cancellation, -x
+          # stops at the first failure with a full traceback, and
+          # --faulthandler-timeout dumps all thread stacks if a single test
+          # exceeds 120s. Revert once the windows failure/hang is identified
+          # and fixed.
+          DIAG_ARGS: ${{ matrix.os == 'windows-latest' && '-v -x --tb=long --faulthandler-timeout=120' || '-q' }}
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS --tb=short
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

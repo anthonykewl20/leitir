@@ -66,11 +66,11 @@ jobs:
       - name: Run offline test suite
         shell: bash
         env:
-          # TEMPORARY diagnostic for issue #285: verbose mode plus faulthandler
-          # stack dumps; no -x, so the run continues past the first failure and
-          # reaches the hang. Revert once the windows failure/hang is identified
-          # and fixed.
-          DIAG_ARGS: ${{ matrix.os == 'windows-latest' && '-v --faulthandler-timeout=120 --tb=long' || '-q' }}
+          # Diagnostic for issue #285: -v keeps the last-started test name in the
+          # log through cancellation, -x stops at the first failure with a full
+          # traceback, and the faulthandler timeout dumps all thread stacks if a
+          # single test exceeds 120s.
+          DIAG_ARGS: "${{ matrix.os == 'windows-latest' && '-v -x --tb=long -o faulthandler_timeout=120' || '-q' }}"
         run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest $DIAG_ARGS --tb=short
 
   determinism:

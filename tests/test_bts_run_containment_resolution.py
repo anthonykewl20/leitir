@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -290,10 +291,14 @@ def test_resolution_is_byte_identical_across_pythonhashseed(tmp_path: Path) -> N
     for seed in ("0", "1", "2", "42"):
         result = subprocess.run(
             [sys.executable, str(script)],
-            env={"PYTHONHASHSEED": seed, "PATH": ""},
+            env={**os.environ, "PYTHONHASHSEED": seed},
             capture_output=True,
-            check=True,
         )
+        if result.returncode != 0:
+            pytest.fail(
+                f"resolution child failed for PYTHONHASHSEED={seed} with exit code {result.returncode}; "
+                f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+            )
         outputs.add(result.stdout)
     assert len(outputs) == 1
 

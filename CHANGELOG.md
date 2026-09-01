@@ -27,6 +27,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - finish the ADR renumber and recovery-guidance content (previous commit only captured the rename) (`corpus`)
 - give the check-bridge demo fixture a real top_level.txt (`bench`)
 - have build_port_attribution verify its own source root (`bts`)
+- inherit the ambient environment in the differential check bridge (#285) (`bench`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)

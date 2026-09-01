@@ -292,11 +292,9 @@ def _dispatch_command(
     _exit_windows_doctor_success: bool,
     session: WarmSession | None,
 ) -> int:
-    # The session is deliberately carried to the dispatcher rather than read
-    # from ambient process state.  Verb owners consume this explicit optional
-    # handle as their read/write paths gain warm threading; absence preserves
-    # the byte-identical cold CLI path.
-    del session
+    # The session is deliberately carried to verb owners rather than read from
+    # ambient process state. Its enclosing call window is active for this
+    # dispatch; owners may open nested windows for their local fan-out.
     from ._update_check import maybe_start_update_check
 
     maybe_start_update_check(
@@ -384,6 +382,7 @@ def _dispatch_command(
             code_search_factory=code_search_factory,
             out=out,
             err=err,
+            session=session,
         )
 
     # Only "search" remains once every other verb has returned above,
@@ -397,6 +396,7 @@ def _dispatch_command(
         global_searcher_factory=global_searcher_factory,
         out=out,
         err=err,
+        session=session,
     )
 
 

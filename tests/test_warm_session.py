@@ -10,6 +10,7 @@ import pytest
 
 from leitir import materialize
 from leitir.adapters import PythonAdapter
+from leitir.api import call_json, warm_call
 from leitir.corpus import (
     enumerate_shelved_sources,
     find_materialized_sources,
@@ -41,6 +42,8 @@ def _shelf(root: Path) -> Path:
         "fetched_at": "2026-08-27T00:00:00Z",
         "verified": False,
         "verified_at": None,
+        "source": "git-commit",
+        "parity": "exact",
         **full_coverage_manifest_fields(target),
     }
     (target / MANIFEST_NAME).write_text(
@@ -329,3 +332,69 @@ def test_cold_and_first_warm_threaded_reads_have_identical_results(tmp_path: Pat
     assert warm_found == cold_found
     assert warm_search.matches == cold_search.matches
     assert warm_search.coverage == cold_search.coverage
+
+
+def test_warm_call_threads_session_to_corpus_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One corpus-search call records warm verification without changing JSON."""
+    import leitir.api as api_module
+
+    target = _shelf(tmp_path)
+    write_sources(tmp_path, [_entry(target)])
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+    monkeypatch.setattr("leitir.index.query._utc_now", lambda: "2026-09-02T00:00:00Z")
+    observed_output: list[tuple[str, str]] = []
+    real_main = api_module.main
+
+    def capture_main(*args: object, **kwargs: object) -> int:
+        code = real_main(*args, **kwargs)
+        out = kwargs.get("stdout")
+        err = kwargs.get("stderr")
+        assert hasattr(out, "getvalue") and hasattr(err, "getvalue")
+        observed_output.append((out.getvalue(), err.getvalue()))
+        return code
+
+    monkeypatch.setattr(api_module, "main", capture_main)
+    argv = [
+        "search",
+        "--corpus",
+        "--must",
+        "identifier:demo",
+        "--root",
+        str(tmp_path),
+    ]
+
+    cold = call_json(argv)
+    with warm_call(tmp_path) as caller:
+        warm = caller(argv)
+        stats = caller.stats()
+
+    # The in-process API parses these exact stdout bytes after the dispatch
+    # returns, so capture them at that boundary rather than comparing only
+    # decoded JSON. The warm path serves the same bytes and enters verification.
+    assert len(observed_output) == 2
+    assert observed_output[1] == observed_output[0]
+    assert warm == cold
+    assert stats["hits"] + stats["misses"] > 0
+    assert stats["misses"] > 0
+    assert stats["cold_fallbacks"] == 0
+
+
+def test_warm_call_writer_uses_no_manifest_memo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trust writer verifies cold after invalidating its lookup memo."""
+    target = _shelf(tmp_path)
+    write_sources(tmp_path, [_entry(target)])
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+    argv = ["trust", f"acme/demo@{SHA}", "--root", str(tmp_path), "--json"]
+
+    cold = call_json(argv)
+    with warm_call(tmp_path) as caller:
+        warm = caller(argv)
+        stats = caller.stats()
+
+    assert warm == cold
+    assert stats["hits"] == 0
+    assert stats["misses"] == 1

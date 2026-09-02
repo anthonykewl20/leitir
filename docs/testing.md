@@ -79,11 +79,11 @@ ruff check .
 mypy src
 ```
 
-The suite target is 2537 passed, 122 skipped, and zero failures. Installing the
-optional tree-sitter extra additionally runs 105 polyglot tests. Live tests
-remain gated by `LEITIR_ENABLE_LIVE_E2E=1`. Security, integrity, and
-materialization changes also require independent review by the required
-reviewer(s) or a human equivalent.
+The gate is zero failures; skips appear only where an environment gate holds
+them back. The live pass/skip count is recorded in README's dated status
+paragraph, not here. Live tests remain gated by `LEITIR_ENABLE_LIVE_E2E=1`.
+Security, integrity, and materialization changes also require the dual review
+defined in AGENTS.md review lanes (both reviewers, requested together).
 
 ## Leitir Patterns
 
@@ -125,8 +125,7 @@ proof of the contract.
 Live-gated tests carry the registered `pytest.mark.live` marker alongside
 their `LEITIR_ENABLE_LIVE_E2E` skip gate, so
 `PYTHONPATH=src python -m pytest -m live --collect-only -q` prints the
-authoritative inventory of everything the gate holds back (61 tests across 23
-files at 2026-08-20, plus the module-skipped `test_query_probe_live.py`).
+authoritative inventory of everything the gate holds back.
 `tests/test_live_marker_inventory.py` fails if a test env-gates without the
 marker (invisible to the inventory) or is marked without a gate (it would run
 offline), and the unknown-marker-as-error discipline in `tests/conftest.py`
@@ -241,7 +240,7 @@ before calling the intent honestly met.
 ## References
 
 - `AGENTS.md` for the suite command, determinism, fail-closed rules, live-test
-  gate, and test target.
+  gate, and review lanes.
 - `tests/test_cli_e2e.py` for offline CLI and JSON intent.
 - `tests/test_corpus_cli_e2e.py` for subprocess, local-server, cache, manifest,
   filesystem, and failure intent.

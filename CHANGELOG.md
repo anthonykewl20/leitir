@@ -42,6 +42,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- resolve the epoch identity and cover the round-3 findings (#272) (`warm`)
 - retire the tree-layout import-root tier as an authority (`check`)
 - stage manifest rewrites outside the verified shelf tree (#282) (`materialize`)
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)

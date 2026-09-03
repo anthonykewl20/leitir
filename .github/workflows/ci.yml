@@ -172,8 +172,10 @@ jobs:
           PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
 
   coverage:
-    # Observed 1:38; 15 min ≥ 9× margin (issue #199).
-    timeout-minutes: 15
+    # Observed 14:25 on main (2026-09-03; the 1:38 note was pre-suite-growth);
+    # PR runs at 15:16 hit the old 15-min ceiling and were canceled. 30 min
+    # ≈ 2× margin (issue #199 discipline, refreshed).
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

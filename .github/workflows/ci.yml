@@ -16,40 +16,36 @@ concurrency:
 
 jobs:
   test:
-    # Measured green wall-times on run 32992045211 (3720 tests collected):
-    # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
-    # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
-    # variance without masking a genuine hang for 10+ extra minutes the way
-    # 25 did. The differential module takes 12:07 locally after the Windows
-    # child-environment fix; retain headroom for the slower Windows runner.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 20 }}
+    # Lane split (2026-09-04): PRs run the version extremes plus one leg per
+    # platform (ubuntu 3.11/3.14, macos 3.13, windows 3.12); every main push
+    # and the weekly schedule run the full seven-leg matrix, so the interior
+    # minors (3.12, 3.12.3 floor pin, 3.13) are still gated on each merge.
+    # Wall-time: serial legs measured ~14-15 min (2026-09-03); -n auto on the
+    # 4-core public runners cuts that several-fold. Timeouts keep margin over
+    # the sharded expectation plus straggler headroom for the subprocess-heavy
+    # differential module (issue #199 discipline).
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 25 || 15 }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Full-matrix rationale, retained for the main/schedule legs:
+      # - Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
+      #   are both ≥ the ubuntu floor (3.11) and already exercised minors —
+      #   reproducible legs instead of runner-image drift (issue #199).
+      # - Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
+      #   builds lazily import ntpath from pathlib and import machinery,
+      #   which the floating '3.12' leg never sees because setup-python
+      #   resolves the newest patch. The runtime import recorder must stay
+      #   correct on the oldest supported 3.12 patch, so pin it exactly.
+      #
+      # Dynamic matrix (fromJSON ternary): conditional `if` keys on include
+      # entries are NOT a filter — the runner merges them as matrix variables
+      # and the leg still runs (observed on PR #294's first run, whose
+      # main-only legs showed up named "…, false"). PRs get the extremes
+      # plus one leg per platform; main pushes and the weekly schedule get
+      # the full seven-leg matrix, gating the interior minors on each merge.
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: '3.11'
-          - os: ubuntu-latest
-            python-version: '3.12'
-          - os: ubuntu-latest
-            python-version: '3.13'
-          - os: ubuntu-latest
-            python-version: '3.14'
-          # Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
-          # are both ≥ the ubuntu floor (3.11) and already exercised minors —
-          # reproducible legs instead of runner-image drift (issue #199).
-          - os: macos-latest
-            python-version: '3.13'
-          - os: windows-latest
-            python-version: '3.12'
-          # Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
-          # builds lazily import ntpath from pathlib and import machinery,
-          # which the floating '3.12' leg never sees because setup-python
-          # resolves the newest patch. The runtime import recorder must stay
-          # correct on the oldest supported 3.12 patch, so pin it exactly.
-          - os: ubuntu-latest
-            python-version: '3.12.3'
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"macos-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.12.3"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"macos-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"}]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -64,7 +60,10 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Run offline test suite
         shell: bash
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
+        # -n auto: tests are process-isolated (tmp_path fixtures, subprocess
+        # runners); xdist workers are separate processes, so in-test
+        # thread-concurrency coverage (warm/safeio) is unaffected.
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short -n auto
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs
@@ -172,10 +171,12 @@ jobs:
           PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
 
   coverage:
-    # Observed 14:25 on main (2026-09-03; the 1:38 note was pre-suite-growth);
-    # PR runs at 15:16 hit the old 15-min ceiling and were canceled. 30 min
-    # ≈ 2× margin (issue #199 discipline, refreshed).
-    timeout-minutes: 30
+    # Serial full-suite measurement was 14:25 on main (2026-09-03) and its
+    # 15-min ceiling started canceling runs (30 min was the stopgap). Sharded
+    # via pytest-cov + xdist, the same line+branch measurement and
+    # per-module baselines hold at a fraction of the wall time. 20 min keeps
+    # >2× margin (issue #199 discipline).
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -200,7 +201,7 @@ jobs:
           PYTHONPATH: src
         run: |
           source .tree-sitter-venv/bin/activate
-          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 python -m coverage run --branch --source=leitir -m pytest -q -p no:cacheprovider
+          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 --with pytest-cov==7.1.0 python -m pytest -q -p no:cacheprovider -n auto --cov=leitir --cov-branch --cov-report=
       - name: Write coverage reports
         run: |
           uv run --no-project --with coverage==7.15.2 python -m coverage report --precision=2 --fail-under=82.5

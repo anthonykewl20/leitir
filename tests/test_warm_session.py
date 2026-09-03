@@ -582,6 +582,17 @@ def test_symlinked_corpus_root_stays_warm_and_correct(
     assert len(calls) == 1
 
 
+def test_parse_lock_epoch_accepts_only_the_canonical_spelling() -> None:
+    assert materialize.parse_lock_epoch(b"41") == 41
+    assert materialize.parse_lock_epoch(b"41\n") == 41
+    assert materialize.parse_lock_epoch(b" 41\n") is None
+    assert materialize.parse_lock_epoch(b"41 \n") is None
+    assert materialize.parse_lock_epoch(b"4_1\n") is None
+    assert materialize.parse_lock_epoch(b"+41\n") is None
+    assert materialize.parse_lock_epoch(b"") is None
+    assert materialize.parse_lock_epoch(b"41\n\n") is None
+
+
 def test_close_discards_all_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = _shelf(tmp_path)
     calls = _count_verifications(monkeypatch)

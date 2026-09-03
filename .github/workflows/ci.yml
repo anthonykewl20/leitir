@@ -28,35 +28,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Full-matrix rationale, retained for the main/schedule legs:
+      # - Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
+      #   are both ≥ the ubuntu floor (3.11) and already exercised minors —
+      #   reproducible legs instead of runner-image drift (issue #199).
+      # - Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
+      #   builds lazily import ntpath from pathlib and import machinery,
+      #   which the floating '3.12' leg never sees because setup-python
+      #   resolves the newest patch. The runtime import recorder must stay
+      #   correct on the oldest supported 3.12 patch, so pin it exactly.
+      #
+      # Dynamic matrix (fromJSON ternary): conditional `if` keys on include
+      # entries are NOT a filter — the runner merges them as matrix variables
+      # and the leg still runs (observed on PR #294's first run, whose
+      # main-only legs showed up named "…, false"). PRs get the extremes
+      # plus one leg per platform; main pushes and the weekly schedule get
+      # the full seven-leg matrix, gating the interior minors on each merge.
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: '3.11'
-          - os: ubuntu-latest
-            python-version: '3.14'
-          # Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
-          # are both ≥ the ubuntu floor (3.11) and already exercised minors —
-          # reproducible legs instead of runner-image drift (issue #199).
-          - os: macos-latest
-            python-version: '3.13'
-          - os: windows-latest
-            python-version: '3.12'
-          # Main-push/schedule-only interior minors; PRs rely on the 3.11
-          # floor and 3.14 ceiling legs above plus the per-platform pins.
-          - os: ubuntu-latest
-            python-version: '3.12'
-            if: ${{ github.event_name != 'pull_request' }}
-          - os: ubuntu-latest
-            python-version: '3.13'
-            if: ${{ github.event_name != 'pull_request' }}
-          # Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
-          # builds lazily import ntpath from pathlib and import machinery,
-          # which the floating '3.12' leg never sees because setup-python
-          # resolves the newest patch. The runtime import recorder must stay
-          # correct on the oldest supported 3.12 patch, so pin it exactly.
-          - os: ubuntu-latest
-            python-version: '3.12.3'
-            if: ${{ github.event_name != 'pull_request' }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"macos-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.12.3"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"macos-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"}]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

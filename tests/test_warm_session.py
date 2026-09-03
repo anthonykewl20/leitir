@@ -339,6 +339,39 @@ def test_stat_restoring_tamper_detected_via_ctime(
     assert len(calls) == 2
 
 
+def test_resolve_under_lock_rejects_extra_intervening_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The under-lock arithmetic must reject anything beyond recorded+1.
+
+    Two acquisitions between the recording and the caller's own take — a
+    foreign writer's bump plus a re-open, or any wider gate someone might
+    substitute — must force the full cold gate rather than a memo serve.
+    Deleting or widening the accepted set in resolve_under_lock has to fail
+    here (review P2: the rejection branch had no pin).
+    """
+    target = _shelf(tmp_path)
+    calls = _count_verifications(monkeypatch)
+    with WarmSession(tmp_path) as session, session.call():
+        with materialize._target_lock(tmp_path, target, SHA):
+            # First touch: cold verification recorded under this hold, with
+            # the epoch this acquisition itself advanced.
+            assert session.read_valid_manifest(
+                target, "acme", "demo", SHA
+            ) is not None
+        # Two further acquisitions land between the recording and the
+        # caller's own take: current is recorded+2, outside the accepted
+        # {recorded, recorded+1} set, so the memo must be refused.
+        with materialize._target_lock(tmp_path, target, SHA):
+            pass
+        with materialize._target_lock(tmp_path, target, SHA):
+            pass
+        assert (
+            session.resolve_under_lock(target, "acme", "demo", SHA) is None
+        )
+    assert session.stats()["revalidations"] >= 1
+
+
 def test_close_discards_all_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = _shelf(tmp_path)
     calls = _count_verifications(monkeypatch)

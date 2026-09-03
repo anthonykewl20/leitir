@@ -382,7 +382,11 @@ stat signature are unchanged, so a *non-cooperating* process that mutates
 bytes in place **and restores the stat signature** (and, on POSIX, also
 defeats the ctime component, which `utime` cannot restore — inode or clock
 manipulation is required) is detected at the next *cold* load but not until
-the session ends under warm mode. Cooperating writers are caught with
+the session ends under warm mode. On Windows the bar is lower: `st_ctime` is
+creation time there and does not move on a content write, so the
+stat-restoring adversary needs only size and mtime restoration — the
+platform-divergent residual ADR-0006 already documents, unchanged by this
+amendment. Cooperating writers are caught with
 certainty: taking the lock advances the epoch regardless of what they do to
 the shelf bytes or metadata. Two further accepted edges: (i) leitir
 binaries predating this amendment do not advance epoch files (version

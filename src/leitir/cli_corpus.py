@@ -700,6 +700,7 @@ def _gc_abandoned_staging(root: Path) -> int:
         MANIFEST_NAME,
         MaterializationError,
         _assert_target_confinement,
+        _bump_lock_epoch,
         _file_lock,
         _fsync_directory,
         read_valid_manifest,
@@ -767,6 +768,11 @@ def _gc_abandoned_staging(root: Path) -> int:
         ).encode("utf-8")
         lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
         with _file_lock(lock_path):
+            # This recovery path restores or removes shelf generations
+            # directly; advance the writer-visible epoch for the same lock
+            # identity _target_lock would have bumped, so warm sessions
+            # observe the mutation (ADR-0035 amendment, review P2).
+            _bump_lock_epoch(os.path.normcase(str(lock_path.absolute())))
             _assert_target_confinement(root, candidate)
             if marker == ".old-" and not target.exists():
                 # A crash after target -> backup but before staging -> target

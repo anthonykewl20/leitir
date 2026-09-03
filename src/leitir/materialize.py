@@ -265,6 +265,11 @@ def read_lock_epoch(lock_identity: str) -> bytes | None:
         with open(_epoch_path(lock_identity), "rb") as handle:
             data = handle.read(_EPOCH_MAX_BYTES + 1)
     except FileNotFoundError:
+        # An absent epoch is the legacy-corpus stable value.  A dangling
+        # symlink aliasing to ENOENT lands here too; that is within the
+        # amendment's accepted residual (ii) — the epoch file is protocol
+        # metadata, not an adversarially protected artifact — and the next
+        # cooperating bump replaces the alias wholesale.
         return b""
     except OSError:
         return None
@@ -272,14 +277,15 @@ def read_lock_epoch(lock_identity: str) -> bytes | None:
 
 
 def parse_lock_epoch(data: bytes) -> int | None:
-    """Parse an epoch counter, or ``None`` when it is absent or malformed."""
-    if not data:
+    """Parse an epoch counter, or ``None`` when it is absent or malformed.
+
+    Only the writer's canonical ``<decimal>\\n`` spelling parses; int()'s
+    leniency (underscores, signs, surrounding whitespace) would give the
+    under-lock arithmetic more than one representation of one counter.
+    """
+    if not re.fullmatch(rb"[0-9]+", data.strip()):
         return None
-    try:
-        value = int(data)
-    except ValueError:
-        return None
-    return value if value >= 0 else None
+    return int(data)
 
 
 def _bump_lock_epoch(lock_identity: str) -> None:
@@ -296,7 +302,16 @@ def _bump_lock_epoch(lock_identity: str) -> None:
     current = read_lock_epoch(lock_identity)
     parsed = parse_lock_epoch(current) if current is not None else None
     value = parsed + 1 if parsed is not None else 1
-    atomic_write_bytes(_epoch_path(lock_identity), f"{value}\n".encode("ascii"))
+    try:
+        atomic_write_bytes(
+            _epoch_path(lock_identity), f"{value}\n".encode("ascii")
+        )
+    except OSError as exc:
+        # Fail the acquisition itself: a mutation whose heralding bump could
+        # not be durably recorded must not proceed under this lock.
+        raise MaterializationError(
+            f"cannot advance materialization lock epoch: {_epoch_path(lock_identity)}"
+        ) from exc
 
 
 @contextmanager

@@ -20,6 +20,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 - thread optional WarmSession through engine and corpus read paths (#272) (`warm`)
+- thread the active warm session into verb owners (#272) (`cli`)
 - warm_call(root) context manager and session-aware CLI dispatch (#272) (`api`)
 - WarmSession verified-manifest cache with lock-epoch invalidation (#272) (`warm`)
 

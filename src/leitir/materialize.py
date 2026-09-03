@@ -284,7 +284,7 @@ def parse_lock_epoch(data: bytes) -> int | None:
     leniency (underscores, signs, surrounding whitespace) would give the
     under-lock arithmetic more than one representation of one counter.
     """
-    if not re.fullmatch(rb"[0-9]+", data.strip()):
+    if not re.fullmatch(rb"[0-9]+\n?", data):
         return None
     return int(data)
 

@@ -378,7 +378,13 @@ def test_concurrent_writers_serialized_by_target_lock_are_atomic_last_writer_win
     reader_attempt_cap = 20_000
     writer_attempt_cap = 20_000
     retry_wait = threading.Event()
-    contention_errnos = {errno.EACCES, errno.EWOULDBLOCK, errno.EAGAIN}
+    # msvcrt lock acquisition surfaces contention under several errnos:
+    # LK_LOCK's retry-budget exhaustion (EACCES/EWOULDBLOCK/EAGAIN) and,
+    # when the OS sees an overlapping byte-range hold from another handle
+    # in this process, EDEADLK ("Resource deadlock avoided") — observed on
+    # windows-latest CI (run 33772714531). All are acquisition-only and
+    # transient here: each attempt releases under finally before retrying.
+    contention_errnos = {errno.EACCES, errno.EWOULDBLOCK, errno.EAGAIN, errno.EDEADLK}
     failures: list[BaseException] = []
     completed_payloads: list[bytes] = []
 

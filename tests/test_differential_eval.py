@@ -36,6 +36,17 @@ from benchmarks.differential.prompt import (
 from benchmarks.differential.runner import Arm, GenerationResult
 from benchmarks.differential.stub_runner import DeterministicStubRunner
 
+# #285: nested captured subprocess timeouts can deadlock this benchmark harness
+# on Windows runners; Linux and macOS retain full coverage.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "differential-eval benchmark harness hangs on Windows runners: "
+        "nested subprocess.run timeout+capture pipes deadlock (issue #285); "
+        "benchmark infrastructure targets Linux CI"
+    ),
+)
+
 # An address nothing listens on: every `leitir check` network call this
 # harness makes in these tests is redirected here, so it fails fast with
 # ECONNREFUSED instead of depending on (or being blocked by) real network

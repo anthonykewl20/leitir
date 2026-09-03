@@ -22,6 +22,13 @@ _GATE = _ROOT / "scripts/live_canary_gate.py"
 _SECRET = _ROOT / "scripts/check_live_canary_secret.py"
 
 
+def _non_dispatch_env(**overrides: str) -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop("GITHUB_EVENT_NAME", None)
+    env.update(overrides)
+    return env
+
+
 def _http_error(code: int, headers: dict[str, str] | None = None) -> HTTPError:
     message = Message()
     for key, value in sorted((headers or {}).items()):
@@ -410,6 +417,8 @@ def test_enabled_gate_with_missing_named_test_fails_closed(
     # deliberately lacks the named file (same typed error as before).
     import importlib.util
 
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
     spec = importlib.util.spec_from_file_location("live_canary_gate_module", _GATE)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -431,12 +440,11 @@ def test_enabled_gate_resolves_true_now_that_every_named_test_exists() -> None:
     result = subprocess.run(
         (sys.executable, str(_GATE)),
         cwd=_ROOT,
-        env={
-            **os.environ,
-            "LEITIR_CANARY_TREE_V2": "true",
-            "LEITIR_CANARY_STREAM_V2": "true",
-            "LEITIR_CANARY_INDEX_V2": "true",
-        },
+        env=_non_dispatch_env(
+            LEITIR_CANARY_TREE_V2="true",
+            LEITIR_CANARY_STREAM_V2="true",
+            LEITIR_CANARY_INDEX_V2="true",
+        ),
         check=False,
         capture_output=True,
         text=True,
@@ -452,7 +460,7 @@ def test_enabled_gate_resolves_true_now_that_every_named_test_exists() -> None:
 
 
 def test_absent_feature_gates_are_explicitly_false() -> None:
-    env = dict(os.environ)
+    env = _non_dispatch_env()
     for name in (
         "LEITIR_CANARY_TREE_V2",
         "LEITIR_CANARY_STREAM_V2",
@@ -482,12 +490,11 @@ def test_malformed_gate_variable_fails_closed_through_the_cli() -> None:
     result = subprocess.run(
         (sys.executable, str(_GATE)),
         cwd=_ROOT,
-        env={
-            **os.environ,
-            "LEITIR_CANARY_TREE_V2": "maybe",
-            "LEITIR_CANARY_STREAM_V2": "false",
-            "LEITIR_CANARY_INDEX_V2": "false",
-        },
+        env=_non_dispatch_env(
+            LEITIR_CANARY_TREE_V2="maybe",
+            LEITIR_CANARY_STREAM_V2="false",
+            LEITIR_CANARY_INDEX_V2="false",
+        ),
         check=False,
         capture_output=True,
         text=True,

@@ -24,6 +24,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - bind port attribution to measured BTS evidence, not caller claims (`bts`)
 - close the strict-defeating laundering gap and audit IndexedSearcher (P1/P2 review findings) (`corpus`)
 - fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
+- fall back to the digest-anchored no_follow read when O_NOFOLLOW is unavailable (#285) (`bts`)
 - finish the ADR renumber and recovery-guidance content (previous commit only captured the rename) (`corpus`)
 - give the check-bridge demo fixture a real top_level.txt (`bench`)
 - have build_port_attribution verify its own source root (`bts`)

@@ -55,10 +55,12 @@ from leitir.port_contract import (
     TargetLanguage,
     _canonical,
     build_port_attribution,
+    load_donor_sources_from_snapshot,
     load_portable_contract_suite,
     load_recipient_license_policy,
     translate_contract,
 )
+from leitir.safeio import NoFollowUnavailableError
 from leitir.treehash import compute_materialized_tree_hash
 
 _SHA = "a" * 40
@@ -462,3 +464,101 @@ def test_translated_contract_is_hash_seed_independent(tmp_path: Path) -> None:
 
     assert len(set(json.dumps(item, sort_keys=True) for item in payloads)) == 1
     assert len(set(go_bytes_by_seed)) == 1
+
+
+# --- Windows O_NOFOLLOW portability of the donor-source read (issue #285) ---
+#
+# ``leitir.safeio.read_regular_file(..., no_follow=True)`` raises
+# ``NoFollowUnavailableError`` immediately on a platform without
+# ``os.O_NOFOLLOW`` (Windows).  Before this fix, every
+# ``bts-port-contract`` invocation rejected there with
+# ``port_contract_donor_source_read_v1`` before any license logic ran.
+# ``load_donor_sources_from_snapshot`` now falls back to the digest-anchored
+# ``no_follow=False`` read *only* for that platform-capability error,
+# mirroring ``leitir.usage._io.read_portable_file``.
+
+
+def _snapshot_bts(root: Path):
+    artifacts = run_bts_compute(
+        root, "owner", "donor", _SHA, seed=SeedSelector("package.policy", "package.policy.normalize_contract")
+    )
+    assert artifacts.result.bts is not None
+    return artifacts.result.bts
+
+
+def test_donor_source_read_falls_back_when_o_nofollow_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulates a Windows-like platform: no_follow=True always raises."""
+
+    import leitir.port_contract as port_contract_module
+
+    root = tmp_path / "root"
+    _shelf(root, fixture=_MIT_FIXTURE)
+    artifact = _snapshot_bts(root)
+    target = target_path(root, "owner", "donor", _SHA)
+
+    real_read_regular_file = port_contract_module.read_regular_file
+
+    def _no_o_nofollow(path: Path, *, maximum_bytes: int, no_follow: bool = True) -> bytes:
+        if no_follow:
+            raise NoFollowUnavailableError("platform does not support O_NOFOLLOW")
+        return real_read_regular_file(path, maximum_bytes=maximum_bytes, no_follow=False)
+
+    monkeypatch.setattr(port_contract_module, "read_regular_file", _no_o_nofollow)
+
+    sources = port_contract_module.load_donor_sources_from_snapshot(target, artifact)
+    assert sources, "fallback read must succeed and pass the BTS re-verification"
+
+
+def test_donor_source_read_never_falls_back_on_an_unrelated_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-capability OSError must still reject as a provenance mismatch,
+    never trigger a retry."""
+
+    import leitir.port_contract as port_contract_module
+
+    root = tmp_path / "root"
+    _shelf(root, fixture=_MIT_FIXTURE)
+    artifact = _snapshot_bts(root)
+
+    calls: list[bool] = []
+
+    def _raises_plain_oserror(path: Path, *, maximum_bytes: int, no_follow: bool = True) -> bytes:
+        calls.append(no_follow)
+        raise OSError("not a regular file")
+
+    monkeypatch.setattr(port_contract_module, "read_regular_file", _raises_plain_oserror)
+
+    with pytest.raises(BTSError) as excinfo:
+        port_contract_module.load_donor_sources_from_snapshot(target_path(root, "owner", "donor", _SHA), artifact)
+    assert excinfo.value.reason is BTSRejectReason.REJECT_PROVENANCE_MISMATCH
+    assert excinfo.value.evidence.detail_code == "port_contract_donor_source_read_v1"
+    assert calls == [True]  # exactly one attempt -- no retry for a non-capability failure
+
+
+def test_donor_source_read_on_a_capable_platform_still_refuses_a_symlink(tmp_path: Path) -> None:
+    """No monkeypatching: proves the real, unmodified behavior on this host
+    (which does support O_NOFOLLOW) still refuses a symlinked donor source,
+    i.e. the fallback branch is never exercised and no security guarantee
+    regresses for platforms that can enforce O_NOFOLLOW."""
+
+    no_follow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if type(no_follow_flag) is not int or no_follow_flag == 0:
+        pytest.skip("this platform does not support O_NOFOLLOW")
+
+    root = tmp_path / "root"
+    _shelf(root, fixture=_MIT_FIXTURE)
+    artifact = _snapshot_bts(root)
+    target = target_path(root, "owner", "donor", _SHA)
+
+    policy = target / "package" / "policy.py"
+    backing = target / "package" / "policy_backing.py"
+    shutil.copy2(policy, backing)
+    policy.unlink()
+    policy.symlink_to(backing)
+
+    with pytest.raises(BTSError) as excinfo:
+        load_donor_sources_from_snapshot(target, artifact)
+    assert excinfo.value.reason is BTSRejectReason.REJECT_PROVENANCE_MISMATCH

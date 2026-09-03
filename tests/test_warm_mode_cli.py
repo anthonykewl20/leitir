@@ -234,7 +234,6 @@ def test_warm_cli_second_call_reuses_verification(
     assert after_second["hits"] > after_first["hits"]
     assert after_second["misses"] == after_first["misses"]
     assert after_second["revalidations"] == after_first["revalidations"]
-    assert after_second["sticky_rejects"] == after_first["sticky_rejects"]
 
 
 def test_warm_cli_tamper_isolated_to_affected_shelf(
@@ -261,7 +260,7 @@ def test_warm_cli_tamper_isolated_to_affected_shelf(
     assert stats["misses"] > 0
 
 
-def test_warm_cli_tamper_rejection_is_sticky(
+def test_warm_cli_tamper_rejection_persists_across_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Once revalidation rejects a shelf, later session calls cannot serve it."""
@@ -305,7 +304,6 @@ def test_warm_establishment_failure_uses_byte_identical_cold_path(
             "hits": 0,
             "misses": 0,
             "revalidations": 0,
-            "sticky_rejects": 0,
             "cold_fallbacks": 0,
         }
 

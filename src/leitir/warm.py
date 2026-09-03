@@ -6,7 +6,11 @@ verification is reused only while the writer-visible lock epoch and the
 whole-tree stat signature recorded at verification time are both unchanged;
 any ambiguity falls back to ADR-0006 full verification.  The session holds
 no target locks: cross-writer visibility is the on-disk epoch's job, so
-lock windows stay as short as a single writer transaction.
+lock windows stay as short as a single writer transaction.  A failed
+verification discards the memo and fails the touch; because a lock-free
+failure cannot be attributed (a writer's swap-and-restore leaves
+net-neutral evidence), later touches re-verify cold per touch — exactly
+the cold path's per-invocation contract, never weaker.
 """
 
 from __future__ import annotations
@@ -92,7 +96,6 @@ class WarmSession:
         self._root = Path(root).expanduser().resolve()
         self._lock = threading.RLock()
         self._entries: dict[str, _WarmEntry] = {}
-        self._sticky: set[str] = set()
         self._window_thread: int | None = None
         self._window_depth = 0
         self._closed = False
@@ -101,7 +104,6 @@ class WarmSession:
             "hits": 0,
             "misses": 0,
             "revalidations": 0,
-            "sticky_rejects": 0,
             "cold_fallbacks": 0,
         }
 
@@ -177,7 +179,8 @@ class WarmSession:
         ambiguous evidence — re-runs the unchanged cold gate.
         """
         target = target.expanduser().absolute()
-        target_key = os.path.normcase(str(target.resolve(strict=False)))
+        resolved = target.resolve(strict=False)
+        target_key = os.path.normcase(str(resolved))
         with self._lock:
             self._require_open()
             if (
@@ -188,9 +191,7 @@ class WarmSession:
                 if self._window_depth and self._window_thread != threading.get_ident():
                     self._degrade()
                 return self._cold_read(target, owner, repo, commit_sha, host=host)
-            if target_key in self._sticky:
-                return None
-            if not target.is_relative_to(self._root):
+            if not resolved.is_relative_to(self._root):
                 return self._cold_read(target, owner, repo, commit_sha, host=host)
 
             entry = self._entries.get(target_key)
@@ -213,11 +214,15 @@ class WarmSession:
             self._stats["misses"] += 1
             if was_cached:
                 self._stats["revalidations"] += 1
-            # Record the epoch both before and after the full verification:
-            # an intervening writer's bump then prevents caching, so a memo
-            # can never be pinned against bytes that verification did not
-            # actually cover.
+            # Bracket the whole verification with BOTH evidence kinds.  The
+            # epoch brackets acquisitions, not mutations — a writer swaps the
+            # shelf at the END of a long held interval, after its bump — so
+            # only agreeing sweep+epoch pairs across the attempt prove the
+            # hashed bytes and the pinned signature describe one shelf state
+            # (review F1).  Agreement also distinguishes a torn read from
+            # corruption for stickiness (review F3).
             epoch_before = self._read_epoch_or_none(target)
+            sweep_before = self._sweep_or_degrade(target)
             status, manifest = materialize._read_valid_manifest_with_status(
                 target,
                 owner,
@@ -226,26 +231,39 @@ class WarmSession:
                 host=host,
                 allow_missing_tree_hash=False,
             )
+            epoch_after = self._read_epoch_or_none(target)
+            sweep_after = self._sweep_or_degrade(target)
+            writer_overlapped = (
+                epoch_before is None
+                or epoch_after is None
+                or epoch_before != epoch_after
+                or sweep_before is None
+                or sweep_after is None
+                or sweep_before != sweep_after
+            )
             if status == "invalid":
+                # A lock-free failure is attribution-ambiguous: a writer
+                # that swapped and restored mid-verify leaves net-neutral
+                # sweep/epoch evidence indistinguishable from corruption.
+                # Drop the memo and fail this touch; every later touch
+                # re-verifies cold (review F3) — the cold path's own
+                # per-invocation contract, so no cached success ever
+                # survives a failure and nothing unverified is served.
                 self._entries.pop(target_key, None)
-                self._sticky.add(target_key)
-                self._stats["sticky_rejects"] += 1
                 return None
             if status != "ok" or manifest is None:
                 return None
 
-            epoch_after = self._read_epoch_or_none(target)
-            sweep = self._sweep_or_degrade(target)
             if (
-                sweep is not None
+                not writer_overlapped
                 and not self._degraded
-                and epoch_before is not None
-                and epoch_before == epoch_after
+                and sweep_after is not None
+                and epoch_after is not None
             ):
                 self._entries[target_key] = _WarmEntry(
                     manifest=copy.deepcopy(manifest),
-                    file_stats=sweep[0],
-                    manifest_stat=sweep[1],
+                    file_stats=sweep_after[0],
+                    manifest_stat=sweep_after[1],
                     epoch=epoch_after,
                 )
             return copy.deepcopy(manifest)
@@ -271,15 +289,15 @@ class WarmSession:
         the caller must re-run the full cold gate under its lock.
         """
         target = target.expanduser().absolute()
-        target_key = os.path.normcase(str(target.resolve(strict=False)))
+        resolved = target.resolve(strict=False)
+        target_key = os.path.normcase(str(resolved))
         with self._lock:
             self._require_open()
             if (
                 self._degraded
                 or self._window_depth == 0
                 or self._window_thread != threading.get_ident()
-                or target_key in self._sticky
-                or not target.is_relative_to(self._root)
+                or not resolved.is_relative_to(self._root)
             ):
                 self._stats["misses"] += 1
                 return None
@@ -339,15 +357,15 @@ class WarmSession:
         if not self._cache_identity_matches(manifest, owner, repo, commit_sha, host):
             return
         target = target.expanduser().absolute()
-        target_key = os.path.normcase(str(target.resolve(strict=False)))
+        resolved = target.resolve(strict=False)
+        target_key = os.path.normcase(str(resolved))
         with self._lock:
             self._require_open()
             if (
                 self._degraded
                 or self._window_depth == 0
                 or self._window_thread != threading.get_ident()
-                or target_key in self._sticky
-                or not target.is_relative_to(self._root)
+                or not resolved.is_relative_to(self._root)
             ):
                 return
             epoch = self._read_epoch_or_none(target)
@@ -368,17 +386,15 @@ class WarmSession:
                 "hits": self._stats["hits"],
                 "misses": self._stats["misses"],
                 "revalidations": self._stats["revalidations"],
-                "sticky_rejects": self._stats["sticky_rejects"],
                 "cold_fallbacks": self._stats["cold_fallbacks"],
             }
 
     def invalidate(self, target: Path) -> None:
-        """Forget one target's cache entry and sticky rejection."""
+        """Forget one target's cache entry."""
         target_key = os.path.normcase(str(target.expanduser().resolve(strict=False)))
         with self._lock:
             self._require_open()
             self._entries.pop(target_key, None)
-            self._sticky.discard(target_key)
 
     def close(self) -> None:
         """Discard every task-local memo; no locks are held to release."""
@@ -386,7 +402,6 @@ class WarmSession:
             if self._closed:
                 return
             self._entries.clear()
-            self._sticky.clear()
             self._window_depth = 0
             self._window_thread = None
             self._closed = True

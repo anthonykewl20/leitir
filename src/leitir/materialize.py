@@ -23,6 +23,7 @@ import stat
 import tarfile
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -288,6 +289,27 @@ def parse_lock_epoch(data: bytes) -> int | None:
     return int(data)
 
 
+def _write_epoch_with_retry(path: Path, data: bytes) -> None:
+    """Atomically replace the epoch, tolerating brief contrary reader handles.
+
+    On Windows a lock-free reader's open() handle (no FILE_SHARE_DELETE)
+    makes os.replace over the epoch fail with PermissionError for the
+    handle's lifetime.  Readers hold it for microseconds; a short bounded
+    retry keeps that from aborting writers (review F4) without ever
+    weakening the bump: persistence still fails closed in the caller.
+    """
+    last: OSError | None = None
+    for attempt in range(5):
+        try:
+            atomic_write_bytes(path, data)
+            return
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.01 * (attempt + 1))
+    assert last is not None
+    raise last
+
+
 def _bump_lock_epoch(lock_identity: str) -> None:
     """Advance one target's on-disk epoch; callers hold the target lock.
 
@@ -303,9 +325,7 @@ def _bump_lock_epoch(lock_identity: str) -> None:
     parsed = parse_lock_epoch(current) if current is not None else None
     value = parsed + 1 if parsed is not None else 1
     try:
-        atomic_write_bytes(
-            _epoch_path(lock_identity), f"{value}\n".encode("ascii")
-        )
+        _write_epoch_with_retry(_epoch_path(lock_identity), f"{value}\n".encode("ascii"))
     except OSError as exc:
         # Fail the acquisition itself: a mutation whose heralding bump could
         # not be durably recorded must not proceed under this lock.

@@ -352,10 +352,24 @@ Cache validity across released-lock intervals is then:
    whole-tree stat signature — per regular file `(relative path, inode,
    mtime_ns, ctime_ns, size)` plus the manifest's own stat — is unchanged
    since the recorded full verification. The session holds no target locks
-   on this path. Entries are recorded only when the epoch read before and
-   after the full verification is identical (no writer intervened while the
-   bytes were being hashed), and a shelf whose (re)verification fails is
-   sticky-rejected for the remainder of the session.
+   on this path. Entries are recorded only when BOTH the epoch reads and
+   BOTH the stat sweeps bracketing the full verification agree: the epoch
+   brackets acquisitions, not mutations — a cooperating writer swaps the
+   shelf at the *end* of a long held interval, after its bump — so epoch
+   agreement alone cannot prove the hashed bytes and the pinned signature
+   describe one shelf state (review round 2, F1).
+
+   **Failure attribution (review round 2, F3).** A failed verification
+   drops the memo and fails that touch. A lock-free failure cannot be
+   attributed: a racing writer that swaps and restores mid-verification
+   leaves evidence net-neutral and indistinguishable from corruption, so
+   the session never blacklists a shelf — every later touch re-verifies
+   cold, exactly the cold path's per-invocation contract, never weaker and
+   never session-permanent. No cached success survives a failure (the memo
+   is dropped), and nothing unverified is ever served (re-serving requires
+   a fresh successful full verification). This refines §5's original
+   session-sticky wording, which assumed verification failure implied
+   corruption.
 
 2. **Under-lock streaming gate** (engine local-shelf streaming, which in the
    cold path holds the per-target lock across the stream): the caller
@@ -394,7 +408,11 @@ skew — the same trust class as any stale writer); (ii) the epoch file
 itself is not adversarially protected (an attacker who restores an old
 epoch snapshot after mutating is equivalent to the stat-restoring
 adversary above). Both are bounded by the session-scoped lifetime of the
-memo and by the unchanged cold gate that every first touch still pays.
+memo and by the unchanged cold gate that every first touch still pays. On
+filesystems whose `st_ino` is unstable (FAT/exFAT-class removable media)
+the signature silently degrades to its mtime/ctime/size components — the
+same direction as the Windows residual, and likewise detected by the next
+cold load.
 
 ## Positive Consequences
 

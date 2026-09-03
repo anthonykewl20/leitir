@@ -189,7 +189,6 @@ class WarmJsonCaller:
                 "hits": 0,
                 "misses": 0,
                 "revalidations": 0,
-                "sticky_rejects": 0,
                 "cold_fallbacks": 0,
             }
         return self._session.stats()

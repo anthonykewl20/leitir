@@ -23,4 +23,6 @@
 - [ ] Determinism verified (`PYTHONHASHSEED`-independent)
 - [ ] Fail-closed paths preserved
 - [ ] Full suite passes: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
+- [ ] Review lane marked: ordinary (one review) / sensitive (security, integrity, or materialization — two reviews)
+- [ ] Follow-ups: none, or filed as issues with acceptance criteria
 - [ ] AI assistance disclosed (tool and use described) — required if used

@@ -1,13 +1,44 @@
 # AGENTS.md — Working on leitir with AI agents
 
-## Where to find tracked work
+## Where work comes from
 
-- **Milestone status:** [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6) is **released** (2026-08-25, gated `release.yml` run 32853136479: gate/package/release/attest all green) and `pyproject.toml` is 0.1.6. It ships the offline usage evidence pipeline (#255-#259, PR #260) plus the fixes from a full-product real-data E2E campaign (PRs #261, #262): a `doctor` cache-integrity blind spot, null registry metadata crashing `get`/`info`/`lock`, raw tracebacks on Ctrl+C, unbounded regex/signature/path predicates, `examples` misranking install commands above real usage, and non-functioning `info`/`api` caches. [v0.1.5](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.5) is released (2026-08-24, first release cut through the gated `release.yml`). [v0.1.4](https://github.com/anthonykewl20/leitir/milestone/4) is complete and released — the first `v*` tag (2026-08-17). v0.1.3 is complete. v0.1.2 is complete and closed: the runtime digest was ratified on 2026-08-17 (owner key `7baec2e9…` signing `sha256:72949674…` via `benchmarks/exit-corpus/ratification-v1.json`), the Phase-C gate reached `complete` on branch run 32018653190 and canonical main run 32018948262 (5/5 donors), and #73/#52 were closed on that evidence; the five-donor Phase-A corpus is repeatedly contained-green and the six-task BTS benchmark is published.
-- Pull available work with: `gh issue list --label ready-for-agent --state open`. **The ready-for-agent pool is currently empty; promotion is owner-gated.** PRs #163–#185 are landed: they cover contained execution, security P2 remediation, contained benchmark baselines, the published rootfs, the ratification ceremony, the Phase-C closure evidence, and the v0.1.4 release cut. #42, #75, #148, #73, and #52 are closed with their evidence. ADR-0021's manifest-free donor mount projection removed the run-to-run staged mount-source tree digest drift; runs 32008683557 and 32009633642 measured the stabilized digest byte-identically, the 2026-08-17 owner ceremony rotated the trust root (session key 8528aa69… destroyed as documented) and re-signed, and Phase-C ran `complete` (branch 32018653190, main 32018948262).
-- The occupied gate's trust binding follows ADR-0017: policy-pinned authority, occupied rerun receipts, and complete dependency evidence are required for composition acceptance.
-- ADR-0008 through ADR-0011 are Accepted and Implemented. ADR-0012 is Accepted and fully implemented; ADR-0013 through ADR-0019, including ADR-0018, are Accepted. Issues #76/#77/#78/#79/#80 are closed via PRs #132/#137/#136/#135/#134, with shared contract unification in PR #138; #128 is closed by PR #131's three-layer Windows fix. Main now includes `composition.py`, `architecture.py`, `duplicates.py`, `lineage.py` (plus bundle v2), `cost.py`, `occupied.py`, and the polyglot graph modules `graph/{ts_kernel,javascript,typescript,rust,go}.py`, with graph policy/registry scaffolding and `requirements-tree-sitter.lock`.
-- The contained workflow uses the published `containment-rootfs-v1` release asset, whose canonical tree digest is `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`; consumers verify it before policy construction. The Ed25519 key sidecar and trusted-key configuration are committed and bind the ratified runtime digest `sha256:72949674…` (owner key `7baec2e9…`, 2026-08-17); acceptance evidence is the Phase-C COMPLETE exit-gate run on `main` ([32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262)).
-- The daily `GH_TOKEN`-gated live canary is enabled and green on main. Production-readiness evidence includes the 116-package load test, dogfood evidence (with a tracked low/medium friction backlog), and post-#163 independent security sign-offs with P2 remediation. Note: v1.0 is reserved for the 10,000-users adoption milestone; production-ready quality is achieved within the 0.x series, not at a specific version number.
+- The owner assigns work directly: a task naming an issue, or an issue labeled
+  `ready-for-agent`. If the label pool is empty, do not wait for promotion and
+  do not ask — work the assignment you were given.
+- Never self-assign issues the owner did not give you.
+- Current status (test counts, releases, run evidence, milestones) lives on
+  GitHub and in README's dated status paragraph — never in this file.
+
+## Agent operating rules
+
+1. Read the assigned issue end-to-end, then the code it names; plan locally, not on GitHub.
+2. Probe first: reproduce the real defect or missing behavior with the actual code before writing anything.
+3. Write the failing user-level intent test ("when a user runs X, they observe Y"), then the smallest honest fix.
+4. Any integrity path touched gets a tamper/reject test in the same change.
+5. Preserve the conventions below without exception.
+6. Run the full suite, `ruff check .`, and `mypy src`; all green before calling anything done.
+7. Behavior change means the relevant ADR and README section change in the same PR.
+8. One issue, one PR, template filled, `Closes #N` in the body.
+9. Address review by pushing commits; at most one "addressed in `<sha>`" note per thread.
+10. Comment on GitHub only when genuinely blocked after local investigation: one blocking question, then continue what you can.
+11. Never close an issue manually; its PR's merge closes it.
+12. Follow-ups are finished inside the PR or filed as issues with acceptance criteria — never untracked TODOs.
+
+## Definition of done (what stops the loop)
+
+A task is done when its PR is green (full suite, ruff, mypy), its checklist is
+complete, its review lane is satisfied, and it is mergeable with `Closes #N`.
+Merging may be owner-gated; the agent is not blocked on it. After merge,
+verify the issue auto-closed.
+
+## Review lanes
+
+- Ordinary change: one independent review (reviewer-hy3, reviewer-qwen, or a
+  human equivalent — any one), after CI is green.
+- Security, integrity, or materialization change (verification, manifests,
+  keys, fail-closed paths, error taxonomy): both reviewers, requested together;
+  each reviews the diff; no review-to-review thread.
+- A misclassified lane is fixed by requesting the second review, not redoing the PR.
 
 ## Conventions (non-negotiable)
 
@@ -21,28 +52,30 @@
 ## Test discipline
 
 - Run: `PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q`
-- Target: 3431 passed / 143 skipped (current; the six L5 ratification tests additionally run with the optional `cryptography` extra), 0 failed; installing the tree-sitter extra runs additional polyglot tests.
-- Live tests are gated on `LEITIR_ENABLE_LIVE_E2E=1`; don't ungate them in default CI.
+- Gate: zero failures; skips only where an env gate holds them back. The live
+  pass/skip count is not recorded here — paste suite output into the PR.
+- Live tests stay behind `LEITIR_ENABLE_LIVE_E2E=1`; never ungate them in default CI.
 - Do not weaken tests. If a test caught real behavior, fix production code.
-- For security/integrity changes, add a tamper/reject test.
-
-## Review discipline
-
-- Security, integrity, or materialization changes require independent review by `reviewer-hy3` and `reviewer-qwen` (or human equivalent).
-- The reference example of “how a fix should look” is issue #17: real probes → fix → tests → review → ADR.
+- Security/integrity changes add a tamper/reject test.
 
 ## Documentation discipline
 
-- If you change behavior, update the relevant ADR + README section in the same change.
-- Status claims (test count, scorer decision) drift fast — re-verify before committing.
+- Behavior change ⇒ relevant ADR + README section updated in the same change.
+- Rule documents (this file, CONTRIBUTING.md, docs/testing.md,
+  docs/adr/README.md, and the issue/PR templates) carry invariants, never
+  status. Dated records — docs/STATUS.md, ADRs, PRD status blocks — are status
+  by design and are exempt; the only live suite count outside them is README's
+  dated status paragraph.
+
+## Change size
+
+Most fixes are probe → red test → fix → PR. Write an ADR for durable
+architectural choices (docs/adr/README.md), not for every change. Issue #17 is
+a thorough historical example, not the default arc.
 
 ## Out of scope without explicit authorization
 
-- No commits without explicit user request.
-- No dependency additions.
-- No removal of fail-closed paths.
-- No disable of the load-time tree verification (`materialized_tree_hash`).
-
-## Reference example
-
-Issue #17 (https://github.com/anthonykewl20/leitir/issues/17) shows the full workflow: probe-driven weakness analysis → research → implementation → review → follow-ups → milestone tracking. Follow that pattern for new work.
+- No unsolicited commits. When the owner asks for work, commits, tests, docs,
+  and the opened PR are part of that work.
+- No dependency additions. No removal of fail-closed paths. No disabling
+  load-time tree verification (`materialized_tree_hash`).

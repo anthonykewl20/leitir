@@ -93,17 +93,35 @@ behavior when a test identifies a real defect.
 Security and integrity changes must include a tamper/reject test that proves
 malformed or mismatched data is rejected.
 
+## Definition of done
+
+The authoritative definition of done lives in [AGENTS.md](AGENTS.md): a green
+PR (full suite, ruff, mypy), a complete checklist, a satisfied review lane,
+mergeability with `Closes #N`, and the issue auto-closed by the merge. Treat
+AGENTS.md as the source of truth rather than duplicating criteria here.
+
 ## Review discipline
 
-Security, integrity, and materialization changes require independent review.
-Issue [#17](https://github.com/anthonykewl20/leitir/issues/17) is the reference
-example: real probes, a focused fix, tests, review, and an ADR.
+Review requirements follow the review lanes defined in
+[AGENTS.md](AGENTS.md): an ordinary change needs one independent review after
+CI is green; a security, integrity, or materialization change (verification,
+manifests, keys, fail-closed paths, error taxonomy) needs both reviewers,
+requested together. Reviews are answered by pushing commits, with at most one
+"addressed in `<sha>`" note per thread. Issue
+[#17](https://github.com/anthonykewl20/leitir/issues/17) is a thorough
+historical example, not the required arc for every change.
 
 ## Documentation discipline
 
 When behavior changes, update the relevant ADR and README section in the same
 change. Status claims such as test counts and scorer decisions drift quickly;
 re-verify them before committing.
+
+Rule documents (AGENTS.md, CONTRIBUTING.md, docs/testing.md,
+docs/adr/README.md, and the issue/PR templates) state invariants, not status.
+Dated records — docs/STATUS.md, ADRs, PRD status blocks — are status by design
+and are exempt; the only live suite count outside them is README's dated
+status paragraph.
 
 ## AI-assisted contributions
 
@@ -113,7 +131,9 @@ its behavior, and responding to review feedback.
 
 ## Out of scope without explicit authorization
 
-- Do not create commits unless explicitly requested.
+- Do not create commits unless the work was explicitly requested. When the
+  owner asks for work, finishing it — commits, tests, docs, and an opened PR —
+  is in scope; unsolicited commits remain forbidden.
 - Do not add runtime dependencies.
 - Do not remove fail-closed paths.
 - Do not disable load-time tree verification through

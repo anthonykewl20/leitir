@@ -357,7 +357,6 @@ def test_resolve_under_lock_rejects_extra_intervening_acquisition(
     here (review P2: the rejection branch had no pin).
     """
     target = _shelf(tmp_path)
-    calls = _count_verifications(monkeypatch)
     with WarmSession(tmp_path) as session, session.call():
         with materialize._target_lock(tmp_path, target, SHA):
             # First touch: cold verification recorded under this hold, with

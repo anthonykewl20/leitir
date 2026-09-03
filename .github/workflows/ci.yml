@@ -182,10 +182,12 @@ jobs:
           PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
 
   coverage:
-    # Observed 14:25 on main (2026-09-03; the 1:38 note was pre-suite-growth);
-    # PR runs at 15:16 hit the old 15-min ceiling and were canceled. 30 min
-    # ≈ 2× margin (issue #199 discipline, refreshed).
-    timeout-minutes: 30
+    # Serial full-suite measurement was 14:25 on main (2026-09-03) and its
+    # 15-min ceiling started canceling runs (30 min was the stopgap). Sharded
+    # via pytest-cov + xdist, the same line+branch measurement and
+    # per-module baselines hold at a fraction of the wall time. 20 min keeps
+    # >2× margin (issue #199 discipline).
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -210,7 +212,7 @@ jobs:
           PYTHONPATH: src
         run: |
           source .tree-sitter-venv/bin/activate
-          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 python -m coverage run --branch --source=leitir -m pytest -q -p no:cacheprovider
+          uv run --active --no-project --with-requirements requirements.txt --with coverage==7.15.2 --with pytest-cov==7.1.0 python -m pytest -q -p no:cacheprovider -n auto --cov=leitir --cov-branch --cov-report=
       - name: Write coverage reports
         run: |
           uv run --no-project --with coverage==7.15.2 python -m coverage report --precision=2 --fail-under=82.5

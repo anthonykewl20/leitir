@@ -19,7 +19,7 @@ import stat
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO, cast
+from typing import TYPE_CHECKING, Any, TextIO, TypedDict, cast
 
 from .cli_support import (
     _UPGRADE_CACHE_DESCRIPTION,
@@ -40,10 +40,17 @@ from .spec import CorpusSpec, parse_corpus_spec
 
 if TYPE_CHECKING:
     from .resolver import ResolvedPackage
+    from .warm import WarmSession
 
 if TYPE_CHECKING:
     from .diff import DiffReport, ImpactReport
     from .trust import TrustScore
+
+
+class _WarmSessionOptions(TypedDict, total=False):
+    """Optional warm-session keyword forwarded to compatible owners."""
+
+    session: WarmSession
 
 def register_index(commands: argparse._SubParsersAction) -> None:
     index_command = commands.add_parser(
@@ -448,7 +455,11 @@ def _print_diff_impact_summary(impact: ImpactReport, err: TextIO) -> None:
 
 
 def _require_all_shelves_authenticated(
-    root: Path, args: argparse.Namespace, *, err: TextIO
+    root: Path,
+    args: argparse.Namespace,
+    *,
+    err: TextIO,
+    session: WarmSession | None = None,
 ) -> None:
     """Fail closed if any shelved source lacks a valid publisher signature.
 
@@ -466,12 +477,23 @@ def _require_all_shelves_authenticated(
     # policy whose whole point is to hold over the entire corpus.
     for entry in load_sources(root, strict=True):
         target = root / entry["path"]
-        manifest = read_valid_manifest(
-            target,
-            entry["owner"],
-            entry["repo"],
-            entry["commit_sha"],
-            host=entry["host"],
+        manifest = (
+            read_valid_manifest(
+                target,
+                entry["owner"],
+                entry["repo"],
+                entry["commit_sha"],
+                host=entry["host"],
+                session=session,
+            )
+            if session is not None
+            else read_valid_manifest(
+                target,
+                entry["owner"],
+                entry["repo"],
+                entry["commit_sha"],
+                host=entry["host"],
+            )
         )
         if manifest is None:
             raise ValueError(
@@ -494,6 +516,7 @@ def _corpus_list(
     err: TextIO | None = None,
     require_auth: bool = False,
     trusted_keys: str | None = None,
+    session: WarmSession | None = None,
 ) -> None:
     from .corpus import load_sources
     from .info import source_routing
@@ -511,12 +534,23 @@ def _corpus_list(
     rendered = []
     filtered = 0
     for entry in entries:
-        manifest = read_valid_manifest(
-            root / entry["path"],
-            entry["owner"],
-            entry["repo"],
-            entry["commit_sha"],
-            host=entry["host"],
+        manifest = (
+            read_valid_manifest(
+                root / entry["path"],
+                entry["owner"],
+                entry["repo"],
+                entry["commit_sha"],
+                host=entry["host"],
+                session=session,
+            )
+            if session is not None
+            else read_valid_manifest(
+                root / entry["path"],
+                entry["owner"],
+                entry["repo"],
+                entry["commit_sha"],
+                host=entry["host"],
+            )
         )
         if manifest is None:
             if require_auth:
@@ -585,7 +619,12 @@ def _corpus_list(
 
 
 def _upgrade_cache(
-    root: Path, *, dry_run: bool, recompute_git_parity: bool, out: TextIO
+    root: Path,
+    *,
+    dry_run: bool,
+    recompute_git_parity: bool,
+    out: TextIO,
+    session: WarmSession | None = None,
 ) -> int:
     """Backfill integrity anchors; parity recomputation can downgrade exact to drift."""
     from .materialize import MANIFEST_NAME, _target_lock, _write_manifest
@@ -598,6 +637,10 @@ def _upgrade_cache(
     upgraded = skipped = failed = 0
     for manifest_path in sorted(root.rglob(MANIFEST_NAME)):
         target = manifest_path.parent
+        if session is not None and not dry_run:
+            # This command can amend any manifest it encounters. Invalidate
+            # before inspecting it so no memo survives a partial writer run.
+            session.invalidate(target)
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
@@ -657,6 +700,7 @@ def _gc_abandoned_staging(root: Path) -> int:
         MANIFEST_NAME,
         MaterializationError,
         _assert_target_confinement,
+        _bump_lock_epoch,
         _file_lock,
         _fsync_directory,
         read_valid_manifest,
@@ -724,6 +768,11 @@ def _gc_abandoned_staging(root: Path) -> int:
         ).encode("utf-8")
         lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
         with _file_lock(lock_path):
+            # This recovery path restores or removes shelf generations
+            # directly; advance the writer-visible epoch for the same lock
+            # identity _target_lock would have bumped, so warm sessions
+            # observe the mutation (ADR-0035 amendment, review P2).
+            _bump_lock_epoch(os.path.normcase(str(lock_path.absolute())))
             _assert_target_confinement(root, candidate)
             if marker == ".old-" and not target.exists():
                 # A crash after target -> backup but before staging -> target
@@ -796,6 +845,7 @@ def _run_corpus_command(
     code_search_factory: Callable[[str | None], object],
     out: TextIO,
     err: TextIO,
+    session: WarmSession | None = None,
 ) -> int:
     # Looked up dynamically through the ``leitir.cli`` module object (rather
     # than imported by name) so that ``monkeypatch.setattr("leitir.cli.
@@ -811,6 +861,9 @@ def _run_corpus_command(
             require_manifest_authentication = True
         root = _corpus_root(args, err)
         if args.command == "list":
+            list_options: _WarmSessionOptions = {}
+            if session is not None:
+                list_options["session"] = session
             _corpus_list(
                 root,
                 as_json=args.as_json,
@@ -818,6 +871,7 @@ def _run_corpus_command(
                 err=err,
                 require_auth=require_manifest_authentication,
                 trusted_keys=getattr(args, "trusted_keys", None),
+                **list_options,
             )
             return int(ExitCode.SUCCESS)
         if args.command == "upgrade-cache":
@@ -826,6 +880,7 @@ def _run_corpus_command(
                 dry_run=args.dry_run,
                 recompute_git_parity=args.recompute_git_parity,
                 out=out,
+                session=session,
             )
         if args.command == "gc":
             removed = _gc_abandoned_staging(root)
@@ -853,7 +908,10 @@ def _run_corpus_command(
             if not shelves:
                 raise ValueError("the corpus has no materialized shelves to index")
             if require_manifest_authentication:
-                _require_all_shelves_authenticated(root, args, err=err)
+                if session is None:
+                    _require_all_shelves_authenticated(root, args, err=err)
+                else:
+                    _require_all_shelves_authenticated(root, args, err=err, session=session)
             built_paths: list[str] = []
             skipped_ineligible: list[dict[str, object]] = []
             hard_errors: list[dict[str, object]] = []
@@ -929,8 +987,14 @@ def _run_corpus_command(
             from .corpus import record_trust
 
             if require_manifest_authentication:
-                _require_all_shelves_authenticated(root, args, err=err)
-            entry, untyped_result, target = record_trust(args.spec, root)
+                if session is None:
+                    _require_all_shelves_authenticated(root, args, err=err)
+                else:
+                    _require_all_shelves_authenticated(root, args, err=err, session=session)
+            if session is None:
+                entry, untyped_result, target = record_trust(args.spec, root)
+            else:
+                entry, untyped_result, target = record_trust(args.spec, root, session=session)
             result = cast("TrustScore", untyped_result)
             payload = dict(
                 result.as_dict(),
@@ -972,6 +1036,9 @@ def _run_corpus_command(
                 fetch_options["tree_base_url"] = os.environ[
                     "LEITIR_GITHUB_API_BASE_URL"
                 ]
+            writer_session: _WarmSessionOptions = (
+                {"session": session} if session is not None else {}
+            )
             notes_options: _BaseUrlOptions = {}
             if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
                 notes_options["base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
@@ -1036,6 +1103,7 @@ def _run_corpus_command(
                         else None
                     ),
                     on_fetch=announce_fetch,
+                    **writer_session,
                     **fetch_options,
                 )
                 prepared[raw] = (path, scope, materialize_host)
@@ -1164,7 +1232,10 @@ def _run_corpus_command(
             from .snapshot import export_corpus
 
             if require_manifest_authentication:
-                _require_all_shelves_authenticated(root, args, err=err)
+                if session is None:
+                    _require_all_shelves_authenticated(root, args, err=err)
+                else:
+                    _require_all_shelves_authenticated(root, args, err=err, session=session)
             lock_path, tarball_path = export_corpus(args.output, root=root)
             lock_sha256 = hashlib.sha256(lock_path.read_bytes()).hexdigest()
             print(
@@ -1313,6 +1384,9 @@ def _run_corpus_command(
         fetch_options["verify"] = not args.no_verify
         if os.environ.get("LEITIR_GITHUB_API_BASE_URL"):
             fetch_options["tree_base_url"] = os.environ["LEITIR_GITHUB_API_BASE_URL"]
+        materializer_session: _WarmSessionOptions = (
+            {"session": session} if session is not None else {}
+        )
         raw_specs = args.specs if hasattr(args, "specs") else [args.spec]
         index_paths: list[Path] = []
         index_payloads: list[dict[str, object]] = []
@@ -1437,6 +1511,7 @@ def _run_corpus_command(
                         else None
                     ),
                     on_fetch=announce_fetch,
+                    **materializer_session,
                     **fetch_options,
                 )
                 materialized_targets[target_identity] = materialized_path
@@ -1526,7 +1601,11 @@ def _run_corpus_command(
                         file=err,
                     )
                     if args.brief:
-                        brief_document = build_brief_info(raw, corpus_root=root)
+                        brief_document = (
+                            build_brief_info(raw, corpus_root=root, session=session)
+                            if session is not None
+                            else build_brief_info(raw, corpus_root=root)
+                        )
                         if args.as_json:
                             print(
                                 json.dumps(brief_document, indent=2, sort_keys=True),
@@ -1560,7 +1639,11 @@ def _run_corpus_command(
                             print(f"trust: {brief_document['trust']}/100", file=out)
                             print(brief_document["citation"], file=out)
                         continue
-                    document = build_info(raw, corpus_root=root)
+                    document = (
+                        build_info(raw, corpus_root=root, session=session)
+                        if session is not None
+                        else build_info(raw, corpus_root=root)
+                    )
                     if args.as_json:
                         print(json.dumps(document, indent=2, sort_keys=True), file=out)
                     else:
@@ -1811,6 +1894,7 @@ def run(
     code_search_factory: Callable[[str | None], object],
     out: TextIO,
     err: TextIO,
+    session: WarmSession | None = None,
 ) -> int:
     """Dispatch one of the corpus-family verbs and report its outcome.
 
@@ -1823,6 +1907,7 @@ def run(
         code_search_factory=code_search_factory,
         out=out,
         err=err,
+        session=session,
     )
     if result == int(ExitCode.SUCCESS):
         return mark_successful()

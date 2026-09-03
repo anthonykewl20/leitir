@@ -38,7 +38,8 @@ import argparse
 import importlib.metadata
 import sys
 from collections.abc import Callable, Sequence
-from typing import TextIO, cast
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, TextIO, cast
 
 from . import cli_ask, cli_bts, cli_corpus, cli_diagnostics, cli_search
 from .cli_corpus import _corpus_list, _gc_abandoned_staging, _require_all_shelves_authenticated
@@ -66,6 +67,9 @@ from .cli_support import (
     mark_successful,
 )
 from .spec import parse_corpus_spec
+
+if TYPE_CHECKING:
+    from .warm import WarmSession
 
 __all__ = [
     "ExitCode",
@@ -187,6 +191,7 @@ def main(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     _exit_windows_doctor_success: bool = False,
+    session: WarmSession | None = None,
 ) -> int:
     """Parse one command and wire resolver -> engine -> report.
 
@@ -212,6 +217,7 @@ def main(
             stdout=stdout,
             stderr=stderr,
             _exit_windows_doctor_success=_exit_windows_doctor_success,
+            session=session,
         )
     except KeyboardInterrupt:
         try:
@@ -236,6 +242,7 @@ def _main_impl(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     _exit_windows_doctor_success: bool = False,
+    session: WarmSession | None = None,
 ) -> int:
     out = stdout or sys.stdout
     err = stderr or sys.stderr
@@ -251,19 +258,21 @@ def _main_impl(
     # the outer call's route pointing at the inner call's buffer.
     restore_logging_route = _configure_logging_from_env(args, err)
     try:
-        return _dispatch_command(
-            args,
-            out=out,
-            err=err,
-            stdout=stdout,
-            tree_source_factory=tree_source_factory,
-            resolver_factory=resolver_factory,
-            searcher_factory=searcher_factory,
-            code_search_factory=code_search_factory,
-            global_searcher_factory=global_searcher_factory,
-            benchmark_runner_factory=benchmark_runner_factory,
-            _exit_windows_doctor_success=_exit_windows_doctor_success,
-        )
+        with session.call() if session is not None else nullcontext():
+            return _dispatch_command(
+                args,
+                out=out,
+                err=err,
+                stdout=stdout,
+                tree_source_factory=tree_source_factory,
+                resolver_factory=resolver_factory,
+                searcher_factory=searcher_factory,
+                code_search_factory=code_search_factory,
+                global_searcher_factory=global_searcher_factory,
+                benchmark_runner_factory=benchmark_runner_factory,
+                _exit_windows_doctor_success=_exit_windows_doctor_success,
+                session=session,
+            )
     finally:
         restore_logging_route()
 
@@ -281,7 +290,11 @@ def _dispatch_command(
     global_searcher_factory: Callable[..., object],
     benchmark_runner_factory: Callable[[object], object],
     _exit_windows_doctor_success: bool,
+    session: WarmSession | None,
 ) -> int:
+    # The session is deliberately carried to verb owners rather than read from
+    # ambient process state. Its enclosing call window is active for this
+    # dispatch; owners may open nested windows for their local fan-out.
     from ._update_check import maybe_start_update_check
 
     maybe_start_update_check(
@@ -369,6 +382,7 @@ def _dispatch_command(
             code_search_factory=code_search_factory,
             out=out,
             err=err,
+            session=session,
         )
 
     # Only "search" remains once every other verb has returned above,
@@ -382,6 +396,7 @@ def _dispatch_command(
         global_searcher_factory=global_searcher_factory,
         out=out,
         err=err,
+        session=session,
     )
 
 

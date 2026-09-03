@@ -19,8 +19,14 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add the agent-facing code-supply verbs and close two coverage falsifications
 - derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
+- replace in-memory lock epochs with writer-visible on-disk epochs (#272) (`warm`)
+- thread optional WarmSession through engine and corpus read paths (#272) (`warm`)
+- thread the active warm session into verb owners (#272) (`cli`)
+- warm_call(root) context manager and session-aware CLI dispatch (#272) (`api`)
+- WarmSession verified-manifest cache with lock-epoch invalidation (#272) (`warm`)
 
 ### Fixed
+- attribute verification failures correctly under concurrent writers (#272) (`warm`)
 - bind port attribution to measured BTS evidence, not caller claims (`bts`)
 - close the strict-defeating laundering gap and audit IndexedSearcher (P1/P2 review findings) (`corpus`)
 - fail closed on a corrupt catalog for write, artefact, and policy callers of load_sources (`corpus`)
@@ -42,6 +48,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)
 
 ### Security
+- advance the epoch on gc shelf recovery; pin the under-lock rejection (#272) (`warm`)
 - capture concurrent call_json warnings per thread (#281) (`api`)
 - resolve single-shelf specs against the catalog before verifying (#279) (`corpus`)
 

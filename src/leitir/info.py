@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
+
+if TYPE_CHECKING:
+    from .warm import WarmSession
 
 from .apisurface import API_SCHEMA_VERSION, extract_api_surface
 from .corpus import (
@@ -105,8 +108,13 @@ def source_routing(target: Path, identifier: object) -> dict[str, str]:
     return {"verdict": routing.verdict, "reason": routing.reason}
 
 
-def _source(spec: str, corpus_root: Path) -> tuple[dict[str, Any], dict[str, object], Path]:
-    matches = find_materialized_sources(spec, corpus_root)
+def _source(
+    spec: str,
+    corpus_root: Path,
+    *,
+    session: WarmSession | None = None,
+) -> tuple[dict[str, Any], dict[str, object], Path]:
+    matches = find_materialized_sources(spec, corpus_root, session=session)
     if not matches:
         raise ValueError(f"source is not materialized: {spec}")
     if len(matches) != 1:
@@ -267,12 +275,21 @@ def _api_summary(index: dict[str, object], path: Path) -> dict[str, object]:
     }
 
 
-def build_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
+def build_info(
+    spec: str,
+    *,
+    corpus_root: str | Path,
+    session: WarmSession | None = None,
+) -> dict[str, object]:
     """Build context from one already-materialized source, filling missing caches."""
 
     logger.debug("building info spec=%s corpus_root=%s", spec, corpus_root)
     root = resolve_root(corpus_root)
-    entry, manifest, target = _source(spec, root)
+    entry, manifest, target = _source(spec, root, session=session)
+    if session is not None:
+        # Info may refresh the API/examples/trust/license caches below.  Its
+        # initial lookup cannot survive that possible writer transaction.
+        session.invalidate(target)
     raw_subpath = manifest.get("subpath")
     subpath = raw_subpath if isinstance(raw_subpath, str) else None
     scan_path = target / subpath if subpath else target
@@ -438,7 +455,12 @@ def _citation_line(provenance: dict[str, object], example: dict[str, object] | N
     return f"# Per {owner}/{repo}@{sha}:"
 
 
-def build_brief_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]:
+def build_brief_info(
+    spec: str,
+    *,
+    corpus_root: str | Path,
+    session: WarmSession | None = None,
+) -> dict[str, object]:
     """A materially smaller projection of ``build_info`` for repeated agent calls.
 
     Purely subtractive (issue #266 A2): every field returned here is
@@ -452,7 +474,7 @@ def build_brief_info(spec: str, *, corpus_root: str | Path) -> dict[str, object]
     factor breakdown, cache paths, and the long tail of symbols/examples.
     """
 
-    document = build_info(spec, corpus_root=corpus_root)
+    document = build_info(spec, corpus_root=corpus_root, session=session)
     provenance = cast(dict[str, object], document["provenance"])
     api = cast(dict[str, object], document["api"])
     examples = cast(dict[str, object], document["examples"])

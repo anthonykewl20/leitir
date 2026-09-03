@@ -213,6 +213,30 @@ def test_warm_cli_tamper_between_calls_is_rejected(
     assert stats["misses"] > 0
 
 
+def test_warm_cli_second_call_reuses_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0035 option (b): an untouched shelf is not re-verified across calls."""
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+    monkeypatch.setattr("leitir.index.query._utc_now", lambda: "2026-09-02T00:00:00Z")
+    _install_corpus(tmp_path)
+    argv = _corpus_search_argv(tmp_path)
+
+    with warm_call(tmp_path) as caller:
+        first = caller(argv)
+        after_first = caller.stats()
+        assert after_first["misses"] > 0
+
+        second = caller(argv)
+        after_second = caller.stats()
+
+    assert second == first
+    assert after_second["hits"] > after_first["hits"]
+    assert after_second["misses"] == after_first["misses"]
+    assert after_second["revalidations"] == after_first["revalidations"]
+    assert after_second["sticky_rejects"] == after_first["sticky_rejects"]
+
+
 def test_warm_cli_tamper_isolated_to_affected_shelf(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

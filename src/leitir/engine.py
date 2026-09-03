@@ -676,25 +676,30 @@ class ScopedSearcher:
 
         # ``call`` is reentrant, so a callable-API owner can bracket a whole
         # tool call while direct engine callers still get a safe one-shelf
-        # window.  WarmSession owns the held lock; layering _target_lock here
-        # would let the outer lock release while the session still believed it
-        # was continuous.
-        with self._session.call():
-            manifest = read_valid_manifest(
-                target,
-                owner,
-                repo,
-                commit_sha,
-                host="github.com",
-                session=self._session,
+        # window.  Streamed content keeps the cold path's per-target lock
+        # held across the stream; the session memo may shortcut the manifest
+        # read only when the writer-visible epoch advanced by exactly this
+        # acquisition's single bump (ADR-0035 epoch amendment), so a foreign
+        # writer between memo and lock still forces the full cold gate.
+        with (
+            self._session.call(),
+            _target_lock(self._corpus_root, target, commit_sha),
+        ):
+            manifest = self._session.resolve_under_lock(
+                target, owner, repo, commit_sha, host="github.com"
             )
-            if self._session.degraded:
-                # A degraded session's cold fallback does not own this path's
-                # historical engine lock.  Re-run the unchanged locked cold
-                # gate before serving so degradation cannot weaken it.
-                with _target_lock(self._corpus_root, target, commit_sha):
-                    manifest = read_valid_manifest(
-                        target, owner, repo, commit_sha, host="github.com"
+            if manifest is None:
+                manifest = read_valid_manifest(
+                    target, owner, repo, commit_sha, host="github.com"
+                )
+                if manifest is not None:
+                    self._session.record_under_lock(
+                        target,
+                        owner,
+                        repo,
+                        commit_sha,
+                        manifest,
+                        host="github.com",
                     )
             if manifest is None:
                 yield None

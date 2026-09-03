@@ -60,11 +60,6 @@ from leitir.treehash import (
 
 logger = logging.getLogger(__name__)
 _TARGET_LOCK_STATE = threading.local()
-# Process-wide lock generations complement the thread-local reentrancy state.
-# A generation changes whenever this process owns an acquire or release, while
-# _TARGET_LOCK_STATE answers only whether the current thread may borrow it.
-_LOCK_EPOCHS: dict[str, int] = {}
-_LOCK_EPOCHS_GUARD = threading.Lock()
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -249,16 +244,59 @@ def _target_lock_identity(
     return os.path.normcase(str(lock_path.absolute()))
 
 
-def _lock_epoch(lock_identity: str) -> int:
-    """Return the current process-local generation for one target lock."""
-    with _LOCK_EPOCHS_GUARD:
-        return _LOCK_EPOCHS.get(lock_identity, 0)
+def _epoch_path(lock_identity: str) -> Path:
+    """Return the writer-visible epoch file path for one target lock."""
+    return Path(lock_identity).with_suffix(".epoch")
+
+
+_EPOCH_MAX_BYTES = 64
+
+
+def read_lock_epoch(lock_identity: str) -> bytes | None:
+    """Read a target's writer-visible epoch bytes, or ``None`` if unreadable.
+
+    ``b""`` (an absent epoch file) is a stable, comparable value: legacy
+    corpora carry no epoch files until a post-amendment writer or warm
+    session first advances one.  Only a read failure — or an implausibly
+    large file — yields ``None``: ambiguous evidence that never validates a
+    cached verification (ADR-0035 amendment).
+    """
+    try:
+        with open(_epoch_path(lock_identity), "rb") as handle:
+            data = handle.read(_EPOCH_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return b""
+    except OSError:
+        return None
+    return data if len(data) <= _EPOCH_MAX_BYTES else None
+
+
+def parse_lock_epoch(data: bytes) -> int | None:
+    """Parse an epoch counter, or ``None`` when it is absent or malformed."""
+    if not data:
+        return None
+    try:
+        value = int(data)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
 
 
 def _bump_lock_epoch(lock_identity: str) -> None:
-    """Record one owning acquire or release of ``lock_identity``."""
-    with _LOCK_EPOCHS_GUARD:
-        _LOCK_EPOCHS[lock_identity] = _LOCK_EPOCHS.get(lock_identity, 0) + 1
+    """Advance one target's on-disk epoch; callers hold the target lock.
+
+    Every real acquisition of the per-target lock advances the counter, so
+    any cooperating writer process — including this process — makes its
+    generation observable to every reader without trusting process-local
+    state.  A malformed epoch resets to 1: the write still changes the file
+    and the next full verification carries the fail-closed load.  The bump
+    precedes the caller's mutation, so even a writer that crashes mid-write
+    leaves an epoch no earlier reader can still trust.
+    """
+    current = read_lock_epoch(lock_identity)
+    parsed = parse_lock_epoch(current) if current is not None else None
+    value = parsed + 1 if parsed is not None else 1
+    atomic_write_bytes(_epoch_path(lock_identity), f"{value}\n".encode("ascii"))
 
 
 @contextmanager
@@ -283,20 +321,18 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     # preserves writer serialization for the materialization itself.
     _assert_target_confinement(root, target)
     _sweep_target_debris(lock_path, target, commit_sha)
-    owns_lock = False
-    try:
-        with _file_lock(lock_path):
-            _bump_lock_epoch(lock_identity)
-            owns_lock = True
-            held.add(lock_identity)
-            try:
-                _assert_target_confinement(root, target)
-                yield
-            finally:
-                held.remove(lock_identity)
-    finally:
-        if owns_lock:
-            _bump_lock_epoch(lock_identity)
+    with _file_lock(lock_path):
+        # Advance the writer-visible epoch before the caller's mutation so
+        # warm readers can never trust a pre-acquisition verification
+        # (ADR-0035 amendment).  Fail-closed: a bump that cannot be written
+        # aborts this lock acquisition rather than mutating unheralded.
+        _bump_lock_epoch(lock_identity)
+        held.add(lock_identity)
+        try:
+            _assert_target_confinement(root, target)
+            yield
+        finally:
+            held.remove(lock_identity)
 
 
 # Directory fsync is consolidated in leitir.safeio (issue #200); the

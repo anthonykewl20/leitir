@@ -232,16 +232,111 @@ def test_read_valid_manifest_session_kwarg_routes_to_session(tmp_path: Path) -> 
     assert routed == direct
 
 
-def test_epochs_bump_on_acquire_and_release(tmp_path: Path) -> None:
+def test_lock_acquisition_advances_on_disk_epoch(tmp_path: Path) -> None:
     target = _shelf(tmp_path)
     identity = materialize._target_lock_identity(tmp_path, target, SHA)
-    before = materialize._LOCK_EPOCHS.get(identity, 0)
+    epoch_path = materialize._epoch_path(identity)
+    assert materialize.read_lock_epoch(identity) == b""
+
     with materialize._target_lock(tmp_path, target, SHA):
-        acquired = materialize._LOCK_EPOCHS[identity]
+        acquired = materialize.read_lock_epoch(identity)
+        assert materialize.parse_lock_epoch(acquired) == 1
         with materialize._target_lock(tmp_path, target, SHA):
-            assert materialize._LOCK_EPOCHS[identity] == acquired
-    assert acquired > before
-    assert materialize._LOCK_EPOCHS[identity] > acquired
+            # A reentrant borrow of a held lock is not a new acquisition.
+            assert materialize.read_lock_epoch(identity) == acquired
+    # Releasing does not advance the counter; only acquisitions do.
+    assert materialize.read_lock_epoch(identity) == acquired
+    with materialize._target_lock(tmp_path, target, SHA):
+        assert materialize.parse_lock_epoch(
+            materialize.read_lock_epoch(identity)
+        ) == 2
+    assert epoch_path.exists()
+
+
+def test_cross_window_read_hits_without_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0035 option (b): untouched shelves reuse verification across calls."""
+    target = _shelf(tmp_path)
+    calls = _count_verifications(monkeypatch)
+    with WarmSession(tmp_path) as session:
+        with session.call():
+            assert _read(session, target) is not None
+        with session.call():
+            assert _read(session, target) is not None
+        assert session.stats()["hits"] == 1
+        assert session.stats()["misses"] == 1
+    assert len(calls) == 1
+
+
+def test_cooperating_writer_epoch_bump_invalidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any lock acquisition by a cooperating writer invalidates the memo,
+    even when the shelf's stat signature is left untouched."""
+    target = _shelf(tmp_path)
+    calls = _count_verifications(monkeypatch)
+    with WarmSession(tmp_path) as session:
+        with session.call():
+            assert _read(session, target) is not None
+        # A cooperative writer takes the target lock (and, per protocol,
+        # advances the on-disk epoch) without otherwise changing bytes.
+        with materialize._target_lock(tmp_path, target, SHA):
+            pass
+        with session.call():
+            assert _read(session, target) is not None
+        assert session.stats()["hits"] == 0
+        assert session.stats()["revalidations"] == 1
+    assert len(calls) == 2
+
+
+def test_foreign_epoch_advance_invalidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memo trusts the epoch file itself, not this process's state.
+
+    A separate writer process that had advanced the epoch file leaves the
+    same on-disk evidence; rewriting the file as it would must invalidate
+    the memo even though this process never observed the lock.
+    """
+    target = _shelf(tmp_path)
+    calls = _count_verifications(monkeypatch)
+    with WarmSession(tmp_path) as session:
+        with session.call():
+            assert _read(session, target) is not None
+        identity = materialize._target_lock_identity(tmp_path, target, SHA)
+        epoch_path = materialize._epoch_path(identity)
+        epoch_path.parent.mkdir(parents=True, exist_ok=True)
+        epoch_path.write_bytes(b"41\n")
+        with session.call():
+            assert _read(session, target) is not None
+        assert session.stats()["hits"] == 0
+        assert session.stats()["revalidations"] == 1
+    assert len(calls) == 2
+
+
+@pytest.mark.skipif(os.name != "posix", reason="ctime restoration is POSIX-visible")
+def test_stat_restoring_tamper_detected_via_ctime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-place editor that restores size and mtime still moves ctime."""
+    target = _shelf(tmp_path)
+    victim = target / "nested" / "data.txt"
+    original = victim.read_bytes()
+    metadata = victim.stat()
+    calls = _count_verifications(monkeypatch)
+    with WarmSession(tmp_path) as session:
+        with session.call():
+            assert _read(session, target) is not None
+        victim.write_bytes(b"TAMPERED da\n")
+        assert len(b"TAMPERED da\n") == len(original)
+        os.utime(
+            victim, ns=(metadata.st_atime_ns, metadata.st_mtime_ns)
+        )
+        with session.call():
+            assert _read(session, target) is None
+        assert session.stats()["sticky_rejects"] == 1
+    assert len(calls) == 2
 
 
 def test_close_discards_all_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -496,6 +496,7 @@ def run(
                 indexed,
                 use_index=args.use_index or args.require_index,
                 require_index=args.require_index,
+                session=session,
             )
             corpus_report = corpus_searcher.search(
                 must=must,

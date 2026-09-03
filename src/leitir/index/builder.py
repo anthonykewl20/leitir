@@ -6,6 +6,10 @@ import hashlib
 import json
 import stat
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from leitir.warm import WarmSession
 
 from leitir.index.postings import build_postings
 from leitir.index.verify import (
@@ -127,20 +131,34 @@ def build_shelf_index(root: Path, shelf: ShelfRef) -> Path:
         return directory / "index.json"
 
 
-def ineligible_shelf_conditions(root: Path, shelf: ShelfRef) -> tuple[str, ...]:
+def ineligible_shelf_conditions(
+    root: Path, shelf: ShelfRef, *, session: WarmSession | None = None
+) -> tuple[str, ...]:
     """Return the named eligibility conditions a verified shelf does not meet.
 
     A missing or invalid manifest is an operational error rather than an
     eligibility result: callers must not turn failed load-time verification into
-    a skippable shelf.
+    a skippable shelf.  With a warm session the read goes through its
+    epoch+stat gate lock-free (ADR-0035 amendment); the cold path keeps its
+    historical per-target lock hold.
     """
 
     root = root.expanduser().absolute()
     target = target_path(root, shelf.owner, shelf.repo, shelf.commit, host=shelf.host)
-    with _target_lock(root, target, shelf.commit):
+    if session is not None:
         manifest = read_valid_manifest(
-            target, shelf.owner, shelf.repo, shelf.commit, host=shelf.host
+            target,
+            shelf.owner,
+            shelf.repo,
+            shelf.commit,
+            host=shelf.host,
+            session=session,
         )
+    else:
+        with _target_lock(root, target, shelf.commit):
+            manifest = read_valid_manifest(
+                target, shelf.owner, shelf.repo, shelf.commit, host=shelf.host
+            )
     if manifest is None:
         raise VerificationError("materialized shelf failed load-time verification")
     conditions: list[str] = []

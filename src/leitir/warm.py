@@ -1,11 +1,12 @@
-"""Task-bounded warm manifest verification (ADR-0035).
+"""Task-bounded warm manifest verification (ADR-0035, epoch amendment).
 
-One session supports one corpus root and is intended for one thread at a time.
-Within an explicit :meth:`WarmSession.call` window, it retains each target's
-advisory lock and can reuse an already verified manifest only while the same
-lock acquisition remains continuous.  File-stat evidence is an invalidation
-signal, never an integrity substitute: ambiguity always falls back to ADR-0006
-full verification.
+One session supports one corpus root and is intended for one thread at a
+time within an explicit :meth:`WarmSession.call` window.  A cached
+verification is reused only while the writer-visible lock epoch and the
+whole-tree stat signature recorded at verification time are both unchanged;
+any ambiguity falls back to ADR-0006 full verification.  The session holds
+no target locks: cross-writer visibility is the on-disk epoch's job, so
+lock windows stay as short as a single writer transaction.
 """
 
 from __future__ import annotations
@@ -16,18 +17,21 @@ import os
 import stat
 import threading
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from leitir import materialize
-from leitir.materialize import MANIFEST_NAME, MaterializationError
+from leitir.materialize import MANIFEST_NAME
 
 logger = logging.getLogger(__name__)
 
-_FileStats = tuple[tuple[str, int, int, int], ...]
-_ManifestStat = tuple[int, int, int]
+# (relative path, inode, mtime_ns, ctime_ns, size) per regular file.  ctime
+# makes POSIX utime-based stat restoration observable; on platforms where
+# ctime is creation time (Windows) the documented residual stands.
+_FileStats = tuple[tuple[str, int, int, int, int], ...]
+_ManifestStat = tuple[int, int, int, int]
 _Sweep = tuple[_FileStats, _ManifestStat] | None
 
 
@@ -38,10 +42,11 @@ class _WarmEntry:
     manifest: dict[str, Any]
     file_stats: _FileStats
     manifest_stat: _ManifestStat
+    epoch: bytes
 
 
-def _stat_tuple(metadata: os.stat_result) -> tuple[int, int, int]:
-    return metadata.st_ino, metadata.st_mtime_ns, metadata.st_size
+def _stat_tuple(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return metadata.st_ino, metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size
 
 
 def _stat_sweep(target: Path) -> _Sweep:
@@ -50,7 +55,7 @@ def _stat_sweep(target: Path) -> _Sweep:
     if not stat.S_ISDIR(root_metadata.st_mode):
         return None
 
-    file_stats: list[tuple[str, int, int, int]] = []
+    file_stats: list[tuple[str, int, int, int, int]] = []
 
     def raise_walk_error(error: OSError) -> None:
         raise error
@@ -87,10 +92,7 @@ class WarmSession:
         self._root = Path(root).expanduser().resolve()
         self._lock = threading.RLock()
         self._entries: dict[str, _WarmEntry] = {}
-        self._entry_epochs: dict[str, int] = {}
         self._sticky: set[str] = set()
-        self._held: dict[str, AbstractContextManager[None]] = {}
-        self._held_order: list[str] = []
         self._window_thread: int | None = None
         self._window_depth = 0
         self._closed = False
@@ -130,7 +132,12 @@ class WarmSession:
 
     @contextmanager
     def call(self) -> Iterator[WarmSession]:
-        """Open a reentrant per-tool-call lock-holding window."""
+        """Open a reentrant per-tool-call window for this session.
+
+        The window serializes memo use to one thread at a time; it holds no
+        target locks.  Cross-writer invalidation is the on-disk lock
+        epoch's responsibility, checked on every memoized read.
+        """
         thread_id = threading.get_ident()
         foreign = False
         with self._lock:
@@ -151,7 +158,6 @@ class WarmSession:
                     if not self._closed:
                         self._window_depth -= 1
                         if self._window_depth == 0:
-                            self._release_all()
                             self._window_thread = None
 
     def read_valid_manifest(
@@ -163,7 +169,13 @@ class WarmSession:
         *,
         host: str = "github.com",
     ) -> dict[str, Any] | None:
-        """Return a verified manifest, using a same-window memo only safely."""
+        """Return a verified manifest, memoized across calls when provable.
+
+        A memo is served only when the target's writer-visible epoch bytes
+        and whole-tree stat signature are both unchanged since the recorded
+        full verification.  Anything else — mismatch, absent entry, or
+        ambiguous evidence — re-runs the unchanged cold gate.
+        """
         target = target.expanduser().absolute()
         target_key = os.path.normcase(str(target.resolve(strict=False)))
         with self._lock:
@@ -181,12 +193,6 @@ class WarmSession:
             if not target.is_relative_to(self._root):
                 return self._cold_read(target, owner, repo, commit_sha, host=host)
 
-            try:
-                lock_identity = self._hold_target_lock(target, commit_sha, host=host)
-            except (MaterializationError, OSError, RuntimeError, ValueError):
-                self._degrade()
-                return self._cold_read(target, owner, repo, commit_sha, host=host)
-
             entry = self._entries.get(target_key)
             if entry is not None and self._cache_identity_matches(
                 entry.manifest, owner, repo, commit_sha, host
@@ -198,8 +204,7 @@ class WarmSession:
                     sweep is not None
                     and sweep[0] == entry.file_stats
                     and sweep[1] == entry.manifest_stat
-                    and self._entry_epochs.get(target_key)
-                    == materialize._lock_epoch(lock_identity)
+                    and self._epoch_unchanged(target, entry)
                 ):
                     self._stats["hits"] += 1
                     return copy.deepcopy(entry.manifest)
@@ -208,6 +213,11 @@ class WarmSession:
             self._stats["misses"] += 1
             if was_cached:
                 self._stats["revalidations"] += 1
+            # Record the epoch both before and after the full verification:
+            # an intervening writer's bump then prevents caching, so a memo
+            # can never be pinned against bytes that verification did not
+            # actually cover.
+            epoch_before = self._read_epoch_or_none(target)
             status, manifest = materialize._read_valid_manifest_with_status(
                 target,
                 owner,
@@ -218,22 +228,138 @@ class WarmSession:
             )
             if status == "invalid":
                 self._entries.pop(target_key, None)
-                self._entry_epochs.pop(target_key, None)
                 self._sticky.add(target_key)
                 self._stats["sticky_rejects"] += 1
                 return None
             if status != "ok" or manifest is None:
                 return None
 
+            epoch_after = self._read_epoch_or_none(target)
             sweep = self._sweep_or_degrade(target)
-            if sweep is not None and not self._degraded:
+            if (
+                sweep is not None
+                and not self._degraded
+                and epoch_before is not None
+                and epoch_before == epoch_after
+            ):
                 self._entries[target_key] = _WarmEntry(
                     manifest=copy.deepcopy(manifest),
                     file_stats=sweep[0],
                     manifest_stat=sweep[1],
+                    epoch=epoch_after,
                 )
-                self._entry_epochs[target_key] = materialize._lock_epoch(lock_identity)
             return copy.deepcopy(manifest)
+
+    def resolve_under_lock(
+        self,
+        target: Path,
+        owner: str,
+        repo: str,
+        commit_sha: str,
+        *,
+        host: str = "github.com",
+    ) -> dict[str, Any] | None:
+        """Serve the memo for a shelf whose target lock the caller holds.
+
+        Valid only when the current counter equals the recorded counter or
+        exceeds it by exactly one: ``recorded`` means the caller's take was
+        a reentrant borrow of a hold that has been continuous since the
+        recording (a foreign writer could not have acquired in between),
+        and ``recorded + 1`` means the caller's own real acquisition is the
+        only bump since.  Any other total means a further acquisition —
+        this process in a later hold, or a foreign writer — intervened, so
+        the caller must re-run the full cold gate under its lock.
+        """
+        target = target.expanduser().absolute()
+        target_key = os.path.normcase(str(target.resolve(strict=False)))
+        with self._lock:
+            self._require_open()
+            if (
+                self._degraded
+                or self._window_depth == 0
+                or self._window_thread != threading.get_ident()
+                or target_key in self._sticky
+                or not target.is_relative_to(self._root)
+            ):
+                self._stats["misses"] += 1
+                return None
+            entry = self._entries.get(target_key)
+            if entry is None or not self._cache_identity_matches(
+                entry.manifest, owner, repo, commit_sha, host
+            ):
+                self._stats["misses"] += 1
+                return None
+            epoch_now = self._read_epoch_or_none(target)
+            recorded = materialize.parse_lock_epoch(entry.epoch)
+            current = materialize.parse_lock_epoch(epoch_now or b"")
+            if (
+                epoch_now is None
+                or recorded is None
+                or current is None
+                or current not in (recorded, recorded + 1)
+            ):
+                self._stats["revalidations"] += 1
+                return None
+            sweep = self._sweep_or_degrade(target)
+            if (
+                sweep is None
+                or self._degraded
+                or sweep[0] != entry.file_stats
+                or sweep[1] != entry.manifest_stat
+            ):
+                self._stats["revalidations"] += 1
+                return None
+            # Refresh the recorded generation to this acquisition's counter
+            # so each later locked open observes exactly its own +1 step.
+            self._entries[target_key] = _WarmEntry(
+                manifest=entry.manifest,
+                file_stats=sweep[0],
+                manifest_stat=sweep[1],
+                epoch=epoch_now,
+            )
+            self._stats["hits"] += 1
+            return copy.deepcopy(entry.manifest)
+
+    def record_under_lock(
+        self,
+        target: Path,
+        owner: str,
+        repo: str,
+        commit_sha: str,
+        manifest: dict[str, Any],
+        *,
+        host: str = "github.com",
+    ) -> None:
+        """Pin a just-verified manifest for a lock the caller still holds.
+
+        The caller performed a full cold verification under the target lock
+        and has not yet released it, so the stat sweep and epoch read here
+        cannot interleave with a cooperating writer.
+        """
+        if not self._cache_identity_matches(manifest, owner, repo, commit_sha, host):
+            return
+        target = target.expanduser().absolute()
+        target_key = os.path.normcase(str(target.resolve(strict=False)))
+        with self._lock:
+            self._require_open()
+            if (
+                self._degraded
+                or self._window_depth == 0
+                or self._window_thread != threading.get_ident()
+                or target_key in self._sticky
+                or not target.is_relative_to(self._root)
+            ):
+                return
+            epoch = self._read_epoch_or_none(target)
+            sweep = self._sweep_or_degrade(target)
+            if epoch is None or sweep is None or self._degraded:
+                return
+            self._entries[target_key] = _WarmEntry(
+                manifest=copy.deepcopy(manifest),
+                file_stats=sweep[0],
+                manifest_stat=sweep[1],
+                epoch=epoch,
+            )
 
     def stats(self) -> dict[str, int]:
         """Return deterministic copies of the session counters."""
@@ -252,17 +378,14 @@ class WarmSession:
         with self._lock:
             self._require_open()
             self._entries.pop(target_key, None)
-            self._entry_epochs.pop(target_key, None)
             self._sticky.discard(target_key)
 
     def close(self) -> None:
-        """Release held locks and discard every task-local cache value."""
+        """Discard every task-local memo; no locks are held to release."""
         with self._lock:
             if self._closed:
                 return
-            self._release_all()
             self._entries.clear()
-            self._entry_epochs.clear()
             self._sticky.clear()
             self._window_depth = 0
             self._window_thread = None
@@ -291,23 +414,13 @@ class WarmSession:
         )
         return copy.deepcopy(manifest) if status == "ok" and manifest is not None else None
 
-    def _hold_target_lock(self, target: Path, commit_sha: str, *, host: str) -> str:
-        lock_identity = materialize._target_lock_identity(
-            self._root, target, commit_sha, host=host
-        )
-        if lock_identity in self._held:
-            return lock_identity
-        held = materialize._target_lock(self._root, target, commit_sha)
-        held.__enter__()
-        self._held[lock_identity] = held
-        self._held_order.append(lock_identity)
-        return lock_identity
+    def _read_epoch_or_none(self, target: Path) -> bytes | None:
+        identity = materialize._target_lock_identity(self._root, target, "")
+        return materialize.read_lock_epoch(identity)
 
-    def _release_all(self) -> None:
-        while self._held_order:
-            lock_identity = self._held_order.pop()
-            held = self._held.pop(lock_identity)
-            held.__exit__(None, None, None)
+    def _epoch_unchanged(self, target: Path, entry: _WarmEntry) -> bool:
+        current = self._read_epoch_or_none(target)
+        return current is not None and current == entry.epoch
 
     def _sweep_or_degrade(self, target: Path) -> _Sweep:
         try:

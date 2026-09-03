@@ -16,13 +16,15 @@ concurrency:
 
 jobs:
   test:
-    # Measured green wall-times on run 32992045211 (3720 tests collected):
-    # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
-    # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
-    # variance without masking a genuine hang for 10+ extra minutes the way
-    # 25 did. The differential module takes 12:07 locally after the Windows
-    # child-environment fix; retain headroom for the slower Windows runner.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 20 }}
+    # Lane split (2026-09-04): PRs run the version extremes plus one leg per
+    # platform (ubuntu 3.11/3.14, macos 3.13, windows 3.12); every main push
+    # and the weekly schedule run the full seven-leg matrix, so the interior
+    # minors (3.12, 3.12.3 floor pin, 3.13) are still gated on each merge.
+    # Wall-time: serial legs measured ~14-15 min (2026-09-03); -n auto on the
+    # 4-core public runners cuts that several-fold. Timeouts keep margin over
+    # the sharded expectation plus straggler headroom for the subprocess-heavy
+    # differential module (issue #199 discipline).
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 25 || 15 }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,10 +32,6 @@ jobs:
         include:
           - os: ubuntu-latest
             python-version: '3.11'
-          - os: ubuntu-latest
-            python-version: '3.12'
-          - os: ubuntu-latest
-            python-version: '3.13'
           - os: ubuntu-latest
             python-version: '3.14'
           # Pinned interpreters (no floating '3.x'): macos 3.13 / windows 3.12
@@ -43,6 +41,14 @@ jobs:
             python-version: '3.13'
           - os: windows-latest
             python-version: '3.12'
+          # Main-push/schedule-only interior minors; PRs rely on the 3.11
+          # floor and 3.14 ceiling legs above plus the per-platform pins.
+          - os: ubuntu-latest
+            python-version: '3.12'
+            if: ${{ github.event_name != 'pull_request' }}
+          - os: ubuntu-latest
+            python-version: '3.13'
+            if: ${{ github.event_name != 'pull_request' }}
           # Patch-pinned 3.12 floor (audit 2026-08-23, P1(a)): 3.12.3-era
           # builds lazily import ntpath from pathlib and import machinery,
           # which the floating '3.12' leg never sees because setup-python
@@ -50,6 +56,7 @@ jobs:
           # correct on the oldest supported 3.12 patch, so pin it exactly.
           - os: ubuntu-latest
             python-version: '3.12.3'
+            if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -64,7 +71,10 @@ jobs:
           cache-dependency-glob: requirements.txt
       - name: Run offline test suite
         shell: bash
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short
+        # -n auto: tests are process-isolated (tmp_path fixtures, subprocess
+        # runners); xdist workers are separate processes, so in-test
+        # thread-concurrency coverage (warm/safeio) is unaffected.
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short -n auto
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

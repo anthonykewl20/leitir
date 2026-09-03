@@ -1,10 +1,12 @@
 # ADR-0035: Warm process mode — the invalidation contract for verified state held in memory
 
-- Status: proposed
+- Status: accepted (amended 2026-09-03 — owner decision on issue #272)
 - Deciders: anthonykewl20
-- Date: 2026-08-27
-- Implementation: not-started
-- Related: issue #272 (A5, split out of #266), issue #271 (C4, callable Python API — blocking dependency),
+- Date: 2026-08-27 (amendment 2026-09-03)
+- Implementation: complete (option (b) epoch contract; issue #272)
+- Related: issue #272 (A5, split out of #266; owner decision 2026-09-03: option (b)),
+  issue #282 (writer staging race — landed via PR #286 before this contract was built on the read path),
+  issue #271 (C4, callable Python API — blocking dependency),
   issue #279 (a distinct, cold-path defect this ADR's own measurement uncovered: `info`/`get`/`api`/`examples`/`trust`
   pay O(catalog) re-verification to resolve a single-shelf spec, with no warm process involved — see the framing note below),
   [ADR-0006](0006-load-time-tree-verification.md) (load-time tree verification),
@@ -88,6 +90,17 @@ warm mode's needs in view.
   unverified fast path.
 
 ## Considered Options
+
+*Amendment note (2026-09-03):* the original §2 contract contained two rules
+that cannot both hold — locks must be released between unrelated tool calls,
+and any release forces a full re-verify — which confines cache reuse to a
+single held-lock interval and makes the cross-call win unreachable. The
+owner resolved this on issue #272 by choosing **(b) writer-visible
+epochs** (this ADR's amendment below) over (a) task-scoped lock holding
+(rejected: starves writers or requires a new contention contract) and (c)
+within-interval-only reuse (rejected: post-#279 that leaves almost nothing
+to win). Nothing below the amendment line is rewritten; where the original
+text and the amendment differ, the amendment governs.
 
 1. **Trust-on-first-verify, unbounded lifetime** — verify a shelf once per
    warm process lifetime, serve it from memory forever after. Rejected: this
@@ -208,8 +221,9 @@ digest map) rather than inventing a parallel trust mechanism.
    and reacquired — in which case the contract mandates a full re-verify
    before serving, so any mutation in the gap is caught by the same hashing
    ADR-0006 already performs on every cold load. There is no third path: no
-   cache entry may be served without either continuous lock possession or a
-   fresh re-verify gating it.
+   cache entry may be served without either continuous lock possession, an
+   unchanged writer-visible epoch plus unchanged stat signature (the 2026-09-03
+   amendment below), or a fresh re-verify gating it.
 
 4. **Residual TOCTOU window — stated honestly, not zero.** Within a single
    held-lock interval, the window is identical to ADR-0006's existing
@@ -235,6 +249,11 @@ digest map) rather than inventing a parallel trust mechanism.
    lock acquisition for that shelf** — which the contract guarantees is
    re-verified at that next acquisition, so no stale result is ever *served*,
    only ever *discarded and replaced*.
+
+   The 2026-09-03 amendment widens that interval by design: between tool
+   calls the lock is released and no re-verify occurs, so the bound becomes
+   "unchanged epoch plus unchanged stat signature" — see the amendment's own
+   residual statement.
 
 5. **Failure handling.**
    - Failure to establish warm state at all (the warm process cannot start,
@@ -313,6 +332,65 @@ implement these, only to leave room):
 - No behavior change to argparse-facing CLI semantics; this ADR's needs are
   additive to #271's committed scope (byte-identical `--help`, exit codes,
   and JSON), not in tension with it.
+
+### Amendment — writer-visible lock epochs (2026-09-03; issue #272 owner decision, option (b))
+
+Every real acquisition of the per-target advisory lock advances a
+**lock-adjacent epoch file** — `.locks/<sha256-of-target>.epoch`, a decimal
+counter atomically replaced under the lock, living outside every verified
+tree — *before* the acquiring code performs any mutation. The bump therefore
+precedes the write, so even a writer that crashes mid-mutation leaves an
+epoch no earlier reader can still trust. A bump that cannot be written fails
+the acquisition (fail-closed), and a malformed counter resets to 1 while
+still changing the file.
+
+Cache validity across released-lock intervals is then:
+
+1. **Lock-free resolution gate** (manifest reads on the `info`/`api`/`get`/
+   `trust`/`examples` resolution paths, corpus enumeration, and eligibility):
+   the memo is served iff the epoch file's bytes are unchanged *and* the
+   whole-tree stat signature — per regular file `(relative path, inode,
+   mtime_ns, ctime_ns, size)` plus the manifest's own stat — is unchanged
+   since the recorded full verification. The session holds no target locks
+   on this path. Entries are recorded only when the epoch read before and
+   after the full verification is identical (no writer intervened while the
+   bytes were being hashed), and a shelf whose (re)verification fails is
+   sticky-rejected for the remainder of the session.
+
+2. **Under-lock streaming gate** (engine local-shelf streaming, which in the
+   cold path holds the per-target lock across the stream): the caller
+   acquires the lock — advancing the epoch by exactly one — and may serve
+   the memo iff the current counter equals the recorded counter (the
+   caller's take was a reentrant borrow of a continuously held lock, so no
+   other process could have acquired) or the recorded counter plus exactly
+   one (the caller's own acquisition is the only bump since). Any other
+   total forces the unchanged cold full verification under the lock. The
+   lock is held across the stream exactly as in the cold path.
+
+3. **Who advances the epoch:** every real `_target_lock` acquisition in any
+   process — writers (`get`, `remove`, `clean`, `upgrade-cache`, trust and
+   license manifest updates, index builds) and also cold readers that
+   historically hold the lock (cold local-shelf streaming, cold
+   eligibility). Cold callers may therefore spuriously invalidate a warm
+   session's memo; that direction only costs a re-verification and never
+   serves unverified bytes.
+
+**Honest residual, versus the cold path.** The cold path re-hashes on every
+load, so it detects any byte mutation at the next invocation. Warm mode
+under this amendment serves from the memo without re-hashing when epoch and
+stat signature are unchanged, so a *non-cooperating* process that mutates
+bytes in place **and restores the stat signature** (and, on POSIX, also
+defeats the ctime component, which `utime` cannot restore — inode or clock
+manipulation is required) is detected at the next *cold* load but not until
+the session ends under warm mode. Cooperating writers are caught with
+certainty: taking the lock advances the epoch regardless of what they do to
+the shelf bytes or metadata. Two further accepted edges: (i) leitir
+binaries predating this amendment do not advance epoch files (version
+skew — the same trust class as any stale writer); (ii) the epoch file
+itself is not adversarially protected (an attacker who restores an old
+epoch snapshot after mutating is equivalent to the stat-restoring
+adversary above). Both are bounded by the session-scoped lifetime of the
+memo and by the unchanged cold gate that every first touch still pays.
 
 ## Positive Consequences
 

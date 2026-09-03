@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .diff import DiffReport, ImpactReport  # noqa: F401
     from .parity import ArtifactInfo as ArtifactInfoLike
     from .resolver import Ecosystem, ResolvedPackage, _CorpusResolver, _HeadResolver
+    from .warm import WarmSession
 
 logger = logging.getLogger("leitir.cli")
 
@@ -320,6 +321,8 @@ def _build_default_searcher(
     tree_source: object,
     ast_python: bool = False,
     corpus_root: str | os.PathLike[str] | None = None,
+    *,
+    session: WarmSession | None = None,
 ) -> object:
     from .adapters.registry import build_adapters
     from .engine import ScopedSearcher
@@ -329,6 +332,7 @@ def _build_default_searcher(
         tree_source=cast(TreeSource, tree_source),
         adapters=build_adapters(ast_python=ast_python),
         corpus_root=corpus_root,
+        session=session,
     )
 
 

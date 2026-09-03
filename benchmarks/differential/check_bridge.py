@@ -61,7 +61,11 @@ def run_leitir_check(
     actually examined at least one site and reported it in valid JSON.
     """
 
-    env: dict[str, str] = {"PATH": _path_env(), "PYTHONPATH": str(_SRC)}
+    # Preserve the Windows process environment (notably SYSTEMROOT, COMSPEC,
+    # SystemDrive, TEMP, and TMP).  The CLI still receives the intentionally
+    # controlled import path and PATH used by this bridge.
+    env: dict[str, str] = dict(os.environ)
+    env.update({"PATH": _path_env(), "PYTHONPATH": str(_SRC)})
     if extra_env:
         env.update(extra_env)
 

@@ -581,7 +581,7 @@ no username, repository path, project data, command arguments, or telemetry. Set
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. Current status (2026-08-24): **3431 passed, 143 skipped** without extras; additional polyglot tests run with the tree-sitter extra active; combined line+branch coverage **83.48%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. **Status (dated — re-verify against CI; 2026-08-24):** **3431 passed, 143 skipped** without extras; additional polyglot tests run with the tree-sitter extra active; combined line+branch coverage **83.48%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
 
 ## Current state
 

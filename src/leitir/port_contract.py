@@ -42,7 +42,7 @@ from leitir.license_policy import (
     render_attribution,
 )
 from leitir.relocate import _span
-from leitir.safeio import read_regular_file
+from leitir.safeio import NoFollowUnavailableError, read_regular_file
 
 PORTABLE_CONTRACT_SCHEMA_VERSION = "leitir-portable-contract-v1"
 TRANSLATED_CONTRACT_SCHEMA_VERSION = "leitir-translated-contract-v1"
@@ -961,6 +961,13 @@ def load_donor_sources_from_snapshot(source_root: Path, artifact: BTS) -> tuple[
             )
         try:
             data = read_regular_file(source_root / path, maximum_bytes=1 << 20, no_follow=True)
+        except NoFollowUnavailableError:
+            # Platforms without os.O_NOFOLLOW (Windows) refuse no_follow=True
+            # before any I/O.  These bytes are independently digest-anchored
+            # by the BTS member hashes and re-verified against the artifact
+            # below, so safeio's documented digest-anchored opt-out applies;
+            # the lstat/fstat device+inode swap check still runs here too.
+            data = read_regular_file(source_root / path, maximum_bytes=1 << 20, no_follow=False)
         except OSError as exc:
             raise _reject(
                 BTSRejectReason.REJECT_PROVENANCE_MISMATCH,

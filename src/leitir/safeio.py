@@ -1,10 +1,10 @@
 """Small fail-closed readers and atomic writers for corpus-controlled files.
 
 The atomic-write mechanics for every durable artifact in leitir live here
-(issue #200): temp file in the target's directory, write, ``os.fsync(file)``,
-``os.replace``, then ``fsync`` of the parent directory, with an fd sentinel so
-every failure path closes the descriptor exactly once and never closes a
-recycled descriptor owned by another thread.
+(issue #200): temp file in the target's directory by default, write,
+``os.fsync(file)``, ``os.replace``, then ``fsync`` of the affected directory
+entries, with an fd sentinel so every failure path closes the descriptor
+exactly once and never closes a recycled descriptor owned by another thread.
 """
 
 from __future__ import annotations
@@ -144,30 +144,64 @@ class _StagedFile:
 
 
 @contextmanager
-def _staged_file(path: Path, *, fsync_dir: bool) -> Iterator[_StagedFile]:
-    """Stage one atomic replacement of ``path`` (temp in the target directory)."""
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
+def _staged_file(
+    path: Path,
+    *,
+    fsync_dir: bool,
+    # Issue #282: a verified-tree writer must stage outside that tree so a
+    # lock-free verifier cannot observe an unmapped transient entry. The
+    # verifier's universe rules remain unchanged: hostile or crashed debris
+    # inside the tree is still rejected fail-closed.
+    staging_directory: Path | None = None,
+    staging_prefix: str | None = None,
+) -> Iterator[_StagedFile]:
+    """Stage one atomic replacement of ``path`` in the selected directory.
+
+    ``staging_directory`` MUST NOT be inside a tree verified by
+    ``verify_materialized_integrity``.
+    """
+    stage_dir = path.parent if staging_directory is None else staging_directory
+    prefix = f".{path.name}.tmp-" if staging_prefix is None else staging_prefix
+    fd, name = tempfile.mkstemp(prefix=prefix, dir=stage_dir)
     staged = _StagedFile(name, fd)
     try:
         yield staged
         os.replace(staged.path, path)
         if fsync_dir:
-            fsync_directory(path.parent)
+            fsync_directory(stage_dir)
+            if stage_dir != path.parent:
+                # Moving across sibling directories mutates both directory
+                # entry sets, so preserve durability for the destination too.
+                fsync_directory(path.parent)
     except BaseException:
         staged.discard()
         raise
 
 
 @contextmanager
-def atomic_writer(path: Path, *, fsync_dir: bool = True) -> Iterator[BinaryIO]:
+def atomic_writer(
+    path: Path,
+    *,
+    fsync_dir: bool = True,
+    staging_directory: Path | None = None,
+    staging_prefix: str | None = None,
+) -> Iterator[BinaryIO]:
     """Yield a binary handle whose close publishes ``path`` atomically.
 
-    The handle writes a temporary file in ``path``'s directory; a normal
-    exit flushes, fsyncs the file, renames it onto ``path``, and fsyncs the
-    parent directory. Any failure removes the temporary, closes the
-    descriptor exactly once, and re-raises the original error.
+    The handle writes a temporary file in ``path``'s directory by default; a
+    normal exit flushes, fsyncs the file, renames it onto ``path``, and fsyncs
+    the affected directory entries. Any failure removes the temporary, closes
+    the descriptor exactly once, and re-raises the original error.
+
+    ``staging_directory`` MUST NOT be inside a tree verified by
+    ``verify_materialized_integrity``.
     """
-    with _staged_file(path, fsync_dir=fsync_dir) as staged:
+    with _staged_file(
+        path,
+        fsync_dir=fsync_dir,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    ) as staged:
         with staged.open_binary() as handle:
             yield handle
             handle.flush()
@@ -181,18 +215,45 @@ def atomic_text_writer(
     encoding: str = "utf-8",
     newline: str | None = "\n",
     fsync_dir: bool = True,
+    staging_directory: Path | None = None,
+    staging_prefix: str | None = None,
 ) -> Iterator[TextIO]:
-    """Text sibling of :func:`atomic_writer` with io-compatible newlines."""
-    with _staged_file(path, fsync_dir=fsync_dir) as staged:
+    """Text sibling of :func:`atomic_writer` with io-compatible newlines.
+
+    ``staging_directory`` MUST NOT be inside a tree verified by
+    ``verify_materialized_integrity``.
+    """
+    with _staged_file(
+        path,
+        fsync_dir=fsync_dir,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    ) as staged:
         with staged.open_text(encoding=encoding, newline=newline) as handle:
             yield handle
             handle.flush()
             os.fsync(handle.fileno())
 
 
-def atomic_write_bytes(path: Path, data: bytes, *, fsync_dir: bool = True) -> None:
-    """Atomically replace ``path`` with ``data`` (file + parent-dir fsync)."""
-    with atomic_writer(path, fsync_dir=fsync_dir) as handle:
+def atomic_write_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    fsync_dir: bool = True,
+    staging_directory: Path | None = None,
+    staging_prefix: str | None = None,
+) -> None:
+    """Atomically replace ``path`` with ``data`` (file + parent-dir fsync).
+
+    ``staging_directory`` MUST NOT be inside a tree verified by
+    ``verify_materialized_integrity``.
+    """
+    with atomic_writer(
+        path,
+        fsync_dir=fsync_dir,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    ) as handle:
         handle.write(data)
 
 
@@ -203,7 +264,20 @@ def atomic_write_text(
     encoding: str = "utf-8",
     newline: str | None = "\n",
     fsync_dir: bool = True,
+    staging_directory: Path | None = None,
+    staging_prefix: str | None = None,
 ) -> None:
-    """Atomically replace ``path`` with ``text`` (file + parent-dir fsync)."""
-    with atomic_text_writer(path, encoding=encoding, newline=newline, fsync_dir=fsync_dir) as handle:
+    """Atomically replace ``path`` with ``text`` (file + parent-dir fsync).
+
+    ``staging_directory`` MUST NOT be inside a tree verified by
+    ``verify_materialized_integrity``.
+    """
+    with atomic_text_writer(
+        path,
+        encoding=encoding,
+        newline=newline,
+        fsync_dir=fsync_dir,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    ) as handle:
         handle.write(text)

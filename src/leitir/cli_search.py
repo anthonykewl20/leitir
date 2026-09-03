@@ -29,6 +29,7 @@ from .search import (
 
 if TYPE_CHECKING:
     from .discovery_search import CoverageBounds
+    from .warm import WarmSession
 
 def register_search(commands: argparse._SubParsersAction) -> None:
     search = commands.add_parser(
@@ -247,7 +248,9 @@ def _resolve_scope_via_package(
     return resolved.scope
 
 
-def _corpus_routings(root: Path) -> dict[tuple[str, str], dict[str, str]]:
+def _corpus_routings(
+    root: Path, *, session: WarmSession | None = None
+) -> dict[tuple[str, str], dict[str, str]]:
     """Routing guidance for every materialized corpus source (issue #190).
 
     Keyed by ``(owner/repo, commit_sha)`` — the identity a search match
@@ -272,6 +275,7 @@ def _corpus_routings(root: Path) -> dict[tuple[str, str], dict[str, str]]:
             entry["repo"],
             entry["commit_sha"],
             host=entry["host"],
+            session=session,
         )
         if manifest is None:
             continue
@@ -405,6 +409,7 @@ def run(
     global_searcher_factory: Callable[..., object],
     out: TextIO,
     err: TextIO,
+    session: WarmSession | None = None,
 ) -> int:
     scope_error = _validate_scope_args(args)
     if scope_error:
@@ -466,7 +471,18 @@ def run(
             tree_source = tree_source_factory(token)
             scoped = cast(
                 ScopedSearcher,
-                searcher_factory(tree_source, ast_python=args.ast, corpus_root=corpus_root),
+                (
+                    searcher_factory(
+                        tree_source,
+                        ast_python=args.ast,
+                        corpus_root=corpus_root,
+                        session=session,
+                    )
+                    if session is not None
+                    else searcher_factory(
+                        tree_source, ast_python=args.ast, corpus_root=corpus_root
+                    )
+                ),
             )
             indexed: IndexedSearcher | None = None
             if args.use_index or args.require_index:
@@ -480,6 +496,7 @@ def run(
                 indexed,
                 use_index=args.use_index or args.require_index,
                 require_index=args.require_index,
+                session=session,
             )
             corpus_report = corpus_searcher.search(
                 must=must,
@@ -549,11 +566,26 @@ def run(
             searcher = cast(
                 _Searcher,
                 (
-                    searcher_factory(
-                        tree_source, ast_python=True, corpus_root=corpus_root
+                    (
+                        searcher_factory(
+                            tree_source,
+                            ast_python=True,
+                            corpus_root=corpus_root,
+                            session=session,
+                        )
+                        if session is not None
+                        else searcher_factory(
+                            tree_source, ast_python=True, corpus_root=corpus_root
+                        )
                     )
                     if args.ast
-                    else searcher_factory(tree_source, corpus_root=corpus_root)
+                    else (
+                        searcher_factory(
+                            tree_source, corpus_root=corpus_root, session=session
+                        )
+                        if session is not None
+                        else searcher_factory(tree_source, corpus_root=corpus_root)
+                    )
                 )
                 if corpus_root is not None
                 else (
@@ -593,7 +625,11 @@ def run(
         return mark_successful()
     assert report is not None
 
-    corpus_routings = _corpus_routings(corpus_root) if corpus_root is not None else None
+    corpus_routings = (
+        _corpus_routings(corpus_root, session=session)
+        if corpus_root is not None
+        else None
+    )
     try:
         machine_report = _report_json_with_coverage_bounds(report, coverage_bounds)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:

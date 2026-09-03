@@ -20,10 +20,9 @@ jobs:
     # ubuntu legs up to 14:51, macos-latest 14:57 -- the longest completed
     # leg. 20 min gives that leg ~5 min (~34%) of headroom for run-to-run
     # variance without masking a genuine hang for 10+ extra minutes the way
-    # 25 did. windows-latest has never completed on this branch (issue
-    # #266) and is not part of this measurement; its hang is a separate,
-    # fixed defect, not a timeout problem.
-    timeout-minutes: 20
+    # 25 did. The differential module takes 12:07 locally after the Windows
+    # child-environment fix; retain headroom for the slower Windows runner.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 20 }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -173,8 +172,10 @@ jobs:
           PYTHONPATH=src uv run --active --no-project --with-requirements requirements.txt python -m pytest tests/test_graph_polyglot.py tests/test_graph_polyglot_typescript.py tests/test_graph_polyglot_rust.py tests/test_graph_polyglot_go.py -q
 
   coverage:
-    # Observed 1:38; 15 min ≥ 9× margin (issue #199).
-    timeout-minutes: 15
+    # Observed 14:25 on main (2026-09-03; the 1:38 note was pre-suite-growth);
+    # PR runs at 15:16 hit the old 15-min ceiling and were canceled. 30 min
+    # ≈ 2× margin (issue #199 discipline, refreshed).
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

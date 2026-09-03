@@ -23,12 +23,29 @@ import stat
 import tarfile
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class WarmSessionLike(Protocol):
+        """Minimal warm-session hook, kept type-only to avoid an import cycle."""
+
+        def read_valid_manifest(
+            self,
+            target: Path,
+            owner: str,
+            repo: str,
+            commit_sha: str,
+            *,
+            host: str = "github.com",
+        ) -> dict[str, object] | None: ...
 
 from leitir import _http
 from leitir.safeio import atomic_write_bytes, fsync_directory, read_regular_file
@@ -213,6 +230,110 @@ def _sweep_target_debris(lock_path: Path, target: Path, commit_sha: str) -> None
                 _remove_path(stale)
 
 
+def _target_lock_identity(
+    root: Path,
+    target: Path,
+    commit_sha: str,
+    *,
+    host: str = "github.com",
+) -> str:
+    """Return the existing per-target lock key for one canonical shelf path."""
+    del commit_sha, host
+    relative_target = target.absolute().relative_to(root)
+    identity = os.path.normcase(str(relative_target)).encode("utf-8")
+    lock_path = root / ".locks" / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    return os.path.normcase(str(lock_path.absolute()))
+
+
+def _epoch_path(lock_identity: str) -> Path:
+    """Return the writer-visible epoch file path for one target lock."""
+    return Path(lock_identity).with_suffix(".epoch")
+
+
+_EPOCH_MAX_BYTES = 64
+
+
+def read_lock_epoch(lock_identity: str) -> bytes | None:
+    """Read a target's writer-visible epoch bytes, or ``None`` if unreadable.
+
+    ``b""`` (an absent epoch file) is a stable, comparable value: legacy
+    corpora carry no epoch files until a post-amendment writer or warm
+    session first advances one.  Only a read failure — or an implausibly
+    large file — yields ``None``: ambiguous evidence that never validates a
+    cached verification (ADR-0035 amendment).
+    """
+    try:
+        with open(_epoch_path(lock_identity), "rb") as handle:
+            data = handle.read(_EPOCH_MAX_BYTES + 1)
+    except FileNotFoundError:
+        # An absent epoch is the legacy-corpus stable value.  A dangling
+        # symlink aliasing to ENOENT lands here too; that is within the
+        # amendment's accepted residual (ii) — the epoch file is protocol
+        # metadata, not an adversarially protected artifact — and the next
+        # cooperating bump replaces the alias wholesale.
+        return b""
+    except OSError:
+        return None
+    return data if len(data) <= _EPOCH_MAX_BYTES else None
+
+
+def parse_lock_epoch(data: bytes) -> int | None:
+    """Parse an epoch counter, or ``None`` when it is absent or malformed.
+
+    Only the writer's canonical ``<decimal>\\n`` spelling parses; int()'s
+    leniency (underscores, signs, surrounding whitespace) would give the
+    under-lock arithmetic more than one representation of one counter.
+    """
+    if not re.fullmatch(rb"[0-9]+", data.strip()):
+        return None
+    return int(data)
+
+
+def _write_epoch_with_retry(path: Path, data: bytes) -> None:
+    """Atomically replace the epoch, tolerating brief contrary reader handles.
+
+    On Windows a lock-free reader's open() handle (no FILE_SHARE_DELETE)
+    makes os.replace over the epoch fail with PermissionError for the
+    handle's lifetime.  Readers hold it for microseconds; a short bounded
+    retry keeps that from aborting writers (review F4) without ever
+    weakening the bump: persistence still fails closed in the caller.
+    """
+    last: OSError | None = None
+    for attempt in range(5):
+        try:
+            atomic_write_bytes(path, data)
+            return
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.01 * (attempt + 1))
+    assert last is not None
+    raise last
+
+
+def _bump_lock_epoch(lock_identity: str) -> None:
+    """Advance one target's on-disk epoch; callers hold the target lock.
+
+    Every real acquisition of the per-target lock advances the counter, so
+    any cooperating writer process — including this process — makes its
+    generation observable to every reader without trusting process-local
+    state.  A malformed epoch resets to 1: the write still changes the file
+    and the next full verification carries the fail-closed load.  The bump
+    precedes the caller's mutation, so even a writer that crashes mid-write
+    leaves an epoch no earlier reader can still trust.
+    """
+    current = read_lock_epoch(lock_identity)
+    parsed = parse_lock_epoch(current) if current is not None else None
+    value = parsed + 1 if parsed is not None else 1
+    try:
+        _write_epoch_with_retry(_epoch_path(lock_identity), f"{value}\n".encode("ascii"))
+    except OSError as exc:
+        # Fail the acquisition itself: a mutation whose heralding bump could
+        # not be durably recorded must not proceed under this lock.
+        raise MaterializationError(
+            f"cannot advance materialization lock epoch: {_epoch_path(lock_identity)}"
+        ) from exc
+
+
 @contextmanager
 def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     root = root.expanduser().absolute()
@@ -221,15 +342,13 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     _assert_target_confinement(root, lock_root)
     lock_root.mkdir(exist_ok=True)
     _assert_target_confinement(root, lock_root)
-    relative_target = target.absolute().relative_to(root)
-    identity = os.path.normcase(str(relative_target)).encode("utf-8")
-    lock_path = lock_root / f"{hashlib.sha256(identity).hexdigest()}.lock"
+    lock_identity = _target_lock_identity(root, target, commit_sha)
+    lock_path = Path(lock_identity)
     held = getattr(_TARGET_LOCK_STATE, "held", None)
     if held is None or getattr(_TARGET_LOCK_STATE, "pid", None) != os.getpid():
         held = set()
         _TARGET_LOCK_STATE.held = held
         _TARGET_LOCK_STATE.pid = os.getpid()
-    lock_identity = os.path.normcase(str(lock_path.absolute()))
     if lock_identity in held:
         yield
         return
@@ -238,6 +357,11 @@ def _target_lock(root: Path, target: Path, commit_sha: str) -> Iterator[None]:
     _assert_target_confinement(root, target)
     _sweep_target_debris(lock_path, target, commit_sha)
     with _file_lock(lock_path):
+        # Advance the writer-visible epoch before the caller's mutation so
+        # warm readers can never trust a pre-acquisition verification
+        # (ADR-0035 amendment).  Fail-closed: a bump that cannot be written
+        # aborts this lock acquisition rather than mutating unheralded.
+        _bump_lock_epoch(lock_identity)
         held.add(lock_identity)
         try:
             _assert_target_confinement(root, target)
@@ -281,7 +405,12 @@ def _failure_detail(exc: BaseException) -> str:
     return _http.describe_failure(exc)
 
 
-def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
+def _write_manifest(
+    path: Path,
+    manifest: Mapping[str, object],
+    *,
+    staging_directory: Path | None = None,
+) -> None:
     """Write a manifest atomically, including upgrades of cached manifests."""
     data = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(data) > MANIFEST_MAX_BYTES:
@@ -292,7 +421,24 @@ def _write_manifest(path: Path, manifest: Mapping[str, object]) -> None:
             "digest map would be unreadable at load time"
         )
     logger.debug("writing manifest path=%s", path)
-    atomic_write_bytes(path, data)
+    # A shelf manifest is excluded from its own tree hash, but a temp file in
+    # the shelf is not. Stage alongside the shelf (issue #282) so lock-free
+    # verification never sees the transient file; its unchanged universe scan
+    # still rejects any hostile or crashed-process debris inside the shelf.
+    staging_prefix: str | None = None
+    if path.name == MANIFEST_NAME:
+        if staging_directory is None and path.parent.parent != path.parent:
+            # Root-level paths have no distinct sibling staging directory.
+            staging_directory = path.parent.parent
+            # Match _sweep_target_debris's established per-commit sibling
+            # convention, so an interrupted writer cannot strand debris.
+            staging_prefix = f".{path.parent.name}.tmp-manifest-"
+    atomic_write_bytes(
+        path,
+        data,
+        staging_directory=staging_directory,
+        staging_prefix=staging_prefix,
+    )
 
 
 def _manifest_has_file_map(payload: Mapping[str, object]) -> bool:
@@ -343,7 +489,10 @@ def verify_materialized_integrity(
 
 
 def update_manifest(
-    target: str | os.PathLike[str], fields: Mapping[str, object]
+    target: str | os.PathLike[str],
+    fields: Mapping[str, object],
+    *,
+    staging_directory: Path | None = None,
 ) -> dict[str, object]:
     """Verify a shelf, then atomically merge fields into its manifest.
 
@@ -445,17 +594,22 @@ def update_manifest(
             ) from exc
         payload.update(manifest_digest_fields(tree_digest, scope=tree_scope))
     payload.update(fields)
-    _write_manifest(path, payload)
+    _write_manifest(path, payload, staging_directory=staging_directory)
     return payload
 
 
-def _refresh_license_manifest(target: Path, manifest: dict[str, object]) -> dict[str, object]:
+def _refresh_license_manifest(
+    target: Path,
+    manifest: dict[str, object],
+    *,
+    staging_directory: Path | None = None,
+) -> dict[str, object]:
     from leitir.sbom import license_manifest_fields
 
     fields = license_manifest_fields(manifest, target)
     if all(manifest.get(key) == value for key, value in fields.items()):
         return manifest
-    return update_manifest(target, fields)
+    return update_manifest(target, fields, staging_directory=staging_directory)
 
 
 def has_top_level_tests(target: Path, subpath: str | None = None) -> bool:
@@ -526,8 +680,13 @@ def read_valid_manifest(
     commit_sha: str,
     *,
     host: str = "github.com",
+    session: WarmSessionLike | None = None,
 ) -> dict[str, object] | None:
     """Read a manifest only when it identifies exactly the requested source."""
+    if session is not None:
+        return session.read_valid_manifest(
+            Path(target), owner, repo, commit_sha, host=host
+        )
     return _read_valid_manifest(
         target,
         owner,
@@ -548,15 +707,35 @@ def _read_valid_manifest(
     allow_missing_tree_hash: bool,
 ) -> dict[str, object] | None:
     """Validate a manifest, optionally permitting a legacy missing digest."""
+    return _read_valid_manifest_with_status(
+        target,
+        owner,
+        repo,
+        commit_sha,
+        host=host,
+        allow_missing_tree_hash=allow_missing_tree_hash,
+    )[1]
+
+
+def _read_valid_manifest_with_status(
+    target: str | os.PathLike[str],
+    owner: str,
+    repo: str,
+    commit_sha: str,
+    *,
+    host: str,
+    allow_missing_tree_hash: bool,
+) -> tuple[str, dict[str, object] | None]:
+    """Validate a manifest and distinguish absent input from integrity failure."""
     if Path(target).is_symlink():
-        return None
+        return "absent", None
     metadata = _HOST_METADATA.get(host)
     if metadata is None:
-        return None
+        return "absent", None
     try:
         owner, repo, _parts = _normalize_identity(owner, repo, commit_sha, host)
     except ValueError:
-        return None
+        return "absent", None
     fetch_method, canonical_base = metadata
     try:
         # Match detached-auth parsing: a duplicate field must never silently
@@ -572,9 +751,9 @@ def _read_valid_manifest(
             subject="materialized manifest",
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, ManifestAuthMalformedError):
-        return None
+        return "absent", None
     if not isinstance(payload, dict):
-        return None
+        return "absent", None
     source = payload.get("source")
     fetch_method = (
         "registry-artifact" if source == "registry-artifact" else fetch_method
@@ -587,9 +766,9 @@ def _read_valid_manifest(
         "fetch_method": fetch_method,
     }
     if any(payload.get(key) != value for key, value in expected.items()):
-        return None
+        return "absent", None
     if not isinstance(payload.get("spec"), str) or not payload["spec"]:
-        return None
+        return "absent", None
     if host == "go-module-zip":
         expected_url = None
     elif owner == "registry" and payload.get("degraded_provenance") is not None:
@@ -600,69 +779,69 @@ def _read_valid_manifest(
     else:
         expected_url = f"{canonical_base}/{owner}/{repo}"
     if payload.get("repo_url") != expected_url:
-        return None
+        return "absent", None
     if not isinstance(payload.get("fetched_at"), str) or not payload["fetched_at"]:
-        return None
+        return "absent", None
     if "published_at" in payload and not _valid_timestamp(payload.get("published_at")):
-        return None
+        return "absent", None
     if payload.get("tag") is not None and not isinstance(payload.get("tag"), str):
-        return None
+        return "absent", None
     verified = payload.get("verified")
     if "verified" in payload and not (
         verified is True or verified is False or verified in ("sampled", "archive-only")
     ):
-        return None
+        return "absent", None
     if verified in (True, "sampled", "archive-only") and (
         not isinstance(payload.get("verified_at"), str) or not payload["verified_at"]
     ):
-        return None
+        return "absent", None
     if verified is False and payload.get("verified_at") is not None:
-        return None
+        return "absent", None
     if source is not None and source not in {"registry-artifact", "git-commit", "go-module-zip"}:
-        return None
+        return "absent", None
     if (
         "has_tests" in payload
         and payload.get("has_tests") is not None
         and not isinstance(payload.get("has_tests"), bool)
     ):
-        return None
+        return "absent", None
     artifact_fields = ("artifact_kind", "artifact_checksum")
     if source == "registry-artifact":
         if verified is not True:
-            return None
+            return "absent", None
         if payload.get("artifact_kind") not in {"npm-tarball", "sdist", "crate"}:
-            return None
+            return "absent", None
         if (
             not isinstance(payload.get("artifact_checksum"), str)
             or not payload["artifact_checksum"]
         ):
-            return None
+            return "absent", None
     elif any(field in payload for field in artifact_fields):
-        return None
+        return "absent", None
     if source == "go-module-zip":
         required = ("module_path", "module_version", "proxy_url", "zip_sha256", "sumdb_h1")
         if host != "go-module-zip" or fetch_method != "go-module-zip":
-            return None
+            return "absent", None
         if not all(isinstance(payload.get(field), str) and payload[field] for field in required):
-            return None
+            return "absent", None
         if not str(payload["proxy_url"]).startswith(("https://", "http://127.0.0.1", "http://localhost")):
-            return None
+            return "absent", None
         if not re.fullmatch(r"[0-9a-f]{64}", str(payload["zip_sha256"])):
-            return None
+            return "absent", None
         if not str(payload["sumdb_h1"]).startswith("h1:"):
-            return None
+            return "absent", None
     if "parity" in payload and payload.get("parity") not in {
         "exact",
         "drift",
         "unknown",
     }:
-        return None
+        return "absent", None
     if "graph" in payload and payload.get("graph") not in {"complete", "direct-only"}:
-        return None
+        return "absent", None
     if "deps" in payload:
         deps = payload.get("deps")
         if not isinstance(deps, list):
-            return None
+            return "absent", None
         for dependency in deps:
             if not isinstance(dependency, dict) or set(dependency) != {
                 "name",
@@ -670,34 +849,34 @@ def _read_valid_manifest(
                 "resolved_sha",
                 "spec",
             }:
-                return None
+                return "absent", None
             if not all(
                 isinstance(dependency.get(field), str) and bool(dependency[field])
                 for field in ("name", "version", "spec")
             ):
-                return None
+                return "absent", None
             resolved_sha = dependency.get("resolved_sha")
             if resolved_sha is not None and (
                 not isinstance(resolved_sha, str) or not resolved_sha
             ):
-                return None
+                return "absent", None
     for field in ("files_compared", "only_in_git", "only_in_artifact"):
         if field in payload and (
             not isinstance(payload[field], int)
             or isinstance(payload[field], bool)
             or payload[field] < 0
         ):
-            return None
+            return "absent", None
     if "trust_score" in payload and (
         not isinstance(payload["trust_score"], int)
         or isinstance(payload["trust_score"], bool)
         or not 0 <= payload["trust_score"] <= 100
     ):
-        return None
+        return "absent", None
     if "trust_breakdown" in payload:
         breakdown = payload["trust_breakdown"]
         if not isinstance(breakdown, list):
-            return None
+            return "absent", None
         for factor in breakdown:
             if not isinstance(factor, dict) or set(factor) != {
                 "factor",
@@ -705,18 +884,18 @@ def _read_valid_manifest(
                 "weight",
                 "evidence",
             }:
-                return None
+                return "absent", None
             if not isinstance(factor["factor"], str) or not factor["factor"]:
-                return None
+                return "absent", None
             for field in ("score", "weight"):
                 if (
                     not isinstance(factor[field], int)
                     or isinstance(factor[field], bool)
                     or not 0 <= factor[field] <= 100
                 ):
-                    return None
+                    return "absent", None
             if not isinstance(factor["evidence"], dict):
-                return None
+                return "absent", None
     if payload.get("materialized_tree_hash") is not None or _manifest_has_file_map(
         payload
     ):
@@ -724,14 +903,14 @@ def _read_valid_manifest(
             verify_materialized_integrity(target, payload)
         except VerificationError:
             logger.warning("load-time integrity verification failed for %s", target)
-            return None
+            return "invalid", None
     elif not allow_missing_tree_hash:
         # Every producer writes the anchor. Missing anchors are accepted only
         # by update_manifest's private, provenance-checked backfill path.
         # A map-carrying manifest without an aggregate is malformed and was
         # rejected above, never backfilled (issue #194, SP-2).
-        return None
-    return payload
+        return "absent", None
+    return "ok", payload
 
 
 def _archive_path(name: str) -> PurePosixPath:
@@ -1532,8 +1711,9 @@ def _materialize_hosted_repo_locked(
         # aggregate that anchors it; load-time verification is full-coverage
         # for shelves of any size within the archive limits (issue #194).
         manifest.update(full_coverage_manifest_fields(staging))
-        _write_manifest(staging / MANIFEST_NAME, manifest)
-        _refresh_license_manifest(staging, manifest)
+        # This unpublished, disposable tree is never load-time verified.
+        _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+        _refresh_license_manifest(staging, manifest, staging_directory=staging)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, commit_sha, host=host)
@@ -1697,8 +1877,9 @@ def materialize_go_module_zip(
             # One scan yields the per-file digest map plus the full-scope
             # aggregate anchoring it (issue #194).
             manifest.update(full_coverage_manifest_fields(staging))
-            _write_manifest(staging / MANIFEST_NAME, manifest)
-            _refresh_license_manifest(staging, manifest)
+            # This unpublished, disposable tree is never load-time verified.
+            _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+            _refresh_license_manifest(staging, manifest, staging_directory=staging)
             if target.exists():
                 backup = Path(tempfile.mkdtemp(prefix=f".{scope.commit_sha}.old-", dir=target.parent))
                 backup.rmdir()
@@ -1862,8 +2043,9 @@ def _materialize_artifact_locked(
         # One scan yields the per-file digest map plus the full-scope
         # aggregate anchoring it (issue #194).
         manifest.update(full_coverage_manifest_fields(staging))
-        _write_manifest(staging / MANIFEST_NAME, manifest)
-        _refresh_license_manifest(staging, manifest)
+        # This unpublished, disposable tree is never load-time verified.
+        _write_manifest(staging / MANIFEST_NAME, manifest, staging_directory=staging)
+        _refresh_license_manifest(staging, manifest, staging_directory=staging)
         _assert_target_confinement(Path(root), target)
         if target.exists():
             current = read_valid_manifest(target, owner, repo, scope.commit_sha)

@@ -8,7 +8,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from re import _constants as sre_constants  # type: ignore[attr-defined]
 from re import _parser as sre_parse  # type: ignore[attr-defined]
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from leitir.warm import WarmSession
 
 from leitir.adapters import LanguageAdapter
 from leitir.adapters.registry import trusted_adapter_language
@@ -311,7 +314,9 @@ class IndexedSearcher:
         )
 
 
-def _corpus_eligibility(root: Path) -> tuple[tuple[ShelfRef, ...], list[ShelfExclusion]]:
+def _corpus_eligibility(
+    root: Path, *, session: WarmSession | None = None
+) -> tuple[tuple[ShelfRef, ...], list[ShelfExclusion]]:
     """Deterministically split the corpus into search-eligible and excluded shelves.
 
     Reuses ``shelves_from_corpus`` and ``ineligible_shelf_conditions`` -- the
@@ -343,7 +348,7 @@ def _corpus_eligibility(root: Path) -> tuple[tuple[ShelfRef, ...], list[ShelfExc
             excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "unsupported_host"))
             continue
         try:
-            conditions = ineligible_shelf_conditions(root, shelf)
+            conditions = ineligible_shelf_conditions(root, shelf, session=session)
         except Exception:
             excluded.append(ShelfExclusion(shelf.host, shelf.owner, shelf.repo, shelf.commit, "verification_failed"))
             continue
@@ -389,6 +394,7 @@ class CorpusSearcher:
         *,
         use_index: bool = False,
         require_index: bool = False,
+        session: WarmSession | None = None,
     ) -> None:
         if use_index and indexed is None:
             raise ValueError("use_index requires an IndexedSearcher")
@@ -397,6 +403,7 @@ class CorpusSearcher:
         self._indexed = indexed
         self._use_index = use_index
         self._require_index = require_index
+        self._session = session
 
     def search(
         self,
@@ -406,7 +413,7 @@ class CorpusSearcher:
         whole_file_must: bool = False,
     ) -> CorpusSearchReport:
         digest = corpus_spec_digest(must, should, must_not, whole_file_must)
-        eligible, excluded = _corpus_eligibility(self._root)
+        eligible, excluded = _corpus_eligibility(self._root, session=self._session)
 
         all_matches: list[SourceMatch] = []
         total_eligible = total_indexed = total_excluded = 0

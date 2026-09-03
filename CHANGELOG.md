@@ -35,6 +35,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
 - retire the tree-layout import-root tier as an authority (`check`)
+- stage manifest rewrites outside the verified shelf tree (#282) (`materialize`)
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)
 

@@ -217,10 +217,12 @@ class WarmSession:
             # Bracket the whole verification with BOTH evidence kinds.  The
             # epoch brackets acquisitions, not mutations — a writer swaps the
             # shelf at the END of a long held interval, after its bump — so
-            # only agreeing sweep+epoch pairs across the attempt prove the
-            # hashed bytes and the pinned signature describe one shelf state
-            # (review F1).  Agreement also distinguishes a torn read from
-            # corruption for stickiness (review F3).
+            # agreeing sweep+epoch pairs across the attempt are the pin
+            # precondition (review F1).  Agreement is necessary, not
+            # sufficient: an exotic swap-in-valid-then-restore-around-the-
+            # hash writer could still cross states; that shape has no
+            # in-tree writer and is documented as an accepted residual in
+            # the ADR amendment (review round 3, finding 2).
             epoch_before = self._read_epoch_or_none(target)
             sweep_before = self._sweep_or_degrade(target)
             status, manifest = materialize._read_valid_manifest_with_status(
@@ -430,7 +432,13 @@ class WarmSession:
         return copy.deepcopy(manifest) if status == "ok" and manifest is not None else None
 
     def _read_epoch_or_none(self, target: Path) -> bytes | None:
-        identity = materialize._target_lock_identity(self._root, target, "")
+        # The containment guard and memo key use the resolved form; the
+        # epoch identity must too, or a symlink-spelled target raises
+        # instead of gating (review round 3, finding 1).  Resolving is
+        # idempotent and the identity hashes only the root-relative path,
+        # so every spelling of one shelf agrees on one epoch file.
+        resolved = target.resolve(strict=False)
+        identity = materialize._target_lock_identity(self._root, resolved, "")
         return materialize.read_lock_epoch(identity)
 
     def _epoch_unchanged(self, target: Path, entry: _WarmEntry) -> bool:

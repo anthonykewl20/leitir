@@ -396,7 +396,17 @@ stat signature are unchanged, so a *non-cooperating* process that mutates
 bytes in place **and restores the stat signature** (and, on POSIX, also
 defeats the ctime component, which `utime` cannot restore — inode or clock
 manipulation is required) is detected at the next *cold* load but not until
-the session ends under warm mode. On Windows the bar is lower: `st_ctime` is
+the session ends under warm mode. One further pin-time edge (review round 3,
+finding 2): sweep+epoch agreement across a verification is the *precondition*
+for pinning, not a proof that one shelf state produced both observations —
+a writer that swaps in a fully-valid alternate state before the reader's
+manifest read and restores the original directory node after the tree hash
+could pin a crossed (manifest, signature) pair. No leitir writer has that
+shape (publish rollback only acts while the target path is absent; gc
+recovery is restore-only), and the adversarial version is subsumed by
+residual (ii) below. "Cooperating writers are caught with certainty"
+therefore scopes to memo *invalidation* — any lock acquisition invalidates
+— not to pin-time state pairing. On Windows the bar is lower: `st_ctime` is
 creation time there and does not move on a content write, so the
 stat-restoring adversary needs only size and mtime restoration — the
 platform-divergent residual ADR-0006 already documents, unchanged by this

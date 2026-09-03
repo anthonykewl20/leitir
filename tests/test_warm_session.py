@@ -501,6 +501,98 @@ def test_transient_writer_race_is_not_sticky(
     assert len(calls) >= 2
 
 
+def test_epoch_bump_failure_fails_the_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bump that cannot be durably written must abort the lock holder."""
+    target = _shelf(tmp_path)
+
+    def failing_write(*args: object, **kwargs: object) -> None:
+        raise PermissionError("epoch replace blocked")
+
+    monkeypatch.setattr(materialize, "atomic_write_bytes", failing_write)
+    with pytest.raises(materialize.MaterializationError):
+        with materialize._target_lock(tmp_path, target, SHA):
+            pass  # pragma: no cover - acquisition must fail before the body
+
+
+def test_epoch_bump_retries_transient_permission_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Windows-shaped transient reader handle delays but does not abort."""
+    target = _shelf(tmp_path)
+    real_write = materialize.atomic_write_bytes
+    attempts = [0]
+
+    def flaky_write(path: object, data: object, **kwargs: object) -> None:
+        attempts[0] += 1
+        if attempts[0] <= 2:
+            raise PermissionError("reader handle open")
+        real_write(path, data, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(materialize, "atomic_write_bytes", flaky_write)
+    with materialize._target_lock(tmp_path, target, SHA):
+        pass
+    assert attempts[0] == 3
+
+
+def test_gc_recovery_advances_the_epoch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The staging-recovery path heralds its restore/removal with a bump."""
+    from leitir.cli_corpus import _gc_abandoned_staging
+
+    target = _shelf(tmp_path)
+    identity = materialize._target_lock_identity(tmp_path, target, SHA)
+    before = materialize.read_lock_epoch(identity)
+    backup = target.parent / f".{SHA}.old-0"
+    backup.mkdir()
+    (backup / "stale.txt").write_bytes(b"stale\n")
+    monkeypatch.setenv("LEITIR_UPDATE_CHECK", "0")
+    removed = _gc_abandoned_staging(tmp_path)
+    assert removed >= 1
+    assert not backup.exists()
+    assert materialize.read_lock_epoch(identity) != before
+
+
+def test_symlinked_corpus_root_stays_warm_and_correct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A root whose spelling differs from its resolved form must gate, not crash.
+
+    The memo key, containment guard, and epoch identity all derive from the
+    resolved form; a symlink-spelled target (as engine and corpus build
+    them) must hit the memo instead of raising or falling into a false
+    verification failure (review round 3, finding 1).
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    _shelf(real)
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(real)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    calls = _count_verifications(monkeypatch)
+    lexical = link / "repos" / "github.com" / "acme" / "demo" / SHA
+    with WarmSession(link) as session, session.call():
+        assert session.read_valid_manifest(lexical, "acme", "demo", SHA) is not None
+        assert session.read_valid_manifest(lexical, "acme", "demo", SHA) is not None
+        assert session.stats()["hits"] == 1
+    assert len(calls) == 1
+
+
+def test_parse_lock_epoch_accepts_only_the_canonical_spelling() -> None:
+    assert materialize.parse_lock_epoch(b"41") == 41
+    assert materialize.parse_lock_epoch(b"41\n") == 41
+    assert materialize.parse_lock_epoch(b" 41\n") is None
+    assert materialize.parse_lock_epoch(b"41 \n") is None
+    assert materialize.parse_lock_epoch(b"4_1\n") is None
+    assert materialize.parse_lock_epoch(b"+41\n") is None
+    assert materialize.parse_lock_epoch(b"") is None
+    assert materialize.parse_lock_epoch(b"41\n\n") is None
+
+
 def test_close_discards_all_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = _shelf(tmp_path)
     calls = _count_verifications(monkeypatch)

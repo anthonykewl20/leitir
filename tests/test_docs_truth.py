@@ -201,10 +201,92 @@ class TestCheckUnguardedArchivedInstructions:
         assert findings == []
 
 
+class TestSkillScope:
+    """skills/**/*.md -- the agent-facing skill -- sits inside the gate
+    (issue #304). The skill is the document agents are actually taught
+    from, so a command taught there must be verified exactly like one
+    taught in README."""
+
+    def _make_repo(self, tmp_path: Path, skill_body: str) -> Path:
+        cli_dir = tmp_path / "src" / "leitir"
+        cli_dir.mkdir(parents=True)
+        (cli_dir / "cli_search.py").write_text(
+            "import argparse\n"
+            "\n"
+            "def build_parser():\n"
+            "    parser = argparse.ArgumentParser()\n"
+            "    commands = parser.add_subparsers(dest='command')\n"
+            "    commands.add_parser('search', help='search')\n"
+            "    return parser\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "leitir"\nversion = "0.1.6"\n', encoding="utf-8"
+        )
+        skills_dir = tmp_path / "skills" / "leitir"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text(skill_body, encoding="utf-8")
+        return tmp_path
+
+    def _run(self, repo: Path) -> list[docs_truth.Finding]:
+        return docs_truth.run_checks(
+            repo_root=repo, cli_path=repo / "src" / "leitir" / "cli_search.py"
+        )
+
+    def test_skill_teaching_a_dead_command_is_rejected(self, tmp_path: Path) -> None:
+        repo = self._make_repo(
+            tmp_path, "# leitir\n\n```bash\nleitir launch --foo\n```\n"
+        )
+        findings = self._run(repo)
+        assert [(f.path, f.line) for f in findings] == [
+            (repo / "skills" / "leitir" / "SKILL.md", 4)
+        ]
+        assert "leitir launch" in findings[0].message
+
+    def test_skill_teaching_only_real_commands_passes(self, tmp_path: Path) -> None:
+        repo = self._make_repo(
+            tmp_path, "# leitir\n\n```bash\nleitir search --corpus\n```\n"
+        )
+        assert self._run(repo) == []
+
+    def test_archived_skill_still_needs_guards(self, tmp_path: Path) -> None:
+        """Check 2's guard-aware rule applies to skill files too: an
+        archived skill may name dead verbs in prose, but a runnable
+        unguarded instruction is still flagged."""
+        repo = self._make_repo(
+            tmp_path,
+            "# leitir (Removed)\n\n> **ARCHIVED** -- gone.\n\n"
+            "```bash\nleitir launch --foo\n```\n",
+        )
+        findings = self._run(repo)
+        assert len(findings) == 1
+        assert "unguarded" in findings[0].message
+
+
 class TestRealRepoTree:
     def test_run_checks_exits_clean_on_real_tree(self) -> None:
         findings = docs_truth.run_checks()
         assert findings == [], [f.render() for f in findings]
+
+    def test_skill_doc_is_inside_gate_scope(self) -> None:
+        """skills/leitir/SKILL.md is the document agents actually read; the
+        gate must scan it. It is clean today -- pinning the scope means the
+        next drift there fails CI instead of landing silently (issue #304)."""
+        doc_files = docs_truth._iter_doc_files(
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "AGENTS.md",
+            REPO_ROOT / "docs",
+            REPO_ROOT / "skills",
+        )
+        skill = REPO_ROOT / "skills" / "leitir" / "SKILL.md"
+        assert skill in doc_files
+        registered = docs_truth.extract_registered_verbs_from_cli_modules(
+            REPO_ROOT / "src" / "leitir"
+        )
+        assert (
+            docs_truth.check_dead_commands([skill], REPO_ROOT / "docs", registered)
+            == []
+        )
 
     def test_smoke_evaluation_doc_passes(self) -> None:
         """The motivating example: docs/smoke-evaluation.md documents the

@@ -10,13 +10,19 @@ Four checks:
 
 Check 1 -- dead command references.  Every ``leitir <verb>`` invocation that
 appears in *code context* (a fenced code block, or an inline ``` `...` ```
-span) in README.md, AGENTS.md, or a *non-historical* doc under docs/ must name
-a verb that is actually registered as an argparse subcommand in
-``src/leitir/cli.py``. The authoritative verb list is extracted by parsing
-``cli.py`` with the ``ast`` module and collecting every
-``commands.add_parser("<name>", ...)`` call -- including the one case where
-the literal name is a for-loop variable (``get``/``fetch`` share one
-``add_parser(command, ...)`` call site) -- rather than hardcoding a list.
+span) in README.md, AGENTS.md, a *non-historical* doc under docs/, or a
+markdown file under skills/ must name a verb that is actually registered as
+an argparse subcommand in ``src/leitir/cli*.py``. The authoritative verb list
+is extracted by parsing the ``cli*.py`` modules with the ``ast`` module and
+collecting every ``commands.add_parser("<name>", ...)`` call -- including the
+one case where the literal name is a for-loop variable (``get``/``fetch``
+share one ``add_parser(command, ...)`` call site) -- rather than hardcoding a
+list.
+
+The ``skills/**.md`` files are the agent-facing skill: the rules and command
+lines AI agents are actually taught. A stale instruction there misdirects
+agents directly, so it is verified with exactly the same strictness as
+README -- it is never treated as historical-by-convention.
 
 ADR, evidence, and research documents (``docs/adr/**``, ``docs/evidence/**``,
 ``docs/research/**``) are historical-by-convention records: an ADR documents
@@ -54,11 +60,12 @@ deliberately ignored too (see ``_PYPROJECT_VERSION_CLAIM_RE``).
 Check 4 -- advertised install tag is real and current.  Any
 ``pip install git+...@vX.Y.Z``-shaped instruction in README.md must name a
 tag that both exists in ``git tag --list`` and sorts as the latest ``v*``
-tag. Tags are read via one ``git tag --list 'v*'`` subprocess call. If git
-is unavailable (``FileNotFoundError``), the call fails (non-repo / shallow
-checkout with no tag refs), or the repo simply has no ``v*`` tags, Check 4
-skips cleanly and reports nothing -- it never fails the gate on git/tag
-absence, only on a genuine stale/nonexistent tag reference.
+tag (README-only by design: it is the one document install instructions
+point at). Tags are read via one ``git tag --list 'v*'`` subprocess call. If
+git is unavailable (``FileNotFoundError``), the call fails (non-repo /
+shallow checkout with no tag refs), or the repo simply has no ``v*`` tags,
+Check 4 skips cleanly and reports nothing -- it never fails the gate on
+git/tag absence, only on a genuine stale/nonexistent tag reference.
 
 All four checks are deterministic and PYTHONHASHSEED-independent (all
 collections are sorted before being reported).
@@ -282,10 +289,14 @@ def extract_registered_verbs_from_cli_modules(cli_dir: Path) -> frozenset[str]:
     return frozenset(verbs)
 
 
-def _iter_doc_files(readme: Path, agents: Path, docs_dir: Path) -> list[Path]:
+def _iter_doc_files(
+    readme: Path, agents: Path, docs_dir: Path, skills_dir: Path
+) -> list[Path]:
     files = [p for p in (readme, agents) if p.is_file()]
     if docs_dir.is_dir():
         files.extend(sorted(docs_dir.rglob("*.md")))
+    if skills_dir.is_dir():
+        files.extend(sorted(skills_dir.rglob("*.md")))
     return sorted(set(files))
 
 
@@ -510,7 +521,12 @@ def run_checks(
 ) -> list[Finding]:
     registered_verbs = extract_registered_verbs_from_cli_modules(cli_path.parent)
     docs_dir = repo_root / "docs"
-    doc_files = _iter_doc_files(repo_root / "README.md", repo_root / "AGENTS.md", docs_dir)
+    doc_files = _iter_doc_files(
+        repo_root / "README.md",
+        repo_root / "AGENTS.md",
+        docs_dir,
+        repo_root / "skills",
+    )
     real_version = read_pyproject_version(repo_root / "pyproject.toml")
     tags = get_git_tags(repo_root)
     findings = [

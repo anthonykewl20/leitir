@@ -79,7 +79,7 @@ def _parity(manifest: Mapping[str, object]) -> dict[str, object]:
 def _license(manifest: Mapping[str, object], target_path: Path) -> dict[str, object]:
     confidence = manifest.get("license_confidence")
     method: object = manifest.get("license_method")
-    if confidence not in {"high", "medium", "low"}:
+    if not isinstance(confidence, str) or confidence not in {"high", "medium", "low"}:
         from leitir.sbom import infer_license
 
         result = infer_license(dict(manifest), target_path)

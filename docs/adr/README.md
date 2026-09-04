@@ -41,6 +41,7 @@ please use [`template.md`](template.md) as the basis.
 | [0034](0034-corpus-catalog-corruption-fail-closed-audit.md) | Fail-closed catalog reads: a per-caller audit of `load_sources`'s corruption recovery | Accepted | 2026-08-27 |
 | [0035](0035-warm-process-invalidation-contract.md) | Warm process mode — the invalidation contract for verified state held in memory | Proposed | 2026-08-27 |
 | [0036](0036-go-containment-substrate.md) | Go containment substrate — proving an executed Go port under containment | Proposed | 2026-09-02 |
+| [0037](0037-self-calibration-loop.md) | Self-calibration loop — bounded blind-spot hunting with a convergence ledger | Accepted | 2026-09-04 |
 
 ## Status vocabulary
 

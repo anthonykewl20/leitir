@@ -1,0 +1,65 @@
+name: Self-calibration
+
+# Nightly blind-spot hunt (ADR-0037). Fails only on NEW or regressed findings of
+# severity >= high; the known backlog is tracked in calibration/ledger.json.
+on:
+  workflow_dispatch:
+    inputs:
+      probes:
+        description: comma-separated probes (default all except scorecard)
+        required: false
+        default: ""
+      mutants:
+        description: mutants to sample
+        required: false
+        default: "300"
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Python 3.12
+        run: uv python install 3.12
+      - name: Run calibration
+        env:
+          PYTHONPATH: src
+        run: >-
+          uv run --python 3.12 --no-project --with-requirements requirements.txt
+          --with coverage==7.15.2 --with pytest-cov==7.1.0 --with ruff --with mypy
+          python tools/calibrate.py run
+          --mutants "${{ github.event.inputs.mutants || '300' }}"
+          --mutation-budget 5400
+          ${{ github.event.inputs.probes && format('--probes {0}', github.event.inputs.probes) || '' }}
+          --fail-on high
+      - name: File new high-severity findings as ready-for-agent issues
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: src
+        run: python tools/calibrate.py issues --min-severity high --limit 10
+      - name: Publish report to job summary
+        if: always()
+        run: cat calibration/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-run
+          path: |
+            calibration/ledger.json
+            calibration/REPORT.md
+            .leitir-calibration/runs/**/run.json
+            .leitir-calibration/runs/**/mutants.json
+            .leitir-calibration/runs/**/fuzz.json
+          if-no-files-found: warn

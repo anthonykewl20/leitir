@@ -32,3 +32,4 @@ tests/fixtures/.locks/
 !.leitir-score/evidence/performance-runner.json
 !.leitir-score/evidence/baseline-asv.json
 !.leitir-score/evidence/candidate-asv.json
+.leitir-calibration/

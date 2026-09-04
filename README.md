@@ -575,6 +575,8 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 `tools/score_engine.py` is the ADR-002 repository/engine assessment scorer. It evaluates the Leitir project itself—code health, test adequacy, supply chain, and related evidence—across six weighted dimensions. It does **not** implement, mirror, or independently verify the runtime `leitir trust` seven-factor corpus-trust model in `src/leitir/trust.py`. The two systems assess different subjects and share only the abstract principle that “unknown is neither zero nor pass.” The published pinned assessment reports `decision=pass`, `complete=true`. Details, exact scores, and subject identity are tracked in [docs/scoring.md](docs/scoring.md).
 
+`tools/calibrate.py` is the complementary ADR-0037 self-calibration loop: where the scorer *assesses* with a fixed policy, the calibrator *explores* for blind spots the project cannot yet see — sampled mutation testing (kill rate with a Wilson 95% interval), seeded fuzzing of the pure kernels with crash/hang/determinism/metamorphic oracles (rule-of-three and Good-Turing bounds per target), environment determinism across hash seed, time zone, and locale, never-executed fail-closed `raise` paths in integrity modules, and hot-path timing drift. Findings keep stable identities in a tracked ledger (`calibration/ledger.json`, `calibration/REPORT.md`) so convergence and regression are visible run over run; fixes flow through the normal AGENTS.md probe → red test → fix → PR loop. See [docs/calibration.md](docs/calibration.md).
+
 ## Tests
 
 ```bash
@@ -642,6 +644,7 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - [Architecture Decision Records](docs/adr/README.md)
 - [docs/STATUS.md](docs/STATUS.md)
 - [docs/scoring.md](docs/scoring.md)
+- [docs/calibration.md](docs/calibration.md)
 - [skills/leitir/SKILL.md](skills/leitir/SKILL.md)
 
 Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.md](docs/operations.md), [docs/smoke-evaluation.md](docs/smoke-evaluation.md), plus the manual v1 scorecards — [docs/leitir-engine-scorecard.html](docs/leitir-engine-scorecard.html), its [historical PNG snapshot](docs/leitir-engine-scorecard.png), and the manual [v2 editorial scorecard](docs/leitir-engine-scorecard-v2.html). These manual

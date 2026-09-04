@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from urllib.error import URLError
 
 import pytest
 from _http_server import json_body, routed_server
@@ -171,3 +172,14 @@ def test_npm_token_authenticates_default_registry_metadata(monkeypatch):
     monkeypatch.setattr("leitir._http.safe_urlopen", fake_urlopen)
     assert NpmResolver(Tags()).latest_version("demo") == "1.2.0"
     assert captured["Authorization"] == "Bearer npm-secret"
+
+
+def test_registry_transport_failure_raises_resolution_error(monkeypatch):
+    def failing_urlopen(request, timeout):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("leitir._http.safe_urlopen", failing_urlopen)
+    resolver = NpmResolver(Tags(), max_attempts=1)
+    with pytest.raises(ResolutionError, match="npm registry lookup failed for demo") as error:
+        resolver.latest_version("demo")
+    assert isinstance(error.value.__cause__, OSError)

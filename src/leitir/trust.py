@@ -70,7 +70,7 @@ def _verification(manifest: Mapping[str, object]) -> dict[str, object]:
 def _parity(manifest: Mapping[str, object]) -> dict[str, object]:
     state = manifest.get("parity", "unknown")
     scores = {"exact": 100, "drift": 0, "unknown": 50}
-    if state not in scores:
+    if not isinstance(state, str) or state not in scores:
         state = "unknown"
     reason = "cached parity result" if state != "unknown" else "parity result is unknown"
     return _factor("parity", scores[state], {"state": state, "reason": reason})

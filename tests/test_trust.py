@@ -243,3 +243,20 @@ def test_malformed_cached_license_confidence_is_unknown_not_a_crash(tmp_path, ma
     factor = _by_factor(compute_trust(manifest, tmp_path))["license"]
     assert factor["score"] == 50
     assert factor["evidence"]["state"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {},
+        {"exact": True},
+        ["exact"],
+        True,
+        None,
+        3,
+    ],
+)
+def test_malformed_cached_parity_state_is_unknown_not_a_crash(malformed):
+    factor = _parity({"parity": malformed})
+    assert factor["score"] == 50
+    assert factor["evidence"]["state"] == "unknown"

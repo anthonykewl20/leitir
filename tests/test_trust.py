@@ -226,3 +226,20 @@ def test_parity_invalid_state_and_invalid_timestamps_are_neutral():
     assert _parity({"parity": "not-a-parity-state"})["evidence"]["state"] == "unknown"
     assert _parse_timestamp("not-a-timestamp") is None
     assert _parse_timestamp("2026-01-01T00:00:00") is None
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"8j1u": False},
+        ["high"],
+        True,
+        None,
+        3,
+    ],
+)
+def test_malformed_cached_license_confidence_is_unknown_not_a_crash(tmp_path, malformed):
+    manifest = {"license_confidence": malformed, "license_method": None}
+    factor = _by_factor(compute_trust(manifest, tmp_path))["license"]
+    assert factor["score"] == 50
+    assert factor["evidence"]["state"] == "unknown"

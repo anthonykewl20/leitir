@@ -27,7 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Full history: the suite probe runs test_changelog_sync, whose
+          # sync_changelog check fails closed on shallow clones (#296).
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - name: Install Python 3.12
         run: uv python install 3.12

@@ -34,6 +34,7 @@ plus a deterministic code-search kernel for AI coding agents.
 - [Security policy](../SECURITY.md) — vulnerability reporting and threat boundary
 - [Agent instructions](../AGENTS.md) — workflow for AI coding agents
 - [Scoring](scoring.md) — ADR-002 repository/engine assessment scorer
+- [Calibration](calibration.md) — ADR-0037 self-calibration loop: mutation, fuzz, determinism, coverage-of-raises, perf drift, convergence ledger
 
 ## Historical (retained for context, not current documentation)
 

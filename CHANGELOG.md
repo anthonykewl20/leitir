@@ -17,6 +17,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - add a docs-truth gate for command, version, and tag claims (`ci`)
 - add evidence-assisted cross-language port (ADR-0033) (`bts`)
 - add the agent-facing code-supply verbs and close two coverage falsifications
+- add the self-calibration loop (ADR-0037) (`calibration`)
 - derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 - replace in-memory lock epochs with writer-visible on-disk epochs (#272) (`warm`)
@@ -36,6 +37,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - have build_port_attribution verify its own source root (`bts`)
 - inherit the ambient environment in the differential check bridge (#285) (`bench`)
 - land the strict epoch parse the round-3 message claimed (#272) (`materialize`)
+- let the full-surface mypy run resolve tools/calibration (`calibration`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)

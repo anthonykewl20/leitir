@@ -4881,6 +4881,7 @@
         "seed": 3
       },
       "first_seen": "20260904T115118Z-0001",
+      "fixed_in": "20260904T152222Z-0004",
       "id": "8735063ec4b0c090",
       "last_seen": "20260904T143056Z-0003",
       "location": "trust:TypeError@trust.py:_parity",
@@ -4888,7 +4889,7 @@
       "reproducer": "python tools/calibrate.py fuzz-repro --target trust --seed 3 --index 7",
       "seen_runs": 2,
       "severity": "high",
-      "status": "open",
+      "status": "fixed",
       "title": "crash in trust: TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')"
     },
     "87be99317b14a517": {
@@ -9771,6 +9772,46 @@
       "regressed": [],
       "run_id": "20260904T143056Z-0003",
       "started_at": "2026-09-04T14:30:56Z"
+    },
+    {
+      "blind_spot_index": 1440,
+      "fixed": [
+        "8735063ec4b0c090"
+      ],
+      "git_sha": "309f8065a733c7fad3a55481f3472acdd79dc6be",
+      "metrics": {
+        "fuzz": {
+          "failures": 0,
+          "inputs": 400,
+          "rechecked": 1,
+          "targets": {
+            "trust": {
+              "by_design": 0,
+              "by_design_ratio": 0.0,
+              "distinct_signatures": 0,
+              "elapsed": 0.14,
+              "executed": 400,
+              "failure_rate_upper95_if_clean": 0.0075,
+              "failures": 0,
+              "unseen_mass_good_turing": 0.0
+            }
+          }
+        }
+      },
+      "new": [],
+      "open_by_severity": {
+        "critical": 0,
+        "high": 1,
+        "info": 1,
+        "low": 13,
+        "medium": 473
+      },
+      "probes": [
+        "fuzz"
+      ],
+      "regressed": [],
+      "run_id": "20260904T152222Z-0004",
+      "started_at": "2026-09-04T15:22:22Z"
     }
   ],
   "schema_version": "leitir-calibration-ledger-v1"

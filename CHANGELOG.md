@@ -53,6 +53,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)
 - treat non-string cached license confidence as unknown (`trust`)
+- treat non-string cached parity state as unknown (`trust`)
 
 ### Security
 - advance the epoch on gc shelf recovery; pin the under-lock rejection (#272) (`warm`)

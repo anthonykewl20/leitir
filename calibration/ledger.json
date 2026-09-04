@@ -542,37 +542,33 @@
           "original": "0",
           "path": "src/leitir/engine.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_ask.py::test_ask_accepts_a_lockfile_file_path_for_pin",
-          "tests/test_ask.py::test_ask_predicates_are_rerunnable_via_leitir_search",
-          "tests/test_ask.py::test_ask_resolves_pinned_version_and_answers_in_one_call",
-          "tests/test_ask.py::test_ask_second_call_after_first_is_still_offline_and_stable",
-          "tests/test_cli.py::test_search_uses_passed_root_for_verified_local_shelf",
-          "tests/test_corpus_search_cli.py::test_corpus_search_corrupt_catalog_fails_closed_not_vacuous_success",
-          "tests/test_corpus_search_cli.py::test_corpus_search_excludes_and_names_drift_and_tampered_shelves",
-          "tests/test_corpus_search_cli.py::test_corpus_search_finds_match_in_one_shelf_among_several",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_full_drift_shelf_uses_local_artifact_and_reports_git_only_exclusion",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_local_shelf_report_is_deterministic",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_oversized_local_blob_uses_verified_stream",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_symlink_blob_uses_link_text_bytes",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_valid_shelf_avoids_blob_http_gets",
-          "tests/test_engine.py::TestLocalMaterializedShelf::test_valid_shelf_serves_regular_blob_without_api_read",
-          "tests/test_warm_mode_cli.py::test_cold_and_first_warm_cli_calls_are_byte_identical[search]",
-          "tests/test_warm_mode_cli.py::test_warm_cli_second_call_reuses_verification",
-          "tests/test_warm_mode_cli.py::test_warm_cli_tamper_between_calls_is_rejected[file_bytes]",
-          "tests/test_warm_mode_cli.py::test_warm_cli_tamper_between_calls_is_rejected[file_digest_entry]",
-          "tests/test_warm_mode_cli.py::test_warm_cli_tamper_between_calls_is_rejected[symlink_target]",
-          "tests/test_warm_mode_cli.py::test_warm_cli_tamper_between_calls_is_rejected[tree_hash]"
+          "tests/test_adapters_multi.py",
+          "tests/test_cli.py",
+          "tests/test_cli_e2e.py",
+          "tests/test_engine.py",
+          "tests/test_engine_e2e.py",
+          "tests/test_engine_e2e_live.py",
+          "tests/test_index_recall_e2e_live.py",
+          "tests/test_python_ast_adapter.py",
+          "tests/test_s2b_language_routing.py",
+          "tests/test_search_verification_exit_codes.py",
+          "tests/test_streaming.py",
+          "tests/test_tier2_adapters.py",
+          "tests/test_tree.py",
+          "tests/test_tree_walk.py",
+          "tests/test_trigram_index.py",
+          "tests/test_warm_session.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "110f7bd39c51dace",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/engine.py:67",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 9b76668b8a5d5e17 --path src/leitir/engine.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to int-shift: `0` -> `1`"
@@ -727,19 +723,20 @@
           "original": "latest.size > stored.size",
           "path": "src/leitir/sumdb.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_sumdb.py::test_historical_lookup_head_is_accepted_when_latest_advances",
-          "tests/test_sumdb.py::test_lookup_record_inclusion_is_verified_against_historical_fixture_tiles"
+          "tests/test_import_purity.py",
+          "tests/test_materialize_artifact.py",
+          "tests/test_sumdb.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "1861308be9ac6554",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/sumdb.py:444",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 49e9a22ca5d38bd2 --path src/leitir/sumdb.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to cmp-swap: `latest.size > stored.size` -> `latest.size >= stored.size`"
@@ -1071,6 +1068,7 @@
         ]
       },
       "first_seen": "20260904T120617Z-0002",
+      "fixed_in": "20260904T162205Z-0005",
       "id": "228b07e529c2910d",
       "last_seen": "20260904T120617Z-0002",
       "location": "src/leitir/resolver.py:2545",
@@ -1078,7 +1076,7 @@
       "reproducer": "python tools/calibrate.py mutant ab58a3fced513e86 --path src/leitir/resolver.py",
       "seen_runs": 1,
       "severity": "high",
-      "status": "open",
+      "status": "fixed",
       "title": "tests blind to raise-drop: `raise ResolutionError( f\"npm registry lookup failed for {nam` -> `pass`"
     },
     "22e23e821f741b46": {
@@ -1333,18 +1331,37 @@
           "original": "16",
           "path": "src/leitir/resolver.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_resolver_sourcehut.py::test_anonymous_info_refs_parsing_and_resolution_avoids_graphql"
+          "tests/test_ask.py",
+          "tests/test_cli.py",
+          "tests/test_cli_e2e.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_e2e.py",
+          "tests/test_diff_impact.py",
+          "tests/test_import_purity.py",
+          "tests/test_lock.py",
+          "tests/test_materialize.py",
+          "tests/test_materialize_artifact.py",
+          "tests/test_materialize_bitbucket.py",
+          "tests/test_materialize_codeberg.py",
+          "tests/test_materialize_e2e_live.py",
+          "tests/test_materialize_gitlab.py",
+          "tests/test_materialize_sourcehut.py",
+          "tests/test_offline_cached_resolution.py",
+          "tests/test_parity_e2e.py",
+          "tests/test_resolver.py",
+          "tests/test_resolver_bitbucket.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "2c97c677770b700e",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/resolver.py:1728",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 5b5910f6519cfe5e --path src/leitir/resolver.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `16` -> `17`"
@@ -1600,37 +1617,24 @@
           "original": "1024",
           "path": "src/leitir/exec_sandbox.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_bts_bench_tasks.py::test_concurrent_live_task_assemblies_reuse_complete_stage",
-          "tests/test_bts_bench_tasks.py::test_repeated_live_task_assembly_has_a_deterministic_mount_plan_digest",
-          "tests/test_containment_attestation.py::test_controller_failure_kills_and_reaps_the_child_before_aborting",
-          "tests/test_containment_attestation.py::test_unconfirmed_group_kill_on_abort_escalates_to_child_leak_not_launcher_failure",
-          "tests/test_exec_sandbox.py::test_abort_bounds_reported_stream_lengths",
-          "tests/test_exec_sandbox.py::test_binary_digest_tamper_rejects",
-          "tests/test_exec_sandbox.py::test_caller_cannot_supply_smuggled_kafel[DEFAULT KILL /* hidden */ ALLOW { socket }]",
-          "tests/test_exec_sandbox.py::test_caller_cannot_supply_smuggled_kafel[DEFAULT KILL\\nALLOW { SYSCALL[41] }]",
-          "tests/test_exec_sandbox.py::test_caller_cannot_supply_smuggled_kafel[DEFAULT KILL\\nLOG { socket }]",
-          "tests/test_exec_sandbox.py::test_contained_launch_clears_state_left_in_the_policy_pinned_scratch_source",
-          "tests/test_exec_sandbox.py::test_debug_containment_trace_is_controller_only_and_removed",
-          "tests/test_exec_sandbox.py::test_debug_mount_manifests_are_bounded_and_cleared_per_run",
-          "tests/test_exec_sandbox.py::test_debug_mount_source_manifests_are_silent_without_the_debug_environment",
-          "tests/test_exec_sandbox.py::test_debug_mount_source_manifests_do_not_change_integrity_decisions",
-          "tests/test_exec_sandbox.py::test_duplicate_mount_destination_rejects_before_execution",
-          "tests/test_exec_sandbox.py::test_exact_opt_in_gate_rejects_every_other_value[ 1]",
-          "tests/test_exec_sandbox.py::test_exact_opt_in_gate_rejects_every_other_value[01]",
-          "tests/test_exec_sandbox.py::test_exact_opt_in_gate_rejects_every_other_value[None]",
-          "tests/test_exec_sandbox.py::test_exact_opt_in_gate_rejects_every_other_value[true]",
-          "tests/test_exec_sandbox.py::test_exact_opt_in_gate_rejects_every_other_value[yes]"
+          "tests/test_bts_bench.py",
+          "tests/test_bts_skeleton.py",
+          "tests/test_containment_attestation.py",
+          "tests/test_exec_sandbox.py",
+          "tests/test_import_purity.py",
+          "tests/test_pipeline_cli.py",
+          "tests/test_rerun.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "30d7129b2935d235",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/exec_sandbox.py:787",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 3cee616a3b9cb930 --path src/leitir/exec_sandbox.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `1024` -> `1025`"
@@ -2636,37 +2640,37 @@
           "original": "artifact is not None",
           "path": "src/leitir/corpus.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_check_cli_e2e.py::test_conditionally_defined_symbol_is_unresolved_not_a_violation",
-          "tests/test_check_cli_e2e.py::test_dynamic_dispatch_only_usage_is_unresolved_not_ok",
-          "tests/test_check_cli_e2e.py::test_dynamic_usage_is_unresolved_not_a_violation",
-          "tests/test_check_cli_e2e.py::test_missing_or_empty_index_fails_closed",
-          "tests/test_check_cli_e2e.py::test_symbol_definitively_absent_fails_and_names_symbol",
-          "tests/test_check_cli_e2e.py::test_symbol_present_via_from_import_alias_passes",
-          "tests/test_check_cli_e2e.py::test_symbol_that_genuinely_exists_passes",
-          "tests/test_check_cli_e2e.py::test_zero_examined_sites_is_loud_not_a_silent_pass",
-          "tests/test_check_import_root_evidence_e2e.py::test_multi_root_distribution_can_still_report_a_real_violation",
-          "tests/test_check_import_root_evidence_e2e.py::test_multi_root_distribution_examines_usage_of_every_declared_root",
-          "tests/test_check_import_root_evidence_e2e.py::test_pillow_import_root_is_derived_from_top_level_txt_not_guessed_from_name",
-          "tests/test_check_import_root_evidence_e2e.py::test_pillow_src_layout_alone_is_undeterminable",
-          "tests/test_check_import_root_evidence_e2e.py::test_pillow_wrong_symbol_is_a_real_violation_now_that_root_is_derived",
-          "tests/test_check_import_root_evidence_e2e.py::test_pyyaml_import_root_is_derived_as_yaml_not_pyyaml",
-          "tests/test_check_import_root_evidence_e2e.py::test_pyyaml_root_layout_alone_is_undeterminable",
-          "tests/test_check_import_root_evidence_e2e.py::test_src_layout_vendored_helper_masking_real_root_never_produces_a_false_violation",
-          "tests/test_check_import_root_evidence_e2e.py::test_stray_top_level_module_never_produces_a_false_violation",
-          "tests/test_check_import_root_evidence_e2e.py::test_undeterminable_import_root_fails_safe_never_a_guessed_violation",
-          "tests/test_check_import_root_evidence_e2e.py::test_vendored_subpackage_never_produces_a_false_violation",
-          "tests/test_corpus_cli_e2e.py::test_explicit_version_beats_lockfile"
+          "tests/test_apisurface.py",
+          "tests/test_ask.py",
+          "tests/test_benchmark_error_paths.py",
+          "tests/test_cli_in_process_api.py",
+          "tests/test_cli_list.py",
+          "tests/test_corpus_bench.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_corpus_search_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_e2e.py",
+          "tests/test_diff_impact.py",
+          "tests/test_docpointers.py",
+          "tests/test_doctor.py",
+          "tests/test_examples.py",
+          "tests/test_git_license_detection.py",
+          "tests/test_index_recall_e2e_live.py",
+          "tests/test_info.py",
+          "tests/test_license_policy.py",
+          "tests/test_load_sources_strict_callers.py",
+          "tests/test_lock.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "4bd70534da3f9473",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/corpus.py:882",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant bbee526012760ee6 --path src/leitir/corpus.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to cmp-swap: `artifact is not None` -> `artifact is None`"
@@ -2804,22 +2808,20 @@
           "original": "1",
           "path": "src/leitir/transplant.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_lineage.py::test_bundle_v2_rejects_tampered_lineage_member",
-          "tests/test_lineage.py::test_bundle_v2_requires_and_binds_lineage_while_v1_loads_unchanged",
-          "tests/test_transplant_packet.py::test_archive_tamper_fails_closed",
-          "tests/test_transplant_packet.py::test_reference_packet_is_closed_metadata_only",
-          "tests/test_transplant_packet.py::test_reuse_packet_is_canonical_uncompressed_ustar_and_round_trips"
+          "tests/test_import_purity.py",
+          "tests/test_lineage.py",
+          "tests/test_transplant_packet.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "4e487a6c5279a2ad",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/transplant.py:878",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 6350f49ec327d169 --path src/leitir/transplant.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `1` -> `2`"
@@ -3029,27 +3031,22 @@
           "original": "path.is_symlink() or not path.is_file()",
           "path": "src/leitir/snapshot.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_snapshot.py::test_archive_membership_closure_rejects_undeclared_file",
-          "tests/test_snapshot.py::test_export_import_round_trip_is_byte_identical",
-          "tests/test_snapshot.py::test_import_cleans_abandoned_sibling_staging",
-          "tests/test_snapshot.py::test_import_publish_failure_leaves_no_partial_corpus",
-          "tests/test_snapshot.py::test_import_rejects_any_preexisting_destination_entry",
-          "tests/test_snapshot.py::test_import_rejects_symlink_destination",
-          "tests/test_snapshot.py::test_library_import_requires_explicit_lock_binding_or_opt_out",
-          "tests/test_snapshot.py::test_snapshot_cli_outputs_machine_readable_paths_and_summary",
-          "tests/test_snapshot_e2e.py::test_gitlab_subgroup_snapshot_round_trip_and_removal",
-          "tests/test_snapshot_e2e.py::test_offline_snapshot_restores_complete_corpus"
+          "tests/test_corpus_cli.py",
+          "tests/test_load_sources_strict_callers.py",
+          "tests/test_snapshot.py",
+          "tests/test_snapshot_e2e.py",
+          "tests/test_trigram_index.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "53757ab53b5e59ba",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/snapshot.py:215",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 9195d5769a74034d --path src/leitir/snapshot.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to boolop-swap: `path.is_symlink() or not path.is_file()` -> `path.is_symlink() and (not path.is_file())`"
@@ -3153,26 +3150,18 @@
           "original": "prospective_bytes > self._policy.max_evidence_bytes",
           "path": "src/leitir/graph/runtime.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_graph_runtime.py::test_direct_path_shim_import_stays_terminal",
-          "tests/test_graph_runtime.py::test_nested_path_shim_import_is_interpreter_infrastructure",
-          "tests/test_graph_runtime.py::test_observed_donor_import_is_terminal_even_when_caught[False]",
-          "tests/test_graph_runtime.py::test_observed_donor_import_is_terminal_even_when_caught[True]",
-          "tests/test_graph_runtime.py::test_recorder_lock_is_released_when_the_inventory_digest_fails",
-          "tests/test_graph_runtime.py::test_records_bts_member_and_stdlib_as_diagnostic_only",
-          "tests/test_graph_runtime.py::test_runtime_augmentation_is_additive_and_cannot_resolve_static_edge",
-          "tests/test_graph_runtime.py::test_shadowed_path_shim_stays_terminal",
-          "tests/test_graph_runtime.py::test_unknown_import_is_terminal"
+          "tests/test_graph_runtime.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "573d978689ab5b52",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/graph/runtime.py:603",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 68445a82c91e4be3 --path src/leitir/graph/runtime.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to cmp-swap: `prospective_bytes > self._policy.max_evidence_bytes` -> `prospective_bytes >= self._policy.max_evidence_bytes`"
@@ -3276,20 +3265,23 @@
           "original": "exc.lineno or 1",
           "path": "src/leitir/graph/python.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_graph_static_edges.py::test_pep695_is_rejected_by_python_311_gate_on_every_host[class Box[T]: pass\\n-pep695_type_parameters_v1]",
-          "tests/test_graph_static_edges.py::test_pep695_is_rejected_by_python_311_gate_on_every_host[def identity[T](value: T) -> T: return value\\n-pep695_type_parameters_v1]",
-          "tests/test_graph_static_edges.py::test_pep695_is_rejected_by_python_311_gate_on_every_host[type Alias = int\\n-pep695_type_alias_v1]"
+          "tests/test_analysis_cli.py",
+          "tests/test_bts_cli.py",
+          "tests/test_bts_skeleton.py",
+          "tests/test_bts_walk.py",
+          "tests/test_graph_calls_reads.py",
+          "tests/test_graph_static_edges.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "5806246faa810cd7",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/graph/python.py:1226",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 545dbb04361900a5 --path src/leitir/graph/python.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to boolop-swap: `exc.lineno or 1` -> `exc.lineno and 1`"
@@ -3495,22 +3487,37 @@
           "original": "0",
           "path": "src/leitir/materialize.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_corpus_cli.py::test_upgrade_cache_never_promotes_parity_without_full_tree_proof[sampled]",
-          "tests/test_materialize.py::test_above_cap_shelf_load_verifies_every_file",
-          "tests/test_materialize.py::test_mode_less_source_keeps_sampled_ingest",
-          "tests/test_verify.py::test_mode_less_tree_verification_is_never_fully_claimed",
-          "tests/test_verify.py::test_over_cap_uses_deterministic_sample"
+          "tests/test_bts_bench_tasks.py",
+          "tests/test_bts_cli.py",
+          "tests/test_bts_skeleton.py",
+          "tests/test_cli.py",
+          "tests/test_cli_in_process_api.py",
+          "tests/test_cli_list.py",
+          "tests/test_corpus_bench.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_docpointers.py",
+          "tests/test_engine.py",
+          "tests/test_git_license_detection.py",
+          "tests/test_info.py",
+          "tests/test_license_policy.py",
+          "tests/test_load_sources_strict_callers.py",
+          "tests/test_lock.py",
+          "tests/test_manifest_auth.py",
+          "tests/test_manifest_staging_race.py",
+          "tests/test_materialize.py",
+          "tests/test_materialize_artifact.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "5cabfd6e77266937",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/materialize.py:1263",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 98aadb7df5de82bc --path src/leitir/materialize.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `0` -> `1`"
@@ -4140,18 +4147,19 @@
           "original": "value is not None",
           "path": "src/leitir/cost.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_composition_cost.py::test_exact_test_surface_requires_pinned_plan_digest"
+          "tests/test_bts_cli.py",
+          "tests/test_composition_cost.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "7096bc32975dc07f",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/cost.py:194",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 12f679edde5c4d6f --path src/leitir/cost.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to cmp-swap: `value is not None` -> `value is None`"
@@ -5263,18 +5271,24 @@
           "original": "brace_depth == 0",
           "path": "src/leitir/apisurface.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_apisurface_heuristic.py::test_go_heuristic_surface_is_exported_deterministic_and_multifile"
+          "tests/test_apisurface.py",
+          "tests/test_apisurface_heuristic.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_impact.py",
+          "tests/test_info.py",
+          "tests/test_python_ast_adapter.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "94affe20fc6a2342",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/apisurface.py:456",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 16f6bee625264dc2 --path src/leitir/apisurface.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to cmp-swap: `brace_depth == 0` -> `brace_depth != 0`"
@@ -5395,20 +5409,37 @@
           "original": "0",
           "path": "src/leitir/resolver.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_materialize_sourcehut.py::test_materializes_fully_verified_sourcehut_tree",
-          "tests/test_materialize_sourcehut.py::test_sourcehut_mismatch_fails_closed",
-          "tests/test_resolver_sourcehut.py::test_archive_and_tree_endpoints"
+          "tests/test_ask.py",
+          "tests/test_cli.py",
+          "tests/test_cli_e2e.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_e2e.py",
+          "tests/test_diff_impact.py",
+          "tests/test_import_purity.py",
+          "tests/test_lock.py",
+          "tests/test_materialize.py",
+          "tests/test_materialize_artifact.py",
+          "tests/test_materialize_bitbucket.py",
+          "tests/test_materialize_codeberg.py",
+          "tests/test_materialize_e2e_live.py",
+          "tests/test_materialize_gitlab.py",
+          "tests/test_materialize_sourcehut.py",
+          "tests/test_offline_cached_resolution.py",
+          "tests/test_parity_e2e.py",
+          "tests/test_resolver.py",
+          "tests/test_resolver_bitbucket.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "96de5eef86614b6d",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/resolver.py:1680",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 5bf6b609827a3a1b --path src/leitir/resolver.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `0` -> `1`"
@@ -5529,24 +5560,37 @@
           "original": "True",
           "path": "src/leitir/resolver.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_materialize.py::test_codeberg_symlink_glitch_cleared_via_git_blob_fallback_channel",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_fallback_digest_disagreement_rejects",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_fallback_size_disagreement_rejects",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_surrogate_target_falls_back_to_verified_channel",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_target_lies_falls_back_to_verified_channel",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_target_size_lies_falls_back_to_verified_channel",
-          "tests/test_resolver_codeberg.py::test_read_blob_at_commit_symlink_without_target_uses_verified_git_blob_fallback"
+          "tests/test_ask.py",
+          "tests/test_cli.py",
+          "tests/test_cli_e2e.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_e2e.py",
+          "tests/test_diff_impact.py",
+          "tests/test_import_purity.py",
+          "tests/test_lock.py",
+          "tests/test_materialize.py",
+          "tests/test_materialize_artifact.py",
+          "tests/test_materialize_bitbucket.py",
+          "tests/test_materialize_codeberg.py",
+          "tests/test_materialize_e2e_live.py",
+          "tests/test_materialize_gitlab.py",
+          "tests/test_materialize_sourcehut.py",
+          "tests/test_offline_cached_resolution.py",
+          "tests/test_parity_e2e.py",
+          "tests/test_resolver.py",
+          "tests/test_resolver_bitbucket.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "9e29bc9fcdb1785b",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/resolver.py:1473",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant a878be53743f50e5 --path src/leitir/resolver.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to bool-flip: `True` -> `False`"
@@ -5927,34 +5971,18 @@
           "original": "not isinstance(recipient_policy, RecipientLicensePolicy) or not isinstance(policy, LicensePolicy)",
           "path": "src/leitir/license_policy.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_license_policy.py::test_dep5_copyright_and_apache_modification_are_materialized",
-          "tests/test_license_policy.py::test_duplicate_conflicting_file_headers_are_ambiguous",
-          "tests/test_license_policy.py::test_empty_or_non_utf8_notice_rejects_obligation_materialization[\\xff]",
-          "tests/test_license_policy.py::test_empty_or_non_utf8_notice_rejects_obligation_materialization[]",
-          "tests/test_license_policy.py::test_explicit_recipient_prohibition_precedes_deferred_catalog",
-          "tests/test_license_policy.py::test_missing_or_malformed_evidence_is_unknown_and_rejected[None]",
-          "tests/test_license_policy.py::test_missing_or_malformed_evidence_is_unknown_and_rejected[Not-A-Real-SPDX-License]",
-          "tests/test_license_policy.py::test_permissive_sources_emit_authoritative_obligations_and_attribution",
-          "tests/test_license_policy.py::test_reuse_annotation_materializes_all_typed_text_obligations",
-          "tests/test_license_policy.py::test_well_formed_but_deferred_expressions_are_unknown[GPL-2.0-only WITH Classpath-exception-2.0]",
-          "tests/test_license_policy.py::test_well_formed_but_deferred_expressions_are_unknown[GPL-3.0-only]",
-          "tests/test_license_policy.py::test_well_formed_but_deferred_expressions_are_unknown[LicenseRef-Private]",
-          "tests/test_license_policy.py::test_well_formed_but_deferred_expressions_are_unknown[MIT AND Apache-2.0]",
-          "tests/test_license_policy.py::test_well_formed_but_deferred_expressions_are_unknown[MIT OR Apache-2.0]",
-          "tests/test_port_contract_cli.py::test_incompatible_recipient_license_policy_fails_closed",
-          "tests/test_port_contract_cli.py::test_translates_donor_behaviour_into_go_contract_and_attribution",
-          "tests/test_port_contract_cli.py::test_unlicensed_donor_fails_closed_with_no_donor_sources_flag_to_forge"
+          "tests/test_license_policy.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "a4fc9760a16458f7",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/license_policy.py:1107",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 2db4d214bc9439c0 --path src/leitir/license_policy.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to boolop-swap: `not isinstance(recipient_policy, RecipientLicensePolicy) or ` -> `not isinstance(recipient_policy, RecipientLicensePolicy) and`"
@@ -6228,18 +6256,18 @@
           "original": "return ()",
           "path": "src/leitir/usage/import_evidence.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_usage_import_evidence.py::test_self_referencing_setup_cfg_interpolation_error_fails_closed"
+          "tests/test_usage_import_evidence.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "aa9c179714c6547b",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/usage/import_evidence.py:254",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant ecf696d692a338d5 --path src/leitir/usage/import_evidence.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to return-none: `return ()` -> `return None`"
@@ -7113,35 +7141,24 @@
           "original": "1024",
           "path": "src/leitir/exec_sandbox.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_containment_attestation.py::test_controller_failure_kills_and_reaps_the_child_before_aborting",
-          "tests/test_containment_attestation.py::test_unconfirmed_group_kill_on_abort_escalates_to_child_leak_not_launcher_failure",
-          "tests/test_containment_attestation.py::test_verify_backend_rejects_a_hung_backend_within_the_bound",
-          "tests/test_exec_sandbox.py::test_binary_digest_tamper_rejects",
-          "tests/test_exec_sandbox.py::test_contained_launch_clears_state_left_in_the_policy_pinned_scratch_source",
-          "tests/test_exec_sandbox.py::test_debug_containment_trace_is_controller_only_and_removed",
-          "tests/test_exec_sandbox.py::test_debug_mount_source_manifests_do_not_change_integrity_decisions",
-          "tests/test_exec_sandbox.py::test_missing_policy_pinned_scratch_source_rejects_before_execution",
-          "tests/test_exec_sandbox.py::test_mount_source_digest_debug_reports_per_entry_diff",
-          "tests/test_exec_sandbox.py::test_mount_source_digest_tamper_rejects_before_launch",
-          "tests/test_exec_sandbox.py::test_nsjail_help_usage_is_an_accepted_bounded_liveness_probe",
-          "tests/test_exec_sandbox.py::test_offline_execution_reaches_backend_after_static_containment_validation",
-          "tests/test_exec_sandbox.py::test_only_exact_one_enables",
-          "tests/test_exec_sandbox.py::test_plan_cannot_recompute_away_an_unapplied_policy_control",
-          "tests/test_exec_sandbox.py::test_post_run_scratch_quota_accepts_under_limit_deterministically",
-          "tests/test_exec_sandbox.py::test_post_run_scratch_quota_rejects_byte_overage",
-          "tests/test_exec_sandbox.py::test_post_run_scratch_quota_rejects_inode_overage",
-          "tests/test_exec_sandbox.py::test_rootfs_mount_digest_must_equal_policy_rootfs_digest"
+          "tests/test_bts_bench.py",
+          "tests/test_bts_skeleton.py",
+          "tests/test_containment_attestation.py",
+          "tests/test_exec_sandbox.py",
+          "tests/test_import_purity.py",
+          "tests/test_pipeline_cli.py",
+          "tests/test_rerun.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "cdf0dbf309654a18",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/exec_sandbox.py:348",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 05accd1b731c4bbb --path src/leitir/exec_sandbox.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to int-shift: `1024` -> `1025`"
@@ -7544,6 +7561,7 @@
         ]
       },
       "first_seen": "20260904T120617Z-0002",
+      "fixed_in": "20260904T162205Z-0005",
       "id": "da16a7326e56a623",
       "last_seen": "20260904T120617Z-0002",
       "location": "src/leitir/ask.py:96",
@@ -7551,7 +7569,7 @@
       "reproducer": "python tools/calibrate.py mutant 717c4ead5bf1212e --path src/leitir/ask.py",
       "seen_runs": 1,
       "severity": "low",
-      "status": "open",
+      "status": "fixed",
       "title": "tests blind to int-shift: `1` -> `2`"
     },
     "da2d6007552dacba": {
@@ -7670,22 +7688,19 @@
           "original": "0x20",
           "path": "src/leitir/port_contract.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_port_contract.py::test_go_string_literal_escapes_control_and_special_characters",
-          "tests/test_port_contract_cli.py::test_build_port_attribution_verifies_root_itself_not_just_the_cli_caller",
-          "tests/test_port_contract_cli.py::test_incompatible_recipient_license_policy_fails_closed",
-          "tests/test_port_contract_cli.py::test_translates_donor_behaviour_into_go_contract_and_attribution",
-          "tests/test_port_contract_cli.py::test_unlicensed_donor_fails_closed_with_no_donor_sources_flag_to_forge"
+          "tests/test_port_contract.py",
+          "tests/test_port_contract_cli.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "de4221bf76c64c76",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/port_contract.py:604",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant cb4c116beabf8fc4 --path src/leitir/port_contract.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to int-shift: `0x20` -> `33`"
@@ -8231,18 +8246,37 @@
           "original": "length < 4",
           "path": "src/leitir/resolver.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_resolver_sourcehut.py::test_anonymous_info_refs_parsing_and_resolution_avoids_graphql"
+          "tests/test_ask.py",
+          "tests/test_cli.py",
+          "tests/test_cli_e2e.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_e2e.py",
+          "tests/test_diff_impact.py",
+          "tests/test_import_purity.py",
+          "tests/test_lock.py",
+          "tests/test_materialize.py",
+          "tests/test_materialize_artifact.py",
+          "tests/test_materialize_bitbucket.py",
+          "tests/test_materialize_codeberg.py",
+          "tests/test_materialize_e2e_live.py",
+          "tests/test_materialize_gitlab.py",
+          "tests/test_materialize_sourcehut.py",
+          "tests/test_offline_cached_resolution.py",
+          "tests/test_parity_e2e.py",
+          "tests/test_resolver.py",
+          "tests/test_resolver_bitbucket.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "ef8e6c55b81f7e6f",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/resolver.py:1758",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 33144dfb28b8d1b8 --path src/leitir/resolver.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "medium",
       "status": "open",
       "title": "tests blind to cmp-swap: `length < 4` -> `length <= 4`"
@@ -8636,20 +8670,24 @@
           "original": "character == \"/\"",
           "path": "src/leitir/apisurface.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_apisurface_heuristic.py::test_go_heuristic_skips_vendor_and_testdata_directories",
-          "tests/test_apisurface_heuristic.py::test_go_heuristic_surface_is_exported_deterministic_and_multifile",
-          "tests/test_license_policy.py::test_routing_field_present_in_outputs"
+          "tests/test_apisurface.py",
+          "tests/test_apisurface_heuristic.py",
+          "tests/test_corpus_cli.py",
+          "tests/test_diff.py",
+          "tests/test_diff_impact.py",
+          "tests/test_info.py",
+          "tests/test_python_ast_adapter.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "f9cf688c6f93dd93",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/apisurface.py:280",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant 932d4f0c9527d751 --path src/leitir/apisurface.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to cmp-swap: `character == \"/\"` -> `character != '/'`"
@@ -8736,37 +8774,26 @@
           "original": "self.schema_version != RERUN_POLICY_SCHEMA_VERSION or not isinstance(self.containment, ContainmentPolicy)",
           "path": "src/leitir/rerun.py"
         },
-        "selection_mode": "contexts",
+        "selection_mode": "static",
         "tests": [
-          "tests/test_bts_bench.py::test_adapter_counts_matched_fail_probe_as_success",
-          "tests/test_bts_bench.py::test_adapter_projects_real_pipeline_fixture",
-          "tests/test_bts_bench.py::test_adapter_projects_rerun_abort_as_reject",
-          "tests/test_bts_bench.py::test_adapter_rejects_pipeline_without_bts_artifact",
-          "tests/test_bts_bench_tasks.py::test_concurrent_live_task_assemblies_reuse_complete_stage",
-          "tests/test_bts_bench_tasks.py::test_repeated_live_task_assembly_has_a_deterministic_mount_plan_digest",
-          "tests/test_bts_bench_tasks.py::test_task_sidecars_assemble_one_nonexecuting_driver_request",
-          "tests/test_bts_e4b.py::test_additive_expansion_changes_digest_and_old_ratification_rejects_swap",
-          "tests/test_bts_e4b.py::test_exit_corpus_requires_at_least_five_donors",
-          "tests/test_bts_e4b.py::test_exit_gate_ignores_executor_specific_outcome_evidence_for_parity",
-          "tests/test_bts_e4b.py::test_exit_gate_is_an_and_and_still_runs_every_donor",
-          "tests/test_bts_e4b.py::test_exit_gate_rejects_nonzero_failure_baseline_even_with_exact_parity",
-          "tests/test_bts_e4b.py::test_five_donor_exit_corpus_passes_every_non_compensating_gate",
-          "tests/test_bts_skeleton.py::test_offline_missing_required_helper_rejects",
-          "tests/test_bts_skeleton.py::test_offline_walking_skeleton_exact_counts_donor_ban_and_content_identity",
-          "tests/test_lineage.py::test_bundle_v2_rejects_tampered_lineage_member",
-          "tests/test_lineage.py::test_bundle_v2_requires_and_binds_lineage_while_v1_loads_unchanged",
-          "tests/test_pipeline_cli.py::test_assemble_bts_task_request_maps_pinned_task_sidecars_without_executing",
-          "tests/test_pipeline_cli.py::test_task_assembly_observation_is_unchanged_after_gold_is_poisoned",
-          "tests/test_rerun.py::test_count_delta_is_coverage_miscount"
+          "tests/test_bts_bench.py",
+          "tests/test_bts_bench_tasks.py",
+          "tests/test_bts_e4b.py",
+          "tests/test_bts_occupied.py",
+          "tests/test_bts_skeleton.py",
+          "tests/test_bts_walk.py",
+          "tests/test_import_purity.py",
+          "tests/test_pipeline_cli.py",
+          "tests/test_rerun.py"
         ]
       },
       "first_seen": "20260904T120617Z-0002",
       "id": "fe5fa2ce785e19de",
-      "last_seen": "20260904T120617Z-0002",
+      "last_seen": "20260904T162205Z-0005",
       "location": "src/leitir/rerun.py:247",
       "probe": "mutation",
       "reproducer": "python tools/calibrate.py mutant de48f32a8e0728c6 --path src/leitir/rerun.py",
-      "seen_runs": 1,
+      "seen_runs": 2,
       "severity": "low",
       "status": "open",
       "title": "tests blind to boolop-swap: `self.schema_version != RERUN_POLICY_SCHEMA_VERSION or not is` -> `self.schema_version != RERUN_POLICY_SCHEMA_VERSION and (not `"
@@ -9812,6 +9839,141 @@
       "regressed": [],
       "run_id": "20260904T152222Z-0004",
       "started_at": "2026-09-04T15:22:22Z"
+    },
+    {
+      "blind_spot_index": 1431,
+      "fixed": [
+        "228b07e529c2910d",
+        "da16a7326e56a623"
+      ],
+      "git_sha": "94ca89802d6a902cee288848fe4e34bd9d5f6c48",
+      "metrics": {
+        "mutation": {
+          "control_failures": 0,
+          "enumerated": 18779,
+          "error": 0,
+          "executed": 22,
+          "files": 111,
+          "kill_rate": 0.0455,
+          "kill_rate_wilson95": [
+            0.0081,
+            0.218
+          ],
+          "killed": 1,
+          "per_module": {
+            "leitir.apisurface": {
+              "killed": 0,
+              "survived": 2
+            },
+            "leitir.corpus": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.cost": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.engine": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.exec_sandbox": {
+              "killed": 0,
+              "survived": 2
+            },
+            "leitir.graph.python": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.graph.runtime": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.license_policy": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.materialize": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.port_contract": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.rerun": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.resolver": {
+              "killed": 1,
+              "survived": 4
+            },
+            "leitir.snapshot": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.sumdb": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.transplant": {
+              "killed": 0,
+              "survived": 1
+            },
+            "leitir.usage.import_evidence": {
+              "killed": 0,
+              "survived": 1
+            }
+          },
+          "per_operator": {
+            "bool-flip": {
+              "killed": 0,
+              "survived": 1
+            },
+            "boolop-swap": {
+              "killed": 0,
+              "survived": 4
+            },
+            "cmp-swap": {
+              "killed": 0,
+              "survived": 7
+            },
+            "int-shift": {
+              "killed": 0,
+              "survived": 8
+            },
+            "raise-drop": {
+              "killed": 1,
+              "survived": 0
+            },
+            "return-none": {
+              "killed": 0,
+              "survived": 1
+            }
+          },
+          "rechecked": 23,
+          "sampled": 23,
+          "selection_mode": "static",
+          "survived": 21,
+          "timeout": 0,
+          "uncovered_in_sample": 1
+        }
+      },
+      "new": [],
+      "open_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "info": 1,
+        "low": 12,
+        "medium": 473
+      },
+      "probes": [
+        "mutation"
+      ],
+      "regressed": [],
+      "run_id": "20260904T162205Z-0005",
+      "started_at": "2026-09-04T16:22:05Z"
     }
   ],
   "schema_version": "leitir-calibration-ledger-v1"

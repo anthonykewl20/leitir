@@ -579,6 +579,10 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Tests
 
+The macOS CI full suite redistributes pending tests with xdist's `worksteal`
+scheduler. The canonical local command remains serial. See the
+[actual worker/timing evidence for issue #334](docs/evidence/issue-334-2026-09-05/README.md).
+
 ```bash
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```

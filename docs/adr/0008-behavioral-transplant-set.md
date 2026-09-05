@@ -1062,3 +1062,5 @@ unresolved semantic decision in this ADR.
 - [#59 — BTS reproducibility](https://github.com/anthonykewl20/leitir/issues/59)
 - [ADR-0002 — deterministic evidence scoring](0002-deterministic-evidence-scoring-engine.md)
 - [ADR-0006 — load-time tree verification](0006-load-time-tree-verification.md)
+
+BTS included-source closure (issue #309): including a class or function also traverses runtime dependencies and unresolved edges owned by nested definitions inside its included source span. Constructors, class assignments and method bodies cannot be hidden by separate graph ownership. Nested-owner traversal consumes the work budget; exhaustion stays partial, and unresolved runtime behavior rejects.

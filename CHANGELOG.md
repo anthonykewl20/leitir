@@ -43,6 +43,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - let the full-surface mypy run resolve tools/calibration (`calibration`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
+- make shared immutable tree-cache access atomic (#316)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)

@@ -349,4 +349,3 @@ started / in progress / done (with gate result).
 | M6 | done | offline 40 targeted; full 894 passed, 36 skipped (3.11) |
 | M7 | done | full 900 passed, 37 skipped (3.11); live 38 passed, 1 skipped, 898 deselected |
 
-2026-09-05 search semantic correction (#312): optional predicates are independent boosts; streamed exclusions preserve buffered span semantics. Match results retain AST/heuristic method provenance. CLI JSON predicate objects preserve arbitrary literal values and generated `ask` commands replay the exact typed query.

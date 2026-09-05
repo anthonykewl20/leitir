@@ -231,3 +231,5 @@ enrichment behind the existing CLI (P5–P6).
       to bare terms, while PATH compiles with the honored `path:` qualifier.
       Before G6 can be implemented, the report contract must include a
       machine-readable `query_translation` record for every predicate.
+
+2026-09-05 search semantic correction (#312): optional predicates boost independently. Content must_not predicates filter documents in direct, buffered, indexed and streamed scoring. Serialized matches retain AST/heuristic method provenance. Closed JSON predicate objects preserve arbitrary literal values, and generated ask commands replay their exact typed query.

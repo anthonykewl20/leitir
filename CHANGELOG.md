@@ -60,6 +60,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- require upstream exactness before reusing local Git identities (#311)
 - resolve the epoch identity and cover the round-3 findings (#272) (`warm`)
 - restrict repository link priority to source labels (#313)
 - retire the tree-layout import-root tier as an authority (`check`)

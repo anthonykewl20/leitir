@@ -1,0 +1,112 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_actual_normalized_vitest_shelf_cannot_invent_git_blob_identity ______
+
+tmp_path = PosixPath('/tmp/pytest-of-soultransit/pytest-1353/test_actual_normalized_vitest_0')
+
+    @pytest.mark.live
+    def test_actual_normalized_vitest_shelf_cannot_invent_git_blob_identity(tmp_path: Path) -> None:
+        from leitir.tree import GitHubTreeSource
+    
+        pin = "c9e59a089d94642eea29a43f2ee1986a5afb99c6"
+        slug = "vitest-dev/vitest"
+        def invoke(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([sys.executable, "-m", "leitir.cli", *args, "--root", str(tmp_path), "--json"], capture_output=True, text=True, timeout=300, check=False)
+        fetched = invoke("get", "github:" + slug + "@" + pin)
+        assert fetched.returncode == 0, fetched.stderr
+        target = Path(json.loads(fetched.stdout)["results"][0]["path"])
+        source = GitHubTreeSource(token=os.environ.get("GITHUB_TOKEN"))
+        blobs = {item.path: item for item in source.list_blobs(slug, pin)}
+        normalized = "test/reporters/fixtures/indicator-position.test.js"
+        # GitHub's real archive has CRLF here; the pinned Git blob identity is
+        # different. A full local tree hash authenticates the archive bytes only.
+        assert GitHubTreeSource.git_blob_sha((target / normalized).read_bytes()) != blobs[normalized].blob_sha
+        bad = invoke("search", "--repo", slug, "--commit", pin,
+                     "--must", "path:" + normalized + ":js", "--must", "identifier:expect:js")
+>       assert bad.returncode != 0, bad.stdout
+E       AssertionError: {
+E           "spec_digest": "7d45a9871a416aebe1b9ad48b0aaccae87c035277fd945e30ce96b140a49a376",
+E           "coverage": {
+E             "status": "complete_for_declared_universe",
+E             "files_eligible": 1,
+E             "files_indexed": 1,
+E             "files_excluded": 0,
+E             "incomplete_results": false,
+E             "exclusions": {}
+E           },
+E           "matches": [
+E             {
+E               "source": {
+E                 "slug": "vitest-dev/vitest",
+E                 "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+E                 "path": "test/reporters/fixtures/indicator-position.test.js",
+E                 "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+E                 "start_line": 3,
+E                 "end_line": 3,
+E                 "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L3-L3"
+E               },
+E               "score": 1.0,
+E               "matched_kinds": [
+E                 "identifier"
+E               ]
+E             },
+E             {
+E               "source": {
+E                 "slug": "vitest-dev/vitest",
+E                 "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+E                 "path": "test/reporters/fixtures/indicator-position.test.js",
+E                 "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+E                 "start_line": 12,
+E                 "end_line": 12,
+E                 "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L12-L12"
+E               },
+E               "score": 1.0,
+E               "matched_kinds": [
+E                 "identifier"
+E               ]
+E             },
+E             {
+E               "source": {
+E                 "slug": "vitest-dev/vitest",
+E                 "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+E                 "path": "test/reporters/fixtures/indicator-position.test.js",
+E                 "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+E                 "start_line": 13,
+E                 "end_line": 13,
+E                 "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L13-L13"
+E               },
+E               "score": 1.0,
+E               "matched_kinds": [
+E                 "identifier"
+E               ]
+E             },
+E             {
+E               "source": {
+E                 "slug": "vitest-dev/vitest",
+E                 "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+E                 "path": "test/reporters/fixtures/indicator-position.test.js",
+E                 "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+E                 "start_line": 14,
+E                 "end_line": 14,
+E                 "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L14-L14"
+E               },
+E               "score": 1.0,
+E               "matched_kinds": [
+E                 "identifier"
+E               ]
+E             }
+E           ],
+E           "resolution": {
+E             "strategy": "declared_scope",
+E             "as_of": "2026-09-05T08:23:25.413105Z"
+E           },
+E           "query_translation": []
+E         }
+E         
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/home/soultransit/.cache/uv/builds-v0/.tmpbdAu3p/bin/python', '-m', 'leitir.cli', 'search', '-...r-position.test.js:14-14 score=1.0 [identifier] vitest-dev/vitest@c9e59a089d94 routing=transplant-ok/permissive:MIT\n').returncode
+
+tests/test_shelf_provenance_live.py:69: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_shelf_provenance_live.py::test_actual_normalized_vitest_shelf_cannot_invent_git_blob_identity
+1 failed, 1 passed in 42.64s

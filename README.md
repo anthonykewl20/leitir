@@ -658,7 +658,7 @@ snapshots are never scorer evidence.
 
 Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.
 
-Shelf provenance and indexing (#311): only full, verified Git materializations supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.
+Shelf provenance and indexing (#311): only full Git materializations with full upstream verification and exact parity supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.
 
 Registry artifacts without recorded upstream blob bindings cannot supply offline Git search citations. Their checksum-verified info/API/example views remain available. Existing corrupt Git shelves reject instead of silently switching to remote source. The regression fixture for offline ask explicitly represents a Git-bound package shelf.
 
@@ -666,3 +666,5 @@ PyPI repository selection (issue #313): source/repository metadata takes priorit
 Qualified API checking (#315): `check` preserves the consumer import path and complete attribute chain, then verifies that qualified symbol or an explicit source-level reexport. A same-named definition in another module does not establish `ok`. Conditional/star/dynamic exports without exact binding evidence remain `unresolved`; arity and runtime behavior are not inferred.
 Immutable tree reuse (#316): one GitHub tree-source instance reuses successfully validated listings by repository and exact commit. The cache retains at most four listings and 600,000 total blob entries. Failed or incomplete walks are never cached; recovered-tree coverage annotations are preserved.
 C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.
+
+Normalized Git archives (#311): the real Vitest 2.1.9 archive carries a CRLF file whose Git blob identity differs. Sampled, unverified, unknown-parity and drift shelves must use the upstream tree listing and verify queried bytes against it. A full local tree hash alone cannot authorize Git citations. Legacy shelves without an explicit exact-parity proof also take that checked path.

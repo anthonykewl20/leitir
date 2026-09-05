@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -96,6 +97,7 @@ class GitHubTreeSource:
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
+        self._tree_cache: OrderedDict[tuple[str, str], tuple[tuple[BlobEntry, ...], bool]] = OrderedDict()
         self._token = token
         if token:
             from leitir.logging import register_secret
@@ -145,10 +147,23 @@ class GitHubTreeSource:
         except _http.RETRIABLE_EXCEPTIONS as exc:
             raise TreeReadError(f"GitHub API call failed: {_http.describe_failure(exc)}") from exc
 
+    def _remember_tree(self, key: tuple[str, str], result: tuple[tuple[BlobEntry, ...], bool]) -> tuple[tuple[BlobEntry, ...], bool]:
+        # Complete immutable listings only; never publish a failed walk's
+        # partial_blobs. Bound both the shelf count and retained entry count.
+        self._tree_cache[key] = result
+        self._tree_cache.move_to_end(key)
+        while len(self._tree_cache) > 4 or sum(len(value[0]) for value in self._tree_cache.values()) > MAX_TREE_ENTRIES:
+            self._tree_cache.popitem(last=False)
+        return result
+
     def list_blobs_ex(
         self, slug: str, commit_sha: str
     ) -> tuple[tuple[BlobEntry, ...], bool]:
         commit_sha = _require_hex_sha(commit_sha)
+        cache_key = (slug, commit_sha)
+        if cache_key in self._tree_cache:
+            self._tree_cache.move_to_end(cache_key)
+            return self._tree_cache[cache_key]
         url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
         logger.debug("tree API url=%s", url)
         payload = self._get_json(url, self._headers())
@@ -161,7 +176,7 @@ class GitHubTreeSource:
         if not truncated:
             blobs = _recursive_blobs(payload)
             logger.debug("tree fetched blobs=%d slug=%s sha=%s", len(blobs), slug, commit_sha[:12])
-            return blobs, False
+            return self._remember_tree(cache_key, (blobs, False))
 
         stack = [(root_tree_sha, "")]
         visited: set[tuple[str, str]] = set()
@@ -249,7 +264,7 @@ class GitHubTreeSource:
                     exc.attach_partial_blobs(partial_blobs())
                     raise
             stack.extend(reversed(subtrees))
-        return partial_blobs(), True
+        return self._remember_tree(cache_key, (partial_blobs(), True))
 
     def list_blobs(self, slug: str, commit_sha: str) -> tuple[BlobEntry, ...]:
         """Return the complete blob universe reachable from *commit_sha*.

@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "commit_sha": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "path": "/tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-validation/corpus-sdist/repos/github.com/pypa/packaging/85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "source": "git-commit",
+      "spec": "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "verified": true
+    }
+  ],
+  "schema_version": 1
+}

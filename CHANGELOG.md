@@ -2,11 +2,14 @@
 
 All notable changes to leitir will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
-within the 0.x series, patch releases (0.1.1, 0.1.2, ...) carry all incremental
-work — audit fixes, bug fixes, and feature/behavior increments alike. Breaking
-changes are permitted within 0.x (pre-1.0) and must be called out here.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Public versions use `MAJOR.MINOR.PATCH` with exactly three patch digits, such as
+`0.2.000`; Python distributions normalize the same identity to `0.2.0`.
+Substantial capabilities or compatibility changes increment the minor version
+and reset the patch during 0.x. Corrective releases increment the patch
+(`0.2.001`, `0.2.002`, …). Breaking changes must be called out here.
+See [ADR-0038](docs/adr/0038-release-versioning-and-publication.md) for the
+version and publication contract.
 
 <!-- leitir-sync-changelog start -->
 
@@ -21,6 +24,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 - put the agent-facing skill under the docs-truth gate (`docs-truth`)
+- release 0.2.000 with padded public versions and verified publication (#332)
 - replace in-memory lock epochs with writer-visible on-disk epochs (#272) (`warm`)
 - thread optional WarmSession through engine and corpus read paths (#272) (`warm`)
 - thread the active warm session into verb owners (#272) (`cli`)
@@ -61,10 +65,12 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - prove module loading and preserve removed owner impact (`check`)
 - reject ambiguous imports and non-module import targets (#315)
+- reject corrupt archives and malformed identity records (`release`)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- require CI built from the exact tagged source (`release`)
 - require upstream exactness before reusing local Git identities (#311)
 - resolve the epoch identity and cover the round-3 findings (#272) (`warm`)
 - restrict repository link priority to source labels (#313)

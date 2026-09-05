@@ -1,0 +1,1132 @@
+﻿2026-08-20T15:51:01.8955728Z Current runner version: '2.336.0'
+2026-08-20T15:51:01.8983520Z ##[group]Runner Image Provisioner
+2026-08-20T15:51:01.8984515Z Hosted Compute Agent
+2026-08-20T15:51:01.8985148Z Version: 20260729.566
+2026-08-20T15:51:01.8985785Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-20T15:51:01.8986810Z Build Date: 2026-07-29T19:17:02Z
+2026-08-20T15:51:01.8987530Z Worker ID: {8648cffa-6a0d-407c-9af6-85bddb85977e}
+2026-08-20T15:51:01.8988272Z Azure Region: westus2
+2026-08-20T15:51:01.8988957Z ##[endgroup]
+2026-08-20T15:51:01.8990452Z ##[group]Operating System
+2026-08-20T15:51:01.8991187Z Ubuntu
+2026-08-20T15:51:01.8991725Z 24.04.4
+2026-08-20T15:51:01.8992256Z LTS
+2026-08-20T15:51:01.8992829Z ##[endgroup]
+2026-08-20T15:51:01.8993377Z ##[group]Runner Image
+2026-08-20T15:51:01.8994009Z Image: ubuntu-24.04
+2026-08-20T15:51:01.8994595Z Version: 20260816.277.1
+2026-08-20T15:51:01.8996273Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260816.277/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-20T15:51:01.8998102Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260816.277
+2026-08-20T15:51:01.8999163Z ##[endgroup]
+2026-08-20T15:51:01.9000249Z ##[group]GITHUB_TOKEN Permissions
+2026-08-20T15:51:01.9002559Z Metadata: read
+2026-08-20T15:51:01.9003190Z ##[endgroup]
+2026-08-20T15:51:01.9005283Z Secret source: Actions
+2026-08-20T15:51:01.9006795Z Prepare workflow directory
+2026-08-20T15:51:01.9342073Z Prepare all required actions
+2026-08-20T15:51:01.9416397Z Getting action download info
+2026-08-20T15:51:02.3107868Z Download action repository 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-08-20T15:51:02.4186543Z Download action repository 'actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-08-20T15:51:02.5094731Z Download action repository 'astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39' (SHA:caf0cab7a618c569241d31dcd442f54681755d39)
+2026-08-20T15:51:02.7407288Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-08-20T15:51:02.9476672Z Complete job name: package
+2026-08-20T15:51:03.0253301Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:03.0262543Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-08-20T15:51:03.0263476Z with:
+2026-08-20T15:51:03.0263926Z   persist-credentials: false
+2026-08-20T15:51:03.0264461Z   repository: anthonykewl20/leitir
+2026-08-20T15:51:03.0268422Z   token: ***
+2026-08-20T15:51:03.0268869Z   ssh-strict: true
+2026-08-20T15:51:03.0269313Z   ssh-user: git
+2026-08-20T15:51:03.0269732Z   clean: true
+2026-08-20T15:51:03.0270206Z   sparse-checkout-cone-mode: true
+2026-08-20T15:51:03.0270734Z   fetch-depth: 1
+2026-08-20T15:51:03.0271157Z   fetch-tags: false
+2026-08-20T15:51:03.0271594Z   show-progress: true
+2026-08-20T15:51:03.0272077Z   lfs: false
+2026-08-20T15:51:03.0272504Z   submodules: false
+2026-08-20T15:51:03.0272954Z   set-safe-directory: true
+2026-08-20T15:51:03.0273457Z   allow-unsafe-pr-checkout: false
+2026-08-20T15:51:03.0274263Z ##[endgroup]
+2026-08-20T15:51:03.1221187Z Syncing repository: anthonykewl20/leitir
+2026-08-20T15:51:03.1222985Z ##[group]Getting Git version info
+2026-08-20T15:51:03.1223684Z Working directory is '/home/runner/work/leitir/leitir'
+2026-08-20T15:51:03.1224666Z [command]/usr/bin/git version
+2026-08-20T15:51:03.1365751Z git version 2.55.0
+2026-08-20T15:51:03.1386552Z ##[endgroup]
+2026-08-20T15:51:03.1401058Z Temporarily overriding HOME='/home/runner/work/_temp/248df531-5947-4fe5-a6de-5b7c57d630c8' before making global git config changes
+2026-08-20T15:51:03.1402550Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-20T15:51:03.1405596Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/leitir/leitir
+2026-08-20T15:51:03.1459467Z Deleting the contents of '/home/runner/work/leitir/leitir'
+2026-08-20T15:51:03.1464941Z ##[group]Initializing the repository
+2026-08-20T15:51:03.1470083Z [command]/usr/bin/git init /home/runner/work/leitir/leitir
+2026-08-20T15:51:03.1605209Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-20T15:51:03.1607014Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-20T15:51:03.1608779Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-20T15:51:03.1610411Z hint: call:
+2026-08-20T15:51:03.1611701Z hint:
+2026-08-20T15:51:03.1613120Z hint: 	git config --global init.defaultBranch <name>
+2026-08-20T15:51:03.1614749Z hint:
+2026-08-20T15:51:03.1616668Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-20T15:51:03.1618935Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-20T15:51:03.1620772Z hint:
+2026-08-20T15:51:03.1622017Z hint: 	git branch -m <name>
+2026-08-20T15:51:03.1623265Z hint:
+2026-08-20T15:51:03.1624730Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-20T15:51:03.1627034Z Initialized empty Git repository in /home/runner/work/leitir/leitir/.git/
+2026-08-20T15:51:03.1630551Z [command]/usr/bin/git remote add origin https://github.com/anthonykewl20/leitir
+2026-08-20T15:51:03.1703065Z ##[endgroup]
+2026-08-20T15:51:03.1703943Z ##[group]Disabling automatic garbage collection
+2026-08-20T15:51:03.1707554Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-20T15:51:03.1736262Z ##[endgroup]
+2026-08-20T15:51:03.1737439Z ##[group]Setting up auth
+2026-08-20T15:51:03.1742651Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-20T15:51:03.1772388Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-20T15:51:03.2132400Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-20T15:51:03.2165638Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-20T15:51:03.2378695Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-20T15:51:03.2410551Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-20T15:51:03.2626829Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-20T15:51:03.2659457Z ##[endgroup]
+2026-08-20T15:51:03.2660280Z ##[group]Fetching the repository
+2026-08-20T15:51:03.2669793Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c1297bccfcc14d8f7596c3ecf12587246047fc6f:refs/remotes/pull/225/merge
+2026-08-20T15:51:03.9046484Z From https://github.com/anthonykewl20/leitir
+2026-08-20T15:51:03.9048080Z  * [new ref]         c1297bccfcc14d8f7596c3ecf12587246047fc6f -> pull/225/merge
+2026-08-20T15:51:03.9052029Z ##[endgroup]
+2026-08-20T15:51:03.9053898Z ##[group]Determining the checkout info
+2026-08-20T15:51:03.9056168Z ##[endgroup]
+2026-08-20T15:51:03.9059853Z [command]/usr/bin/git sparse-checkout disable
+2026-08-20T15:51:03.9113198Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-20T15:51:03.9141197Z ##[group]Checking out the ref
+2026-08-20T15:51:03.9143440Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/225/merge
+2026-08-20T15:51:03.9668919Z Note: switching to 'refs/remotes/pull/225/merge'.
+2026-08-20T15:51:03.9669830Z
+2026-08-20T15:51:03.9670823Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-08-20T15:51:03.9672717Z changes and commit them, and you can discard any commits you make in this
+2026-08-20T15:51:03.9674553Z state without impacting any branches by switching back to a branch.
+2026-08-20T15:51:03.9675639Z
+2026-08-20T15:51:03.9676685Z If you want to create a new branch to retain commits you create, you may
+2026-08-20T15:51:03.9678627Z do so (now or later) by using -c with the switch command. Example:
+2026-08-20T15:51:03.9680248Z
+2026-08-20T15:51:03.9681016Z   git switch -c <new-branch-name>
+2026-08-20T15:51:03.9682345Z
+2026-08-20T15:51:03.9683058Z Or undo this operation with:
+2026-08-20T15:51:03.9684215Z
+2026-08-20T15:51:03.9684885Z   git switch -
+2026-08-20T15:51:03.9685825Z
+2026-08-20T15:51:03.9687512Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-08-20T15:51:03.9689745Z
+2026-08-20T15:51:03.9692247Z HEAD is now at c1297bc Merge 33dd0a18e1cc2baba4f19903016e59e967ff3cb7 into 6472c4247850344b64825ce38f140fed049a4402
+2026-08-20T15:51:03.9699131Z ##[endgroup]
+2026-08-20T15:51:03.9740601Z [command]/usr/bin/git log -1 --format=%H
+2026-08-20T15:51:03.9767348Z c1297bccfcc14d8f7596c3ecf12587246047fc6f
+2026-08-20T15:51:03.9777616Z ##[group]Removing auth
+2026-08-20T15:51:03.9780884Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-20T15:51:03.9813796Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-20T15:51:04.0055386Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-20T15:51:04.0080335Z http.https://github.com/.extraheader
+2026-08-20T15:51:04.0090582Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-08-20T15:51:04.0125273Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-20T15:51:04.0355560Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-20T15:51:04.0384629Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-20T15:51:04.0596969Z ##[endgroup]
+2026-08-20T15:51:04.0956828Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:04.0962805Z ##[group]Run actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+2026-08-20T15:51:04.0964372Z with:
+2026-08-20T15:51:04.0965157Z   python-version: 3.11
+2026-08-20T15:51:04.0966247Z   check-latest: false
+2026-08-20T15:51:04.0975368Z   token: ***
+2026-08-20T15:51:04.0976406Z   update-environment: true
+2026-08-20T15:51:04.0977429Z   allow-prereleases: false
+2026-08-20T15:51:04.0978402Z   freethreaded: false
+2026-08-20T15:51:04.0979266Z ##[endgroup]
+2026-08-20T15:51:04.2324988Z ##[group]Installed versions
+2026-08-20T15:51:04.2422046Z (node:2247) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-20T15:51:04.2426662Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-20T15:51:04.2429362Z Successfully set up CPython (3.11.16)
+2026-08-20T15:51:04.2432036Z ##[endgroup]
+2026-08-20T15:51:04.2747853Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:04.2753143Z ##[group]Run astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+2026-08-20T15:51:04.2754574Z with:
+2026-08-20T15:51:04.2755295Z   enable-cache: true
+2026-08-20T15:51:04.2756367Z   cache-dependency-glob: requirements.txt
+2026-08-20T15:51:04.2757453Z   version: latest
+2026-08-20T15:51:04.2766196Z   github-token: ***
+2026-08-20T15:51:04.2767059Z   prune-cache: true
+2026-08-20T15:51:04.2767841Z env:
+2026-08-20T15:51:04.2768767Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:04.2770441Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:04.2772164Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:04.2773641Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:04.2775142Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:04.2776789Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:04.2778060Z ##[endgroup]
+2026-08-20T15:51:04.4179164Z Downloading uv from "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-08-20T15:51:04.4189758Z (node:2255) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-20T15:51:04.4194194Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-20T15:51:04.8884635Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/b8a29470-8439-4d08-b3ee-aa4c5bdf1d86 -f /home/runner/work/_temp/23a96136-f431-4a8e-8be2-4f9509064c5b
+2026-08-20T15:51:05.3312925Z Added /opt/hostedtoolcache/uv/0.12.5/x86_64 to the path
+2026-08-20T15:51:05.3314035Z Added /home/runner/.local/bin to the path
+2026-08-20T15:51:05.3318738Z Successfully installed uv version 0.12.5
+2026-08-20T15:51:05.3327608Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:05.3328130Z Searching files using cache dependency glob: requirements.txt
+2026-08-20T15:51:05.3366227Z /home/runner/work/leitir/leitir/requirements.txt
+2026-08-20T15:51:05.3383872Z Found 1 files to hash.
+2026-08-20T15:51:05.3385292Z Trying to restore uv cache from GitHub Actions cache with key: setup-uv-1-x86_64-unknown-linux-gnu-0.12.5-e9ed04ea365629849545da4adab952343559bc614f6a879f03315afe0bd35d97
+2026-08-20T15:51:05.4018956Z ##[warning]Failed to restore: Cache service responded with 400
+2026-08-20T15:51:05.4027274Z No GitHub Actions cache found for key: setup-uv-1-x86_64-unknown-linux-gnu-0.12.5-e9ed04ea365629849545da4adab952343559bc614f6a879f03315afe0bd35d97
+2026-08-20T15:51:05.4158162Z ##[group]Run uv run --no-project --with build --with twine python -m build --outdir dist/
+2026-08-20T15:51:05.4158919Z [36;1muv run --no-project --with build --with twine python -m build --outdir dist/[0m
+2026-08-20T15:51:05.4206749Z shell: /usr/bin/bash -e {0}
+2026-08-20T15:51:05.4207088Z env:
+2026-08-20T15:51:05.4207416Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:05.4207941Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:05.4208433Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:05.4208873Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:05.4209320Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:05.4209760Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:05.4210190Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:05.4210542Z ##[endgroup]
+2026-08-20T15:51:05.8510154Z Downloading cryptography (4.5MiB)
+2026-08-20T15:51:05.8510759Z Downloading pygments (1.2MiB)
+2026-08-20T15:51:05.9983547Z  Downloaded cryptography
+2026-08-20T15:51:06.0271639Z  Downloaded pygments
+2026-08-20T15:51:06.0504866Z Installed 32 packages in 22ms
+2026-08-20T15:51:06.2638898Z * Creating isolated environment: venv+pip...
+2026-08-20T15:51:06.2954390Z * Installing packages in isolated environment:
+2026-08-20T15:51:06.2955429Z   - setuptools>=83
+2026-08-20T15:51:06.2955895Z   - wheel>=0.46
+2026-08-20T15:51:07.6017816Z * Getting build dependencies for sdist...
+2026-08-20T15:51:08.0765951Z running egg_info
+2026-08-20T15:51:08.0783374Z creating src/leitir.egg-info
+2026-08-20T15:51:08.0784890Z writing src/leitir.egg-info/PKG-INFO
+2026-08-20T15:51:08.0804163Z writing dependency_links to src/leitir.egg-info/dependency_links.txt
+2026-08-20T15:51:08.0808269Z writing entry points to src/leitir.egg-info/entry_points.txt
+2026-08-20T15:51:08.0820500Z writing requirements to src/leitir.egg-info/requires.txt
+2026-08-20T15:51:08.0821674Z writing top-level names to src/leitir.egg-info/top_level.txt
+2026-08-20T15:51:08.0823686Z writing manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:08.0947802Z reading manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:08.0949841Z adding license file 'LICENSE'
+2026-08-20T15:51:08.0978991Z writing manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:08.1215771Z * Building sdist...
+2026-08-20T15:51:08.2601646Z running sdist
+2026-08-20T15:51:08.2602802Z running egg_info
+2026-08-20T15:51:08.2623686Z writing src/leitir.egg-info/PKG-INFO
+2026-08-20T15:51:08.2636328Z writing dependency_links to src/leitir.egg-info/dependency_links.txt
+2026-08-20T15:51:08.2639696Z writing entry points to src/leitir.egg-info/entry_points.txt
+2026-08-20T15:51:08.2646983Z writing requirements to src/leitir.egg-info/requires.txt
+2026-08-20T15:51:08.2648381Z writing top-level names to src/leitir.egg-info/top_level.txt
+2026-08-20T15:51:08.2725585Z reading manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:08.2749121Z adding license file 'LICENSE'
+2026-08-20T15:51:08.2775879Z writing manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:08.2778622Z running check
+2026-08-20T15:51:08.2801193Z creating leitir-0.1.4
+2026-08-20T15:51:08.2806991Z creating leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2809174Z creating leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2810526Z creating leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2812201Z creating leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.2813628Z creating leitir-0.1.4/src/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:08.2815851Z creating leitir-0.1.4/src/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:08.2818456Z creating leitir-0.1.4/src/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:08.2819753Z creating leitir-0.1.4/src/leitir/benchmarks/search-v1
+2026-08-20T15:51:08.2821269Z creating leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.2823023Z creating leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.2824043Z creating leitir-0.1.4/tests
+2026-08-20T15:51:08.2825094Z copying files to leitir-0.1.4...
+2026-08-20T15:51:08.2826147Z copying LICENSE -> leitir-0.1.4
+2026-08-20T15:51:08.2828219Z copying README.md -> leitir-0.1.4
+2026-08-20T15:51:08.2830075Z copying pyproject.toml -> leitir-0.1.4
+2026-08-20T15:51:08.2831840Z copying src/leitir/__init__.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2833511Z copying src/leitir/_http.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2835452Z copying src/leitir/_python_ast.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2837758Z copying src/leitir/_update_check.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2839528Z copying src/leitir/analysis_cli.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2841248Z copying src/leitir/apisurface.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2843144Z copying src/leitir/architecture.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2844855Z copying src/leitir/bench.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2846429Z copying src/leitir/bts.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2848571Z copying src/leitir/bts_bench.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2850590Z copying src/leitir/bts_cli.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2852426Z copying src/leitir/bts_errors.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2854163Z copying src/leitir/bts_exit_gate.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2856575Z copying src/leitir/bts_pipeline.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2858469Z copying src/leitir/candidates.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2860434Z copying src/leitir/capability.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2862483Z copying src/leitir/cli.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2864853Z copying src/leitir/comparison.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2867180Z copying src/leitir/composition.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2869065Z copying src/leitir/corpus.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2871005Z copying src/leitir/corpus_bench.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2872748Z copying src/leitir/cost.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2874701Z copying src/leitir/credentials.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2876447Z copying src/leitir/diff.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2878419Z copying src/leitir/discovery_search.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2880358Z copying src/leitir/docpointers.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2882107Z copying src/leitir/doctor.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2884069Z copying src/leitir/duplicates.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2885872Z copying src/leitir/engine.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2888012Z copying src/leitir/examples.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2889849Z copying src/leitir/exec_sandbox.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2892031Z copying src/leitir/exit_corpus.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2893949Z copying src/leitir/funnel_cli.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2895786Z copying src/leitir/info.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2897956Z copying src/leitir/license_policy.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2899982Z copying src/leitir/lineage.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2901768Z copying src/leitir/lockfiles.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2903754Z copying src/leitir/logging.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2905506Z copying src/leitir/manifest_auth.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2907593Z copying src/leitir/matching.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2909406Z copying src/leitir/materialize.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2911577Z copying src/leitir/occupied.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2913815Z copying src/leitir/parity.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2915505Z copying src/leitir/pipeline_cli.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2918182Z copying src/leitir/probes.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2920058Z copying src/leitir/project_profile.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2921847Z copying src/leitir/ranking.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2923635Z copying src/leitir/relocate.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2925763Z copying src/leitir/rerun.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2927968Z copying src/leitir/resolver.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2930178Z copying src/leitir/safeio.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2931884Z copying src/leitir/sbom.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2933789Z copying src/leitir/search.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2936166Z copying src/leitir/snapshot.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2938302Z copying src/leitir/spec.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2940014Z copying src/leitir/streaming.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2941625Z copying src/leitir/suitability.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2943518Z copying src/leitir/sumdb.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2945313Z copying src/leitir/transplant.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2947556Z copying src/leitir/tree.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2949302Z copying src/leitir/treehash.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2951085Z copying src/leitir/trust.py -> leitir-0.1.4/src/leitir
+2026-08-20T15:51:08.2952880Z copying src/leitir.egg-info/PKG-INFO -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2954457Z copying src/leitir.egg-info/SOURCES.txt -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2956299Z copying src/leitir.egg-info/dependency_links.txt -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2958044Z copying src/leitir.egg-info/entry_points.txt -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2959511Z copying src/leitir.egg-info/requires.txt -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2961026Z copying src/leitir.egg-info/top_level.txt -> leitir-0.1.4/src/leitir.egg-info
+2026-08-20T15:51:08.2962568Z copying src/leitir/adapters/__init__.py -> leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2964389Z copying src/leitir/adapters/_tier2_patterns.py -> leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2965785Z copying src/leitir/adapters/languages.py -> leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2967593Z copying src/leitir/adapters/python_ast.py -> leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2969231Z copying src/leitir/adapters/registry.py -> leitir-0.1.4/src/leitir/adapters
+2026-08-20T15:51:08.2970847Z copying src/leitir/adapters/_tier2/__init__.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.2993791Z copying src/leitir/adapters/_tier2/_base.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.2994939Z copying src/leitir/adapters/_tier2/c.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.2998047Z copying src/leitir/adapters/_tier2/cpp.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.2999636Z copying src/leitir/adapters/_tier2/java.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.3001101Z copying src/leitir/adapters/_tier2/javascript.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.3002270Z copying src/leitir/adapters/_tier2/typescript.py -> leitir-0.1.4/src/leitir/adapters/_tier2
+2026-08-20T15:51:08.3003514Z copying src/leitir/benchmarks/ast-vs-regex-v1/README.md -> leitir-0.1.4/src/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:08.3004946Z copying src/leitir/benchmarks/ast-vs-regex-v1/comparison.json -> leitir-0.1.4/src/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:08.3007138Z copying src/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt -> leitir-0.1.4/src/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:08.3008761Z copying src/leitir/benchmarks/corpus-v1/README.md -> leitir-0.1.4/src/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:08.3010052Z copying src/leitir/benchmarks/corpus-v1/manifest.json -> leitir-0.1.4/src/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:08.3011413Z copying src/leitir/benchmarks/search-v1/manifest.json -> leitir-0.1.4/src/leitir/benchmarks/search-v1
+2026-08-20T15:51:08.3012702Z copying src/leitir/benchmarks/search-v1/qrels.json -> leitir-0.1.4/src/leitir/benchmarks/search-v1
+2026-08-20T15:51:08.3013767Z copying src/leitir/graph/__init__.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3014647Z copying src/leitir/graph/go.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3015436Z copying src/leitir/graph/javascript.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3016535Z copying src/leitir/graph/model.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3017250Z copying src/leitir/graph/policy.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3017721Z copying src/leitir/graph/python.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3018302Z copying src/leitir/graph/registry.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3018761Z copying src/leitir/graph/runtime.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3019211Z copying src/leitir/graph/rust.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3019993Z copying src/leitir/graph/ts_kernel.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3020462Z copying src/leitir/graph/typescript.py -> leitir-0.1.4/src/leitir/graph
+2026-08-20T15:51:08.3020920Z copying src/leitir/index/__init__.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3021482Z copying src/leitir/index/builder.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3021945Z copying src/leitir/index/postings.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3022382Z copying src/leitir/index/query.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3022822Z copying src/leitir/index/rank.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3023364Z copying src/leitir/index/verify.py -> leitir-0.1.4/src/leitir/index
+2026-08-20T15:51:08.3023793Z copying tests/test_adapter_registry.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3024181Z copying tests/test_adapters_multi.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3024551Z copying tests/test_analysis_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3025118Z copying tests/test_apisurface.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3027198Z copying tests/test_apisurface_heuristic.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3028826Z copying tests/test_bench.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3030629Z copying tests/test_bench_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3032341Z copying tests/test_benchmark_error_paths.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3034137Z copying tests/test_bts_artifact.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3035845Z copying tests/test_bts_bench.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3038018Z copying tests/test_bts_bench_tasks.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3039942Z copying tests/test_bts_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3041832Z copying tests/test_bts_e4b.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3043635Z copying tests/test_bts_errors.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3045356Z copying tests/test_bts_occupied.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3047480Z copying tests/test_bts_pinning.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3049213Z copying tests/test_bts_skeleton.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3051033Z copying tests/test_bts_walk.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3052930Z copying tests/test_candidates.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3054665Z copying tests/test_capability.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3056766Z copying tests/test_changelog_sync.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3058371Z copying tests/test_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3060612Z copying tests/test_cli_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3062190Z copying tests/test_cli_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3063918Z copying tests/test_cli_list.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3065603Z copying tests/test_comparison.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3067656Z copying tests/test_composition_arch.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3069505Z copying tests/test_composition_conflicts.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3071288Z copying tests/test_composition_cost.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3073093Z copying tests/test_composition_dupes.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3074922Z copying tests/test_containment_attestation.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3077025Z copying tests/test_corpus_bench.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3078841Z copying tests/test_corpus_bench_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3080506Z copying tests/test_corpus_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3082578Z copying tests/test_corpus_cli_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3084384Z copying tests/test_credentials.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3086307Z copying tests/test_diff.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3088243Z copying tests/test_diff_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3089987Z copying tests/test_discovery_search.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3091767Z copying tests/test_docpointers.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3093676Z copying tests/test_doctor.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3095548Z copying tests/test_engine.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3097983Z copying tests/test_engine_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3099760Z copying tests/test_engine_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3101487Z copying tests/test_examples.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3103293Z copying tests/test_examples_classification.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3104972Z copying tests/test_exec_sandbox.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3107978Z copying tests/test_exit_corpus.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3109643Z copying tests/test_exit_corpus_content.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3111365Z copying tests/test_funnel_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3113661Z copying tests/test_git_license_detection.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3115015Z copying tests/test_global.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3117874Z copying tests/test_global_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3119452Z copying tests/test_global_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3121598Z copying tests/test_graph_calls_reads.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3123212Z copying tests/test_graph_model.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3125329Z copying tests/test_graph_polyglot.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3127691Z copying tests/test_graph_polyglot_go.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3129386Z copying tests/test_graph_polyglot_rust.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3131375Z copying tests/test_graph_polyglot_typescript.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3133073Z copying tests/test_graph_runtime.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3135215Z copying tests/test_graph_static_edges.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3136984Z copying tests/test_http.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3139377Z copying tests/test_http_retry_real.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3141087Z copying tests/test_import_purity.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3142929Z copying tests/test_info.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3145211Z copying tests/test_license_policy.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3147615Z copying tests/test_lineage.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3149253Z copying tests/test_live_canary_classifier.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3151853Z copying tests/test_live_canary_workflow.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3153395Z copying tests/test_loadtest_corpus.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3155140Z copying tests/test_lock.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3157603Z copying tests/test_lockfiles.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3159238Z copying tests/test_lockfiles_closure.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3160892Z copying tests/test_logging.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3163091Z copying tests/test_manifest_auth.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3164981Z copying tests/test_materialize.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3167758Z copying tests/test_materialize_artifact.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3169404Z copying tests/test_materialize_bitbucket.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3171608Z copying tests/test_materialize_codeberg.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3173102Z copying tests/test_materialize_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3174853Z copying tests/test_materialize_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3176797Z copying tests/test_materialize_gitlab.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3179072Z copying tests/test_materialize_sourcehut.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3180492Z copying tests/test_parity.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3182320Z copying tests/test_parity_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3184446Z copying tests/test_parity_error_paths.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3186177Z copying tests/test_pipeline_cli.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3189054Z copying tests/test_pipeline_cli_occupied_artifact.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3190468Z copying tests/test_probes.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3192715Z copying tests/test_project_profile.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3194482Z copying tests/test_python_adapter_comparison.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3196471Z copying tests/test_python_ast_adapter.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3198630Z copying tests/test_query_probe_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3200117Z copying tests/test_ranking.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3202279Z copying tests/test_relocate.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3204334Z copying tests/test_rerun.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3206371Z copying tests/test_resolver.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3208951Z copying tests/test_resolver_bitbucket.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3210663Z copying tests/test_resolver_byte_exact.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3212397Z copying tests/test_resolver_codeberg.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3214132Z copying tests/test_resolver_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3216269Z copying tests/test_resolver_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3218077Z copying tests/test_resolver_gitlab.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3220333Z copying tests/test_resolver_npm.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3222040Z copying tests/test_resolver_npm_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3223770Z copying tests/test_resolver_retry_real.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3225909Z copying tests/test_resolver_sourcehut.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3228403Z copying tests/test_s2b_language_routing.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3229838Z copying tests/test_safeio.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3231857Z copying tests/test_sbom.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3233514Z copying tests/test_sbom_cyclonedx.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3235631Z copying tests/test_sbom_spdx.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3237459Z copying tests/test_score_code_health.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3239585Z copying tests/test_score_contracts.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3241895Z copying tests/test_score_dogfood.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3243269Z copying tests/test_score_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3245346Z copying tests/test_score_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3247276Z copying tests/test_score_engine_checks.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3249581Z copying tests/test_score_performance.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3251772Z copying tests/test_score_process.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3253415Z copying tests/test_score_process_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3255176Z copying tests/test_score_provenance.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3257735Z copying tests/test_score_render.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3259439Z copying tests/test_score_retrieval.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3261737Z copying tests/test_score_test_adequacy.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3263382Z copying tests/test_search.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3265539Z copying tests/test_search_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3267789Z copying tests/test_search_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3269475Z copying tests/test_snapshot.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3271763Z copying tests/test_snapshot_e2e.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3273389Z copying tests/test_spec.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3275375Z copying tests/test_streaming.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3278134Z copying tests/test_suitability.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3280038Z copying tests/test_sumdb.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3281862Z copying tests/test_tier2_adapters.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3283790Z copying tests/test_transplant_packet.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3285576Z copying tests/test_tree.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3288646Z copying tests/test_tree_walk.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3290122Z copying tests/test_treehash.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3293019Z copying tests/test_treehash_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3294059Z copying tests/test_treehash_integration.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3296295Z copying tests/test_trigram_index.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3298691Z copying tests/test_trust.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3300863Z copying tests/test_update_check.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3302521Z copying tests/test_verify.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3304953Z copying tests/test_verify_e2e_live.py -> leitir-0.1.4/tests
+2026-08-20T15:51:08.3318279Z Writing leitir-0.1.4/setup.cfg
+2026-08-20T15:51:08.3320035Z Creating tar archive
+2026-08-20T15:51:08.6990774Z removing 'leitir-0.1.4' (and everything under it)
+2026-08-20T15:51:08.8205414Z * Building wheel from sdist
+2026-08-20T15:51:08.8260015Z * Creating isolated environment: venv+pip...
+2026-08-20T15:51:08.8281298Z * Installing packages in isolated environment:
+2026-08-20T15:51:08.8281852Z   - setuptools>=83
+2026-08-20T15:51:08.8282114Z   - wheel>=0.46
+2026-08-20T15:51:09.5076290Z * Getting build dependencies for wheel...
+2026-08-20T15:51:09.9005962Z running egg_info
+2026-08-20T15:51:09.9017684Z writing src/leitir.egg-info/PKG-INFO
+2026-08-20T15:51:09.9030429Z writing dependency_links to src/leitir.egg-info/dependency_links.txt
+2026-08-20T15:51:09.9032918Z writing entry points to src/leitir.egg-info/entry_points.txt
+2026-08-20T15:51:09.9040145Z writing requirements to src/leitir.egg-info/requires.txt
+2026-08-20T15:51:09.9041854Z writing top-level names to src/leitir.egg-info/top_level.txt
+2026-08-20T15:51:09.9118664Z reading manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:09.9140981Z adding license file 'LICENSE'
+2026-08-20T15:51:09.9168101Z writing manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:09.9388331Z * Building wheel...
+2026-08-20T15:51:10.0771787Z running bdist_wheel
+2026-08-20T15:51:10.0815146Z running build
+2026-08-20T15:51:10.0815483Z running build_py
+2026-08-20T15:51:10.0830775Z creating build/lib/leitir
+2026-08-20T15:51:10.0833047Z copying src/leitir/capability.py -> build/lib/leitir
+2026-08-20T15:51:10.0835616Z copying src/leitir/__init__.py -> build/lib/leitir
+2026-08-20T15:51:10.0837981Z copying src/leitir/lineage.py -> build/lib/leitir
+2026-08-20T15:51:10.0840430Z copying src/leitir/examples.py -> build/lib/leitir
+2026-08-20T15:51:10.0842801Z copying src/leitir/manifest_auth.py -> build/lib/leitir
+2026-08-20T15:51:10.0844993Z copying src/leitir/matching.py -> build/lib/leitir
+2026-08-20T15:51:10.0847278Z copying src/leitir/lockfiles.py -> build/lib/leitir
+2026-08-20T15:51:10.0849690Z copying src/leitir/relocate.py -> build/lib/leitir
+2026-08-20T15:51:10.0852050Z copying src/leitir/treehash.py -> build/lib/leitir
+2026-08-20T15:51:10.0854269Z copying src/leitir/credentials.py -> build/lib/leitir
+2026-08-20T15:51:10.0856292Z copying src/leitir/rerun.py -> build/lib/leitir
+2026-08-20T15:51:10.0858787Z copying src/leitir/streaming.py -> build/lib/leitir
+2026-08-20T15:51:10.0860816Z copying src/leitir/exec_sandbox.py -> build/lib/leitir
+2026-08-20T15:51:10.0863236Z copying src/leitir/info.py -> build/lib/leitir
+2026-08-20T15:51:10.0865329Z copying src/leitir/bts_bench.py -> build/lib/leitir
+2026-08-20T15:51:10.0867975Z copying src/leitir/bts_cli.py -> build/lib/leitir
+2026-08-20T15:51:10.0870253Z copying src/leitir/corpus_bench.py -> build/lib/leitir
+2026-08-20T15:51:10.0872342Z copying src/leitir/discovery_search.py -> build/lib/leitir
+2026-08-20T15:51:10.0874557Z copying src/leitir/search.py -> build/lib/leitir
+2026-08-20T15:51:10.0876830Z copying src/leitir/_python_ast.py -> build/lib/leitir
+2026-08-20T15:51:10.0878910Z copying src/leitir/doctor.py -> build/lib/leitir
+2026-08-20T15:51:10.0881147Z copying src/leitir/logging.py -> build/lib/leitir
+2026-08-20T15:51:10.0883093Z copying src/leitir/license_policy.py -> build/lib/leitir
+2026-08-20T15:51:10.0885282Z copying src/leitir/apisurface.py -> build/lib/leitir
+2026-08-20T15:51:10.0887532Z copying src/leitir/composition.py -> build/lib/leitir
+2026-08-20T15:51:10.0889523Z copying src/leitir/project_profile.py -> build/lib/leitir
+2026-08-20T15:51:10.0891454Z copying src/leitir/docpointers.py -> build/lib/leitir
+2026-08-20T15:51:10.0893363Z copying src/leitir/spec.py -> build/lib/leitir
+2026-08-20T15:51:10.0895325Z copying src/leitir/comparison.py -> build/lib/leitir
+2026-08-20T15:51:10.0897672Z copying src/leitir/duplicates.py -> build/lib/leitir
+2026-08-20T15:51:10.0899608Z copying src/leitir/bts_pipeline.py -> build/lib/leitir
+2026-08-20T15:51:10.0901565Z copying src/leitir/sumdb.py -> build/lib/leitir
+2026-08-20T15:51:10.0903589Z copying src/leitir/pipeline_cli.py -> build/lib/leitir
+2026-08-20T15:51:10.0906130Z copying src/leitir/exit_corpus.py -> build/lib/leitir
+2026-08-20T15:51:10.0908357Z copying src/leitir/suitability.py -> build/lib/leitir
+2026-08-20T15:51:10.0910398Z copying src/leitir/trust.py -> build/lib/leitir
+2026-08-20T15:51:10.0912381Z copying src/leitir/occupied.py -> build/lib/leitir
+2026-08-20T15:51:10.0914587Z copying src/leitir/materialize.py -> build/lib/leitir
+2026-08-20T15:51:10.0917036Z copying src/leitir/safeio.py -> build/lib/leitir
+2026-08-20T15:51:10.0918942Z copying src/leitir/engine.py -> build/lib/leitir
+2026-08-20T15:51:10.0920954Z copying src/leitir/sbom.py -> build/lib/leitir
+2026-08-20T15:51:10.0922967Z copying src/leitir/parity.py -> build/lib/leitir
+2026-08-20T15:51:10.0924947Z copying src/leitir/diff.py -> build/lib/leitir
+2026-08-20T15:51:10.0927078Z copying src/leitir/cost.py -> build/lib/leitir
+2026-08-20T15:51:10.0929149Z copying src/leitir/architecture.py -> build/lib/leitir
+2026-08-20T15:51:10.0931208Z copying src/leitir/bts_errors.py -> build/lib/leitir
+2026-08-20T15:51:10.0933062Z copying src/leitir/tree.py -> build/lib/leitir
+2026-08-20T15:51:10.0935171Z copying src/leitir/resolver.py -> build/lib/leitir
+2026-08-20T15:51:10.0937737Z copying src/leitir/analysis_cli.py -> build/lib/leitir
+2026-08-20T15:51:10.0939993Z copying src/leitir/probes.py -> build/lib/leitir
+2026-08-20T15:51:10.0942038Z copying src/leitir/cli.py -> build/lib/leitir
+2026-08-20T15:51:10.0944824Z copying src/leitir/snapshot.py -> build/lib/leitir
+2026-08-20T15:51:10.0947648Z copying src/leitir/ranking.py -> build/lib/leitir
+2026-08-20T15:51:10.0949278Z copying src/leitir/bench.py -> build/lib/leitir
+2026-08-20T15:51:10.0951532Z copying src/leitir/_update_check.py -> build/lib/leitir
+2026-08-20T15:51:10.0953770Z copying src/leitir/funnel_cli.py -> build/lib/leitir
+2026-08-20T15:51:10.0956221Z copying src/leitir/bts.py -> build/lib/leitir
+2026-08-20T15:51:10.0958909Z copying src/leitir/bts_exit_gate.py -> build/lib/leitir
+2026-08-20T15:51:10.0961360Z copying src/leitir/_http.py -> build/lib/leitir
+2026-08-20T15:51:10.0963707Z copying src/leitir/corpus.py -> build/lib/leitir
+2026-08-20T15:51:10.0966410Z copying src/leitir/transplant.py -> build/lib/leitir
+2026-08-20T15:51:10.0969005Z copying src/leitir/candidates.py -> build/lib/leitir
+2026-08-20T15:51:10.0974611Z creating build/lib/leitir/graph
+2026-08-20T15:51:10.0976378Z copying src/leitir/graph/javascript.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0979009Z copying src/leitir/graph/typescript.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0981570Z copying src/leitir/graph/__init__.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0983739Z copying src/leitir/graph/ts_kernel.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0985804Z copying src/leitir/graph/rust.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0988558Z copying src/leitir/graph/go.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0990963Z copying src/leitir/graph/model.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0993437Z copying src/leitir/graph/policy.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0995781Z copying src/leitir/graph/registry.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.0998548Z copying src/leitir/graph/python.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.1001333Z copying src/leitir/graph/runtime.py -> build/lib/leitir/graph
+2026-08-20T15:51:10.1004699Z creating build/lib/leitir/index
+2026-08-20T15:51:10.1006366Z copying src/leitir/index/__init__.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1008799Z copying src/leitir/index/postings.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1010957Z copying src/leitir/index/query.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1013254Z copying src/leitir/index/builder.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1015617Z copying src/leitir/index/rank.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1018196Z copying src/leitir/index/verify.py -> build/lib/leitir/index
+2026-08-20T15:51:10.1021449Z creating build/lib/leitir/adapters
+2026-08-20T15:51:10.1022918Z copying src/leitir/adapters/__init__.py -> build/lib/leitir/adapters
+2026-08-20T15:51:10.1025693Z copying src/leitir/adapters/_tier2_patterns.py -> build/lib/leitir/adapters
+2026-08-20T15:51:10.1027974Z copying src/leitir/adapters/registry.py -> build/lib/leitir/adapters
+2026-08-20T15:51:10.1030317Z copying src/leitir/adapters/languages.py -> build/lib/leitir/adapters
+2026-08-20T15:51:10.1032287Z copying src/leitir/adapters/python_ast.py -> build/lib/leitir/adapters
+2026-08-20T15:51:10.1038807Z creating build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1040699Z copying src/leitir/adapters/_tier2/javascript.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1042647Z copying src/leitir/adapters/_tier2/typescript.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1044703Z copying src/leitir/adapters/_tier2/__init__.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1047342Z copying src/leitir/adapters/_tier2/cpp.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1049326Z copying src/leitir/adapters/_tier2/_base.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1051572Z copying src/leitir/adapters/_tier2/c.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1054030Z copying src/leitir/adapters/_tier2/java.py -> build/lib/leitir/adapters/_tier2
+2026-08-20T15:51:10.1056426Z running egg_info
+2026-08-20T15:51:10.1066086Z writing src/leitir.egg-info/PKG-INFO
+2026-08-20T15:51:10.1079165Z writing dependency_links to src/leitir.egg-info/dependency_links.txt
+2026-08-20T15:51:10.1082270Z writing entry points to src/leitir.egg-info/entry_points.txt
+2026-08-20T15:51:10.1089954Z writing requirements to src/leitir.egg-info/requires.txt
+2026-08-20T15:51:10.1091257Z writing top-level names to src/leitir.egg-info/top_level.txt
+2026-08-20T15:51:10.1147784Z reading manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:10.1170887Z adding license file 'LICENSE'
+2026-08-20T15:51:10.1198211Z writing manifest file 'src/leitir.egg-info/SOURCES.txt'
+2026-08-20T15:51:10.1224036Z creating build/lib/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1226340Z copying src/leitir/benchmarks/corpus-v1/manifest.json -> build/lib/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1228425Z creating build/lib/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1230278Z copying src/leitir/benchmarks/ast-vs-regex-v1/comparison.json -> build/lib/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1231998Z creating build/lib/leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1233740Z copying src/leitir/benchmarks/search-v1/manifest.json -> build/lib/leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1236668Z copying src/leitir/benchmarks/search-v1/qrels.json -> build/lib/leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1239185Z copying src/leitir/benchmarks/corpus-v1/README.md -> build/lib/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1241782Z copying src/leitir/benchmarks/ast-vs-regex-v1/README.md -> build/lib/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1243629Z creating build/lib/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:10.1247040Z copying src/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt -> build/lib/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:10.1280665Z installing to build/bdist.linux-x86_64/wheel
+2026-08-20T15:51:10.1281225Z running install
+2026-08-20T15:51:10.1341022Z running install_lib
+2026-08-20T15:51:10.1350691Z creating build/bdist.linux-x86_64/wheel
+2026-08-20T15:51:10.1353778Z creating build/bdist.linux-x86_64/wheel/leitir
+2026-08-20T15:51:10.1355383Z copying build/lib/leitir/capability.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1358158Z copying build/lib/leitir/__init__.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1359824Z copying build/lib/leitir/lineage.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1362246Z copying build/lib/leitir/examples.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1363891Z copying build/lib/leitir/manifest_auth.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1365790Z copying build/lib/leitir/matching.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1367831Z copying build/lib/leitir/lockfiles.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1370593Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks
+2026-08-20T15:51:10.1372811Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1374468Z copying build/lib/leitir/benchmarks/corpus-v1/README.md -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1376570Z copying build/lib/leitir/benchmarks/corpus-v1/manifest.json -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/corpus-v1
+2026-08-20T15:51:10.1378740Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1380738Z copying build/lib/leitir/benchmarks/ast-vs-regex-v1/comparison.json -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1382522Z copying build/lib/leitir/benchmarks/ast-vs-regex-v1/README.md -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/ast-vs-regex-v1
+2026-08-20T15:51:10.1384342Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/ast-vs-regex-v1/corpus
+2026-08-20T15:51:10.1387051Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib
+2026-08-20T15:51:10.1388889Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:10.1391013Z copying build/lib/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib
+2026-08-20T15:51:10.1393046Z creating build/bdist.linux-x86_64/wheel/leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1394979Z copying build/lib/leitir/benchmarks/search-v1/manifest.json -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1397349Z copying build/lib/leitir/benchmarks/search-v1/qrels.json -> build/bdist.linux-x86_64/wheel/./leitir/benchmarks/search-v1
+2026-08-20T15:51:10.1399052Z copying build/lib/leitir/relocate.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1401734Z copying build/lib/leitir/treehash.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1403501Z copying build/lib/leitir/credentials.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1405245Z copying build/lib/leitir/rerun.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1408045Z copying build/lib/leitir/streaming.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1409646Z copying build/lib/leitir/exec_sandbox.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1412216Z copying build/lib/leitir/info.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1413925Z copying build/lib/leitir/bts_bench.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1417061Z creating build/bdist.linux-x86_64/wheel/leitir/graph
+2026-08-20T15:51:10.1418698Z copying build/lib/leitir/graph/javascript.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1420742Z copying build/lib/leitir/graph/typescript.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1422638Z copying build/lib/leitir/graph/__init__.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1424425Z copying build/lib/leitir/graph/ts_kernel.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1426601Z copying build/lib/leitir/graph/rust.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1428705Z copying build/lib/leitir/graph/go.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1430743Z copying build/lib/leitir/graph/model.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1432732Z copying build/lib/leitir/graph/policy.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1434588Z copying build/lib/leitir/graph/registry.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1436810Z copying build/lib/leitir/graph/python.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1439345Z copying build/lib/leitir/graph/runtime.py -> build/bdist.linux-x86_64/wheel/./leitir/graph
+2026-08-20T15:51:10.1441171Z copying build/lib/leitir/bts_cli.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1443413Z copying build/lib/leitir/corpus_bench.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1445109Z copying build/lib/leitir/discovery_search.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1447362Z copying build/lib/leitir/search.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1449271Z copying build/lib/leitir/_python_ast.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1450984Z copying build/lib/leitir/doctor.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1453444Z copying build/lib/leitir/logging.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1454995Z copying build/lib/leitir/license_policy.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1457821Z copying build/lib/leitir/apisurface.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1459881Z copying build/lib/leitir/composition.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1461518Z copying build/lib/leitir/project_profile.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1463340Z copying build/lib/leitir/docpointers.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1465110Z copying build/lib/leitir/spec.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1467230Z copying build/lib/leitir/comparison.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1469628Z copying build/lib/leitir/duplicates.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1471314Z copying build/lib/leitir/bts_pipeline.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1473116Z copying build/lib/leitir/sumdb.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1475056Z copying build/lib/leitir/pipeline_cli.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1478259Z copying build/lib/leitir/exit_corpus.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1480032Z copying build/lib/leitir/suitability.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1481938Z copying build/lib/leitir/trust.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1483784Z copying build/lib/leitir/occupied.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1486180Z copying build/lib/leitir/materialize.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1489260Z creating build/bdist.linux-x86_64/wheel/leitir/index
+2026-08-20T15:51:10.1490795Z copying build/lib/leitir/index/__init__.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1492613Z copying build/lib/leitir/index/postings.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1494296Z copying build/lib/leitir/index/query.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1496365Z copying build/lib/leitir/index/builder.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1498377Z copying build/lib/leitir/index/rank.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1500119Z copying build/lib/leitir/index/verify.py -> build/bdist.linux-x86_64/wheel/./leitir/index
+2026-08-20T15:51:10.1501888Z copying build/lib/leitir/safeio.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1503660Z copying build/lib/leitir/engine.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1505551Z copying build/lib/leitir/sbom.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1508138Z copying build/lib/leitir/parity.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1509780Z copying build/lib/leitir/diff.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1511654Z copying build/lib/leitir/cost.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1513831Z copying build/lib/leitir/architecture.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1515635Z copying build/lib/leitir/bts_errors.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1517719Z copying build/lib/leitir/tree.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1519722Z copying build/lib/leitir/resolver.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1521999Z copying build/lib/leitir/analysis_cli.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1523842Z copying build/lib/leitir/probes.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1525838Z copying build/lib/leitir/cli.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1528461Z copying build/lib/leitir/snapshot.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1530316Z copying build/lib/leitir/ranking.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1532089Z copying build/lib/leitir/bench.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1534155Z copying build/lib/leitir/_update_check.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1535949Z copying build/lib/leitir/funnel_cli.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1537944Z copying build/lib/leitir/bts.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1539994Z copying build/lib/leitir/bts_exit_gate.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1541864Z copying build/lib/leitir/_http.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1543758Z copying build/lib/leitir/corpus.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1546136Z creating build/bdist.linux-x86_64/wheel/leitir/adapters
+2026-08-20T15:51:10.1548001Z copying build/lib/leitir/adapters/__init__.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters
+2026-08-20T15:51:10.1549970Z copying build/lib/leitir/adapters/_tier2_patterns.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters
+2026-08-20T15:51:10.1551747Z copying build/lib/leitir/adapters/registry.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters
+2026-08-20T15:51:10.1553757Z creating build/bdist.linux-x86_64/wheel/leitir/adapters/_tier2
+2026-08-20T15:51:10.1555553Z copying build/lib/leitir/adapters/_tier2/javascript.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1557636Z copying build/lib/leitir/adapters/_tier2/typescript.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1559249Z copying build/lib/leitir/adapters/_tier2/__init__.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1561132Z copying build/lib/leitir/adapters/_tier2/cpp.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1562906Z copying build/lib/leitir/adapters/_tier2/_base.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1564459Z copying build/lib/leitir/adapters/_tier2/c.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1566445Z copying build/lib/leitir/adapters/_tier2/java.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters/_tier2
+2026-08-20T15:51:10.1568191Z copying build/lib/leitir/adapters/languages.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters
+2026-08-20T15:51:10.1570101Z copying build/lib/leitir/adapters/python_ast.py -> build/bdist.linux-x86_64/wheel/./leitir/adapters
+2026-08-20T15:51:10.1571948Z copying build/lib/leitir/transplant.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1573966Z copying build/lib/leitir/candidates.py -> build/bdist.linux-x86_64/wheel/./leitir
+2026-08-20T15:51:10.1575708Z running install_egg_info
+2026-08-20T15:51:10.1585111Z Copying src/leitir.egg-info to build/bdist.linux-x86_64/wheel/./leitir-0.1.4-py3.11.egg-info
+2026-08-20T15:51:10.1594073Z running install_scripts
+2026-08-20T15:51:10.1604822Z creating build/bdist.linux-x86_64/wheel/leitir-0.1.4.dist-info/WHEEL
+2026-08-20T15:51:10.1609487Z creating '/home/runner/work/leitir/leitir/dist/.tmp-7i0f46_w/leitir-0.1.4-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+2026-08-20T15:51:10.1613048Z adding 'leitir/__init__.py'
+2026-08-20T15:51:10.1621130Z adding 'leitir/_http.py'
+2026-08-20T15:51:10.1623831Z adding 'leitir/_python_ast.py'
+2026-08-20T15:51:10.1628982Z adding 'leitir/_update_check.py'
+2026-08-20T15:51:10.1633909Z adding 'leitir/analysis_cli.py'
+2026-08-20T15:51:10.1641524Z adding 'leitir/apisurface.py'
+2026-08-20T15:51:10.1647475Z adding 'leitir/architecture.py'
+2026-08-20T15:51:10.1652750Z adding 'leitir/bench.py'
+2026-08-20T15:51:10.1667110Z adding 'leitir/bts.py'
+2026-08-20T15:51:10.1683832Z adding 'leitir/bts_bench.py'
+2026-08-20T15:51:10.1693980Z adding 'leitir/bts_cli.py'
+2026-08-20T15:51:10.1697642Z adding 'leitir/bts_errors.py'
+2026-08-20T15:51:10.1703066Z adding 'leitir/bts_exit_gate.py'
+2026-08-20T15:51:10.1707354Z adding 'leitir/bts_pipeline.py'
+2026-08-20T15:51:10.1716417Z adding 'leitir/candidates.py'
+2026-08-20T15:51:10.1725727Z adding 'leitir/capability.py'
+2026-08-20T15:51:10.1754475Z adding 'leitir/cli.py'
+2026-08-20T15:51:10.1764613Z adding 'leitir/comparison.py'
+2026-08-20T15:51:10.1770573Z adding 'leitir/composition.py'
+2026-08-20T15:51:10.1779303Z adding 'leitir/corpus.py'
+2026-08-20T15:51:10.1783435Z adding 'leitir/corpus_bench.py'
+2026-08-20T15:51:10.1790199Z adding 'leitir/cost.py'
+2026-08-20T15:51:10.1793295Z adding 'leitir/credentials.py'
+2026-08-20T15:51:10.1797726Z adding 'leitir/diff.py'
+2026-08-20T15:51:10.1808791Z adding 'leitir/discovery_search.py'
+2026-08-20T15:51:10.1812711Z adding 'leitir/docpointers.py'
+2026-08-20T15:51:10.1821305Z adding 'leitir/doctor.py'
+2026-08-20T15:51:10.1826879Z adding 'leitir/duplicates.py'
+2026-08-20T15:51:10.1833635Z adding 'leitir/engine.py'
+2026-08-20T15:51:10.1839780Z adding 'leitir/examples.py'
+2026-08-20T15:51:10.1860320Z adding 'leitir/exec_sandbox.py'
+2026-08-20T15:51:10.1868079Z adding 'leitir/exit_corpus.py'
+2026-08-20T15:51:10.1873961Z adding 'leitir/funnel_cli.py'
+2026-08-20T15:51:10.1878341Z adding 'leitir/info.py'
+2026-08-20T15:51:10.1894164Z adding 'leitir/license_policy.py'
+2026-08-20T15:51:10.1900879Z adding 'leitir/lineage.py'
+2026-08-20T15:51:10.1909927Z adding 'leitir/lockfiles.py'
+2026-08-20T15:51:10.1913394Z adding 'leitir/logging.py'
+2026-08-20T15:51:10.1918467Z adding 'leitir/manifest_auth.py'
+2026-08-20T15:51:10.1920795Z adding 'leitir/matching.py'
+2026-08-20T15:51:10.1941442Z adding 'leitir/materialize.py'
+2026-08-20T15:51:10.1952842Z adding 'leitir/occupied.py'
+2026-08-20T15:51:10.1958318Z adding 'leitir/parity.py'
+2026-08-20T15:51:10.1994076Z adding 'leitir/pipeline_cli.py'
+2026-08-20T15:51:10.2012599Z adding 'leitir/probes.py'
+2026-08-20T15:51:10.2013047Z adding 'leitir/project_profile.py'
+2026-08-20T15:51:10.2013349Z adding 'leitir/ranking.py'
+2026-08-20T15:51:10.2024676Z adding 'leitir/relocate.py'
+2026-08-20T15:51:10.2034777Z adding 'leitir/rerun.py'
+2026-08-20T15:51:10.2053806Z adding 'leitir/resolver.py'
+2026-08-20T15:51:10.2057275Z adding 'leitir/safeio.py'
+2026-08-20T15:51:10.2063567Z adding 'leitir/sbom.py'
+2026-08-20T15:51:10.2068967Z adding 'leitir/search.py'
+2026-08-20T15:51:10.2073965Z adding 'leitir/snapshot.py'
+2026-08-20T15:51:10.2078187Z adding 'leitir/spec.py'
+2026-08-20T15:51:10.2081265Z adding 'leitir/streaming.py'
+2026-08-20T15:51:10.2089502Z adding 'leitir/suitability.py'
+2026-08-20T15:51:10.2095402Z adding 'leitir/sumdb.py'
+2026-08-20T15:51:10.2109507Z adding 'leitir/transplant.py'
+2026-08-20T15:51:10.2115518Z adding 'leitir/tree.py'
+2026-08-20T15:51:10.2124548Z adding 'leitir/treehash.py'
+2026-08-20T15:51:10.2128408Z adding 'leitir/trust.py'
+2026-08-20T15:51:10.2133120Z adding 'leitir/adapters/__init__.py'
+2026-08-20T15:51:10.2135934Z adding 'leitir/adapters/_tier2_patterns.py'
+2026-08-20T15:51:10.2138095Z adding 'leitir/adapters/languages.py'
+2026-08-20T15:51:10.2143532Z adding 'leitir/adapters/python_ast.py'
+2026-08-20T15:51:10.2146093Z adding 'leitir/adapters/registry.py'
+2026-08-20T15:51:10.2149010Z adding 'leitir/adapters/_tier2/__init__.py'
+2026-08-20T15:51:10.2152066Z adding 'leitir/adapters/_tier2/_base.py'
+2026-08-20T15:51:10.2154241Z adding 'leitir/adapters/_tier2/c.py'
+2026-08-20T15:51:10.2156368Z adding 'leitir/adapters/_tier2/cpp.py'
+2026-08-20T15:51:10.2158793Z adding 'leitir/adapters/_tier2/java.py'
+2026-08-20T15:51:10.2161095Z adding 'leitir/adapters/_tier2/javascript.py'
+2026-08-20T15:51:10.2163209Z adding 'leitir/adapters/_tier2/typescript.py'
+2026-08-20T15:51:10.2165964Z adding 'leitir/benchmarks/ast-vs-regex-v1/README.md'
+2026-08-20T15:51:10.2168619Z adding 'leitir/benchmarks/ast-vs-regex-v1/comparison.json'
+2026-08-20T15:51:10.2183278Z adding 'leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt'
+2026-08-20T15:51:10.2185759Z adding 'leitir/benchmarks/corpus-v1/README.md'
+2026-08-20T15:51:10.2188471Z adding 'leitir/benchmarks/corpus-v1/manifest.json'
+2026-08-20T15:51:10.2193172Z adding 'leitir/benchmarks/search-v1/manifest.json'
+2026-08-20T15:51:10.2196777Z adding 'leitir/benchmarks/search-v1/qrels.json'
+2026-08-20T15:51:10.2199595Z adding 'leitir/graph/__init__.py'
+2026-08-20T15:51:10.2205676Z adding 'leitir/graph/go.py'
+2026-08-20T15:51:10.2211797Z adding 'leitir/graph/javascript.py'
+2026-08-20T15:51:10.2219240Z adding 'leitir/graph/model.py'
+2026-08-20T15:51:10.2224142Z adding 'leitir/graph/policy.py'
+2026-08-20T15:51:10.2238971Z adding 'leitir/graph/python.py'
+2026-08-20T15:51:10.2243977Z adding 'leitir/graph/registry.py'
+2026-08-20T15:51:10.2253154Z adding 'leitir/graph/runtime.py'
+2026-08-20T15:51:10.2260429Z adding 'leitir/graph/rust.py'
+2026-08-20T15:51:10.2266736Z adding 'leitir/graph/ts_kernel.py'
+2026-08-20T15:51:10.2273171Z adding 'leitir/graph/typescript.py'
+2026-08-20T15:51:10.2275650Z adding 'leitir/index/__init__.py'
+2026-08-20T15:51:10.2279613Z adding 'leitir/index/builder.py'
+2026-08-20T15:51:10.2281952Z adding 'leitir/index/postings.py'
+2026-08-20T15:51:10.2286095Z adding 'leitir/index/query.py'
+2026-08-20T15:51:10.2288676Z adding 'leitir/index/rank.py'
+2026-08-20T15:51:10.2292643Z adding 'leitir/index/verify.py'
+2026-08-20T15:51:10.2296417Z adding 'leitir-0.1.4.dist-info/licenses/LICENSE'
+2026-08-20T15:51:10.2308080Z adding 'leitir-0.1.4.dist-info/METADATA'
+2026-08-20T15:51:10.2309538Z adding 'leitir-0.1.4.dist-info/WHEEL'
+2026-08-20T15:51:10.2310990Z adding 'leitir-0.1.4.dist-info/entry_points.txt'
+2026-08-20T15:51:10.2312320Z adding 'leitir-0.1.4.dist-info/top_level.txt'
+2026-08-20T15:51:10.2318046Z adding 'leitir-0.1.4.dist-info/RECORD'
+2026-08-20T15:51:10.2321618Z removing build/bdist.linux-x86_64/wheel
+2026-08-20T15:51:10.2815809Z Successfully built leitir-0.1.4.tar.gz and leitir-0.1.4-py3-none-any.whl
+2026-08-20T15:51:10.3043918Z ##[group]Run uv run --no-project --with twine python -m twine check dist/*
+2026-08-20T15:51:10.3044485Z [36;1muv run --no-project --with twine python -m twine check dist/*[0m
+2026-08-20T15:51:10.3082440Z shell: /usr/bin/bash -e {0}
+2026-08-20T15:51:10.3082695Z env:
+2026-08-20T15:51:10.3082975Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:10.3083446Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:10.3083882Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:10.3084269Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:10.3084655Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:10.3085045Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:10.3085456Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:10.3085759Z ##[endgroup]
+2026-08-20T15:51:10.3465879Z Installed 30 packages in 16ms
+2026-08-20T15:51:10.9994184Z Checking dist/leitir-0.1.4-py3-none-any.whl: [32mPASSED[0m
+2026-08-20T15:51:11.0356295Z Checking dist/leitir-0.1.4.tar.gz: [32mPASSED[0m
+2026-08-20T15:51:11.0730160Z ##[group]Run python -c "import zipfile, sys; print('\n'.join(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))" dist/*.whl
+2026-08-20T15:51:11.0730984Z [36;1mpython -c "import zipfile, sys; print('\n'.join(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))" dist/*.whl[0m
+2026-08-20T15:51:11.0769944Z shell: /usr/bin/bash -e {0}
+2026-08-20T15:51:11.0770198Z env:
+2026-08-20T15:51:11.0770467Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.0770914Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:11.0771350Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.0771738Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.0772117Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.0772495Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:11.0772857Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:11.0773178Z ##[endgroup]
+2026-08-20T15:51:11.1072136Z leitir-0.1.4.dist-info/METADATA
+2026-08-20T15:51:11.1072709Z leitir-0.1.4.dist-info/RECORD
+2026-08-20T15:51:11.1073098Z leitir-0.1.4.dist-info/WHEEL
+2026-08-20T15:51:11.1073414Z leitir-0.1.4.dist-info/entry_points.txt
+2026-08-20T15:51:11.1073758Z leitir-0.1.4.dist-info/licenses/LICENSE
+2026-08-20T15:51:11.1074087Z leitir-0.1.4.dist-info/top_level.txt
+2026-08-20T15:51:11.1074393Z leitir/__init__.py
+2026-08-20T15:51:11.1074638Z leitir/_http.py
+2026-08-20T15:51:11.1074877Z leitir/_python_ast.py
+2026-08-20T15:51:11.1075133Z leitir/_update_check.py
+2026-08-20T15:51:11.1075397Z leitir/adapters/__init__.py
+2026-08-20T15:51:11.1075705Z leitir/adapters/_tier2/__init__.py
+2026-08-20T15:51:11.1076344Z leitir/adapters/_tier2/_base.py
+2026-08-20T15:51:11.1076711Z leitir/adapters/_tier2/c.py
+2026-08-20T15:51:11.1077024Z leitir/adapters/_tier2/cpp.py
+2026-08-20T15:51:11.1077313Z leitir/adapters/_tier2/java.py
+2026-08-20T15:51:11.1077622Z leitir/adapters/_tier2/javascript.py
+2026-08-20T15:51:11.1077944Z leitir/adapters/_tier2/typescript.py
+2026-08-20T15:51:11.1078260Z leitir/adapters/_tier2_patterns.py
+2026-08-20T15:51:11.1078575Z leitir/adapters/languages.py
+2026-08-20T15:51:11.1078864Z leitir/adapters/python_ast.py
+2026-08-20T15:51:11.1079151Z leitir/adapters/registry.py
+2026-08-20T15:51:11.1079424Z leitir/analysis_cli.py
+2026-08-20T15:51:11.1079684Z leitir/apisurface.py
+2026-08-20T15:51:11.1079935Z leitir/architecture.py
+2026-08-20T15:51:11.1080188Z leitir/bench.py
+2026-08-20T15:51:11.1080453Z leitir/benchmarks/ast-vs-regex-v1/README.md
+2026-08-20T15:51:11.1080835Z leitir/benchmarks/ast-vs-regex-v1/comparison.json
+2026-08-20T15:51:11.1081569Z leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt
+2026-08-20T15:51:11.1082016Z leitir/benchmarks/corpus-v1/README.md
+2026-08-20T15:51:11.1082357Z leitir/benchmarks/corpus-v1/manifest.json
+2026-08-20T15:51:11.1082705Z leitir/benchmarks/search-v1/manifest.json
+2026-08-20T15:51:11.1083050Z leitir/benchmarks/search-v1/qrels.json
+2026-08-20T15:51:11.1083356Z leitir/bts.py
+2026-08-20T15:51:11.1083585Z leitir/bts_bench.py
+2026-08-20T15:51:11.1083825Z leitir/bts_cli.py
+2026-08-20T15:51:11.1084062Z leitir/bts_errors.py
+2026-08-20T15:51:11.1084317Z leitir/bts_exit_gate.py
+2026-08-20T15:51:11.1084576Z leitir/bts_pipeline.py
+2026-08-20T15:51:11.1084830Z leitir/candidates.py
+2026-08-20T15:51:11.1085079Z leitir/capability.py
+2026-08-20T15:51:11.1085321Z leitir/cli.py
+2026-08-20T15:51:11.1085547Z leitir/comparison.py
+2026-08-20T15:51:11.1085792Z leitir/composition.py
+2026-08-20T15:51:11.1086183Z leitir/corpus.py
+2026-08-20T15:51:11.1086418Z leitir/corpus_bench.py
+2026-08-20T15:51:11.1086668Z leitir/cost.py
+2026-08-20T15:51:11.1086897Z leitir/credentials.py
+2026-08-20T15:51:11.1087136Z leitir/diff.py
+2026-08-20T15:51:11.1087369Z leitir/discovery_search.py
+2026-08-20T15:51:11.1087638Z leitir/docpointers.py
+2026-08-20T15:51:11.1087886Z leitir/doctor.py
+2026-08-20T15:51:11.1088128Z leitir/duplicates.py
+2026-08-20T15:51:11.1088647Z leitir/engine.py
+2026-08-20T15:51:11.1088878Z leitir/examples.py
+2026-08-20T15:51:11.1089090Z leitir/exec_sandbox.py
+2026-08-20T15:51:11.1089312Z leitir/exit_corpus.py
+2026-08-20T15:51:11.1089527Z leitir/funnel_cli.py
+2026-08-20T15:51:11.1089741Z leitir/graph/__init__.py
+2026-08-20T15:51:11.1090023Z leitir/graph/go.py
+2026-08-20T15:51:11.1090329Z leitir/graph/javascript.py
+2026-08-20T15:51:11.1090778Z leitir/graph/model.py
+2026-08-20T15:51:11.1091127Z leitir/graph/policy.py
+2026-08-20T15:51:11.1091472Z leitir/graph/python.py
+2026-08-20T15:51:11.1091802Z leitir/graph/registry.py
+2026-08-20T15:51:11.1092126Z leitir/graph/runtime.py
+2026-08-20T15:51:11.1092954Z leitir/graph/rust.py
+2026-08-20T15:51:11.1093308Z leitir/graph/ts_kernel.py
+2026-08-20T15:51:11.1093670Z leitir/graph/typescript.py
+2026-08-20T15:51:11.1094016Z leitir/index/__init__.py
+2026-08-20T15:51:11.1094337Z leitir/index/builder.py
+2026-08-20T15:51:11.1094697Z leitir/index/postings.py
+2026-08-20T15:51:11.1095043Z leitir/index/query.py
+2026-08-20T15:51:11.1095338Z leitir/index/rank.py
+2026-08-20T15:51:11.1095697Z leitir/index/verify.py
+2026-08-20T15:51:11.1096284Z leitir/info.py
+2026-08-20T15:51:11.1096762Z leitir/license_policy.py
+2026-08-20T15:51:11.1097119Z leitir/lineage.py
+2026-08-20T15:51:11.1097393Z leitir/lockfiles.py
+2026-08-20T15:51:11.1097741Z leitir/logging.py
+2026-08-20T15:51:11.1098038Z leitir/manifest_auth.py
+2026-08-20T15:51:11.1098365Z leitir/matching.py
+2026-08-20T15:51:11.1098705Z leitir/materialize.py
+2026-08-20T15:51:11.1099001Z leitir/occupied.py
+2026-08-20T15:51:11.1099325Z leitir/parity.py
+2026-08-20T15:51:11.1099618Z leitir/pipeline_cli.py
+2026-08-20T15:51:11.1099975Z leitir/probes.py
+2026-08-20T15:51:11.1100320Z leitir/project_profile.py
+2026-08-20T15:51:11.1100629Z leitir/ranking.py
+2026-08-20T15:51:11.1100952Z leitir/relocate.py
+2026-08-20T15:51:11.1101231Z leitir/rerun.py
+2026-08-20T15:51:11.1101492Z leitir/resolver.py
+2026-08-20T15:51:11.1101859Z leitir/safeio.py
+2026-08-20T15:51:11.1102136Z leitir/sbom.py
+2026-08-20T15:51:11.1102440Z leitir/search.py
+2026-08-20T15:51:11.1102736Z leitir/snapshot.py
+2026-08-20T15:51:11.1103035Z leitir/spec.py
+2026-08-20T15:51:11.1103398Z leitir/streaming.py
+2026-08-20T15:51:11.1103689Z leitir/suitability.py
+2026-08-20T15:51:11.1104005Z leitir/sumdb.py
+2026-08-20T15:51:11.1104300Z leitir/transplant.py
+2026-08-20T15:51:11.1104587Z leitir/tree.py
+2026-08-20T15:51:11.1104928Z leitir/treehash.py
+2026-08-20T15:51:11.1105211Z leitir/trust.py
+2026-08-20T15:51:11.1152790Z ##[group]Run python -c "import glob, zipfile; required={'leitir/benchmarks/search-v1/manifest.json','leitir/benchmarks/corpus-v1/manifest.json','leitir/benchmarks/corpus-v1/README.md','leitir/__init__.py','leitir/cli.py','leitir/treehash.py'}; names=set(zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist()); missing=sorted(required-names); assert not missing, f'Missing required wheel entries: {missing}'"
+2026-08-20T15:51:11.1155735Z [36;1mpython -c "import glob, zipfile; required={'leitir/benchmarks/search-v1/manifest.json','leitir/benchmarks/corpus-v1/manifest.json','leitir/benchmarks/corpus-v1/README.md','leitir/__init__.py','leitir/cli.py','leitir/treehash.py'}; names=set(zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist()); missing=sorted(required-names); assert not missing, f'Missing required wheel entries: {missing}'"[0m
+2026-08-20T15:51:11.1193534Z shell: /usr/bin/bash -e {0}
+2026-08-20T15:51:11.1193949Z env:
+2026-08-20T15:51:11.1194471Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1195040Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:11.1195578Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1196366Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1196925Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1197484Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:11.1197996Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:11.1198422Z ##[endgroup]
+2026-08-20T15:51:11.1578293Z ##[group]Run python -m venv smoke-venv
+2026-08-20T15:51:11.1578638Z [36;1mpython -m venv smoke-venv[0m
+2026-08-20T15:51:11.1579001Z [36;1msmoke-venv/bin/python -m pip install --no-deps dist/*.whl[0m
+2026-08-20T15:51:11.1579404Z [36;1msmoke-venv/bin/python -m leitir.cli --help[0m
+2026-08-20T15:51:11.1614458Z shell: /usr/bin/bash -e {0}
+2026-08-20T15:51:11.1614725Z env:
+2026-08-20T15:51:11.1615036Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1615490Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:11.1616281Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1616737Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1617132Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:11.1617522Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:11.1617910Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:11.1618228Z ##[endgroup]
+2026-08-20T15:51:15.7668697Z Processing ./dist/leitir-0.1.4-py3-none-any.whl
+2026-08-20T15:51:15.7734978Z Installing collected packages: leitir
+2026-08-20T15:51:16.1573851Z Successfully installed leitir-0.1.4
+2026-08-20T15:51:16.2785389Z
+2026-08-20T15:51:16.2786349Z [notice] A new release of pip is available: 24.0 -> 26.2.1
+2026-08-20T15:51:16.2787215Z [notice] To update, run: python -m pip install --upgrade pip
+2026-08-20T15:51:16.4128949Z usage: leitir [-h] [--debug] [--version]
+2026-08-20T15:51:16.4131557Z               {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc,bts-compute,analysis-architecture,analysis-lineage,exit-gate-validate,bts-funnel,bts-run,exit-gate-run,occupied-validate}
+2026-08-20T15:51:16.4133680Z               ...
+2026-08-20T15:51:16.4133849Z
+2026-08-20T15:51:16.4133997Z Leitir deterministic code-search kernel
+2026-08-20T15:51:16.4134266Z
+2026-08-20T15:51:16.4134408Z positional arguments:
+2026-08-20T15:51:16.4136774Z   {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc,bts-compute,analysis-architecture,analysis-lineage,exit-gate-validate,bts-funnel,bts-run,exit-gate-run,occupied-validate}
+2026-08-20T15:51:16.4138876Z     doctor              diagnose the leitir environment and cache integrity
+2026-08-20T15:51:16.4139348Z     search              search a pinned code corpus
+2026-08-20T15:51:16.4139795Z     index               explicitly build or refresh local trigram index
+2026-08-20T15:51:16.4140540Z                         shelves
+2026-08-20T15:51:16.4140865Z     bench               run the pinned search benchmark
+2026-08-20T15:51:16.4141303Z     get                 materialize sources and print their local paths
+2026-08-20T15:51:16.4141817Z     fetch               materialize sources without printing their paths
+2026-08-20T15:51:16.4142271Z     list                list materialized sources
+2026-08-20T15:51:16.4142752Z     upgrade-cache       Compute and persist load-time tree digests for legacy
+2026-08-20T15:51:16.4143289Z                         verified shelves. NOTE: the digest is computed from
+2026-08-20T15:51:16.4143778Z                         the bytes currently on disk. Run this only on a corpus
+2026-08-20T15:51:16.4144254Z                         whose existing contents you already trust (e.g.,
+2026-08-20T15:51:16.4144739Z                         immediately after materialization, before any external
+2026-08-20T15:51:16.4145240Z                         process could modify the cache). To re-materialize a
+2026-08-20T15:51:16.4145738Z                         suspicious shelf instead, remove it first with `leitir
+2026-08-20T15:51:16.4146368Z                         remove <spec>` and then run `leitir get <spec>`.
+2026-08-20T15:51:16.4146825Z     trust               compute cached trust evidence for a source
+2026-08-20T15:51:16.4147471Z     remove              remove a materialized source
+2026-08-20T15:51:16.4147870Z     clean               empty the source corpus
+2026-08-20T15:51:16.4148252Z     lock                materialize the project's dependency closure
+2026-08-20T15:51:16.4148637Z     sbom                emit an SBOM for the materialized corpus
+2026-08-20T15:51:16.4149011Z     api                 extract and cache a materialized source API
+2026-08-20T15:51:16.4149406Z     examples            extract and cache materialized source examples
+2026-08-20T15:51:16.4149802Z     info                materialize and describe one dependency
+2026-08-20T15:51:16.4150144Z     diff                diff two resolved source versions
+2026-08-20T15:51:16.4150497Z     export              export an immutable corpus snapshot
+2026-08-20T15:51:16.4150847Z     import              import an immutable corpus snapshot
+2026-08-20T15:51:16.4151226Z     gc                  remove abandoned materialization staging directories
+2026-08-20T15:51:16.4151668Z     bts-compute         compute a Behavioral Transplant Set from an exact
+2026-08-20T15:51:16.4152034Z                         verified shelf
+2026-08-20T15:51:16.4152326Z     analysis-architecture
+2026-08-20T15:51:16.4152615Z                         assess a canonical graph artifact for architecture
+2026-08-20T15:51:16.4152963Z                         compatibility
+2026-08-20T15:51:16.4153283Z     analysis-lineage    validate a canonical lineage manifest
+2026-08-20T15:51:16.4153706Z     exit-gate-validate  validate pinned exit-corpus manifest evidence
+2026-08-20T15:51:16.4154160Z     bts-funnel          run the recorded capability-to-candidate BTS funnel
+2026-08-20T15:51:16.4154608Z     bts-run             run the contained Python BTS pipeline from a verified
+2026-08-20T15:51:16.4154954Z                         shelf
+2026-08-20T15:51:16.4155266Z     exit-gate-run       run a v1.1 runnable exit corpus under measured
+2026-08-20T15:51:16.4155685Z                         containment; phase A publishes corpus_manifest_digest,
+2026-08-20T15:51:16.4157243Z                         phase C requires its out-of-band
+2026-08-20T15:51:16.4157567Z                         ratified_runtime_digest
+2026-08-20T15:51:16.4158004Z     occupied-validate   validate a canonical occupied-recipient attachment
+2026-08-20T15:51:16.4158382Z                         artifact
+2026-08-20T15:51:16.4158533Z
+2026-08-20T15:51:16.4158616Z options:
+2026-08-20T15:51:16.4158861Z   -h, --help            show this help message and exit
+2026-08-20T15:51:16.4159241Z   --debug               emit detailed redacted diagnostics to stderr
+2026-08-20T15:51:16.4159638Z   --version             show program's version number and exit
+2026-08-20T15:51:16.4308638Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:16.4310027Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+2026-08-20T15:51:16.4310408Z with:
+2026-08-20T15:51:16.4310623Z   name: python-package-distributions
+2026-08-20T15:51:16.4310899Z   path: dist/
+2026-08-20T15:51:16.4311101Z   if-no-files-found: warn
+2026-08-20T15:51:16.4311326Z   compression-level: 6
+2026-08-20T15:51:16.4311538Z   overwrite: false
+2026-08-20T15:51:16.4311745Z   include-hidden-files: false
+2026-08-20T15:51:16.4311972Z env:
+2026-08-20T15:51:16.4312216Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:16.4312682Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib/pkgconfig
+2026-08-20T15:51:16.4313121Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:16.4313511Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:16.4313892Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.16/x64
+2026-08-20T15:51:16.4314272Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib
+2026-08-20T15:51:16.4314636Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:16.4314924Z ##[endgroup]
+2026-08-20T15:51:16.6016966Z (node:2466) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-20T15:51:16.6018357Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-20T15:51:16.6098716Z With the provided path, there will be 2 files uploaded
+2026-08-20T15:51:16.6099867Z Artifact name is valid!
+2026-08-20T15:51:16.6100330Z Root directory input is valid!
+2026-08-20T15:51:17.0107696Z Beginning upload of artifact content to blob storage
+2026-08-20T15:51:17.0785666Z (node:2466) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-08-20T15:51:17.8534380Z Uploaded bytes 1397921
+2026-08-20T15:51:17.9394195Z Finished uploading artifact content to blob storage!
+2026-08-20T15:51:17.9395477Z SHA256 digest of uploaded artifact zip is 91cca080b91ab6eb07efa3f34ea1a7d87af1ac4191e2d2f39d65d1e64627d49a
+2026-08-20T15:51:17.9397177Z Finalizing artifact upload
+2026-08-20T15:51:18.1806606Z Artifact python-package-distributions.zip successfully finalized. Artifact ID 9413902486
+2026-08-20T15:51:18.1808442Z Artifact python-package-distributions has been successfully uploaded! Final size is 1397921 bytes. Artifact ID is 9413902486
+2026-08-20T15:51:18.1815164Z Artifact download URL: https://github.com/anthonykewl20/leitir/actions/runs/32388573098/artifacts/9413902486
+2026-08-20T15:51:18.1994845Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:18.1996372Z Post job cleanup.
+2026-08-20T15:51:18.3167250Z Pruning cache...
+2026-08-20T15:51:18.3180455Z (node:2478) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-20T15:51:18.3181323Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-20T15:51:18.4322212Z Saving cache path: /home/runner/work/_temp/setup-uv-cache
+2026-08-20T15:51:18.4460028Z [command]/usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /home/runner/work/leitir/leitir --files-from manifest.txt --use-compress-program zstdmt
+2026-08-20T15:51:18.5199986Z ##[warning]Failed to save: <h2>Our services aren't available right now</h2><p>We're working to restore all services as soon as possible. Please check back soon.</p>0diKHagAAAAAtlQJf5hVASYsTe+BVVZABQ08xRURHRTE4MDgARWRnZQ==
+2026-08-20T15:51:18.5202978Z cache saved with the key: setup-uv-1-x86_64-unknown-linux-gnu-0.12.5-e9ed04ea365629849545da4adab952343559bc614f6a879f03315afe0bd35d97
+2026-08-20T15:51:18.5320974Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:18.5322201Z Post job cleanup.
+2026-08-20T15:51:18.6554402Z (node:2501) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-20T15:51:18.6555778Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-20T15:51:18.6717430Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-20T15:51:18.6718688Z Post job cleanup.
+2026-08-20T15:51:18.7541344Z [command]/usr/bin/git version
+2026-08-20T15:51:18.7577817Z git version 2.55.0
+2026-08-20T15:51:18.7618251Z Temporarily overriding HOME='/home/runner/work/_temp/07a46952-4072-445e-88e1-e1f861d3a20b' before making global git config changes
+2026-08-20T15:51:18.7619663Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-20T15:51:18.7624445Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/leitir/leitir
+2026-08-20T15:51:18.7662895Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-20T15:51:18.7697212Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-20T15:51:18.7917253Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-20T15:51:18.7950371Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-20T15:51:18.8169050Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-20T15:51:18.8199431Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-20T15:51:18.8545434Z Cleaning up orphan processes
+2026-08-20T15:51:18.8814181Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02, astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

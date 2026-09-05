@@ -1,0 +1,3 @@
+leitir: resolving github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7 (cwd=/tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-validation)
+leitir: ensuring analysis indexes and trust for github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7
+leitir WARNING leitir.info: license routing inconclusive for /tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-validation/corpus-sdist/repos/github.com/pypa/packaging/85442b8032cb7bae72866dfd7782234a98dd2fb7; routing study-only/license-undetermined

@@ -351,7 +351,7 @@ def test_version_flag_prints_version_and_exits(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(cli.importlib.metadata, "version", lambda name: "0.1.0")
     assert cli.main(["--version"]) == 0
     captured = capsys.readouterr()
-    assert captured.out == "leitir 0.1.0\n"
+    assert captured.out == "leitir 0.1.000\n"
     assert captured.err == ""
 
 

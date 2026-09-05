@@ -1,0 +1,29 @@
+{
+  "staging": "/tmp/leitir-remediation-20260905/release-evidence/crash-recovery/corpus/repos/github.com/pypa/packaging/.85442b8032cb7bae72866dfd7782234a98dd2fb7.tmp-2642095-4opjfx2h",
+  "files": [
+    {
+      "path": ".github/dependabot.yml",
+      "size": 187,
+      "sha256": "bc0b0608a6c4d65ed3a51cfa3d680e5280a47cf9550c02d065c602e8f9678a09"
+    },
+    {
+      "path": ".github/workflows/codeql.yml",
+      "size": 2096,
+      "sha256": "7e47bb8e19ee5ae08bfd9c1898838b7920975dd7228a9ec7b2387165376d42b1"
+    },
+    {
+      "path": ".github/workflows/docs.yml",
+      "size": 773,
+      "sha256": "48fc3a9da3e7346da4e94140a31357190b6c46c27d9ad2625e1ec01f06630d03"
+    },
+    {
+      "path": ".github/workflows/lint.yml",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "manifest_exists": false,
+  "valid_manifest": false,
+  "published_target_exists": false,
+  "sources_catalog_exists": false
+}

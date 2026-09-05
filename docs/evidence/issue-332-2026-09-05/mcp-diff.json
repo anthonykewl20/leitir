@@ -1,0 +1,999 @@
+{
+  "after": {
+    "commit_sha": "8728c3e4cd4e929a4327d917acd4b96c75f963d0",
+    "name": "flask",
+    "repository": "pallets/flask",
+    "spec": "pypi:flask@2.3.0",
+    "version": "2.3.0"
+  },
+  "api": {
+    "added": [
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 254,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_path",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_path",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 973,
+        "method": "ast",
+        "module": "tests.test_blueprints",
+        "name": "test_child_and_parent_subdomain",
+        "path": "tests/test_blueprints.py",
+        "qualified_name": "tests.test_blueprints.test_child_and_parent_subdomain",
+        "signature": "(app, client) -> None"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 259,
+        "method": "ast",
+        "module": "tests.test_blueprints",
+        "name": "test_empty_name_not_allowed",
+        "path": "tests/test_blueprints.py",
+        "qualified_name": "tests.test_blueprints.test_empty_name_not_allowed",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 952,
+        "method": "ast",
+        "module": "tests.test_blueprints",
+        "name": "test_nesting_subdomains",
+        "path": "tests/test_blueprints.py",
+        "qualified_name": "tests.test_blueprints.test_nesting_subdomains",
+        "signature": "(app, client) -> None"
+      },
+      {
+        "docstring": null,
+        "kind": "method",
+        "line": 497,
+        "method": "ast",
+        "module": "tests.test_cli",
+        "name": "test_host",
+        "path": "tests/test_cli.py",
+        "qualified_name": "tests.test_cli.TestRoutes.test_host",
+        "signature": "(self, runner)"
+      },
+      {
+        "docstring": null,
+        "kind": "method",
+        "line": 488,
+        "method": "ast",
+        "module": "tests.test_cli",
+        "name": "test_subdomain",
+        "path": "tests/test_cli.py",
+        "qualified_name": "tests.test_cli.TestRoutes.test_subdomain",
+        "signature": "(self, runner)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 32,
+        "method": "ast",
+        "module": "tests.test_config",
+        "name": "test_config_from_file_json",
+        "path": "tests/test_config.py",
+        "qualified_name": "tests.test_config.test_config_from_file_json",
+        "signature": "()"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 39,
+        "method": "ast",
+        "module": "tests.test_config",
+        "name": "test_config_from_file_toml",
+        "path": "tests/test_config.py",
+        "qualified_name": "tests.test_config.test_config_from_file_toml",
+        "signature": "()"
+      }
+    ],
+    "changed": [
+      {
+        "after": "(self, f: ft.TemplateFilterCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateFilterCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.app.Flask.add_template_filter"
+      },
+      {
+        "after": "(self, f: ft.TemplateGlobalCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateGlobalCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.app.Flask.add_template_global"
+      },
+      {
+        "after": "(self, f: ft.TemplateTestCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateTestCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.app.Flask.add_template_test"
+      },
+      {
+        "after": "(self, rule: str, endpoint: str | None = None, view_func: ft.RouteCallable | None = None, provide_automatic_options: bool | None = None, **options: t.Any) -> None",
+        "before": "(self, rule: str, endpoint: t.Optional[str] = None, view_func: t.Optional[ft.RouteCallable] = None, provide_automatic_options: t.Optional[bool] = None, **options: t.Any) -> None",
+        "qualified_name": "src.flask.app.Flask.add_url_rule"
+      },
+      {
+        "after": "(self, request: Request | None) -> MapAdapter | None",
+        "before": "(self, request: t.Optional[Request]) -> t.Optional[MapAdapter]",
+        "qualified_name": "src.flask.app.Flask.create_url_adapter"
+      },
+      {
+        "after": "(self, exc: BaseException | None = _sentinel) -> None",
+        "before": "(self, exc: t.Optional[BaseException] = _sentinel) -> None",
+        "qualified_name": "src.flask.app.Flask.do_teardown_appcontext"
+      },
+      {
+        "after": "(self, exc: BaseException | None = _sentinel) -> None",
+        "before": "(self, exc: t.Optional[BaseException] = _sentinel) -> None",
+        "qualified_name": "src.flask.app.Flask.do_teardown_request"
+      },
+      {
+        "after": "(self, rv: ft.ResponseReturnValue | HTTPException, from_error_handler: bool = False) -> Response",
+        "before": "(self, rv: t.Union[ft.ResponseReturnValue, HTTPException], from_error_handler: bool = False) -> Response",
+        "qualified_name": "src.flask.app.Flask.finalize_request"
+      },
+      {
+        "after": "(self, e: HTTPException) -> HTTPException | ft.ResponseReturnValue",
+        "before": "(self, e: HTTPException) -> t.Union[HTTPException, ft.ResponseReturnValue]",
+        "qualified_name": "src.flask.app.Flask.handle_http_exception"
+      },
+      {
+        "after": "(self, error: BuildError, endpoint: str, values: dict[str, t.Any]) -> str",
+        "before": "(self, error: BuildError, endpoint: str, values: t.Dict[str, t.Any]) -> str",
+        "qualified_name": "src.flask.app.Flask.handle_url_build_error"
+      },
+      {
+        "after": "(self, e: Exception) -> HTTPException | ft.ResponseReturnValue",
+        "before": "(self, e: Exception) -> t.Union[HTTPException, ft.ResponseReturnValue]",
+        "qualified_name": "src.flask.app.Flask.handle_user_exception"
+      },
+      {
+        "after": "(self) -> t.ValuesView[Blueprint]",
+        "before": "(self) -> t.ValuesView['Blueprint']",
+        "qualified_name": "src.flask.app.Flask.iter_blueprints"
+      },
+      {
+        "after": "(self, exc_info: tuple[type, BaseException, TracebackType] | tuple[None, None, None]) -> None",
+        "before": "(self, exc_info: t.Union[t.Tuple[type, BaseException, TracebackType], t.Tuple[None, None, None]]) -> None",
+        "qualified_name": "src.flask.app.Flask.log_exception"
+      },
+      {
+        "after": "(self) -> ft.ResponseReturnValue | None",
+        "before": "(self) -> t.Optional[ft.ResponseReturnValue]",
+        "qualified_name": "src.flask.app.Flask.preprocess_request"
+      },
+      {
+        "after": "(self, request: Request) -> t.NoReturn",
+        "before": "(self, request: Request) -> 'te.NoReturn'",
+        "qualified_name": "src.flask.app.Flask.raise_routing_exception"
+      },
+      {
+        "after": "(self, blueprint: Blueprint, **options: t.Any) -> None",
+        "before": "(self, blueprint: 'Blueprint', **options: t.Any) -> None",
+        "qualified_name": "src.flask.app.Flask.register_blueprint"
+      },
+      {
+        "after": "(self, host: str | None = None, port: int | None = None, debug: bool | None = None, load_dotenv: bool = True, **options: t.Any) -> None",
+        "before": "(self, host: t.Optional[str] = None, port: t.Optional[int] = None, debug: t.Optional[bool] = None, load_dotenv: bool = True, **options: t.Any) -> None",
+        "qualified_name": "src.flask.app.Flask.run"
+      },
+      {
+        "after": "(self, error: BaseException | None) -> bool",
+        "before": "(self, error: t.Optional[BaseException]) -> bool",
+        "qualified_name": "src.flask.app.Flask.should_ignore_error"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_filter], T_template_filter]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_filter], T_template_filter]",
+        "qualified_name": "src.flask.app.Flask.template_filter"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_global], T_template_global]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_global], T_template_global]",
+        "qualified_name": "src.flask.app.Flask.template_global"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_test], T_template_test]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_test], T_template_test]",
+        "qualified_name": "src.flask.app.Flask.template_test"
+      },
+      {
+        "after": "(self, **kwargs: t.Any) -> FlaskCliRunner",
+        "before": "(self, **kwargs: t.Any) -> 'FlaskCliRunner'",
+        "qualified_name": "src.flask.app.Flask.test_cli_runner"
+      },
+      {
+        "after": "(self, use_cookies: bool = True, **kwargs: t.Any) -> FlaskClient",
+        "before": "(self, use_cookies: bool = True, **kwargs: t.Any) -> 'FlaskClient'",
+        "qualified_name": "src.flask.app.Flask.test_client"
+      },
+      {
+        "after": "(self, endpoint: str, *, _anchor: str | None = None, _method: str | None = None, _scheme: str | None = None, _external: bool | None = None, **values: t.Any) -> str",
+        "before": "(self, endpoint: str, *, _anchor: t.Optional[str] = None, _method: t.Optional[str] = None, _scheme: t.Optional[str] = None, _external: t.Optional[bool] = None, **values: t.Any) -> str",
+        "qualified_name": "src.flask.app.Flask.url_for"
+      },
+      {
+        "after": "(self, f: ft.TemplateFilterCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateFilterCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.add_app_template_filter"
+      },
+      {
+        "after": "(self, f: ft.TemplateGlobalCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateGlobalCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.add_app_template_global"
+      },
+      {
+        "after": "(self, f: ft.TemplateTestCallable, name: str | None = None) -> None",
+        "before": "(self, f: ft.TemplateTestCallable, name: t.Optional[str] = None) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.add_app_template_test"
+      },
+      {
+        "after": "(self, rule: str, endpoint: str | None = None, view_func: ft.RouteCallable | None = None, provide_automatic_options: bool | None = None, **options: t.Any) -> None",
+        "before": "(self, rule: str, endpoint: t.Optional[str] = None, view_func: t.Optional[ft.RouteCallable] = None, provide_automatic_options: t.Optional[bool] = None, **options: t.Any) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.add_url_rule"
+      },
+      {
+        "after": "(self, code: type[Exception] | int) -> t.Callable[[T_error_handler], T_error_handler]",
+        "before": "(self, code: t.Union[t.Type[Exception], int]) -> t.Callable[[T_error_handler], T_error_handler]",
+        "qualified_name": "src.flask.blueprints.Blueprint.app_errorhandler"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_filter], T_template_filter]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_filter], T_template_filter]",
+        "qualified_name": "src.flask.blueprints.Blueprint.app_template_filter"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_global], T_template_global]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_global], T_template_global]",
+        "qualified_name": "src.flask.blueprints.Blueprint.app_template_global"
+      },
+      {
+        "after": "(self, name: str | None = None) -> t.Callable[[T_template_test], T_template_test]",
+        "before": "(self, name: t.Optional[str] = None) -> t.Callable[[T_template_test], T_template_test]",
+        "qualified_name": "src.flask.blueprints.Blueprint.app_template_test"
+      },
+      {
+        "after": "(self, app: Flask, options: dict, first_registration: bool = False) -> BlueprintSetupState",
+        "before": "(self, app: 'Flask', options: dict, first_registration: bool = False) -> BlueprintSetupState",
+        "qualified_name": "src.flask.blueprints.Blueprint.make_setup_state"
+      },
+      {
+        "after": "(self, app: Flask, options: dict) -> None",
+        "before": "(self, app: 'Flask', options: dict) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.register"
+      },
+      {
+        "after": "(self, blueprint: Blueprint, **options: t.Any) -> None",
+        "before": "(self, blueprint: 'Blueprint', **options: t.Any) -> None",
+        "qualified_name": "src.flask.blueprints.Blueprint.register_blueprint"
+      },
+      {
+        "after": "(self, rule: str, endpoint: str | None = None, view_func: t.Callable | None = None, **options: t.Any) -> None",
+        "before": "(self, rule: str, endpoint: t.Optional[str] = None, view_func: t.Optional[t.Callable] = None, **options: t.Any) -> None",
+        "qualified_name": "src.flask.blueprints.BlueprintSetupState.add_url_rule"
+      },
+      {
+        "after": "(self, filename: str, load: t.Callable[[t.IO[t.Any]], t.Mapping], silent: bool = False, text: bool = True) -> bool",
+        "before": "(self, filename: str, load: t.Callable[[t.IO[t.Any]], t.Mapping], silent: bool = False) -> bool",
+        "qualified_name": "src.flask.config.Config.from_file"
+      },
+      {
+        "after": "(self, mapping: t.Mapping[str, t.Any] | None = None, **kwargs: t.Any) -> bool",
+        "before": "(self, mapping: t.Optional[t.Mapping[str, t.Any]] = None, **kwargs: t.Any) -> bool",
+        "qualified_name": "src.flask.config.Config.from_mapping"
+      },
+      {
+        "after": "(self, obj: object | str) -> None",
+        "before": "(self, obj: t.Union[object, str]) -> None",
+        "qualified_name": "src.flask.config.Config.from_object"
+      },
+      {
+        "after": "(self, namespace: str, lowercase: bool = True, trim_namespace: bool = True) -> dict[str, t.Any]",
+        "before": "(self, namespace: str, lowercase: bool = True, trim_namespace: bool = True) -> t.Dict[str, t.Any]",
+        "qualified_name": "src.flask.config.Config.get_namespace"
+      },
+      {
+        "after": "(self, exc: BaseException | None = _sentinel) -> None",
+        "before": "(self, exc: t.Optional[BaseException] = _sentinel) -> None",
+        "qualified_name": "src.flask.ctx.AppContext.pop"
+      },
+      {
+        "after": "(self) -> RequestContext",
+        "before": "(self) -> 'RequestContext'",
+        "qualified_name": "src.flask.ctx.RequestContext.copy"
+      },
+      {
+        "after": "(self, exc: BaseException | None = _sentinel) -> None",
+        "before": "(self, exc: t.Optional[BaseException] = _sentinel) -> None",
+        "qualified_name": "src.flask.ctx.RequestContext.pop"
+      },
+      {
+        "after": "(code: int | BaseResponse, *args: t.Any, **kwargs: t.Any) -> t.NoReturn",
+        "before": "(code: t.Union[int, 'BaseResponse'], *args: t.Any, **kwargs: t.Any) -> 'te.NoReturn'",
+        "qualified_name": "src.flask.helpers.abort"
+      },
+      {
+        "after": "(with_categories: bool = False, category_filter: t.Iterable[str] = ()) -> list[str] | list[tuple[str, str]]",
+        "before": "(with_categories: bool = False, category_filter: t.Iterable[str] = ()) -> t.Union[t.List[str], t.List[t.Tuple[str, str]]]",
+        "qualified_name": "src.flask.helpers.get_flashed_messages"
+      },
+      {
+        "after": "(*args: t.Any) -> Response",
+        "before": "(*args: t.Any) -> 'Response'",
+        "qualified_name": "src.flask.helpers.make_response"
+      },
+      {
+        "after": "(location: str, code: int = 302, Response: type[BaseResponse] | None = None) -> BaseResponse",
+        "before": "(location: str, code: int = 302, Response: t.Optional[t.Type['BaseResponse']] = None) -> 'BaseResponse'",
+        "qualified_name": "src.flask.helpers.redirect"
+      },
+      {
+        "after": "(path_or_file: os.PathLike | str | t.BinaryIO, mimetype: str | None = None, as_attachment: bool = False, download_name: str | None = None, conditional: bool = True, etag: bool | str = True, last_modified: datetime | int | float | None = None, max_age: None | (int | t.Callable[[str | None], int | None]) = None) -> Response",
+        "before": "(path_or_file: t.Union[os.PathLike, str, t.BinaryIO], mimetype: t.Optional[str] = None, as_attachment: bool = False, download_name: t.Optional[str] = None, conditional: bool = True, etag: t.Union[bool, str] = True, last_modified: t.Optional[t.Union[datetime, int, float]] = None, max_age: t.Optional[t.Union[int, t.Callable[[t.Optional[str]], t.Optional[int]]]] = None) -> 'Response'",
+        "qualified_name": "src.flask.helpers.send_file"
+      },
+      {
+        "after": "(directory: os.PathLike | str, path: os.PathLike | str, **kwargs: t.Any) -> Response",
+        "before": "(directory: t.Union[os.PathLike, str], path: t.Union[os.PathLike, str], **kwargs: t.Any) -> 'Response'",
+        "qualified_name": "src.flask.helpers.send_from_directory"
+      },
+      {
+        "after": "(generator_or_function: t.Iterator[t.AnyStr] | t.Callable[..., t.Iterator[t.AnyStr]]) -> t.Iterator[t.AnyStr]",
+        "before": "(generator_or_function: t.Union[t.Iterator[t.AnyStr], t.Callable[..., t.Iterator[t.AnyStr]]]) -> t.Iterator[t.AnyStr]",
+        "qualified_name": "src.flask.helpers.stream_with_context"
+      },
+      {
+        "after": "(endpoint: str, *, _anchor: str | None = None, _method: str | None = None, _scheme: str | None = None, _external: bool | None = None, **values: t.Any) -> str",
+        "before": "(endpoint: str, *, _anchor: t.Optional[str] = None, _method: t.Optional[str] = None, _scheme: t.Optional[str] = None, _external: t.Optional[bool] = None, **values: t.Any) -> str",
+        "qualified_name": "src.flask.helpers.url_for"
+      },
+      {
+        "after": "(obj: t.Any, fp: t.IO[str], **kwargs: t.Any) -> None",
+        "before": "(obj: t.Any, fp: t.IO[str], *, app: Flask | None = None, **kwargs: t.Any) -> None",
+        "qualified_name": "src.flask.json.dump"
+      },
+      {
+        "after": "(obj: t.Any, **kwargs: t.Any) -> str",
+        "before": "(obj: t.Any, *, app: Flask | None = None, **kwargs: t.Any) -> str",
+        "qualified_name": "src.flask.json.dumps"
+      },
+      {
+        "after": "(fp: t.IO[t.AnyStr], **kwargs: t.Any) -> t.Any",
+        "before": "(fp: t.IO[t.AnyStr], *, app: Flask | None = None, **kwargs: t.Any) -> t.Any",
+        "qualified_name": "src.flask.json.load"
+      },
+      {
+        "after": "(s: str | bytes, **kwargs: t.Any) -> t.Any",
+        "before": "(s: str | bytes, *, app: Flask | None = None, **kwargs: t.Any) -> t.Any",
+        "qualified_name": "src.flask.json.loads"
+      },
+      {
+        "after": "(self, tag_class: type[JSONTag], force: bool = False, index: int | None = None) -> None",
+        "before": "(self, tag_class: t.Type[JSONTag], force: bool = False, index: t.Optional[int] = None) -> None",
+        "qualified_name": "src.flask.json.tag.TaggedJSONSerializer.register"
+      },
+      {
+        "after": "(self, value: t.Any) -> dict[str, t.Any]",
+        "before": "(self, value: t.Any) -> t.Dict[str, t.Any]",
+        "qualified_name": "src.flask.json.tag.TaggedJSONSerializer.tag"
+      },
+      {
+        "after": "(self, value: dict[str, t.Any]) -> t.Any",
+        "before": "(self, value: t.Dict[str, t.Any]) -> t.Any",
+        "qualified_name": "src.flask.json.tag.TaggedJSONSerializer.untag"
+      },
+      {
+        "after": "(app: Flask) -> logging.Logger",
+        "before": "(app: 'Flask') -> logging.Logger",
+        "qualified_name": "src.flask.logging.create_logger"
+      },
+      {
+        "after": "(self, rule: str, endpoint: str | None = None, view_func: ft.RouteCallable | None = None, provide_automatic_options: bool | None = None, **options: t.Any) -> None",
+        "before": "(self, rule: str, endpoint: t.Optional[str] = None, view_func: t.Optional[ft.RouteCallable] = None, provide_automatic_options: t.Optional[bool] = None, **options: t.Any) -> None",
+        "qualified_name": "src.flask.scaffold.Scaffold.add_url_rule"
+      },
+      {
+        "after": "(self, code_or_exception: type[Exception] | int) -> t.Callable[[T_error_handler], T_error_handler]",
+        "before": "(self, code_or_exception: t.Union[t.Type[Exception], int]) -> t.Callable[[T_error_handler], T_error_handler]",
+        "qualified_name": "src.flask.scaffold.Scaffold.errorhandler"
+      },
+      {
+        "after": "(self, filename: str | None) -> int | None",
+        "before": "(self, filename: t.Optional[str]) -> t.Optional[int]",
+        "qualified_name": "src.flask.scaffold.Scaffold.get_send_file_max_age"
+      },
+      {
+        "after": "(self) -> FileSystemLoader | None",
+        "before": "(self) -> t.Optional[FileSystemLoader]",
+        "qualified_name": "src.flask.scaffold.Scaffold.jinja_loader"
+      },
+      {
+        "after": "(self, code_or_exception: type[Exception] | int, f: ft.ErrorHandlerCallable) -> None",
+        "before": "(self, code_or_exception: t.Union[t.Type[Exception], int], f: ft.ErrorHandlerCallable) -> None",
+        "qualified_name": "src.flask.scaffold.Scaffold.register_error_handler"
+      },
+      {
+        "after": "(self, filename: str) -> Response",
+        "before": "(self, filename: str) -> 'Response'",
+        "qualified_name": "src.flask.scaffold.Scaffold.send_static_file"
+      },
+      {
+        "after": "(self, app: Flask) -> URLSafeTimedSerializer | None",
+        "before": "(self, app: 'Flask') -> t.Optional[URLSafeTimedSerializer]",
+        "qualified_name": "src.flask.sessions.SecureCookieSessionInterface.get_signing_serializer"
+      },
+      {
+        "after": "(self, app: Flask, request: Request) -> SecureCookieSession | None",
+        "before": "(self, app: 'Flask', request: 'Request') -> t.Optional[SecureCookieSession]",
+        "qualified_name": "src.flask.sessions.SecureCookieSessionInterface.open_session"
+      },
+      {
+        "after": "(self, app: Flask, session: SessionMixin, response: Response) -> None",
+        "before": "(self, app: 'Flask', session: SessionMixin, response: 'Response') -> None",
+        "qualified_name": "src.flask.sessions.SecureCookieSessionInterface.save_session"
+      },
+      {
+        "after": "(self, app: Flask) -> str | None",
+        "before": "(self, app: 'Flask') -> t.Optional[str]",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_domain"
+      },
+      {
+        "after": "(self, app: Flask) -> bool",
+        "before": "(self, app: 'Flask') -> bool",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_httponly"
+      },
+      {
+        "after": "(self, app: Flask) -> str",
+        "before": "(self, app: 'Flask') -> str",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_name"
+      },
+      {
+        "after": "(self, app: Flask) -> str",
+        "before": "(self, app: 'Flask') -> str",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_path"
+      },
+      {
+        "after": "(self, app: Flask) -> str",
+        "before": "(self, app: 'Flask') -> str",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_samesite"
+      },
+      {
+        "after": "(self, app: Flask) -> bool",
+        "before": "(self, app: 'Flask') -> bool",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_cookie_secure"
+      },
+      {
+        "after": "(self, app: Flask, session: SessionMixin) -> datetime | None",
+        "before": "(self, app: 'Flask', session: SessionMixin) -> t.Optional[datetime]",
+        "qualified_name": "src.flask.sessions.SessionInterface.get_expiration_time"
+      },
+      {
+        "after": "(self, app: Flask) -> NullSession",
+        "before": "(self, app: 'Flask') -> NullSession",
+        "qualified_name": "src.flask.sessions.SessionInterface.make_null_session"
+      },
+      {
+        "after": "(self, app: Flask, request: Request) -> SessionMixin | None",
+        "before": "(self, app: 'Flask', request: 'Request') -> t.Optional[SessionMixin]",
+        "qualified_name": "src.flask.sessions.SessionInterface.open_session"
+      },
+      {
+        "after": "(self, app: Flask, session: SessionMixin, response: Response) -> None",
+        "before": "(self, app: 'Flask', session: SessionMixin, response: 'Response') -> None",
+        "qualified_name": "src.flask.sessions.SessionInterface.save_session"
+      },
+      {
+        "after": "(self, app: Flask, session: SessionMixin) -> bool",
+        "before": "(self, app: 'Flask', session: SessionMixin) -> bool",
+        "qualified_name": "src.flask.sessions.SessionInterface.should_set_cookie"
+      },
+      {
+        "after": "(self, environment: Environment, template: str) -> tuple[str, str | None, t.Callable | None]",
+        "before": "(self, environment: Environment, template: str) -> t.Tuple[str, t.Optional[str], t.Optional[t.Callable]]",
+        "qualified_name": "src.flask.templating.DispatchingJinjaLoader.get_source"
+      },
+      {
+        "after": "(self) -> list[str]",
+        "before": "(self) -> t.List[str]",
+        "qualified_name": "src.flask.templating.DispatchingJinjaLoader.list_templates"
+      },
+      {
+        "after": "(template_name_or_list: str | Template | list[str | Template], **context: t.Any) -> str",
+        "before": "(template_name_or_list: t.Union[str, Template, t.List[t.Union[str, Template]]], **context: t.Any) -> str",
+        "qualified_name": "src.flask.templating.render_template"
+      },
+      {
+        "after": "(template_name_or_list: str | Template | list[str | Template], **context: t.Any) -> t.Iterator[str]",
+        "before": "(template_name_or_list: t.Union[str, Template, t.List[t.Union[str, Template]]], **context: t.Any) -> t.Iterator[str]",
+        "qualified_name": "src.flask.templating.stream_template"
+      },
+      {
+        "after": "(self, *args: t.Any, buffered: bool = False, follow_redirects: bool = False, **kwargs: t.Any) -> TestResponse",
+        "before": "(self, *args: t.Any, buffered: bool = False, follow_redirects: bool = False, **kwargs: t.Any) -> 'TestResponse'",
+        "qualified_name": "src.flask.testing.FlaskClient.open"
+      },
+      {
+        "after": "(self) -> str | None",
+        "before": "(self) -> t.Optional[str]",
+        "qualified_name": "src.flask.wrappers.Request.blueprint"
+      },
+      {
+        "after": "(self) -> list[str]",
+        "before": "(self) -> t.List[str]",
+        "qualified_name": "src.flask.wrappers.Request.blueprints"
+      },
+      {
+        "after": "(self) -> str | None",
+        "before": "(self) -> t.Optional[str]",
+        "qualified_name": "src.flask.wrappers.Request.endpoint"
+      },
+      {
+        "after": "(self) -> int | None",
+        "before": "(self) -> t.Optional[int]",
+        "qualified_name": "src.flask.wrappers.Request.max_content_length"
+      },
+      {
+        "after": "(self, e: ValueError | None) -> t.Any",
+        "before": "(self, e: t.Optional[ValueError]) -> t.Any",
+        "qualified_name": "src.flask.wrappers.Request.on_json_loading_failed"
+      },
+      {
+        "after": "(self, runner)",
+        "before": "(self, invoke_no_routes)",
+        "qualified_name": "tests.test_cli.TestRoutes.test_no_routes"
+      },
+      {
+        "after": "(self, monkeypatch, debug, expect)",
+        "before": "(self, monkeypatch, debug, expected_flag, expected_default_flag)",
+        "qualified_name": "tests.test_helpers.TestHelpers.test_get_debug_flag"
+      },
+      {
+        "after": "(t.TypedDict)",
+        "before": "(te.TypedDict)",
+        "qualified_name": "tests.typing.typing_route.StatusJSON"
+      }
+    ],
+    "removed": [
+      {
+        "docstring": "Registers a function to be run before the first request to this\ninstance of the application.\n\nThe function will be called without any arguments and its return\nvalue is ignored.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Run setup code when creating\n    the application instead.\n\n.. versionadded:: 0.8",
+        "kind": "method",
+        "line": 1483,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "before_first_request",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.before_first_request",
+        "signature": "(self, f: T_before_first_request) -> T_before_first_request"
+      },
+      {
+        "docstring": "What environment the app is running in. This maps to the :data:`ENV` config\nkey.\n\n**Do not enable development when deploying in production.**\n\nDefault: ``'production'``\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3.",
+        "kind": "method",
+        "line": 1014,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "env",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.env",
+        "signature": "(self) -> str"
+      },
+      {
+        "docstring": "The JSON decoder class to use. Defaults to\n:class:`~flask.json.JSONDecoder`.\n\n.. deprecated:: 2.2\n     Will be removed in Flask 2.3. Customize\n     :attr:`json_provider_class` instead.\n\n.. versionadded:: 0.10",
+        "kind": "method",
+        "line": 426,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "json_decoder",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.json_decoder",
+        "signature": "(self) -> t.Type[json.JSONDecoder]"
+      },
+      {
+        "docstring": "The JSON encoder class to use. Defaults to\n:class:`~flask.json.JSONEncoder`.\n\n.. deprecated:: 2.2\n     Will be removed in Flask 2.3. Customize\n     :attr:`json_provider_class` instead.\n\n.. versionadded:: 0.10",
+        "kind": "method",
+        "line": 387,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "json_encoder",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.json_encoder",
+        "signature": "(self) -> t.Type[json.JSONEncoder]"
+      },
+      {
+        "docstring": "Returns the value of the ``PROPAGATE_EXCEPTIONS`` configuration\nvalue in case it's set, otherwise a sensible default is returned.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3.\n\n.. versionadded:: 0.7",
+        "kind": "method",
+        "line": 750,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "propagate_exceptions",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.propagate_exceptions",
+        "signature": "(self) -> bool"
+      },
+      {
+        "docstring": "The default value for ``max_age`` for :func:`~flask.send_file`. The default\nis ``None``, which tells the browser to use conditional requests instead of a\ntimed cache.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use\n    ``app.config[\"SEND_FILE_MAX_AGE_DEFAULT\"]`` instead.\n\n.. versionchanged:: 2.0\n    Defaults to ``None`` instead of 12 hours.",
+        "kind": "method",
+        "line": 319,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "send_file_max_age_default",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.send_file_max_age_default",
+        "signature": "(self) -> t.Optional[timedelta]"
+      },
+      {
+        "docstring": "The name of the cookie set by the session interface.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use ``app.config[\"SESSION_COOKIE_NAME\"]``\n    instead.",
+        "kind": "method",
+        "line": 278,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "session_cookie_name",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.session_cookie_name",
+        "signature": "(self) -> str"
+      },
+      {
+        "docstring": "Reload templates when they are changed. Used by\n:meth:`create_jinja_environment`. It is enabled by default in debug mode.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use ``app.config[\"TEMPLATES_AUTO_RELOAD\"]``\n    instead.\n\n.. versionadded:: 1.0\n    This property was added but the underlying config and behavior\n    already existed.",
+        "kind": "method",
+        "line": 872,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "templates_auto_reload",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.templates_auto_reload",
+        "signature": "(self) -> bool"
+      },
+      {
+        "docstring": "Enable this to use the ``X-Sendfile`` feature, assuming the server supports\nit, from :func:`~flask.send_file`.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use ``app.config[\"USE_X_SENDFILE\"]`` instead.",
+        "kind": "method",
+        "line": 354,
+        "method": "ast",
+        "module": "src.flask.app",
+        "name": "use_x_sendfile",
+        "path": "src/flask/app.py",
+        "qualified_name": "src.flask.app.Flask.use_x_sendfile",
+        "signature": "(self) -> bool"
+      },
+      {
+        "docstring": "Register a function to run before the first request to the application is\nhandled by the worker. Equivalent to :meth:`.Flask.before_first_request`.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Run setup code when creating\n    the application instead.",
+        "kind": "method",
+        "line": 624,
+        "method": "ast",
+        "module": "src.flask.blueprints",
+        "name": "before_app_first_request",
+        "path": "src/flask/blueprints.py",
+        "qualified_name": "src.flask.blueprints.Blueprint.before_app_first_request",
+        "signature": "(self, f: T_before_first_request) -> T_before_first_request"
+      },
+      {
+        "docstring": "Blueprint-local JSON decoder class to use. Set to ``None`` to use the app's.\n\n.. deprecated:: 2.2\n     Will be removed in Flask 2.3. Customize\n     :attr:`json_provider_class` instead.\n\n.. versionadded:: 0.10",
+        "kind": "method",
+        "line": 214,
+        "method": "ast",
+        "module": "src.flask.blueprints",
+        "name": "json_decoder",
+        "path": "src/flask/blueprints.py",
+        "qualified_name": "src.flask.blueprints.Blueprint.json_decoder",
+        "signature": "(self) -> t.Union[t.Type[json.JSONDecoder], None]"
+      },
+      {
+        "docstring": "Blueprint-local JSON encoder class to use. Set to ``None`` to use the app's.\n\n.. deprecated:: 2.2\n     Will be removed in Flask 2.3. Customize\n     :attr:`json_provider_class` instead.\n\n.. versionadded:: 0.10",
+        "kind": "method",
+        "line": 180,
+        "method": "ast",
+        "module": "src.flask.blueprints",
+        "name": "json_encoder",
+        "path": "src/flask/blueprints.py",
+        "qualified_name": "src.flask.blueprints.Blueprint.json_encoder",
+        "signature": "(self) -> t.Union[t.Type[json.JSONEncoder], None]"
+      },
+      {
+        "docstring": "Get the environment the app is running in, indicated by the\n:envvar:`FLASK_ENV` environment variable. The default is\n``'production'``.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3.",
+        "kind": "function",
+        "line": 28,
+        "method": "ast",
+        "module": "src.flask.helpers",
+        "name": "get_env",
+        "path": "src/flask/helpers.py",
+        "qualified_name": "src.flask.helpers.get_env",
+        "signature": "() -> str"
+      },
+      {
+        "docstring": "The default JSON decoder.\n\nThis does not change any behavior from the built-in\n:class:`json.JSONDecoder`.\n\nAssign a subclass of this to :attr:`flask.Flask.json_decoder` or\n:attr:`flask.Blueprint.json_decoder` to override the default.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use ``app.json`` instead.",
+        "kind": "class",
+        "line": 58,
+        "method": "ast",
+        "module": "src.flask.json",
+        "name": "JSONDecoder",
+        "path": "src/flask/json/__init__.py",
+        "qualified_name": "src.flask.json.JSONDecoder",
+        "signature": "(_json.JSONDecoder)"
+      },
+      {
+        "docstring": "The default JSON encoder. Handles extra types compared to the\nbuilt-in :class:`json.JSONEncoder`.\n\n-   :class:`datetime.datetime` and :class:`datetime.date` are\n    serialized to :rfc:`822` strings. This is the same as the HTTP\n    date format.\n-   :class:`decimal.Decimal` is serialized to a string.\n-   :class:`uuid.UUID` is serialized to a string.\n-   :class:`dataclasses.dataclass` is passed to\n    :func:`dataclasses.asdict`.\n-   :class:`~markupsafe.Markup` (or any object with a ``__html__``\n    method) will call the ``__html__`` method to get a string.\n\nAssign a subclass of this to :attr:`flask.Flask.json_encoder` or\n:attr:`flask.Blueprint.json_encoder` to override the default.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. Use ``app.json`` instead.",
+        "kind": "class",
+        "line": 16,
+        "method": "ast",
+        "module": "src.flask.json",
+        "name": "JSONEncoder",
+        "path": "src/flask/json/__init__.py",
+        "qualified_name": "src.flask.json.JSONEncoder",
+        "signature": "(_json.JSONEncoder)"
+      },
+      {
+        "docstring": "Convert ``o`` to a JSON serializable type. See\n:meth:`json.JSONEncoder.default`. Python does not support\noverriding how basic types like ``str`` or ``list`` are\nserialized, they are handled before this method.",
+        "kind": "method",
+        "line": 49,
+        "method": "ast",
+        "module": "src.flask.json",
+        "name": "default",
+        "path": "src/flask/json/__init__.py",
+        "qualified_name": "src.flask.json.JSONEncoder.default",
+        "signature": "(self, o: t.Any) -> t.Any"
+      },
+      {
+        "docstring": "Serialize an object to JSON written to a file object, replacing\nHTML-unsafe characters with Unicode escapes. See\n:func:`htmlsafe_dumps` and :func:`dumps`.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3.",
+        "kind": "function",
+        "line": 291,
+        "method": "ast",
+        "module": "src.flask.json",
+        "name": "htmlsafe_dump",
+        "path": "src/flask/json/__init__.py",
+        "qualified_name": "src.flask.json.htmlsafe_dump",
+        "signature": "(obj: t.Any, fp: t.IO[str], **kwargs: t.Any) -> None"
+      },
+      {
+        "docstring": "Serialize an object to a string of JSON with :func:`dumps`, then\nreplace HTML-unsafe characters with Unicode escapes and mark the\nresult safe with :class:`~markupsafe.Markup`.\n\nThis is available in templates as the ``|tojson`` filter.\n\nThe returned string is safe to render in HTML documents and\n``<script>`` tags. The exception is in HTML attributes that are\ndouble quoted; either use single quotes or the ``|forceescape``\nfilter.\n\n.. deprecated:: 2.2\n    Will be removed in Flask 2.3. This is built-in to Jinja now.\n\n.. versionchanged:: 2.0\n    Uses :func:`jinja2.utils.htmlsafe_json_dumps`. The returned\n    value is marked safe by wrapping in :class:`~markupsafe.Markup`.\n\n.. versionchanged:: 0.10\n    Single quotes are escaped, making this safe to use in HTML,\n    ``<script>`` tags, and single-quoted attributes without further\n    escaping.",
+        "kind": "function",
+        "line": 256,
+        "method": "ast",
+        "module": "src.flask.json",
+        "name": "htmlsafe_dumps",
+        "path": "src/flask/json/__init__.py",
+        "qualified_name": "src.flask.json.htmlsafe_dumps",
+        "signature": "(obj: t.Any, **kwargs: t.Any) -> str"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 1697,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_before_first_request_functions",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_before_first_request_functions",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 1713,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_before_first_request_functions_concurrent",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_before_first_request_functions_concurrent",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 400,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_ip_warning",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_ip_warning",
+        "signature": "(recwarn, app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 386,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_localhost_warning",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_localhost_warning",
+        "signature": "(recwarn, app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 606,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_refresh_vary",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_refresh_vary",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 255,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_using_server_name",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_using_server_name",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 269,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_using_server_name_and_port",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_using_server_name_and_port",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 283,
+        "method": "ast",
+        "module": "tests.test_basic",
+        "name": "test_session_using_server_name_port_and_path",
+        "path": "tests/test_basic.py",
+        "qualified_name": "tests.test_basic.test_session_using_server_name_port_and_path",
+        "signature": "(app, client)"
+      },
+      {
+        "docstring": null,
+        "kind": "method",
+        "line": 454,
+        "method": "ast",
+        "module": "tests.test_cli",
+        "name": "invoke_no_routes",
+        "path": "tests/test_cli.py",
+        "qualified_name": "tests.test_cli.TestRoutes.invoke_no_routes",
+        "signature": "(self, runner)"
+      },
+      {
+        "docstring": null,
+        "kind": "function",
+        "line": 33,
+        "method": "ast",
+        "module": "tests.test_config",
+        "name": "test_config_from_file",
+        "path": "tests/test_config.py",
+        "qualified_name": "tests.test_config.test_config_from_file",
+        "signature": "()"
+      }
+    ]
+  },
+  "before": {
+    "commit_sha": "47af817c8fe01045c641b97f8fb784c7ad864eee",
+    "name": "flask",
+    "repository": "pallets/flask",
+    "spec": "pypi:flask@2.2.5",
+    "version": "2.2.5"
+  },
+  "files": {
+    "added": [
+      "docs/_static/flask-horizontal.png",
+      "docs/_static/flask-vertical.png",
+      "docs/_static/shortcut-icon.png",
+      "examples/javascript/pyproject.toml",
+      "examples/tutorial/pyproject.toml",
+      "pyproject.toml",
+      "tests/static/config.toml"
+    ],
+    "modified": [
+      "CHANGES.rst",
+      "CONTRIBUTING.rst",
+      "PKG-INFO",
+      "README.rst",
+      "docs/api.rst",
+      "docs/appcontext.rst",
+      "docs/blueprints.rst",
+      "docs/cli.rst",
+      "docs/conf.py",
+      "docs/config.rst",
+      "docs/deploying/eventlet.rst",
+      "docs/deploying/gevent.rst",
+      "docs/deploying/gunicorn.rst",
+      "docs/deploying/mod_wsgi.rst",
+      "docs/deploying/uwsgi.rst",
+      "docs/deploying/waitress.rst",
+      "docs/extensiondev.rst",
+      "docs/index.rst",
+      "docs/installation.rst",
+      "docs/license.rst",
+      "docs/patterns/appfactories.rst",
+      "docs/patterns/packages.rst",
+      "docs/quickstart.rst",
+      "docs/reqcontext.rst",
+      "docs/security.rst",
+      "docs/signals.rst",
+      "docs/templating.rst",
+      "docs/tutorial/deploy.rst",
+      "docs/tutorial/install.rst",
+      "docs/tutorial/layout.rst",
+      "docs/tutorial/tests.rst",
+      "docs/views.rst",
+      "examples/celery/pyproject.toml",
+      "examples/javascript/.gitignore",
+      "examples/javascript/README.rst",
+      "examples/tutorial/.gitignore",
+      "examples/tutorial/README.rst",
+      "requirements/tests-pallets-min.txt",
+      "requirements/tests.txt",
+      "setup.cfg",
+      "src/Flask.egg-info/PKG-INFO",
+      "src/Flask.egg-info/SOURCES.txt",
+      "src/Flask.egg-info/requires.txt",
+      "src/flask/__init__.py",
+      "src/flask/app.py",
+      "src/flask/blueprints.py",
+      "src/flask/cli.py",
+      "src/flask/config.py",
+      "src/flask/ctx.py",
+      "src/flask/debughelpers.py",
+      "src/flask/globals.py",
+      "src/flask/helpers.py",
+      "src/flask/json/__init__.py",
+      "src/flask/json/provider.py",
+      "src/flask/json/tag.py",
+      "src/flask/logging.py",
+      "src/flask/scaffold.py",
+      "src/flask/sessions.py",
+      "src/flask/signals.py",
+      "src/flask/templating.py",
+      "src/flask/testing.py",
+      "src/flask/typing.py",
+      "src/flask/views.py",
+      "src/flask/wrappers.py",
+      "tests/conftest.py",
+      "tests/test_async.py",
+      "tests/test_basic.py",
+      "tests/test_blueprints.py",
+      "tests/test_cli.py",
+      "tests/test_config.py",
+      "tests/test_helpers.py",
+      "tests/test_json_tag.py",
+      "tests/test_signals.py",
+      "tests/test_templating.py",
+      "tests/test_testing.py",
+      "tests/typing/typing_route.py",
+      "tox.ini"
+    ],
+    "removed": [
+      "artwork/LICENSE.rst",
+      "artwork/logo-full.svg",
+      "artwork/logo-lineart.svg",
+      "docs/_static/flask-icon.png",
+      "docs/_static/flask-logo.png",
+      "docs/_static/no.png",
+      "docs/_static/yes.png",
+      "examples/javascript/setup.cfg",
+      "examples/javascript/setup.py",
+      "examples/tutorial/setup.cfg",
+      "examples/tutorial/setup.py",
+      "setup.py"
+    ]
+  },
+  "release_notes": [
+    {
+      "body": "This is a security fix release for the 2.2.x release branch. Note that 2.3.x is the currently supported release branch; please upgrade to the latest version if possible.\r\n\r\n* Security advisory: https://github.com/pallets/flask/security/advisories/GHSA-m2qf-hxjv-5gpq, CVE-2023-30861\r\n* Changes: https://flask.palletsprojects.com/en/2.2.x/changes/#version-2-2-5\r\n* Milestone: https://github.com/pallets/flask/milestone/30?closed=1",
+      "tag": "2.2.5",
+      "url": "https://github.com/pallets/flask/releases/tag/2.2.5",
+      "version": "2.2.5"
+    },
+    {
+      "body": "This is a feature release, which includes new features, removes previously deprecated code, and adds new deprecations. The 2.3.x branch is now the supported fix branch, the 2.2.x branch will become a tag marking the end of support for that branch. We encourage everyone to upgrade, and to use a tool such as [pip-tools](https://pypi.org/project/pip-tools/) to pin all dependencies and control upgrades. Test with warnings treated as errors to be able to adapt to deprecation warnings early.\r\n\r\n* Changes: https://flask.palletsprojects.com/en/2.3.x/changes/#version-2-3-0\r\n* Milestone: https://github.com/pallets/flask/milestone/24?closed=1",
+      "tag": "2.3.0",
+      "url": "https://github.com/pallets/flask/releases/tag/2.3.0",
+      "version": "2.3.0"
+    }
+  ],
+  "schema_version": 1
+}

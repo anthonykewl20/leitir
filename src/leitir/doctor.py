@@ -22,6 +22,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TextIO
 
+from leitir._version import display_version
+
 from . import _http
 from ._update_check import _GITHUB_RELEASES_URL, _MAX_RESPONSE_BYTES
 from .corpus import load_sources, resolve_root
@@ -127,7 +129,7 @@ def check_install_location() -> Check:
 
 def check_installed_version() -> Check:
     try:
-        version = importlib.metadata.version("leitir")
+        version = display_version(importlib.metadata.version("leitir"))
     except importlib.metadata.PackageNotFoundError:
         if _leitir_source_root() is not None:
             return Check("install.version", "pass",

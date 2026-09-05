@@ -2,9 +2,13 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Status: released — [`v0.1.6`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6)
-is the latest release (2026-08-25); v0.1.4 was the first `v*` tag (2026-08-17); current milestone v0.1.6 is complete and
-`pyproject.toml` is 0.1.6. Release validation evidence is recorded below.**
+**Release preparation (2026-09-05): `pyproject.toml` is 0.2.000.
+The latest published release remains [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6).
+[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.
+Independent runtime ratification and publication are tracked in [#338](https://github.com/anthonykewl20/leitir/issues/338).**
+
+Release verification checks archive payload CRCs and gzip trailers as well as
+version metadata; malformed or duplicate wheel members reject before publication.
 
 ## Why
 
@@ -58,7 +62,7 @@ flowchart TD
   recipient-incompatible evidence fails closed.
 - Deterministic trust scoring on a 0–100 scale, with factor weights (20,15,15,10,10,15,15) fixed to verification, parity, license, documentation, tests, checksum, and age (sum 100).
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.
-- Transitive dependency closure via `leitir lock` and closure metadata in manifests.
+- Dependency closure via `leitir lock`, with explicit direct-only coverage for Go module manifests.
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
 - Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.
@@ -101,6 +105,19 @@ flowchart LR
     EXP -. reads .-> TREE
     IMP -. writes .-> TREE
 ```
+
+## Versioning
+
+Public versions and Git tags use `MAJOR.MINOR.PATCH` with exactly three patch digits:
+`0.2.000`, `0.2.001`, and so on. Substantial capability or compatibility changes
+advance the minor version and reset the patch; corrective releases advance the
+patch. Patch `999` rolls over to the next minor release. Major and minor
+components are unpadded integers. Python packaging normalizes `0.2.000` to
+`0.2.0` in wheel/sdist names and metadata; these identify the same release.
+CLI, doctor and MCP display the padded public version. Release publication
+requires green CI for the exact commit, verified CI artifacts, successful
+provenance attestation, and committed version-specific notes. See
+[ADR-0038](docs/adr/0038-release-versioning-and-publication.md).
 
 ## Installation
 
@@ -397,7 +414,7 @@ API evidence integrity (issue #310): `info` derives signatures and examples from
 - `examples`: extract and rank usage snippets for that source.
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
-- `diff`: compare two resolved versions with file and API-symbol deltas.
+- `diff`: compare two resolved versions with file and API-symbol deltas. `--impact PATH` intersects removed symbols with Python consumer usage. Impact analysis currently normalizes the distribution name to an import root; renamed or multiple import roots can produce `no_sites_examined`. That result makes no compatibility claim. The evidence-derived import roots used by `check` are a separate capability.
 - `check <path> --against <spec> [--json] [--root ROOT|--local] [--cwd DIR] [--no-verify]`: validate written Python source (a file or directory) against one materialized, pinned source's API surface, e.g. `leitir check ./src/app.py --against pypi:flask@3.0.3`. Python-only: a non-`.py` file or a directory with no `.py` files rejects (`MALFORMED_USAGE`). Every examined usage site gets one of three outcomes, never two: `ok` (the complete qualified access was recovered and bound to an exact definition or explicit module-level reexport), `violation` (provably absent from both the extracted API index and the pinned source's own text), or `unresolved` (statically undecidable — dynamic dispatch, `getattr`, an alias handed to a function, an unproven re-export, a private `_name`, a star import). The gate fails (exit 1, `CORPUS_FAILURE`) only on `violation`; `unresolved` never fails it, but its count is real signal, not noise — a run with a high `sites_unresolved` verified little, so read `counts.sites_unresolved` alongside `counts.sites_violation` before trusting a clean result. **It checks symbol existence only — not arity, parameter types, or return types.** The API index carries no structured signature model, so a call to the right qualified symbol with the wrong number or kind of arguments is not caught. The import root(s) to check are derived from the *materialized distribution's own evidence* (issue #269, [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md)), not guessed from its registry name: a real `top_level.txt` (`*.dist-info`/`*.egg-info`), or a static parse of `setup.cfg`/`pyproject.toml` packaging metadata. This correctly recovers renamed distributions that a name-based guess gets wrong (`pypi:pillow` imports as `PIL`, `beautifulsoup4` as `bs4`, `pyyaml` as `yaml`, `python-dateutil` as `dateutil`, `scikit-learn` as `sklearn`) whenever the materialization carries one of those declarations. There is deliberately **no** fallback tier that guesses an import root purely from the materialized tree's own directory layout: an earlier version did, but it could still bind a *wrong* root to `--against` and produce a false violation against a consumer's own, unrelated code (see ADR-0032's "Tier 4 was retired as an authority" and "Negative Consequences") — a materialization with no `top_level.txt`/`setup.cfg`/`pyproject.toml` packaging declaration at all (common for a GitHub-sourced source tree with no wheel metadata) is reported undeterminable rather than guessed from its layout. A distribution can legitimately declare **more than one** import root (e.g. `attrs` ships both `attr` and `attrs`); every declared root is checked against the same pinned target. If the import root genuinely cannot be determined from any of that evidence, or the evidence is ambiguous, the run still fails safe: zero sites examined, `NOTHING_INDEXED` (4) — never a guessed violation, never a silent `ok`. If zero sites were examined for any reason (including a genuinely undeterminable root, or code that simply never uses any of the derived roots), the run exits 4 (`NOTHING_INDEXED`), not 0, and stderr names the derived import root(s) it searched for (or explains that none could be determined) — this is not "clean," it is "nothing was checked." It fails closed (`CORPUS_FAILURE`) if the pinned source's own API index is empty or unverifiable, before checking a single site. The JSON payload (`schema_version: "leitir-check-report-v1"`) carries `status` (`"nothing_examined"` / `"violations_found"` / `"clean"`), `counts` (`sites_examined`/`sites_ok`/`sites_violation`/`sites_unresolved`), per-site `violations`/`unresolved`/`ok` arrays (`file`, `line`, `col`, `symbol`, `outcome`, `reason`), `files_examined`, `files_excluded`, `target_corroboration_capped` (true if the absence-corroboration text scan hit its byte budget, in which case no violation may be declared from the remaining unscanned text), `import_roots` (the derived roots actually searched for, empty if undeterminable), and `import_roots_determinable` (false only when no evidence tier could determine any root at all). See [ADR-0030](docs/adr/0030-check-command-conservative-symbol-existence-gate.md) for the symbol-existence gate design and [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md) for import-root evidence derivation.
 - `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. `--list-seeds` instead lists selectable donor definition seeds and cannot be combined with seed or output arguments. Without `--allow-reject`, a written REJECT result exits nonzero; `--allow-reject` retains the artifact but exits successfully. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
 - `occupied-validate artifact.json`: validate a canonical occupied-recipient attachment artifact offline. A committed, self-validating example lives at `tests/fixtures/occupied_validate/example-artifact.json` (regenerate deterministically with `PYTHONPATH=src python tests/fixtures/occupied_validate/generate.py`); for example, `leitir occupied-validate tests/fixtures/occupied_validate/example-artifact.json --json`.
@@ -679,3 +696,5 @@ Known BTS blockers (#309): unresolved dependencies on each accepted owner are re
 Shared tree-source instances (#316): cache hits and eviction are atomic under a short lock. Network enumeration runs outside the lock. Concurrent callers cannot lose a listing between membership and read.
 
 Module loading and impact (#315): the checker requires evidence that intermediate modules were loaded by the consumer binding, an earlier unconditional top-level import, or source-backed imports of an already loaded module. A module file alone cannot authorize a parent-package attribute; later imports and imports in other scopes do not establish that access. `diff --impact` preserves removal evidence for imported owners and source-backed ancestors, including inherited attribute accesses; a removed owner cannot become a clean terminal-member result.
+
+Release source identity: publication requires successful push or manually dispatched CI for the exact tagged commit and reuses its tested archives. Pull-request merge-ref builds cannot qualify a release solely through their reported head SHA. See [ADR-0038](docs/adr/0038-release-versioning-and-publication.md).

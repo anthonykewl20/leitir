@@ -1,0 +1,17 @@
+....s.s...............................................s................. [ 84%]
+.............                                                            [100%]
+=============================== warnings summary ===============================
+src/leitir/rerun.py:51
+  /tmp/leitir-remediation-20260905/release-0.2.000/src/leitir/rerun.py:51: PytestCollectionWarning: cannot collect test class 'TestOutcome' because it has a __new__ constructor (from: tests/test_pipeline_cli.py)
+    class TestOutcome(str, Enum):  # noqa: UP042 - canonical ADR contract
+
+src/leitir/rerun.py:71
+  /tmp/leitir-remediation-20260905/release-0.2.000/src/leitir/rerun.py:71: PytestCollectionWarning: cannot collect test class 'TestOutcomeEvidence' because it has a __init__ constructor (from: tests/test_pipeline_cli.py)
+    @dataclass(frozen=True, slots=True, order=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_bts_e4b.py:274: real E4b donors require live opt-in, donor opt-in, and nsjail
+SKIPPED [1] tests/test_bts_skeleton.py:455: real external donor execution requires live opt-in, donor opt-in, and nsjail
+SKIPPED [1] tests/test_resolver_bitbucket.py:666: anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)
+82 passed, 3 skipped, 3818 deselected, 2 warnings in 2970.02s (0:49:30)

@@ -1,0 +1,23 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "--with",
+    "cryptography",
+    "python",
+    "-m",
+    "pytest",
+    "-m",
+    "live",
+    "--deselect=tests/test_tree.py::test_live_list_blobs_truncated_tree_fallback",
+    "--deselect=tests/test_tree_recovery_e2e_live.py::test_truncated_listing_recovery_walk_completes_with_full_universe",
+    "-q",
+    "--tb=short"
+  ],
+  "head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "seconds": 2970.845836847031,
+  "returncode": 0
+}

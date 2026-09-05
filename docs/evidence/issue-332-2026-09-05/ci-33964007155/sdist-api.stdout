@@ -1,0 +1,464 @@
+{
+  "by_kind": {
+    "class": 59,
+    "constant": 0,
+    "function": 82,
+    "method": 321
+  },
+  "index_path": "/tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-validation/corpus-sdist/api/github.com/pypa/packaging/85442b8032cb7bae72866dfd7782234a98dd2fb7/index.json",
+  "method": "ast",
+  "schema_version": 1,
+  "symbols": 462,
+  "top_symbols": [
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 23,
+      "name": "EIClass",
+      "path": "src/packaging/_elffile.py",
+      "qualified_name": "src.packaging._elffile.EIClass",
+      "signature": "(enum.IntEnum)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 28,
+      "name": "EIData",
+      "path": "src/packaging/_elffile.py",
+      "qualified_name": "src.packaging._elffile.EIData",
+      "signature": "(enum.IntEnum)"
+    },
+    {
+      "docstring": "Representation of an ELF executable.",
+      "kind": "class",
+      "line": 41,
+      "name": "ELFFile",
+      "path": "src/packaging/_elffile.py",
+      "qualified_name": "src.packaging._elffile.ELFFile",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 19,
+      "name": "ELFInvalid",
+      "path": "src/packaging/_elffile.py",
+      "qualified_name": "src.packaging._elffile.ELFInvalid",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 33,
+      "name": "EMachine",
+      "path": "src/packaging/_elffile.py",
+      "qualified_name": "src.packaging._elffile.EMachine",
+      "signature": "(enum.IntEnum)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 15,
+      "name": "Node",
+      "path": "src/packaging/_parser.py",
+      "qualified_name": "src.packaging._parser.Node",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 39,
+      "name": "Op",
+      "path": "src/packaging/_parser.py",
+      "qualified_name": "src.packaging._parser.Op",
+      "signature": "(Node)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 50,
+      "name": "ParsedRequirement",
+      "path": "src/packaging/_parser.py",
+      "qualified_name": "src.packaging._parser.ParsedRequirement",
+      "signature": "(NamedTuple)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 34,
+      "name": "Value",
+      "path": "src/packaging/_parser.py",
+      "qualified_name": "src.packaging._parser.Value",
+      "signature": "(Node)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 29,
+      "name": "Variable",
+      "path": "src/packaging/_parser.py",
+      "qualified_name": "src.packaging._parser.Variable",
+      "signature": "(Node)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 6,
+      "name": "InfinityType",
+      "path": "src/packaging/_structures.py",
+      "qualified_name": "src.packaging._structures.InfinityType",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 35,
+      "name": "NegativeInfinityType",
+      "path": "src/packaging/_structures.py",
+      "qualified_name": "src.packaging._structures.NegativeInfinityType",
+      "signature": "()"
+    },
+    {
+      "docstring": "The provided source text could not be parsed correctly.",
+      "kind": "class",
+      "line": 18,
+      "name": "ParserSyntaxError",
+      "path": "src/packaging/_tokenizer.py",
+      "qualified_name": "src.packaging._tokenizer.ParserSyntaxError",
+      "signature": "(Exception)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 12,
+      "name": "Token",
+      "path": "src/packaging/_tokenizer.py",
+      "qualified_name": "src.packaging._tokenizer.Token",
+      "signature": "()"
+    },
+    {
+      "docstring": "Context-sensitive token parsing.\n\nProvides methods to examine the input stream to check whether the next token\nmatches.",
+      "kind": "class",
+      "line": 90,
+      "name": "Tokenizer",
+      "path": "src/packaging/_tokenizer.py",
+      "qualified_name": "src.packaging._tokenizer.Tokenizer",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 49,
+      "name": "Environment",
+      "path": "src/packaging/markers.py",
+      "qualified_name": "src.packaging.markers.Environment",
+      "signature": "(TypedDict)"
+    },
+    {
+      "docstring": "An invalid marker was found, users should refer to PEP 508.",
+      "kind": "class",
+      "line": 30,
+      "name": "InvalidMarker",
+      "path": "src/packaging/markers.py",
+      "qualified_name": "src.packaging.markers.InvalidMarker",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 260,
+      "name": "Marker",
+      "path": "src/packaging/markers.py",
+      "qualified_name": "src.packaging.markers.Marker",
+      "signature": "()"
+    },
+    {
+      "docstring": "An invalid operation was attempted on a value that doesn't support it.",
+      "kind": "class",
+      "line": 36,
+      "name": "UndefinedComparison",
+      "path": "src/packaging/markers.py",
+      "qualified_name": "src.packaging.markers.UndefinedComparison",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "A name was attempted to be used that does not exist inside of the\nenvironment.",
+      "kind": "class",
+      "line": 42,
+      "name": "UndefinedEnvironmentName",
+      "path": "src/packaging/markers.py",
+      "qualified_name": "src.packaging.markers.UndefinedEnvironmentName",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "A metadata field contains invalid data.",
+      "kind": "class",
+      "line": 49,
+      "name": "InvalidMetadata",
+      "path": "src/packaging/metadata.py",
+      "qualified_name": "src.packaging.metadata.InvalidMetadata",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "Representation of distribution metadata.\n\nCompared to :class:`RawMetadata`, this class provides objects representing\nmetadata fields instead of only using built-in types. Any invalid metadata\nwill cause :exc:`InvalidMetadata` to be raised (with a\n:py:attr:`~BaseException.__cause__` attribute as appropriate).",
+      "kind": "class",
+      "line": 637,
+      "name": "Metadata",
+      "path": "src/packaging/metadata.py",
+      "qualified_name": "src.packaging.metadata.Metadata",
+      "signature": "()"
+    },
+    {
+      "docstring": "A dictionary of raw core metadata.\n\nEach field in core metadata maps to a key of this dictionary (when data is\nprovided). The key is lower-case and underscores are used instead of dashes\ncompared to the equivalent core metadata field. Any core metadata field that\ncan be specified multiple times or can hold multiple values in a single\nfield have a key with a plural name. See :class:`Metadata` whose attributes\nmatch the keys of this dictionary.\n\nCore metadata fields that can be specified multiple times are stored as a\nlist or dict depending on which is appropriate for the field. Any fields\nwhich hold multiple values in a single field are stored as a list.",
+      "kind": "class",
+      "line": 64,
+      "name": "RawMetadata",
+      "path": "src/packaging/metadata.py",
+      "qualified_name": "src.packaging.metadata.RawMetadata",
+      "signature": "(TypedDict, total=False)"
+    },
+    {
+      "docstring": "An invalid requirement was found, users should refer to PEP 508.",
+      "kind": "class",
+      "line": 15,
+      "name": "InvalidRequirement",
+      "path": "src/packaging/requirements.py",
+      "qualified_name": "src.packaging.requirements.InvalidRequirement",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "Parse a requirement.\n\nParse a given requirement string into its parts, such as name, specifier,\nURL, and extras. Raises InvalidRequirement on a badly-formed requirement\nstring.",
+      "kind": "class",
+      "line": 21,
+      "name": "Requirement",
+      "path": "src/packaging/requirements.py",
+      "qualified_name": "src.packaging.requirements.Requirement",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 44,
+      "name": "BaseSpecifier",
+      "path": "src/packaging/specifiers.py",
+      "qualified_name": "src.packaging.specifiers.BaseSpecifier",
+      "signature": "(metaclass=abc.ABCMeta)"
+    },
+    {
+      "docstring": "Raised when attempting to create a :class:`Specifier` with a specifier\nstring that is invalid.\n\n>>> Specifier(\"lolwat\")\nTraceback (most recent call last):\n    ...\npackaging.specifiers.InvalidSpecifier: Invalid specifier: 'lolwat'",
+      "kind": "class",
+      "line": 32,
+      "name": "InvalidSpecifier",
+      "path": "src/packaging/specifiers.py",
+      "qualified_name": "src.packaging.specifiers.InvalidSpecifier",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "This class abstracts handling of version specifiers.\n\n.. tip::\n\n    It is generally not required to instantiate this manually. You should instead\n    prefer to work with :class:`SpecifierSet` instead, which can parse\n    comma-separated version specifiers (which is what package metadata contains).",
+      "kind": "class",
+      "line": 99,
+      "name": "Specifier",
+      "path": "src/packaging/specifiers.py",
+      "qualified_name": "src.packaging.specifiers.Specifier",
+      "signature": "(BaseSpecifier)"
+    },
+    {
+      "docstring": "This class abstracts handling of a set of version specifiers.\n\nIt can be passed a single specifier (``>=3.0``), a comma-separated list of\nspecifiers (``>=3.0,!=3.1``), or no specifier at all.",
+      "kind": "class",
+      "line": 690,
+      "name": "SpecifierSet",
+      "path": "src/packaging/specifiers.py",
+      "qualified_name": "src.packaging.specifiers.SpecifierSet",
+      "signature": "(BaseSpecifier)"
+    },
+    {
+      "docstring": "A representation of the tag triple for a wheel.\n\nInstances are considered immutable and thus are hashable. Equality checking\nis also supported.",
+      "kind": "class",
+      "line": 42,
+      "name": "Tag",
+      "path": "src/packaging/tags.py",
+      "qualified_name": "src.packaging.tags.Tag",
+      "signature": "()"
+    },
+    {
+      "docstring": "An invalid distribution name; users should refer to the packaging user guide.",
+      "kind": "class",
+      "line": 17,
+      "name": "InvalidName",
+      "path": "src/packaging/utils.py",
+      "qualified_name": "src.packaging.utils.InvalidName",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "An invalid sdist filename was found, users should refer to the packaging user guide.",
+      "kind": "class",
+      "line": 29,
+      "name": "InvalidSdistFilename",
+      "path": "src/packaging/utils.py",
+      "qualified_name": "src.packaging.utils.InvalidSdistFilename",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "An invalid wheel filename was found, users should refer to PEP 427.",
+      "kind": "class",
+      "line": 23,
+      "name": "InvalidWheelFilename",
+      "path": "src/packaging/utils.py",
+      "qualified_name": "src.packaging.utils.InvalidWheelFilename",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "Raised when a version string is not a valid version.\n\n>>> Version(\"invalid\")\nTraceback (most recent call last):\n    ...\npackaging.version.InvalidVersion: Invalid version: 'invalid'",
+      "kind": "class",
+      "line": 59,
+      "name": "InvalidVersion",
+      "path": "src/packaging/version.py",
+      "qualified_name": "src.packaging.version.InvalidVersion",
+      "signature": "(ValueError)"
+    },
+    {
+      "docstring": "This class abstracts handling of a project's versions.\n\nA :class:`Version` instance is comparison aware and can be compared and\nsorted using the standard Python interfaces.\n\n>>> v1 = Version(\"1.0a5\")\n>>> v2 = Version(\"1.0\")\n>>> v1\n<Version('1.0a5')>\n>>> v2\n<Version('1.0')>\n>>> v1 < v2\nTrue\n>>> v1 == v2\nFalse\n>>> v1 > v2\nFalse\n>>> v1 >= v2\nFalse\n>>> v1 <= v2\nTrue",
+      "kind": "class",
+      "line": 161,
+      "name": "Version",
+      "path": "src/packaging/version.py",
+      "qualified_name": "src.packaging.version.Version",
+      "signature": "(_BaseVersion)"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 102,
+      "name": "TestDefaultEnvironment",
+      "path": "tests/test_markers.py",
+      "qualified_name": "tests.test_markers.TestDefaultEnvironment",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 149,
+      "name": "TestMarker",
+      "path": "tests/test_markers.py",
+      "qualified_name": "tests.test_markers.TestMarker",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 62,
+      "name": "TestNode",
+      "path": "tests/test_markers.py",
+      "qualified_name": "tests.test_markers.TestNode",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 80,
+      "name": "TestOperatorEvaluation",
+      "path": "tests/test_markers.py",
+      "qualified_name": "tests.test_markers.TestOperatorEvaluation",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 249,
+      "name": "TestExceptionGroup",
+      "path": "tests/test_metadata.py",
+      "qualified_name": "tests.test_metadata.TestExceptionGroup",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 269,
+      "name": "TestMetadata",
+      "path": "tests/test_metadata.py",
+      "qualified_name": "tests.test_metadata.TestMetadata",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 9,
+      "name": "TestRawMetadata",
+      "path": "tests/test_metadata.py",
+      "qualified_name": "tests.test_metadata.TestRawMetadata",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 578,
+      "name": "TestRequirementBehaviour",
+      "path": "tests/test_requirements.py",
+      "qualified_name": "tests.test_requirements.TestRequirementBehaviour",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 148,
+      "name": "TestRequirementParsing",
+      "path": "tests/test_requirements.py",
+      "qualified_name": "tests.test_requirements.TestRequirementParsing",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 37,
+      "name": "TestSpecifier",
+      "path": "tests/test_specifiers.py",
+      "qualified_name": "tests.test_specifiers.TestSpecifier",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 643,
+      "name": "TestSpecifierSet",
+      "path": "tests/test_specifiers.py",
+      "qualified_name": "tests.test_specifiers.TestSpecifierSet",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 1368,
+      "name": "TestBitness",
+      "path": "tests/test_tags.py",
+      "qualified_name": "tests.test_tags.TestBitness",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 642,
+      "name": "TestCPythonABI",
+      "path": "tests/test_tags.py",
+      "qualified_name": "tests.test_tags.TestCPythonABI",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 705,
+      "name": "TestCPythonTags",
+      "path": "tests/test_tags.py",
+      "qualified_name": "tests.test_tags.TestCPythonTags",
+      "signature": "()"
+    },
+    {
+      "docstring": null,
+      "kind": "class",
+      "line": 1014,
+      "name": "TestCompatibleTags",
+      "path": "tests/test_tags.py",
+      "qualified_name": "tests.test_tags.TestCompatibleTags",
+      "signature": "()"
+    }
+  ]
+}

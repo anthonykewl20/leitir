@@ -1,0 +1,519 @@
+{
+  "head": "64a90ef978ca9c3485a9b767c9076a0202ea2856",
+  "ci_run_id": 33964007155,
+  "artifacts": {
+    "leitir-0.2.0-py3-none-any.whl": "2c1db4916677d804c200c104c89f02edcc1720002f39fca41164dca45613816c",
+    "leitir-0.2.0.tar.gz": "a133b920c0006d1bf751c13f4ad0f23f4573767c819aeeb79fec525f92c9f802"
+  },
+  "all_packaged_src_files_match": true,
+  "files": [
+    {
+      "path": "src/leitir/__init__.py",
+      "sha256": "4f4c57d9e180a9799519b508c89a69f1e178117ac2f0d6a32874571cc39b2db5"
+    },
+    {
+      "path": "src/leitir/_http.py",
+      "sha256": "c9253f13182bd574def97587524c4201447072de6e06db36478ce150ad388b1f"
+    },
+    {
+      "path": "src/leitir/_python_ast.py",
+      "sha256": "4364f56f5cf1d7323b61381f84101075f0c33499fb6fdb808e0bcda3d3adb424"
+    },
+    {
+      "path": "src/leitir/_regex_budget.py",
+      "sha256": "ecdc6856d8808b0d73a2862bf9f779c555c62d24df2773d23ad8337b404acbfc"
+    },
+    {
+      "path": "src/leitir/_update_check.py",
+      "sha256": "07bdf7c2295434614e148abe7c2952123ec11e8cf77ed93a13628dc19d266be6"
+    },
+    {
+      "path": "src/leitir/_version.py",
+      "sha256": "51c57441bf7eada878d00a30410b625a5343da5191d6e557313b6a4da534a82a"
+    },
+    {
+      "path": "src/leitir/adapters/__init__.py",
+      "sha256": "251f1954df47d74152c48c248e1d78efa35a6b50e21e0afcebdd3bde4558dd7d"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/__init__.py",
+      "sha256": "25231d620fcdebc3e330cbb72f7446eb7156a51d73750ed8a1dc87039f7618e1"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/_base.py",
+      "sha256": "5c9db8d4ff8b5f5f316d3a93da5d0df0a533f88cef894dcbda692279dc35aba6"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/c.py",
+      "sha256": "d74640df87b19890a9fcbe7230127fa50b910d7b3c17ab2bbe00f60883bb0593"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/cpp.py",
+      "sha256": "3794a881c71b36b3395c62c4265b909b1976f0ffd0f5c586d44cb5be92bda0d1"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/java.py",
+      "sha256": "118af68a82462b16be2a352ed42478ba2d7193f327f86c7b3377abc739e77184"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/javascript.py",
+      "sha256": "1ed428840fdb71a2afc0d908450b4dbce0d5aaf96df14580b4485649bbf241b1"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2/typescript.py",
+      "sha256": "62e2e9b6451f72acece81a8fb0f6250584dd74973daa55aa43e9bba4286a8a72"
+    },
+    {
+      "path": "src/leitir/adapters/_tier2_patterns.py",
+      "sha256": "e1d06332c6cfda0c7b6f4700d9c441640c10fc13185fd3412d248370e359c1c0"
+    },
+    {
+      "path": "src/leitir/adapters/languages.py",
+      "sha256": "b5220df96907ad0cc2ee3c4ba391e615abcd3d47eaddce82f5c32a07c5bf210a"
+    },
+    {
+      "path": "src/leitir/adapters/python_ast.py",
+      "sha256": "6a4335ca6a816672a7095fd8bd376f54e752b247ad1e359a86ef3f9b2ee67897"
+    },
+    {
+      "path": "src/leitir/adapters/registry.py",
+      "sha256": "fc07bfaf4dff992f6d3d29845a57763bf717ce16cf500554ffd46651e655cf56"
+    },
+    {
+      "path": "src/leitir/analysis_cli.py",
+      "sha256": "52958552c2c47d6a9f872886e4bdac31e7fbc375327df5cc53c00479bc5fcf17"
+    },
+    {
+      "path": "src/leitir/api.py",
+      "sha256": "82bae657a73bfe4ef305c1ce22f95985435f7ab3ef91bfed9fedbbdfeaeecb4c"
+    },
+    {
+      "path": "src/leitir/apisurface.py",
+      "sha256": "4a14fd92bd2f37c124a0b19922cdde6dbd74c9247e5391dcd79b5cb0a89277e2"
+    },
+    {
+      "path": "src/leitir/architecture.py",
+      "sha256": "540ff31312afd3df113f8bdbd3f42f6ce41671082816db0c45282717859398c0"
+    },
+    {
+      "path": "src/leitir/ask.py",
+      "sha256": "a391627a0732cb35d5086f01a231035b71ffa0a91a1d450d80a621378ecf21c1"
+    },
+    {
+      "path": "src/leitir/bench.py",
+      "sha256": "63ef65a04c7e927fc5ff32bf7d86ee087971ccb7cefb6cdc908404574dba0d72"
+    },
+    {
+      "path": "src/leitir/benchmarks/ast-vs-regex-v1/README.md",
+      "sha256": "eac7f84b2c54634c73dd5c996f0353921f380d9bce1a1501de40cdc720791386"
+    },
+    {
+      "path": "src/leitir/benchmarks/ast-vs-regex-v1/comparison.json",
+      "sha256": "563f147a6c5638d6b8d3e6f5a38cddd447b480bfceeab09f2591cf236447252c"
+    },
+    {
+      "path": "src/leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt",
+      "sha256": "9da7c507c12349f16264fbf765228a4976d8a26946a79ce96c53eb45f7d612f2"
+    },
+    {
+      "path": "src/leitir/benchmarks/corpus-v1/README.md",
+      "sha256": "48ae18846c75ae4cb63f7afe5cf8eabdcf5ffcb091db5fe66c09d81a7045bb93"
+    },
+    {
+      "path": "src/leitir/benchmarks/corpus-v1/manifest.json",
+      "sha256": "567a4ebd8e3cf9f70f7ddead5519fd63a8e4102decc65175a708ee46710efc33"
+    },
+    {
+      "path": "src/leitir/benchmarks/search-v1/manifest.json",
+      "sha256": "fa4eb88f183f4df984762df1ccabcf92ee8797e51c6209ce132100011e38618c"
+    },
+    {
+      "path": "src/leitir/benchmarks/search-v1/qrels.json",
+      "sha256": "a4aca060b70ea81bf516f070cfa17c60ddd84bf8a486bfc40263a007ec9a6f7b"
+    },
+    {
+      "path": "src/leitir/bts.py",
+      "sha256": "2b3c5902c08cf7cc16ca4002f615dbf86fdd4e18d8a4f40dcf82a7c57f5a76d3"
+    },
+    {
+      "path": "src/leitir/bts_bench.py",
+      "sha256": "14be4a2399b8fbe27d74eee732724a4f3a59b674726cb1de9e109f4fa869076b"
+    },
+    {
+      "path": "src/leitir/bts_cli.py",
+      "sha256": "a43920e8225505c67aed5d2d1a67bc18d120f431e87429fff9fc7b71ab4401f3"
+    },
+    {
+      "path": "src/leitir/bts_errors.py",
+      "sha256": "3dc7be2fd32799ab3e0872c197341d7f32aaad61d404a5309ec674d40685e14b"
+    },
+    {
+      "path": "src/leitir/bts_exit_gate.py",
+      "sha256": "96c21773b39488fe7ff78d263ec69c82451dbbbe69cf0ca00ef7bebf15fcc676"
+    },
+    {
+      "path": "src/leitir/bts_pipeline.py",
+      "sha256": "3d2873adda5425eee6212837ea51b9729e7a754fd1298a115e649f343a418f12"
+    },
+    {
+      "path": "src/leitir/candidates.py",
+      "sha256": "c694ad1e05fa3f2dc43067bcc50a299a8dc8b20d81127152bc919b7245166010"
+    },
+    {
+      "path": "src/leitir/capability.py",
+      "sha256": "75c6a4bfee23dcd97f2306e0541aeb334451fae34e94dc39b0d4aa195f6aaa1c"
+    },
+    {
+      "path": "src/leitir/check.py",
+      "sha256": "6c2a5bea816a973cd100e629c5efa7cf988b8c9ae09e40d379dcf750e0e6c29b"
+    },
+    {
+      "path": "src/leitir/cli.py",
+      "sha256": "c7ac6c6a212d57adb65b38eeb103541fc13f529da99780520720d369c59e32d0"
+    },
+    {
+      "path": "src/leitir/cli_ask.py",
+      "sha256": "026c9895f2237ed7316504fc208cf620eb2aa288e267777dba0e652b7f78bb01"
+    },
+    {
+      "path": "src/leitir/cli_bts.py",
+      "sha256": "bd9a77a5bf7a648ace90ed61d96981c8ee2bf30fd25255ca33ea1df458959776"
+    },
+    {
+      "path": "src/leitir/cli_corpus.py",
+      "sha256": "961785ebed1d9eaf3a428517eb639353d63d7db2ce74aac78ad0e93ffb941bad"
+    },
+    {
+      "path": "src/leitir/cli_diagnostics.py",
+      "sha256": "80e94fbd18cba9bd479eb45ef134640b2120f562e8428ff1509cc8c08c0efe63"
+    },
+    {
+      "path": "src/leitir/cli_search.py",
+      "sha256": "9a0bf6fb43b729cde93e959e0c46aa781d6c26bdeb0a96070392b27a922ee598"
+    },
+    {
+      "path": "src/leitir/cli_support.py",
+      "sha256": "0185b102ed220a586dc94262b4e34d9874b53eb85ff4e30c45a80e9e7dac61ce"
+    },
+    {
+      "path": "src/leitir/comparison.py",
+      "sha256": "1c1901fb2005a398167f5b3ffb32554b4cc10e85c14d23b7419fa33ee78879da"
+    },
+    {
+      "path": "src/leitir/composition.py",
+      "sha256": "5e461c5f16e214dc0be7ec0c4c4d255fb2dff04f22b24c0c0b124b9059290033"
+    },
+    {
+      "path": "src/leitir/containment-environment-v1.json",
+      "sha256": "e0ab2417760debf2c304b73f244f7d1c5078e788bf4cd491b7f824868f38a337"
+    },
+    {
+      "path": "src/leitir/corpus.py",
+      "sha256": "af574842d68f7b3b37a268a68e7e018cd2253929ac180b9506156487b4f14954"
+    },
+    {
+      "path": "src/leitir/corpus_bench.py",
+      "sha256": "f4c15e84b4b3c747fa511da99c09da8467a74b675433c3c578418b75a3a5ecb8"
+    },
+    {
+      "path": "src/leitir/cost.py",
+      "sha256": "f9c2263083b822097893ab0610dcab9e30c0cfc2c3f53fe77ebc848a4cb17c99"
+    },
+    {
+      "path": "src/leitir/credentials.py",
+      "sha256": "aa0c395c2823bb027df5d4a528073177c662147d5212ed3befd0a2c9c7ea1556"
+    },
+    {
+      "path": "src/leitir/diff.py",
+      "sha256": "a152aaa86e90bee8275e72dfc4f93b7bbaa3e53970285b09e1d985a75d74c181"
+    },
+    {
+      "path": "src/leitir/discovery_search.py",
+      "sha256": "8f5b2fae86ace9dbb702453a77562a1ebdd410e03a6264034ec4fff7007d36d9"
+    },
+    {
+      "path": "src/leitir/docpointers.py",
+      "sha256": "a0df4cc8956dd2c064faacb348f6b2296a92d4ffa502c1ac8b5112a2270928bf"
+    },
+    {
+      "path": "src/leitir/doctor.py",
+      "sha256": "67e79a9e5d04cfd81dd9821375ed41821cd2b4a9078566b8bd72c3ba606c255f"
+    },
+    {
+      "path": "src/leitir/duplicates.py",
+      "sha256": "3da4c53de7c537f653afe9cf780880d39fa9ac1983f0eefbf6ffd3d6e9e0e73d"
+    },
+    {
+      "path": "src/leitir/engine.py",
+      "sha256": "dd2b838132380395bd98b07b47edcf2bec368a9cc06a87229855bc3f881e872a"
+    },
+    {
+      "path": "src/leitir/examples.py",
+      "sha256": "947a000a20b7a8027467ff9c7442d5dc427df215e0b9fbb9b5d04f83a5dde5a7"
+    },
+    {
+      "path": "src/leitir/exec_sandbox.py",
+      "sha256": "e120a1c742a47d82e5cf0d23876c0c7766a75643efe3e1ccb0666a0d024559ef"
+    },
+    {
+      "path": "src/leitir/exit_corpus.py",
+      "sha256": "6764844db5775a31af7e389ff0c94377af6a409ca9e1f9fe4fab944c775c7adc"
+    },
+    {
+      "path": "src/leitir/funnel_cli.py",
+      "sha256": "646e56a93a432a7eec400144e70cdc46796516b5a7981d8dfb33c541996956e0"
+    },
+    {
+      "path": "src/leitir/graph/__init__.py",
+      "sha256": "2f249c46528e217d07451c79b65357e492501041018a0ae89a32eaca5fdebdc0"
+    },
+    {
+      "path": "src/leitir/graph/go.py",
+      "sha256": "99ba59c06a330c82ba21825d43f15d4a5ab0c46b99239908a7553b39bef8acfa"
+    },
+    {
+      "path": "src/leitir/graph/javascript.py",
+      "sha256": "6e9c50aeea4b5f8f0b8675264b807832d10d320eebf6806f7922be1b748a3ac8"
+    },
+    {
+      "path": "src/leitir/graph/model.py",
+      "sha256": "d1c57d0c0c93d4414f488a8fba620c8138c6d00a9df6034f63884e3b76b12f3e"
+    },
+    {
+      "path": "src/leitir/graph/policy.py",
+      "sha256": "d5e5f0f12513644c2b941e994d98c116b76bfe17f1a42a14b1324f2ca2d2e7b4"
+    },
+    {
+      "path": "src/leitir/graph/python.py",
+      "sha256": "04f8ed430d4b7e85b7f8c361cae4ccc89cd5ef864a760afb0ddb573731df410c"
+    },
+    {
+      "path": "src/leitir/graph/registry.py",
+      "sha256": "2c4c785e6d19d0c27dc886221e5444bf8f284d38e0f86f6ccf5b0761c5daeda1"
+    },
+    {
+      "path": "src/leitir/graph/runtime.py",
+      "sha256": "9a738db0a5653ed42927d7b597c48a542647ac7098cbbfd15ddf473d3d40dbad"
+    },
+    {
+      "path": "src/leitir/graph/rust.py",
+      "sha256": "838d39516d460546e210aed8a6814a9bdbf6ba6d37c75487b1fbc7d2fcfcc8ae"
+    },
+    {
+      "path": "src/leitir/graph/ts_kernel.py",
+      "sha256": "6f6fc9320d89203306585f7d9d12a532ab748ddfe0e8e2b2bb51b118d457f69f"
+    },
+    {
+      "path": "src/leitir/graph/typescript.py",
+      "sha256": "733b2c506c0d2792381e5c6a729f6b976398be44b5b6661b2a489d7bebcaa725"
+    },
+    {
+      "path": "src/leitir/index/__init__.py",
+      "sha256": "d058acf6b9f201c9181a08bc5f1c19df342e8e2a1c85c9097d2784c86efc8309"
+    },
+    {
+      "path": "src/leitir/index/builder.py",
+      "sha256": "7499d187c1fcb7993f9826987da9e973bb8c6c10fa2f99c5577386ed2261d657"
+    },
+    {
+      "path": "src/leitir/index/postings.py",
+      "sha256": "25ccd66483f44df5c1d27c8cf00975e49f921fa68d541298adaed4fbc67e007e"
+    },
+    {
+      "path": "src/leitir/index/query.py",
+      "sha256": "006e931493bedb0573ae8c6093868475ace65cd483e77d19abeb3afa0de074bf"
+    },
+    {
+      "path": "src/leitir/index/rank.py",
+      "sha256": "ae328c2d27daffccc88658c7fb0538ce113886ce2f4853d74aaddc242cc70337"
+    },
+    {
+      "path": "src/leitir/index/verify.py",
+      "sha256": "7a57aa9c5b31144f87b27cc83dd5472170de446a2422a913c304e4178c63888d"
+    },
+    {
+      "path": "src/leitir/info.py",
+      "sha256": "5fc435077bec6a2eb8de72818360e6d3823b0f62c823a5d4d1c880e365662e03"
+    },
+    {
+      "path": "src/leitir/license_policy.py",
+      "sha256": "613416bf935b828a6233477d1a75b3d61b6907355c0da5cc2d075ab2e28ad053"
+    },
+    {
+      "path": "src/leitir/lineage.py",
+      "sha256": "6d9ec3411a7e44a60fd6b66eb120cab47da4b0b11d4c0fe2392190409b04fbf7"
+    },
+    {
+      "path": "src/leitir/lockfiles.py",
+      "sha256": "e46eab2ff3d22ae0c502f65800f04760f63053820b78b362b8db76ef5394db95"
+    },
+    {
+      "path": "src/leitir/logging.py",
+      "sha256": "3d6f8fa23de32dc003e67d52dfbb35904ed614b067b31ddc9658f77eb0fbf7a2"
+    },
+    {
+      "path": "src/leitir/manifest_auth.py",
+      "sha256": "b0ef6503b1248cd9f34e8a3fc38301289fc29f549169a96bd03ff748c170658c"
+    },
+    {
+      "path": "src/leitir/matching.py",
+      "sha256": "f55b5eb6861fa9e5d82b8fe576522e6904110e97c1066085114e4ace443640f2"
+    },
+    {
+      "path": "src/leitir/materialize.py",
+      "sha256": "61123169a115aa9760e309052f349a024b45eb5e0118dcff8f3746616e44562e"
+    },
+    {
+      "path": "src/leitir/mcp/__init__.py",
+      "sha256": "934de1aa41f9a27e5f8f1a33621308f76b7990b669cb394d8501fb26e01e763d"
+    },
+    {
+      "path": "src/leitir/mcp/__main__.py",
+      "sha256": "05634a4d310c32aa31f8e928ef739353ddae8769a45575b892e25195f1844f13"
+    },
+    {
+      "path": "src/leitir/mcp/bridge.py",
+      "sha256": "58fee80226caa5f07fbf73448ff37c33c1f35aac7d0815eab5e570a5995d3003"
+    },
+    {
+      "path": "src/leitir/mcp/server.py",
+      "sha256": "cf5669b9110d96f522b4fbb4fa1df46858513144f68687026617934ba5f783d6"
+    },
+    {
+      "path": "src/leitir/occupied.py",
+      "sha256": "878a5676dbf86ca28625e46d0266fc5fe1e240f2eeb19ddb9d55fe13cc82d450"
+    },
+    {
+      "path": "src/leitir/parity.py",
+      "sha256": "97ccc2ed5b4211f49090d1b448492dfff2f0aba171abe19a18a3bc41a8e763aa"
+    },
+    {
+      "path": "src/leitir/pipeline_cli.py",
+      "sha256": "3d536cca4c10153d0fc526c492fd5a99152479286fbb4325576ce592e45e2f7a"
+    },
+    {
+      "path": "src/leitir/port_contract.py",
+      "sha256": "e19750ff8fd87607bf26b3117b7ba9c9332e0fa26294d05340486b5a2d9385a8"
+    },
+    {
+      "path": "src/leitir/probes.py",
+      "sha256": "47b00dcaafaf2563670798f51308ac3bfb3596d4c28814173fbe5d0ae406f40d"
+    },
+    {
+      "path": "src/leitir/project_profile.py",
+      "sha256": "5f32df7ae9c9d243eb606d80d92dab7a161cc7995208f453a594fe4064e3a096"
+    },
+    {
+      "path": "src/leitir/ranking.py",
+      "sha256": "eff8232b8441b5c12ea82d3fa9efcb91812c406f674a01559aea0086ecac537d"
+    },
+    {
+      "path": "src/leitir/relocate.py",
+      "sha256": "292f862b0d393d7c9e42b491734f7415b13e52d2395cc63b16b14dd31a0be0ba"
+    },
+    {
+      "path": "src/leitir/rerun.py",
+      "sha256": "e2d2c3a02836948ec7dc418021133195bc5c6dcc732a61f08a831766ebd9effb"
+    },
+    {
+      "path": "src/leitir/resolver.py",
+      "sha256": "cb55ccd6ed9f96b8b6f22808893d1a964d9575bda38aee658162793d285a43c3"
+    },
+    {
+      "path": "src/leitir/safeio.py",
+      "sha256": "70f73998366289b247d112118c26d3d0c51c2c69374cca7b21c48836147754c8"
+    },
+    {
+      "path": "src/leitir/sbom.py",
+      "sha256": "0ed7c8ea9f0f842c8e2090044e6aa4af38ad8400da3e367637759feee75e027d"
+    },
+    {
+      "path": "src/leitir/search.py",
+      "sha256": "5882b1ecef71c31b4ea7406e6d375f59f4d1f1be0d5da43d6f84369c3bfc65c0"
+    },
+    {
+      "path": "src/leitir/snapshot.py",
+      "sha256": "030d1beefcf30ba70ecbe96bd97f0727f5017f6306e0861166d4370f071f4600"
+    },
+    {
+      "path": "src/leitir/spec.py",
+      "sha256": "de56cf7a18d7de0badcbe4e4473141e35ba939aa7358f69196d215e70d549dc3"
+    },
+    {
+      "path": "src/leitir/streaming.py",
+      "sha256": "d83600ca87b892721f8286b18a837caf9d13924ab2f8c9b7f9bf593cd9aaa9d3"
+    },
+    {
+      "path": "src/leitir/suitability.py",
+      "sha256": "6ced5b138d9ba8f63382297b3249ac521f19073d0ceaf9fac7cb9c9cb0c8b729"
+    },
+    {
+      "path": "src/leitir/sumdb.py",
+      "sha256": "ce6aea0250e13bb104aaedf7ba659d62fe116e812847197d8e5d2460b93ab9eb"
+    },
+    {
+      "path": "src/leitir/transplant.py",
+      "sha256": "b73cdc5f3891bf814859ebd16fd9c7a2e400a9c8edab6873fc9285ce65008698"
+    },
+    {
+      "path": "src/leitir/tree.py",
+      "sha256": "bb9963197d491e59e63481ce8b0d5bd4d6023cb79e173280276bbb0a3736bc5b"
+    },
+    {
+      "path": "src/leitir/treehash.py",
+      "sha256": "b52351cb425474e8469750bf8341d077c4b80e24cd2fba949c5a89df7fc2dbc6"
+    },
+    {
+      "path": "src/leitir/trust.py",
+      "sha256": "73615964709980c2d808992a200b28ea38861540d22f859e993e9f0a4aef448b"
+    },
+    {
+      "path": "src/leitir/usage/__init__.py",
+      "sha256": "30439088a7ce5e6078d539d6c88c73ec99fc21be16590ce7b874626bcc315bad"
+    },
+    {
+      "path": "src/leitir/usage/_canonical.py",
+      "sha256": "85af040da9c681c89424b816a1d6e7f2d99f226d0d78217865056488a489ed2c"
+    },
+    {
+      "path": "src/leitir/usage/_io.py",
+      "sha256": "03c55c9f4a6c8d387c67189d45f6b5d903479ea24a21bc0879b3d5f6526b8959"
+    },
+    {
+      "path": "src/leitir/usage/admission.py",
+      "sha256": "4f4876409592188b5e70a8ace61f8c283f5e808e1a9ae3b19f4e58e27876f9d4"
+    },
+    {
+      "path": "src/leitir/usage/assemble.py",
+      "sha256": "42023967a828050fc919877f122de02a8f226d4c2bffc29a751b62dae0fb2f20"
+    },
+    {
+      "path": "src/leitir/usage/cli_support.py",
+      "sha256": "0ffc7bfb1ef0999b719a7ac1273f18fa65d8ca44520383c30cce32c0de9ec6f5"
+    },
+    {
+      "path": "src/leitir/usage/contract.py",
+      "sha256": "f7a29ea6b6b7b84c4103768427ddb39190da00da573b51dcaf819eaa11734b14"
+    },
+    {
+      "path": "src/leitir/usage/errors.py",
+      "sha256": "37cdfd13054ed6e6b13c5bc0f40d802aea384da971955046046064bba6cc7cb2"
+    },
+    {
+      "path": "src/leitir/usage/import_catalog.py",
+      "sha256": "e3121d347098ba2b6f9b256601762d637f4d45945932f4156f5422b3e9202dc5"
+    },
+    {
+      "path": "src/leitir/usage/import_evidence.py",
+      "sha256": "35fdc700df3082bfc131ce0f47a7482ac2f6724a3df8645d61ed99beaf914574"
+    },
+    {
+      "path": "src/leitir/usage/resolver.py",
+      "sha256": "7f6b2f0932b3953b2d16d633f9714f0eed125b8fc02239d40daa2315b56ff773"
+    },
+    {
+      "path": "src/leitir/warm.py",
+      "sha256": "2b2f2d751e6070706bb922887e23d18572573fa4fd6badca21f137cc0f7c9405"
+    }
+  ]
+}

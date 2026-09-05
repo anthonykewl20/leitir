@@ -1,0 +1,454 @@
+{
+  "unique_live_nodes": 87,
+  "passed": 84,
+  "skipped": 3,
+  "pending": 0,
+  "failed": 0,
+  "nodes": [
+    {
+      "node": "tests/e2e/test_usage_e2e.py::test_pinned_public_source_usage_e2e",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_api_cache_integrity_live.py::test_info_does_not_authenticate_fabricated_cached_signatures",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_bench_e2e_live.py::test_all_manifest_sources_are_reachable_and_byte_exact",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_bts_class_closure_live.py::test_packaging_parse_does_not_hide_constructor_dependencies",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_bts_e4b.py::test_live_ratified_external_corpus_requires_release_artifacts",
+      "status": "skip",
+      "evidence": "live-rest",
+      "reason": "Dedicated pinned containment workflow supplies actual donor/rootfs execution; local entry skipped."
+    },
+    {
+      "node": "tests/test_bts_skeleton.py::test_live_pinned_external_donor_is_rematerialized",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_bts_skeleton.py::test_live_untrusted_pipeline_requires_release_pinned_s2_artifacts",
+      "status": "skip",
+      "evidence": "live-rest",
+      "reason": "Dedicated pinned containment workflow supplies actual donor/rootfs execution; local entry skipped."
+    },
+    {
+      "node": "tests/test_check_qualified_live.py::test_requests_qualified_calls_and_public_reexports",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLiveExplicitScope::test_finds_urlencode_definition",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLiveExplicitScope::test_permalink_is_immutable",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLiveExplicitScope::test_coverage_is_honest",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLivePackageResolution::test_pypi_resolution_and_search",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLiveSadPaths::test_corrupted_commit_yields_error",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cli_e2e_live.py::TestLiveSadPaths::test_unknown_package_is_infrastructure_failure",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_concurrent_upstream_live.py::test_concurrent_packaging_materialization_and_trust",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_corpus_bench_e2e_live.py::test_corpus_v1_resolves_and_materializes_in_isolated_root",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_cpp_headers_live.py::test_real_fmt_header_definitions_are_eligible_for_cpp",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_diff_e2e.py::test_live_two_public_pypi_versions",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_diff_imported_owner_live.py::test_removed_flask_encoder_owner_is_not_hidden_by_inherited_attribute",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_engine_e2e_live.py::test_live_engine_finds_urlencode_definition",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_engine_e2e_live.py::test_live_permalink_is_immutable",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_engine_e2e_live.py::test_live_coverage_is_honest",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_engine_e2e_live.py::test_live_known_symbols_present_in_blob",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_engine_e2e_live.py::test_live_corrupted_commit_yields_no_results",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalDiscovery::test_finds_python_symbol",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalDiscovery::test_coverage_is_honest",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalDiscovery::test_provenance_has_commit_sha",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalSadPaths::test_no_results_for_absurd_query",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_real_code_search_returns_hits[0]",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_real_code_search_returns_hits[1]",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_real_resolve_head_sha[0]",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_real_resolve_head_sha[1]",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_real_404_is_fatal_not_retried",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveTransportDirect::test_indexed_commit_bytes_are_independently_repeatable",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalRealDataOrdering::test_real_snapshot_is_ordered_unique_and_offline_deterministic",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_global_e2e_live.py::TestLiveGlobalDedup::test_real_vendored_snapshot_deduplicates_deterministically",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_go_mod_live.py::test_published_quoted_go_mod_and_actual_module_graph",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_index_recall_e2e_live.py::test_index_recall_equals_exhaustive_scan_on_full_source_identity",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_info.py::test_live_tinode_routes_study_only",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_artifact.py::test_live_npm_materializes_registry_artifact",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_materializes_pinned_small_repository",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_materializes_pinned_gitlab_repository",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_materializes_pinned_gitlab_subgroup_repository",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_materializes_pinned_bitbucket_repository",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_go_module_zip_h1_matches_pinned_sumdb_record",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_materialize_e2e_live.py::test_materializes_pinned_uppercase_go_module",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_parity_e2e.py::test_live_npm_registry_artifact_parity",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_pypi_metadata_live.py::test_real_pypi_repository_and_artifact_only_sources",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_query_probe_live.py::test_regex_forms_are_not_honored",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_query_probe_live.py::test_honored_qualifiers_narrow_results",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_query_probe_live.py::test_in_comments_and_in_body_are_rejected",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_release_artifacts_live.py::test_real_distributions_install_and_reject_version_tampering",
+      "status": "pass",
+      "evidence": "live-rest",
+      "expanded_rerun_evidence": "archive-rejections"
+    },
+    {
+      "node": "tests/test_resolver.py::test_live_go_golang_x_module_resolves_to_pinned_github_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_bitbucket.py::test_live_ref_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_bitbucket.py::test_live_midsize_enumeration_is_page_bounded",
+      "status": "skip",
+      "evidence": "live-rest",
+      "reason": "Anonymous Bitbucket rate limit persisted on final retry; BITBUCKET_TOKEN unavailable.",
+      "retry_evidence": "bitbucket-final"
+    },
+    {
+      "node": "tests/test_resolver_codeberg.py::test_live_pinned_commit_resolves",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_pypi_tag_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_crates_tag_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_go_tag_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_pypi_full_resolution",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_crates_full_resolution",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_go_full_resolution",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_e2e_live.py::test_live_corrupted_tag_raises",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_gitlab.py::test_live_ref_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_gitlab.py::test_live_subgroup_ref_resolves_to_pinned_commit",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_gitlab.py::test_live_midsize_enumeration_is_page_bounded",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_npm_e2e_live.py::test_live_sveltekit_package_uses_name_tag_and_materializes_verified",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_resolver_sourcehut.py::test_live_pinned_commit_resolves",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_score_process_live.py::test_fresh_public_payload_collects_and_matches_pinned_version",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_score_process_live.py::test_unindexed_leitir_subject_is_typed_unavailable_not_pass_or_error",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_e2e_live.py::test_pinned_commit_still_serves_the_expected_blob",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_e2e_live.py::test_raw_blob_git_sha_matches_the_pinned_value",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_e2e_live.py::test_a_corrupted_commit_sha_is_not_silently_accepted",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_e2e_live.py::test_live_search_pins_latest_stable_tag",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_semantics_live.py::test_live_linux_stream_exclusions_match_buffered_scoring",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_search_semantics_live.py::test_real_requests_query_replay_boosts_and_ast_labels",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_shelf_provenance_live.py::test_real_shelf_identity_indexing_and_tamper_rejection",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_shelf_provenance_live.py::test_actual_normalized_vitest_shelf_cannot_invent_git_blob_identity",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_streaming_e2e_live.py::test_large_blob_streams_chunked_with_verified_digest",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_tree.py::test_live_list_blobs_truncated_tree_fallback",
+      "status": "pass",
+      "evidence": "fallback-live"
+    },
+    {
+      "node": "tests/test_tree_cache_live.py::test_real_tree_reuse_keeps_pinned_identity_and_rejects_bad_pins",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_tree_cache_live.py::test_shared_real_tree_source_keeps_hits_atomic_during_eviction",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_tree_recovery_e2e_live.py::test_pinned_fixture_recursive_listing_arrives_truncated",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_tree_recovery_e2e_live.py::test_truncated_listing_recovery_walk_completes_with_full_universe",
+      "status": "pass",
+      "evidence": "recovery-live"
+    },
+    {
+      "node": "tests/test_treehash_e2e_live.py::test_live_tree_hash_detects_tampering_and_recovers",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_verify_e2e_live.py::test_materializes_and_verifies_pinned_small_repository",
+      "status": "pass",
+      "evidence": "live-rest"
+    },
+    {
+      "node": "tests/test_verify_e2e_live.py::test_materializes_vitest_archive_with_text_normalization",
+      "status": "pass",
+      "evidence": "live-rest"
+    }
+  ],
+  "notes": [
+    "Statuses combine separate real executions; the heavy walks are isolated for provider quota.",
+    "The release artifact node was rerun with expanded actual-archive corruption cases after the verifier correction.",
+    "Dedicated contained PhaseA completed all five donors; independent signed PhaseC is pending and is not converted to a pass."
+  ]
+}

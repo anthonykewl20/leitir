@@ -1,0 +1,223 @@
+s....................................................................... [  1%]
+s...........................................s........................... [  3%]
+........................................................................ [  5%]
+......s............................s........s........................... [  7%]
+........................................................ss.............. [  9%]
+.......................................................................s [ 11%]
+........................................................................ [ 12%]
+..........ssssss........................................................ [ 14%]
+..........................................s............................. [ 16%]
+....s................................................................... [ 18%]
+............................s........................................... [ 20%]
+.........................................................ss............. [ 22%]
+s..............s........................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+...................................sssss................................ [ 29%]
+........................................................................ [ 31%]
+.s...................................................................... [ 33%]
+........................................................................ [ 35%]
+....................sssssssssssss....................................... [ 36%]
+.......................................ssssssssssssssss..ssssssss..sssss [ 38%]
+sssssssssss..ssssssssss................................................. [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+.....................................s..............s................... [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 51%]
+.......................................s...........s.ssssss............. [ 53%]
+.................ss..................................................... [ 55%]
+.............................................s...............ssssss..... [ 57%]
+................s.........................................s............. [ 59%]
+..................................................ssssss................ [ 60%]
+........................................s............................... [ 62%]
+.........s...........................................s.................. [ 64%]
+.............................s.......................................... [ 66%]
+......................................................ss......s......... [ 68%]
+.....s.................sssssss...................................sss.... [ 70%]
+................s....................................................... [ 72%]
+.................................................s...................... [ 73%]
+........................................................................ [ 75%]
+......s................................................................. [ 77%]
+....................ss.................................................. [ 79%]
+............................................................ssssss..ss.. [ 81%]
+........................................................................ [ 83%]
+..........................................s............................. [ 84%]
+......................................................s.............ssss [ 86%]
+........................................................................ [ 88%]
+.....................................................s.................. [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................ss.............................. [ 99%]
+............                                                             [100%]
+=============================== warnings summary ===============================
+src/leitir/rerun.py:51
+  /tmp/leitir-remediation-20260905/release-0.2.000/src/leitir/rerun.py:51: PytestCollectionWarning: cannot collect test class 'TestOutcome' because it has a __new__ constructor (from: tests/test_pipeline_cli.py)
+    class TestOutcome(str, Enum):  # noqa: UP042 - canonical ADR contract
+
+src/leitir/rerun.py:71
+  /tmp/leitir-remediation-20260905/release-0.2.000/src/leitir/rerun.py:71: PytestCollectionWarning: cannot collect test class 'TestOutcomeEvidence' because it has a __init__ constructor (from: tests/test_pipeline_cli.py)
+    @dataclass(frozen=True, slots=True, order=True)
+
+tests/test_load_sources_strict_callers.py::test_upsert_protection_survives_laundering_through_the_ordinary_get_cli_path
+  /tmp/leitir-remediation-20260905/release-0.2.000/src/leitir/cli_support.py:558: RuntimeWarning: leitir: corpus catalog corrupt or unreadable, treating as empty for this read: /tmp/pytest-of-soultransit/pytest-1411/test_upsert_protection_survive0/sources.json. The file was left in place (not renamed) so every subsequent read, including from a different process, keeps detecting the corruption honestly instead of seeing a laundered, genuinely-missing file; move it aside yourself (e.g. `mv /tmp/pytest-of-soultransit/pytest-1411/test_upsert_protection_survive0/sources.json /tmp/pytest-of-soultransit/pytest-1411/test_upsert_protection_survive0/sources.json.bak`) once you're ready to rebuild the catalog.
+    for entry in load_sources(root)
+
+tests/test_materialize_e2e.py::test_structurally_corrupt_index_reads_empty_without_being_renamed_away
+  /tmp/leitir-remediation-20260905/release-0.2.000/tests/test_materialize_e2e.py:118: RuntimeWarning: leitir: corpus catalog corrupt or unreadable, treating as empty for this read: /tmp/pytest-of-soultransit/pytest-1411/test_structurally_corrupt_inde0/sources.json. The file was left in place (not renamed) so every subsequent read, including from a different process, keeps detecting the corruption honestly instead of seeing a laundered, genuinely-missing file; move it aside yourself (e.g. `mv /tmp/pytest-of-soultransit/pytest-1411/test_structurally_corrupt_inde0/sources.json /tmp/pytest-of-soultransit/pytest-1411/test_structurally_corrupt_inde0/sources.json.bak`) once you're ready to rebuild the catalog.
+    assert load_sources(tmp_path) == []
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_query_probe_live.py:27: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub query probes
+SKIPPED [1] tests/e2e/test_usage_e2e.py:112: opt-in pinned public-source usage E2E (six==1.16.0 provider / benjaminp/six@65486e4383f9f411da95937451205d3c7b61b9e1 consumer): requires real network access to PyPI and GitHub, so it only runs with LEITIR_ENABLE_LIVE_E2E=1; the default offline suite never depends on it
+SKIPPED [1] tests/test_api_cache_integrity_live.py:19: set LEITIR_ENABLE_LIVE_E2E=1 for real registry/cache integrity probes
+SKIPPED [1] tests/test_bench_e2e_live.py:21: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_bts_class_closure_live.py:19: set LEITIR_ENABLE_LIVE_E2E=1 for the real Packaging donor
+SKIPPED [1] tests/test_bts_cli.py:447: requires tree-sitter extra
+SKIPPED [1] tests/test_bts_e4b.py:274: real E4b donors require live opt-in, donor opt-in, and nsjail
+SKIPPED [1] tests/test_bts_skeleton.py:445: set LEITIR_ENABLE_LIVE_E2E=1 for pinned external donor acquisition
+SKIPPED [1] tests/test_bts_skeleton.py:455: real external donor execution requires live opt-in, donor opt-in, and nsjail
+SKIPPED [1] tests/test_check_qualified_live.py:15: actual Requests source requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_cli_e2e_live.py:37: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_cli_e2e_live.py:54: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_cli_e2e_live.py:67: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_cli_e2e_live.py:83: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_cli_e2e_live.py:98: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_cli_e2e_live.py:107: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_concurrent_upstream_live.py:19: real concurrent upstream clients require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_corpus_bench_e2e_live.py:20: set LEITIR_ENABLE_LIVE_E2E=1 to run live corpus verification
+SKIPPED [1] tests/test_cpp_headers_live.py:17: actual fmt source requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_diff_e2e.py:104: set LEITIR_ENABLE_LIVE_E2E=1 to enable live diff coverage
+SKIPPED [1] tests/test_diff_e2e.py:125: set LEITIR_ENABLE_LIVE_E2E=1 to enable live diff coverage
+SKIPPED [1] tests/test_diff_imported_owner_live.py:18: real Flask release sources require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_discovery_coverage.py:297: set LEITIR_ENABLE_LIVE_E2E=1 to run live coverage verification
+SKIPPED [1] tests/test_engine_e2e_live.py:64: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_engine_e2e_live.py:102: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_engine_e2e_live.py:109: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_engine_e2e_live.py:121: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_engine_e2e_live.py:128: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_exec_sandbox.py:1066: live nsjail test requires exact donor opt-in and /usr/bin/nsjail
+SKIPPED [1] tests/test_global_e2e_live.py:37: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:48: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:59: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:72: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [2] tests/test_global_e2e_live.py:94: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [2] tests/test_global_e2e_live.py:106: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:114: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:123: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:192: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_global_e2e_live.py:306: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_go_mod_live.py:19: real Go registry access requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_graph_polyglot.py:704: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:742: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:749: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:759: requires tree-sitter extra
+SKIPPED [3] tests/test_graph_polyglot.py:778: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:788: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:804: requires tree-sitter extra
+SKIPPED [2] tests/test_graph_polyglot.py:817: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:833: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:854: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:873: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:898: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot.py:906: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:72: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:92: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:103: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:111: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:124: requires tree-sitter extra
+SKIPPED [2] tests/test_graph_polyglot_go.py:140: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_go.py:149: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:107: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:133: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:140: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:150: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:162: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:174: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:187: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:197: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:216: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:227: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:249: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:260: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:272: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:288: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:298: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_rust.py:306: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:119: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:169: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:176: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:186: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:207: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:223: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:239: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:272: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:288: requires tree-sitter extra
+SKIPPED [1] tests/test_graph_polyglot_typescript.py:304: requires tree-sitter extra
+SKIPPED [1] tests/test_index_recall_e2e_live.py:174: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_info.py:404: set LEITIR_ENABLE_LIVE_E2E=1 to run live license-routing verification
+SKIPPED [1] tests/test_manifest_auth.py:57: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_manifest_auth.py:312: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_manifest_auth.py:353: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [5] tests/test_manifest_auth.py:416: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_manifest_auth.py:753: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_manifest_auth.py:806: auth trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_materialize_artifact.py:500: set LEITIR_ENABLE_LIVE_E2E=1 to run live artifact materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:47: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:61: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:74: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:89: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:107: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_materialize_e2e_live.py:114: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub materialization
+SKIPPED [1] tests/test_mcp_server.py:220: could not import 'mcp': No module named 'mcp'
+SKIPPED [1] tests/test_parity_e2e.py:86: set LEITIR_ENABLE_LIVE_E2E=1 to run live parity verification
+SKIPPED [1] tests/test_pipeline_cli.py:1132: ratification trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_pipeline_cli.py:1139: ratification trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [2] tests/test_pipeline_cli.py:1151: ratification trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_pipeline_cli.py:1168: ratification trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_pipeline_cli.py:1193: ratification trust-anchor reads require cryptography and O_NOFOLLOW
+SKIPPED [1] tests/test_pypi_metadata_live.py:15: real PyPI access requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_release_artifacts_live.py:25: real release builds and upstream installs require live opt-in
+SKIPPED [1] tests/test_rerun.py:386: live rerun requires exact donor opt-in and nsjail
+SKIPPED [1] tests/test_resolver.py:424: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_bitbucket.py:622: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_bitbucket.py:642: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_codeberg.py:101: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_codeberg.py:356: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:41: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:46: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:51: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:56: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:64: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:72: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_e2e_live.py:80: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_gitlab.py:835: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_gitlab.py:845: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_gitlab.py:866: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_resolver_npm_e2e_live.py:38: set LEITIR_ENABLE_LIVE_E2E=1 to run live npm materialization
+SKIPPED [1] tests/test_resolver_sourcehut.py:146: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_score_e2e_live.py:34: set LEITIR_ENABLE_SCORE_LIVE=1 to run live score e2e checks
+SKIPPED [1] tests/test_score_process_live.py:33: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_score_process_live.py:51: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_search_e2e_live.py:37: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_search_e2e_live.py:52: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_search_e2e_live.py:65: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_search_e2e_live.py:76: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_search_semantics_live.py:19: real upstream search probes require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_search_semantics_live.py:50: real upstream search probes require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_shelf_provenance_live.py:15: real shelves require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_shelf_provenance_live.py:50: real shelves require LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_streaming_e2e_live.py:55: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_tree.py:365: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+SKIPPED [1] tests/test_tree_cache_live.py:13: real GitHub access requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_tree_cache_live.py:35: real GitHub access requires LEITIR_ENABLE_LIVE_E2E=1
+SKIPPED [1] tests/test_tree_recovery_e2e_live.py:119: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_tree_recovery_e2e_live.py:138: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_treehash_e2e_live.py:37: set LEITIR_ENABLE_LIVE_E2E=1 to run live tree-hash verification
+SKIPPED [1] tests/test_verify_e2e_live.py:25: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+SKIPPED [1] tests/test_verify_e2e_live.py:38: set LEITIR_ENABLE_LIVE_E2E=1 to run live GitHub verification
+3742 passed, 159 skipped, 4 warnings in 846.32s (0:14:06)

@@ -1,0 +1,94 @@
+[
+  {
+    "name": "requests",
+    "format": "spdx",
+    "command": [
+      "unshare",
+      "-Urn",
+      "python",
+      "-m",
+      "leitir.cli",
+      "sbom",
+      "--format",
+      "spdx",
+      "--root",
+      "/tmp/leitir-audit-20260905/corpora/requests",
+      "--cwd",
+      "/tmp/leitir-remediation-20260905/release-evidence/sbom-validation"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-0.2.000",
+    "pythonpath": "/tmp/leitir-remediation-20260905/release-0.2.000/src",
+    "exit_code": 0,
+    "stdout_sha256": "f9974927fa1a4787e482068e99a98a4ec8031a6fd9d3c6ce3b80c69f3fdc92b7",
+    "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+  },
+  {
+    "name": "requests",
+    "format": "cyclonedx",
+    "command": [
+      "unshare",
+      "-Urn",
+      "python",
+      "-m",
+      "leitir.cli",
+      "sbom",
+      "--format",
+      "cyclonedx",
+      "--root",
+      "/tmp/leitir-audit-20260905/corpora/requests",
+      "--cwd",
+      "/tmp/leitir-remediation-20260905/release-evidence/sbom-validation"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-0.2.000",
+    "pythonpath": "/tmp/leitir-remediation-20260905/release-0.2.000/src",
+    "exit_code": 0,
+    "stdout_sha256": "8cee36cbed3a08288d437e607564c9638d7875df327ef59a58780660147d3db3",
+    "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+  },
+  {
+    "name": "packaging",
+    "format": "spdx",
+    "command": [
+      "unshare",
+      "-Urn",
+      "python",
+      "-m",
+      "leitir.cli",
+      "sbom",
+      "--format",
+      "spdx",
+      "--root",
+      "/tmp/leitir-remediation-20260905/final-evidence/concurrent-views/corpus",
+      "--cwd",
+      "/tmp/leitir-remediation-20260905/release-evidence/sbom-validation"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-0.2.000",
+    "pythonpath": "/tmp/leitir-remediation-20260905/release-0.2.000/src",
+    "exit_code": 0,
+    "stdout_sha256": "35e4388cdcaea90379e0ff3b14bf857e80aee29bfc8a268c7ac61cde7bd19200",
+    "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+  },
+  {
+    "name": "packaging",
+    "format": "cyclonedx",
+    "command": [
+      "unshare",
+      "-Urn",
+      "python",
+      "-m",
+      "leitir.cli",
+      "sbom",
+      "--format",
+      "cyclonedx",
+      "--root",
+      "/tmp/leitir-remediation-20260905/final-evidence/concurrent-views/corpus",
+      "--cwd",
+      "/tmp/leitir-remediation-20260905/release-evidence/sbom-validation"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-0.2.000",
+    "pythonpath": "/tmp/leitir-remediation-20260905/release-0.2.000/src",
+    "exit_code": 0,
+    "stdout_sha256": "02497977433c918d1f50bf7e1c807dcb5e5a5360dadc7d484681241b5cca9538",
+    "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+  }
+]

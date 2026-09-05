@@ -1,0 +1,42 @@
+[
+  {
+    "path": "leitir/benchmarks/ast-vs-regex-v1/README.md",
+    "head_present": false,
+    "artifact_present": true,
+    "matches_head": false,
+    "artifact_sha256": "eac7f84b2c54634c73dd5c996f0353921f380d9bce1a1501de40cdc720791386",
+    "head_sha256": null
+  },
+  {
+    "path": "leitir/benchmarks/ast-vs-regex-v1/comparison.json",
+    "head_present": false,
+    "artifact_present": true,
+    "matches_head": false,
+    "artifact_sha256": "563f147a6c5638d6b8d3e6f5a38cddd447b480bfceeab09f2591cf236447252c",
+    "head_sha256": null
+  },
+  {
+    "path": "leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt",
+    "head_present": false,
+    "artifact_present": true,
+    "matches_head": false,
+    "artifact_sha256": "9da7c507c12349f16264fbf765228a4976d8a26946a79ce96c53eb45f7d612f2",
+    "head_sha256": null
+  },
+  {
+    "path": "leitir/discovery_search.py",
+    "head_present": true,
+    "artifact_present": true,
+    "matches_head": true,
+    "artifact_sha256": "e6b6c706c7bf3057166876d5c8009644487cd7fe8d99124d2ba9d6790190f1fc",
+    "head_sha256": "e6b6c706c7bf3057166876d5c8009644487cd7fe8d99124d2ba9d6790190f1fc"
+  },
+  {
+    "path": "leitir/tree.py",
+    "head_present": true,
+    "artifact_present": true,
+    "matches_head": true,
+    "artifact_sha256": "de5f4268b7d63070310242a9a0002c67ee4a3e71b6cf24d74f54d6631a2b76d6",
+    "head_sha256": "de5f4268b7d63070310242a9a0002c67ee4a3e71b6cf24d74f54d6631a2b76d6"
+  }
+]

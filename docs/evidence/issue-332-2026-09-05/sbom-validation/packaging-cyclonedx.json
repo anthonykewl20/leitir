@@ -1,0 +1,62 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:git-pypa-packaging-85442b8032cb7bae72866dfd7782234a98dd2fb7-85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "85442b8032cb7bae72866dfd7782234a98dd2fb7"
+        }
+      ],
+      "licenses": [],
+      "name": "pypa/packaging",
+      "properties": [
+        {
+          "name": "leitir:license_method",
+          "value": "unknown"
+        },
+        {
+          "name": "leitir:license_confidence",
+          "value": "low"
+        },
+        {
+          "name": "leitir:source",
+          "value": "git-commit"
+        },
+        {
+          "name": "leitir:parity",
+          "value": "exact"
+        }
+      ],
+      "type": "library",
+      "version": "85442b8032cb7bae72866dfd7782234a98dd2fb7"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [],
+      "ref": "leitir:project"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:git-pypa-packaging-85442b8032cb7bae72866dfd7782234a98dd2fb7-85442b8032cb7bae72866dfd7782234a98dd2fb7"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "leitir:project",
+      "name": "project",
+      "type": "application"
+    },
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tools": [
+      {
+        "name": "leitir",
+        "vendor": "leitir"
+      }
+    ]
+  },
+  "specVersion": "1.5",
+  "version": 1
+}

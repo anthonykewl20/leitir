@@ -1,0 +1,9 @@
+{
+  "distribution_version": "0.2.0",
+  "public_version": "0.2.000",
+  "sha256": {
+    "leitir-0.2.0-py3-none-any.whl": "d7a19527869b14546e7cf896479b001f1d4ab835fd62ad690d9821e1b8a3460b",
+    "leitir-0.2.0.tar.gz": "e96a5932d5346d47b9d5c3a0bdbf6f14848f999385e75cac18139bee966090f1"
+  },
+  "tag": "v0.2.000"
+}

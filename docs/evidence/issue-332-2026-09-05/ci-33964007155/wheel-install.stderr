@@ -1,0 +1,5 @@
+Using Python 3.11.15 environment at: venv-wheel
+Resolved 1 package in 1ms
+Prepared 1 package in 10ms
+Installed 1 package in 3ms
+ + leitir==0.2.0 (from file:///tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-dist/leitir-0.2.0-py3-none-any.whl)

@@ -3,7 +3,7 @@ name: Release
 # Audit fix (2026-08-23): a v* tag used to rebuild artifacts with floating
 # pip/build/twine and publish them unverified, with no CI gate. Publication is
 # now gated end-to-end:
-#   gate    - a CI workflow run for the EXACT tagged commit must have succeeded;
+#   gate    - push/dispatch CI for the EXACT tagged commit must have succeeded;
 #   package - the CI-tested wheel/sdist artifact is reused (never rebuilt),
 #             tag<->file-name<->METADATA version is verified, and twine comes
 #             from the hash-locked .github/workflows/requirements-release.lock;
@@ -43,7 +43,7 @@ jobs:
           commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           echo "commit=${commit}" >> "$GITHUB_OUTPUT"
           echo "${GITHUB_REF_NAME} (GITHUB_SHA=${GITHUB_SHA}) -> commit ${commit}"
-      - name: Require a successful CI run for that exact commit
+      - name: Require successful push or dispatch CI for that exact commit
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,8 +52,11 @@ jobs:
           set -euo pipefail
           # NOTE: the workflow file is ci.yml - the GitHub API resolves
           # workflow file names case-sensitively, so 'CI.yml' would 404.
-          runs="$(gh run list --workflow ci.yml --commit "$COMMIT_SHA" --json databaseId,headSha,conclusion,status)"
-          run_id="$(printf '%s' "$runs" | jq -r --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c) | select(.status == "completed" and .conclusion == "success")] | .[0].databaseId // empty')"
+          runs="$(gh run list --workflow ci.yml --commit "$COMMIT_SHA" --json databaseId,headSha,conclusion,status,event)"
+          # PR run.headSha names the head, but default checkout builds its
+          # merge ref. Only push/dispatch checkout is the named commit itself.
+          eligible_runs="$(printf '%s' "$runs" | jq --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c and (.event == "push" or .event == "workflow_dispatch"))]')"
+          run_id="$(printf '%s' "$eligible_runs" | jq -r '[.[] | select(.status == "completed" and .conclusion == "success")] | .[0].databaseId // empty')"
           if [ -n "$run_id" ]; then
             echo "Green CI run for commit ${COMMIT_SHA} (audit trail):"
             echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
@@ -61,13 +64,13 @@ jobs:
             exit 0
           fi
           # No green run: fail closed with a precise reason.
-          pending="$(printf '%s' "$runs" | jq --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c and .status != "completed")] | length')"
+          pending="$(printf '%s' "$eligible_runs" | jq '[.[] | select(.status != "completed")] | length')"
           if [ "${pending:-0}" -gt 0 ]; then
-            echo "::error::CI for commit ${COMMIT_SHA} is still in progress; re-run this workflow after it completes." >&2
-          elif [ -n "$runs" ] && [ "$runs" != "[]" ]; then
-            echo "::error::CI ran for commit ${COMMIT_SHA} but no run concluded 'success'; refusing to publish." >&2
+            echo "::error::Push/dispatch CI for commit ${COMMIT_SHA} is still in progress; re-run this workflow after it completes." >&2
+          elif [ "$eligible_runs" != "[]" ]; then
+            echo "::error::Push/dispatch CI ran for commit ${COMMIT_SHA} but no run concluded 'success'; refusing to publish." >&2
           else
-            echo "::error::No CI workflow run found for commit ${COMMIT_SHA}; publication requires a green CI run for the exact tagged commit." >&2
+            echo "::error::No release-qualified CI run found for commit ${COMMIT_SHA}; run CI with workflow_dispatch on this commit or use its successful main push. Pull-request merge-ref builds cannot qualify a release." >&2
           fi
           exit 1
 
@@ -107,63 +110,10 @@ jobs:
           gh run download "$CI_RUN_ID" --name python-package-distributions --dir dist
           test -d dist
           ls -l dist
-      - name: Verify the artifact file names match the pushed tag
+      - name: Verify the padded tag and normalized distribution identities
         env:
           TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          case "$version" in
-            '' | *[!A-Za-z0-9._-]*)
-              echo "::error::cannot derive a package version from tag '${TAG}'" >&2
-              exit 1 ;;
-          esac
-          expected="leitir-${version}-py3-none-any.whl leitir-${version}.tar.gz"
-          actual="$(find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ' | sed 's/ $//')"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::dist artifact does not match tag '${TAG}':" >&2
-            echo "  expected: ${expected}" >&2
-            echo "  actual:   ${actual}" >&2
-            exit 1
-          fi
-      - name: Verify the wheel METADATA version matches the tag
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          python - "${TAG#v}" <<'PY'
-          import glob
-          import sys
-          import zipfile
-
-          version = sys.argv[1]
-          wheels = sorted(glob.glob("dist/*.whl"))
-          assert len(wheels) == 1, f"expected exactly one wheel, found {wheels}"
-          with zipfile.ZipFile(wheels[0]) as archive:
-              metadata_paths = sorted(
-                  name for name in archive.namelist()
-                  if name.endswith(".dist-info/METADATA")
-              )
-              assert len(metadata_paths) == 1, (
-                  f"expected exactly one METADATA in {wheels[0]}, found {metadata_paths}"
-              )
-              expected_path = f"leitir-{version}.dist-info/METADATA"
-              assert metadata_paths[0] == expected_path, (
-                  f"{metadata_paths[0]} does not match tag version {version}"
-              )
-              versions = [
-                  line.split(":", 1)[1].strip()
-                  for line in archive.read(metadata_paths[0])
-                  .decode("utf-8")
-                  .splitlines()
-                  if line.startswith("Version:")
-              ]
-          assert len(versions) == 1, f"expected exactly one Version header, found {versions}"
-          assert versions[0] == version, (
-              f"wheel METADATA Version {versions[0]!r} != tag version {version!r}"
-          )
-          print(f"wheel METADATA Version {version} matches tag")
-          PY
+        run: python tools/verify_release.py --tag "$TAG" --dist dist
       - name: Install hash-locked twine
         run: >-
           uv pip install --system --require-hashes --only-binary :all:
@@ -213,7 +163,7 @@ jobs:
   release:
     # Gate 4 - publish the exact tested bytes: re-verify the sha256 digests
     # 'package' recorded before creating the release.
-    needs: [gate, package]
+    needs: [gate, package, attest]
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
@@ -239,17 +189,12 @@ jobs:
             echo "  actual:   ${actual}" >&2
             exit 1
           fi
-      - name: Create or update GitHub Release
+      - name: Publish GitHub Release with committed release notes
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          # Generate release notes from commits since the last tag
-          previous_tag=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
-          if [ -n "$previous_tag" ]; then
-            notes=$(git log --pretty=format:'- %s' "${previous_tag}..${tag}")
-          else
-            notes=$(git log --pretty=format:'- %s' "${tag}")
-          fi
-          # Create release with the exact CI-tested artifacts
-          gh release create "$tag" --title "$tag" --notes "$notes" dist/*.whl dist/*.tar.gz
+          set -euo pipefail
+          notes="docs/releases/${TAG#v}.md"
+          test -s "$notes"
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$notes" dist/*.whl dist/*.tar.gz

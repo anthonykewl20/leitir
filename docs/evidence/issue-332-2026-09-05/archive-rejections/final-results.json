@@ -1,0 +1,800 @@
+[
+  {
+    "case": "control_original",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/control_original",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 0,
+    "after_exit": 0,
+    "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba\",\n    \"leitir-0.2.0.tar.gz\": \"da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+    "stderr": "",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_duplicate_metadata",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_metadata",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel contains duplicate member paths\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "f0a135317af8cc79d3fc1e91c9c1ad8ad180ea18512d7dafb7d152e92e9fe396",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_missing",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_missing",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel metadata path/count/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "16fe32b747676ecabc31ccc7aad4fbb5e1c23d6f498bffdd82e63bab6118a848",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_wrong_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_wrong_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "07a6bf21294addb7271dc6de6b25faee4a8964b0b4a453a07a8fb1c92cff582d",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_duplicate_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "f7bfbf4f5e2b2501d636c059dd1b76eb327319c8b65a387c9555910cfeaf1674",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_duplicate_version",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_version",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ea2c497a0faafc228aefc225765552fdd9240d5f3ab5db37e06fa497849b73d4",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_duplicate_same_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_same_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "c508a1bfb48a93a73e65ed15f40976e219a9f2729f9e074aafd0dafda7df563a",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_oversize",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_oversize",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel metadata path/count/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "99340c601ce25a33ed88fc8c9ad198cdb0ee3709a58c1ecb920d897a30a1ad04",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_symlink_metadata",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_symlink_metadata",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 0,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel metadata must be a regular file\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "5e409b816fdcc12573172bde99ae2e8e726b948c2baee7f5cacc6d1ac9570ae5",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "sdist_duplicate_pkg",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_duplicate_pkg",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist PKG-INFO path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "16b87414da376f77b6733ba697620266a2777fcfc331ebfc466c1f9c0dc549e4"
+    }
+  },
+  {
+    "case": "sdist_duplicate_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_duplicate_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "b537e9457ceca1e8b1fb96579e2078133cfeffc36801d5cc05145505aa586a94"
+    }
+  },
+  {
+    "case": "sdist_missing_pkg",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_missing_pkg",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist PKG-INFO path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "a4006377d0e323b218d9a63d1a0304b763d6dfdcb61c1e7d1d95f9cca6a8d83d"
+    }
+  },
+  {
+    "case": "sdist_missing_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_missing_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "231cf542ca611b5eaf64e819e8a0dbce2ab0c4e487a0a8bd0922594a52f45e51"
+    }
+  },
+  {
+    "case": "sdist_wrong_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_wrong_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "f1bf4979341acb8b1baef7557eb8e876e43441146d7e7f48b8926d8e2470c093"
+    }
+  },
+  {
+    "case": "sdist_duplicate_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_duplicate_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "34db4345a106760cac857522e2f8b4a9d044a9f0e7a4622ac19842f0b5898346"
+    }
+  },
+  {
+    "case": "sdist_duplicate_version",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_duplicate_version",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution Name/Version headers do not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "b35e28f218310c52a1cc606e9bf172490d3f168f52e38779916505c379765b32"
+    }
+  },
+  {
+    "case": "sdist_oversize_pkg",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_oversize_pkg",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist PKG-INFO path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "7d90e297587ab87c33b23081a254a9cb4319d73ed5882fa5aec576bb7208923f"
+    }
+  },
+  {
+    "case": "sdist_oversize_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_oversize_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "834528db032ef442712f968ee05faeaba9cbbb3be1b3d47db427f8c3bfca0b4a"
+    }
+  },
+  {
+    "case": "sdist_symlink_pkg",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_symlink_pkg",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist PKG-INFO path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "ebd1064b3c4c5edb2a3eb93040a3a7137bd729a517ba74a2b6000a8d8ce92a0c"
+    }
+  },
+  {
+    "case": "sdist_symlink_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_symlink_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "4b65e2dfa846d0f3bba2a89ed53f3df9dc07366017c07389737b5887a7419d5e"
+    }
+  },
+  {
+    "case": "sdist_hardlink_pkg",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_hardlink_pkg",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist PKG-INFO path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "2aede141f363020352e25d008c151f04a0ecabdd29a5167b7b6086346cbe5459"
+    }
+  },
+  {
+    "case": "sdist_hardlink_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_hardlink_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "40ca519fc9639df36d3aaf52f1ab1924c6bfaedb05c57c232af6c6bb01003925"
+    }
+  },
+  {
+    "case": "sdist_wrong_project_name",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_wrong_project_name",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist project name/version does not match the release tag\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "b76e0b5df1ce85003f6aa9ce3f19d6f9cff0697cf4057a89c6c1b547615c7140"
+    }
+  },
+  {
+    "case": "sdist_project_list",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_project_list",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist project name/version does not match the release tag\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "069c154689e910fc5d905620b2d895d29a09369b8a40371cf9a436454e9ce119"
+    }
+  },
+  {
+    "case": "sdist_project_string",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_project_string",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist project name/version does not match the release tag\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "911378baf4c143d37de3d16701c7a38776b2efee48d0bc8380f5fecb250a02df"
+    }
+  },
+  {
+    "case": "sdist_missing_project_table",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_missing_project_table",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: sdist pyproject.toml path/count/type/size does not match the release\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "d47a8bd0cd3096193d37443f146dce55fb695ad41910a86edaa291f5c4a4a0ce"
+    }
+  },
+  {
+    "case": "sdist_malformed_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_malformed_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: Expected ']' at the end of a table declaration (at line 1, column 9)\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "40ea8ccfe22bfbef1f2ff9a72eeda6cc238ab9f2efef7a82faebec855c5a12ff"
+    }
+  },
+  {
+    "case": "sdist_nonutf_project",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_nonutf_project",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "1e07723f22577130827f3018a9049f03a26b56842907ccf59f94a60519455b32"
+    }
+  },
+  {
+    "case": "symlink_artifact",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/symlink_artifact",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: distribution artifacts must be regular files, not symbolic links\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "corrupt_wheel",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt_wheel",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: File is not a zip file\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "4b28f2331dbe5920322a64798bd8023f0e5ea9a0ae8f813355b749f850a7baaf",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "corrupt_sdist",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt_sdist",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: Compressed file ended before the end-of-stream marker was reached\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "f3a688673f5f9026c4472605c8630e607af043f83bcdbfa04088417fb0b2be5f"
+    }
+  },
+  {
+    "case": "wheel_bad_crc",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_bad_crc",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 0,
+    "after_exit": 0,
+    "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"fb3d66e304ac9a9e6d9798bd5f4ef0295dc667102fb85638479534922e27af46\",\n    \"leitir-0.2.0.tar.gz\": \"da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+    "stderr": "",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "fb3d66e304ac9a9e6d9798bd5f4ef0295dc667102fb85638479534922e27af46",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "wheel_corrupt_payload",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_corrupt_payload",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 0,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel payload checksum mismatch: leitir/__init__.py\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "fa381dc93bb5e9b00caa79ac93216792e2290078800a5581b946222683ff5e2f",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "sdist_project_table_absent",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_project_table_absent",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: 'project'\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "5a5afb302de67fdc8c7f2eaeaed5432a8d9ff9191a3be62ef1bad8ff6936dad6"
+    }
+  },
+  {
+    "case": "wheel_invalid_deflate_metadata",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_invalid_deflate_metadata",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: Error -3 while decompressing data: invalid block type\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "727b64c99b098da8fc9b28fb883ecbbf55fc28006cdbd451c66e90332d6e9126",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  },
+  {
+    "case": "sdist_trailer_crc_corrupt",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_crc_corrupt",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: CRC check failed 0x2944ab89 != 0x2944ab88\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "9f0ec9eab6365e89d200e3a113f2701b29b1737f44041f90e1357f450333252b"
+    }
+  },
+  {
+    "case": "sdist_trailer_truncated",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_truncated",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 1,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: Compressed file ended before the end-of-stream marker was reached\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+      "leitir-0.2.0.tar.gz": "b8fc490f3830259978e6199ef9e13c0ceeef0f3c098fcd07a09614bded00cd78"
+    }
+  },
+  {
+    "case": "duplicate_runtime_member_shadows_corrupt_first_payload",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_payload",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "before_exit": 0,
+    "after_exit": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: wheel contains duplicate member paths\n",
+    "artifact_sha256": {
+      "leitir-0.2.0-py3-none-any.whl": "f0238c812269d685a7d6b4f81bf958488c9cc358b7ae1b8378650b5d2cb4b91f",
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+    }
+  }
+]

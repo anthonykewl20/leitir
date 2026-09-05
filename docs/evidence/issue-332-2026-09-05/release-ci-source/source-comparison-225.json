@@ -1,0 +1,18 @@
+[
+  {
+    "file": "leitir/cli.py",
+    "artifact_sha256": "144367813e6e8fab90fa38df195eb03cc15fd9d6c14b82c4544dffdb14512151",
+    "head_sha256": "144367813e6e8fab90fa38df195eb03cc15fd9d6c14b82c4544dffdb14512151",
+    "merged_sha256": "42e788a1afc903a267127a3f5c0735ea653ac9acc61d4be4079c310b91e2cecd",
+    "artifact_matches_head": true,
+    "artifact_matches_final_merge": false
+  },
+  {
+    "file": "leitir/discovery_search.py",
+    "artifact_sha256": "827479f26065dc99f1fe61720517b00fd03f34cf2ce6c08ee384c48ba544c642",
+    "head_sha256": "827479f26065dc99f1fe61720517b00fd03f34cf2ce6c08ee384c48ba544c642",
+    "merged_sha256": "516a75490278beb4cfd1970a9bd028da7b78bd2b70cd27c922a5a1c1a9a3b7e1",
+    "artifact_matches_head": true,
+    "artifact_matches_final_merge": false
+  }
+]

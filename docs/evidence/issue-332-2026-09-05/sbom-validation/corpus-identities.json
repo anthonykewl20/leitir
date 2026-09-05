@@ -1,0 +1,45 @@
+{
+  "requests": [
+    {
+      "name": "requests",
+      "host": "github.com",
+      "owner": "psf",
+      "repo": "requests",
+      "commit_sha": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "source": "registry-artifact",
+      "version": "2.32.3",
+      "verified": true,
+      "parity": "drift",
+      "materialized_tree_hash_scope": "full",
+      "manifest_sha256": "730b3f19b908c79bd2665ce062f686c7e4aa040369ea99f1d9993ec4a6a7b975"
+    },
+    {
+      "name": "requests",
+      "host": "github.com",
+      "owner": "psf",
+      "repo": "requests",
+      "commit_sha": "147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+      "source": "registry-artifact",
+      "version": "2.31.0",
+      "verified": true,
+      "parity": "drift",
+      "materialized_tree_hash_scope": "full",
+      "manifest_sha256": "b253f9b5befbf7edd84e7598e7c7ef5f5da33b8418619fd7b4c995e0051e7346"
+    }
+  ],
+  "packaging": [
+    {
+      "name": "pypa/packaging",
+      "host": "github.com",
+      "owner": "pypa",
+      "repo": "packaging",
+      "commit_sha": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "source": "git-commit",
+      "version": null,
+      "verified": true,
+      "parity": "exact",
+      "materialized_tree_hash_scope": "full",
+      "manifest_sha256": "bec9d86af2268e2022d52b3bded25509b5cf2d72575cf6a3ccbb9bb44a5bf5d9"
+    }
+  ]
+}

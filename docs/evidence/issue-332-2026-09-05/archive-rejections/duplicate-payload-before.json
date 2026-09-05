@@ -1,0 +1,16 @@
+{
+  "case": "duplicate_runtime_member_shadows_corrupt_first_payload",
+  "command": [
+    "python",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+    "--tag",
+    "v0.2.000",
+    "--dist",
+    "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_payload",
+    "--project",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+  ],
+  "returncode": 0,
+  "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"f0238c812269d685a7d6b4f81bf958488c9cc358b7ae1b8378650b5d2cb4b91f\",\n    \"leitir-0.2.0.tar.gz\": \"da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+  "stderr": ""
+}

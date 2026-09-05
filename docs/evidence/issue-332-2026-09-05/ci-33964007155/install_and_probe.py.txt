@@ -1,0 +1,51 @@
+from __future__ import annotations
+import hashlib
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+root=Path(__file__).resolve().parent
+dist=root.parent/'ci-33964007155-dist'
+base_env=dict(os.environ,LEITIR_NO_UPDATE_CHECK='1')
+for name in ('PYTHONPATH','PYTHONHOME','GH_TOKEN','GITHUB_TOKEN'):
+    base_env.pop(name,None)
+token=subprocess.check_output(['gh','auth','token'],text=True).strip()
+records=json.loads((root/'commands.json').read_text()) if (root/'commands.json').exists() else []
+def run(label,command,live=False):
+    env=dict(base_env)
+    if live:env['GITHUB_TOKEN']=token
+    result=subprocess.run(command,cwd=root,env=env,capture_output=True,text=True,timeout=300)
+    for channel,data in [('stdout',result.stdout),('stderr',result.stderr)]:
+        safe=re.sub(r'gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}','[REDACTED]',data.replace(token,'[REDACTED]'))
+        (root/(label+'.'+channel)).write_text(safe)
+    records.append({'label':label,'command':command,'cwd':str(root),'exit_code':result.returncode,'stdout_sha256':hashlib.sha256(result.stdout.encode()).hexdigest()})
+    (root/'commands.json').write_text(json.dumps(records,indent=2)+'\n')
+    if result.returncode:raise RuntimeError(label+' failed; inspect redacted logs')
+    return result
+for label,pattern in [('wheel','*.whl'),('sdist','*.tar.gz')]:
+    if (root/(label+'-api.stdout')).exists():
+        assert json.loads((root/(label+'-api.stdout')).read_text())['symbols']>0
+        continue
+    archive=next(dist.glob(pattern))
+    venv=root/('venv-'+label)
+    run(label+'-venv',['uv','venv','--python','3.11',str(venv)])
+    python=str(venv/'bin/python')
+    run(label+'-install',['uv','pip','install','--python',python,'--no-deps',str(archive)])
+    result=run(label+'-version',[python,'-m','leitir.cli','--version'])
+    assert result.stdout.strip()=='leitir 0.2.000'
+    run(label+'-metadata',[python,'-c',"import importlib.metadata,json,leitir; print(json.dumps({'distribution_version':importlib.metadata.version('leitir'),'module_path':leitir.__file__}))"])
+    pin='85442b8032cb7bae72866dfd7782234a98dd2fb7'
+    corpus=root/('corpus-'+label)
+    for command in ('get','info','api'):
+        result=run(label+'-'+command,[python,'-m','leitir.cli',command,'github:pypa/packaging@'+pin,'--root',str(corpus),'--json'],live=True)
+        report=json.loads(result.stdout)
+        if command=='get':
+            target=Path(report['results'][0]['path']);manifest=json.loads((target/'leitir-manifest.json').read_text());assert manifest['commit_sha']==pin and manifest['verified'] is True and manifest['parity']=='exact'
+        elif command=='info':
+            assert report['provenance']['commit_sha']==pin and report['provenance']['verified'] is True
+            assert report['api']['symbols']>0
+        else:
+            assert report['symbols']>0
+print(json.dumps({'commands':len(records),'all_exit_zero':all(x['exit_code']==0 for x in records)},indent=2))

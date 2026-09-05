@@ -1,0 +1,38 @@
+{
+  "ci_run_id": 33962193988,
+  "git_head": "cc134194e6528c34dd364d8a1dae15939093ed16",
+  "artifacts": {
+    "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+    "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+  },
+  "installations": {
+    "wheel": {
+      "version_output": "leitir 0.2.000",
+      "metadata": {
+        "distribution_version": "0.2.0",
+        "module_path": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/lib/python3.11/site-packages/leitir/__init__.py"
+      },
+      "upstream_pin": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "upstream_verified": true,
+      "api_symbols": 462,
+      "api_method": "ast",
+      "info_api_symbols": 462,
+      "examples": 10
+    },
+    "sdist": {
+      "version_output": "leitir 0.2.000",
+      "metadata": {
+        "distribution_version": "0.2.0",
+        "module_path": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/lib/python3.11/site-packages/leitir/__init__.py"
+      },
+      "upstream_pin": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "upstream_verified": true,
+      "api_symbols": 462,
+      "api_method": "ast",
+      "info_api_symbols": 462,
+      "examples": 10
+    }
+  },
+  "commands_count": 14,
+  "all_commands_exit_zero": true
+}

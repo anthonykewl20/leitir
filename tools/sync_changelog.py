@@ -33,7 +33,7 @@ SECURITY_FLAVOR = re.compile(
     r"\b(?:security|vulnerabilit(?:y|ies)|cve-\d+|credentials?|secrets?|tamper(?:ing|ed)?|integrity|plaintext|redact(?:ion|ed)?)\b",
     re.IGNORECASE,
 )
-VERSION_TAG = re.compile(r"^v(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)$")
+VERSION_TAG = re.compile(r"^v(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>[0-9]{3}|0|[1-9][0-9]*)$")
 
 
 @dataclass(frozen=True)

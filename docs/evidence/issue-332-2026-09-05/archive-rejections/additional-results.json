@@ -1,0 +1,47 @@
+[
+  {
+    "case": "wheel_corrupt_payload",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_corrupt_payload",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "independent_zip_read_error": {
+      "type": "BadZipFile",
+      "message": "Bad CRC-32 for file 'leitir/__init__.py'"
+    },
+    "returncode": 0,
+    "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"fa381dc93bb5e9b00caa79ac93216792e2290078800a5581b946222683ff5e2f\",\n    \"leitir-0.2.0.tar.gz\": \"da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+    "stderr": "",
+    "artifact_sha256": {
+      "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5",
+      "leitir-0.2.0-py3-none-any.whl": "fa381dc93bb5e9b00caa79ac93216792e2290078800a5581b946222683ff5e2f"
+    }
+  },
+  {
+    "case": "sdist_project_table_absent",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_project_table_absent",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "independent_zip_read_error": null,
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: 'project'\n",
+    "artifact_sha256": {
+      "leitir-0.2.0.tar.gz": "5a5afb302de67fdc8c7f2eaeaed5432a8d9ff9191a3be62ef1bad8ff6936dad6",
+      "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba"
+    }
+  }
+]

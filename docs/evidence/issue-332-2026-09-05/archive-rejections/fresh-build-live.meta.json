@@ -1,0 +1,22 @@
+{
+  "verifier_sha256": "4818d3d7ec4b8450cc0f7357e2e322800644607656ec8614fa792f37b74c7059",
+  "live_test_sha256": "7b1e60cde6143881f14a5d3cc2c8eeca43eb237917dbe12edd7b1f467b34ea0f",
+  "head": "cc134194e6528c34dd364d8a1dae15939093ed16",
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_release_artifacts_live.py",
+    "--basetemp",
+    "/tmp/leitir-remediation-20260905/release-evidence/reject-fix/live-work",
+    "-q",
+    "--tb=short"
+  ],
+  "seconds": 9.755114325962495,
+  "returncode": 0
+}

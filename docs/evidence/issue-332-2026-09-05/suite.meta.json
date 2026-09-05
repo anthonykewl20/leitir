@@ -1,0 +1,16 @@
+{
+  "head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "seconds": 842.1779486210435,
+  "returncode": 0
+}

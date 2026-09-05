@@ -384,25 +384,25 @@ class _ImportTable:
     # local name -> original provider symbol name, or None if this local
     # name is the *module* itself (so an attribute access off of it is what
     # names a symbol).
-    module_names: frozenset[str]
+    module_names: dict[str, str]
     symbol_aliases: dict[str, str]
 
 
 def _build_import_table(tree: ast.Module, import_roots: frozenset[str]) -> _ImportTable:
-    module_names: set[str] = set()
+    module_names: dict[str, str] = {}
     symbol_aliases: dict[str, str] = {}
     for stmt in tree.body:
         if isinstance(stmt, ast.Import):
             for alias in stmt.names:
                 if alias.name.split(".")[0] in import_roots:
-                    module_names.add(alias.asname or alias.name.split(".")[0])
+                    module_names[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
         elif isinstance(stmt, ast.ImportFrom):
             if stmt.level == 0 and stmt.module and stmt.module.split(".")[0] in import_roots:
                 for alias in stmt.names:
                     if alias.name == "*":
                         continue
-                    symbol_aliases[alias.asname or alias.name] = alias.name
-    return _ImportTable(module_names=frozenset(module_names), symbol_aliases=symbol_aliases)
+                    symbol_aliases[alias.asname or alias.name] = stmt.module + "." + alias.name
+    return _ImportTable(module_names=module_names, symbol_aliases=symbol_aliases)
 
 
 def _find_name_node(tree: ast.Module, *, line: int, col: int) -> ast.Name | None:
@@ -423,6 +423,7 @@ def _find_enclosing_attribute(tree: ast.Module, name_node: ast.Name) -> str | No
 class _Candidate:
     symbol: str | None
     reason: str
+    qualified: str | None = None
 
 
 def _candidate_for_reference(
@@ -433,12 +434,109 @@ def _candidate_for_reference(
     if name_node is None:
         return _Candidate(symbol=None, reason="module reference (symbol site not statically located)")
     local_name = name_node.id
-    if local_name in table.symbol_aliases:
-        return _Candidate(symbol=table.symbol_aliases[local_name], reason="from-import usage")
-    attr = _find_enclosing_attribute(tree, name_node)
-    if attr is not None:
-        return _Candidate(symbol=attr, reason="attribute access")
-    return _Candidate(symbol=None, reason="module reference (no attribute access)")
+    qualified = table.symbol_aliases.get(local_name) or table.module_names.get(local_name)
+    if qualified is None:
+        return _Candidate(symbol=None, reason="provider binding is not statically recovered")
+    current: ast.expr = name_node
+    attributes: list[str] = []
+    while True:
+        parent = next((item for item in ast.walk(tree) if isinstance(item, ast.Attribute) and item.value is current), None)
+        if parent is None:
+            break
+        attributes.append(parent.attr)
+        current = parent
+    if attributes:
+        qualified += "." + ".".join(attributes)
+    elif local_name not in table.symbol_aliases:
+        return _Candidate(symbol=None, reason="module reference (no attribute access)")
+    return _Candidate(symbol=qualified.rsplit(".", 1)[-1], reason="qualified import binding", qualified=qualified)
+
+
+def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str]]:
+    """Recover source-backed names and explicit module-level reexports.
+
+    Ambiguous module layouts, conditional/star exports and dynamic mutations
+    remain unknown. A matching bare name in another module is never proof.
+    """
+    module_records = index.get("modules", [])
+    normalized: dict[str, str] = {}
+    paths: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for record in module_records if isinstance(module_records, list) else []:
+        if not isinstance(record, dict) or not isinstance(record.get("name"), str) or not isinstance(record.get("path"), str):
+            continue
+        name, path = record["name"], record["path"]
+        pieces = name.split(".")
+        candidates = [".".join(pieces[position:]) for position, part in enumerate(pieces) if part in import_roots]
+        if len(candidates) != 1:
+            continue
+        public = candidates[0]
+        if public in paths and paths[public] != path:
+            ambiguous.add(public)
+        normalized[name] = public
+        paths[public] = path
+    known: set[str] = set()
+    symbols = index.get("symbols", [])
+    for symbol in symbols if isinstance(symbols, list) else []:
+        if not isinstance(symbol, dict):
+            continue
+        module, qualified = symbol.get("module"), symbol.get("qualified_name")
+        if isinstance(module, str) and isinstance(qualified, str) and module in normalized:
+            public = normalized[module]
+            if public not in ambiguous and qualified.startswith(module + "."):
+                known.add(public + qualified[len(module):])
+    aliases: dict[str, str] = {}
+    total = 0
+    for module, relative in sorted(paths.items())[:MAX_TARGET_FILES]:
+        if module in ambiguous:
+            continue
+        try:
+            path = root / relative
+            if not path.resolve().is_relative_to(root.resolve()):
+                continue
+            raw = read_regular_file(path, maximum_bytes=MAX_TARGET_FILE_BYTES, no_follow=True)
+            total += len(raw)
+            if total > MAX_TARGET_TOTAL_BYTES:
+                break
+            tree = ast.parse(raw)
+        except (OSError, ValueError, SyntaxError):
+            continue
+        package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom):
+                if statement.level:
+                    parts = package.split(".")
+                    if statement.level > len(parts):
+                        continue
+                    prefix = ".".join(parts[:len(parts) - statement.level + 1])
+                    target = prefix + ("." + statement.module if statement.module else "")
+                else:
+                    target = statement.module or ""
+                for alias in statement.names:
+                    if alias.name != "*" and target:
+                        aliases[module + "." + (alias.asname or alias.name)] = target + "." + alias.name
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    aliases[module + "." + (alias.asname or alias.name.split(".")[0])] = alias.name if alias.asname else alias.name.split(".")[0]
+    return frozenset(known), aliases
+
+
+def _has_qualified_api(qualified: str | None, known: frozenset[str], aliases: dict[str, str]) -> bool:
+    visited: set[str] = set()
+    while qualified and qualified not in visited and len(visited) < 32:
+        if qualified in known:
+            return True
+        visited.add(qualified)
+        parts = qualified.split(".")
+        for count in range(len(parts), 0, -1):
+            prefix = ".".join(parts[:count])
+            if prefix in aliases:
+                qualified = aliases[prefix] + ("." + ".".join(parts[count:]) if count < len(parts) else "")
+                break
+        else:
+            return False
+    return False
+
 
 
 # --------------------------------------------------------------------------
@@ -486,7 +584,6 @@ def run_check(
     consumer_root, files = discover_python_files(consumer_path)
     index = extract_check_index(materialized_root)
     _require_checkable_index(index, against=against)
-    index_names = _index_symbol_names(index)
     target_text = _read_target_text(materialized_root)
 
     # Issue #269: derive the import root(s) from the materialized
@@ -502,6 +599,7 @@ def run_check(
     resolved_roots = resolve_import_roots(materialized_root, package_name)
     import_roots_determinable = resolved_roots is not None
     import_roots = tuple(sorted(resolved_roots)) if resolved_roots else ()
+    qualified_names, aliases = _qualified_api_evidence(index, materialized_root, import_roots)
     result = resolve_consumer(
         consumer_root=consumer_root,
         import_roots={root: against for root in import_roots},
@@ -582,9 +680,9 @@ def run_check(
                 )
             )
             continue
-        if symbol in index_names:
+        if _has_qualified_api(candidate.qualified, qualified_names, aliases):
             ok_sites.append(
-                CheckSite(file=relpath, line=line, col=col, symbol=symbol, outcome="ok", reason="present in extracted API index")
+                CheckSite(file=relpath, line=line, col=col, symbol=symbol, outcome="ok", reason="qualified binding is present in the source-backed API index")
             )
             continue
         if target_text.capped:
@@ -607,7 +705,7 @@ def run_check(
                     col=col,
                     symbol=symbol,
                     outcome="unresolved",
-                    reason="not in the API index, but present in the pinned source text "
+                    reason="qualified binding is not established, but the bare name is present in pinned source text "
                     "(likely a conditional definition, alias, or module constant the "
                     "def/class-only extractor cannot see)",
                 )

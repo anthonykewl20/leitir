@@ -51,6 +51,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - parse quoted Go requirements and report direct-only coverage (#314)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - preserve documented search layers and pin method-bearing evidence (#312)
+- preserve known BTS rejection across nested-owner budget exhaustion (#309)
 - preserve the empty package-name diagnostic (#306) (`calibration`)
 - preserve the empty spec package-name diagnostic (#308) (`calibration`)
 - preserve the malformed repository-ref diagnostic (#307) (`calibration`)

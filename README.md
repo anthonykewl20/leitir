@@ -618,14 +618,18 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
   remediated the reported P2 findings.
 - The 2026-09-05 BTS walk correction was executed against all five pinned
   donors under real nsjail containment in
-  [Phase A run 33953061013](https://github.com/anthonykewl20/leitir/actions/runs/33953061013).
-  Each donor completed with exact rerun parity, donor-import rejection proof,
-  and 2 passed / 0 failed / 0 skipped outcomes. The aggregate report remains
-  REJECT pending independent owner ratification of runtime digest
-  `sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`,
-  also measured in run 33951188380. The prior `72949674…` signature cannot
-  authorize the changed runtime. The published rootfs was authenticated and
-  reused; no substrate rebuild or publication occurred.
+  [Phase A run 33960563929](https://github.com/anthonykewl20/leitir/actions/runs/33960563929)
+  (final 0.2.000 source). Each donor completed with exact rerun parity,
+  donor-import rejection proof, and 2 passed / 0 failed / 0 skipped outcomes.
+  The re-measured runtime digest
+  `sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`
+  was re-ratified by the owner on 2026-09-05 with the existing trusted key
+  `7baec2e9…` (the prior `72949674…` signature cannot authorize the changed
+  runtime), and the Phase-C gate reached `complete` on branch run
+  [33974049348](https://github.com/anthonykewl20/leitir/actions/runs/33974049348);
+  see [the #338 evidence](docs/evidence/issue-338-2026-09-05/README.md). The
+  published rootfs was authenticated and reused; no substrate rebuild or
+  publication occurred.
 - BTS benchmark evidence is published at
   `benchmarks/bts-v1/runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/`:
   five of six tasks have exact baselines and metrics; the

@@ -71,12 +71,63 @@ not the out-of-band authority. The ratified runtime authority is recorded in
    Missing, tampered, self-made, or untrusted signatures reject; equality alone
    cannot create authority.
 
-### 2026-08-17 runtime digest ratified (ceremony complete)
+### 2026-09-05 runtime digest re-ratified for 0.2.000 (ceremony complete)
 
-The ADR-0021-stabilized runtime digest is ratified:
+The 0.2.000 release source changed the contained runtime (the #309 BTS walk
+correction and the release fixes), so the runtime digest moved and the
+2026-08-17 signature could no longer authorize it. The re-measured digest is
+`sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`.
+It was measured identically by four runs. Run
+[33951188380](https://github.com/anthonykewl20/leitir/actions/runs/33951188380)
+reported it only in its `ManifestAuthProjectionMismatchError` against the
+stale sidecar and stopped before the gate. The three unratified Phase-A runs
+[33953061013](https://github.com/anthonykewl20/leitir/actions/runs/33953061013),
+[33956771092](https://github.com/anthonykewl20/leitir/actions/runs/33956771092)
+and [33960563929](https://github.com/anthonykewl20/leitir/actions/runs/33960563929)
+(final release source) each completed all five donors at 2/0/0 with exact
+rerun parity, donor-ban proof and complete probes.
+
+`corpus-v1.1.json` now records that digest in `ratified_runtime_digest`, and
+the detached `ratification-v1.json` binds the canonical projection
+`{corpus_id, corpus_manifest_digest, ratified_runtime_digest}` — both digest
+fields carry that same measured value — under the unchanged owner ratifier key:
+
+* owner ratifier key ID:
+  `7baec2e9c408e77ad74312c2d9c575a73fae02275a015a4becd8c829814b5505`
+  (still the single key in `trusted-keys-v1.json`; its private half is held
+  out of band by the owner under `~/.leitir/` and is never committed). The
+  trust root was not rotated; the ceremony re-signed with the existing key.
+* projection digest:
+  `fbdbe2d87f385aed91b204959f337f74955d74680e48ee74b7f038942f5e669e`.
+* The ceremony was executed by the owner on 2026-09-05 on the owner's
+  workstation (`docs/evidence/issue-338-2026-09-05/ceremony-log.txt`). The
+  same log records the fail-closed probes run against the fresh trust root:
+  tampered signature, tampered projection, the stale 2026-08-17 sidecar, a
+  self-made untrusted key and a missing sidecar all reject.
+* The superseded 2026-08-17 sidecar is archived as
+  `ratification-v1-superseded-2026-08-17.json`. It remains valid evidence of
+  that ceremony but no longer matches the active projection, so the active
+  gate rejects it (`ManifestAuthProjectionMismatchError`).
+
+`ratified_manifest_digest` remains `null` by convention: it is the record-level
+`sha256("ratify:" + content_digest)` content-binding convention, not the
+out-of-band authority. The authority is the signed sidecar plus
+`ratified_runtime_digest`, exactly as the protocol above defines.
+
+Phase C follows this record: the ratifying change reruns `exit-gate-run` with
+`--trusted-keys` on the release source, and its summary must flip from
+`reject` to `complete` with `corpus_manifest_digest sha256:901bf7ac…`. The
+Phase-C evidence for 0.2.000 is recorded in
+`docs/evidence/issue-338-2026-09-05/README.md`.
+
+### Ceremony history
+
+**2026-08-17 — runtime digest ratified (superseded 2026-09-05).**
+
+The ADR-0021-stabilized runtime digest was ratified:
 `sha256:72949674c997fe803e58c4060a787c5484785cc96b9bb450c7659aab72658c79`.
-`corpus-v1.1.json` records it in `ratified_runtime_digest`, and the detached
-`ratification-v1.json` binds the canonical projection
+`corpus-v1.1.json` recorded it in `ratified_runtime_digest`, and the detached
+sidecar (now archived as `ratification-v1-superseded-2026-08-17.json`) bound the canonical projection
 `{corpus_id, corpus_manifest_digest, ratified_runtime_digest}` — both digest
 fields carry that same measured value — under the owner-controlled long-term
 ratifier key rotated in for this ceremony:
@@ -93,11 +144,11 @@ out-of-band authority. The authority is the signed sidecar plus
 
 Phase C follows this record: the ratifying change reruns `exit-gate-run` with
 `--trusted-keys`, and its summary must flip from `reject` to `complete` with
-`corpus_manifest_digest sha256:72949674…`. The canonical COMPLETE run on
-`main` is the closing evidence for #73; this section records the ceremony, not
-a pre-claimed gate result.
-
-### Ceremony history
+`corpus_manifest_digest sha256:72949674…`. That gate completed on branch run
+[32018653190](https://github.com/anthonykewl20/leitir/actions/runs/32018653190)
+and canonical main run
+[32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262),
+the closing evidence for #73.
 
 **2026-08-16 — ceremony held pending a stable runtime digest.** The
 out-of-band ceremony was performed and retained as audit evidence under the

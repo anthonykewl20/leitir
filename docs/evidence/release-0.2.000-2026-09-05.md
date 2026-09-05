@@ -2,7 +2,7 @@
 
 This record covers the code/specification remediation and release preparation.
 All selected live probes have completed; three explicit skips remain.
-Independent signed Phase C and publication are tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
+Signed Phase C completed on 2026-09-05 (see Containment and authority below); tag publication is tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
 The original audit examined commit `73f57b66`; runtime, verifier and final help runs below identify their exact source heads.
 Application integration [PR337](https://github.com/anthonykewl20/leitir/pull/337)
 merged as `bf886e1eb59f9e3126826e8a940c94fd28b38a0b`; all13 component PRs
@@ -125,8 +125,13 @@ The [complete report](issue-332-2026-09-05/contained-phase-a/exit-gate-report.js
 and [summary](issue-332-2026-09-05/contained-phase-a/summary.json) preserve the
 aggregate REJECT: only the independent authority match remains unsatisfied.
 
-Phase C requires the independently signed sidecar for the prepared projection,
-using the existing trusted owner key. No signature or trust root is fabricated.
+Phase C: on 2026-09-05 the owner signed that projection with the existing
+trusted owner key (no trust-root rotation, no fabricated signature) and the
+gate was rerun with `--trusted-keys` on the ratifying branch
+([run 33974049348](https://github.com/anthonykewl20/leitir/actions/runs/33974049348));
+its summary is `complete` with the same digest. The ceremony log, rejection
+probes and retained gate artifacts are in
+[issue-338-2026-09-05/](issue-338-2026-09-05/README.md).
 The separate optional six-task BTS evaluation contains unsupported/rejected
 integrations and is not an all-pass result. Proposed Go containment is not
 claimed as implemented by Python-to-Go contract generation.

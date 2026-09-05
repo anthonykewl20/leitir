@@ -1,0 +1,78 @@
+[
+  {
+    "source": "import requests\nrequests.help.info()\n",
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "consumer0.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "consumer0.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 1,
+    "runtime_stderr": "Traceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/review-one-check-modules/consumer0.py\", line 2, in <module>\n    requests.help.info()\n    ^^^^^^^^^^^^^\nAttributeError: module 'requests' has no attribute 'help'\n"
+  },
+  {
+    "source": "import requests.help\nrequests.help.info()\n",
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "consumer1.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "consumer1.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 0,
+    "runtime_stderr": ""
+  }
+]

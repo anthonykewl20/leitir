@@ -366,18 +366,11 @@ def _appears_in_text(name: str, texts: tuple[str, ...]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _ImportTable:
-    """Best-effort, module-top-level-only recovery of what a bound name
-    actually names, for one consumer file.
+    """Unambiguous provider bindings recovered from consumer imports.
 
-    ``resolve_consumer`` already conservatively guarantees *that* a name at
-    a given position is certainly bound to the target distribution; this
-    table only recovers, on a best-effort basis, *which* provider symbol
-    that binding names, by re-reading the file's own top-level
-    import/from-import statements. Anything not resolvable at the top level
-    (a deeper-scope import, a re-bound alias) falls back at lookup time to
-    the attribute-access heuristic in ``_candidate_for_reference``, which is
-    always safe: it either recovers a concrete attribute name or reports a
-    bare module reference, never a guess.
+    The scope-aware resolver determines distribution attribution. Conflicting
+    qualified bindings are omitted here; module loading is proven separately
+    for each reference, preserving statement order and scope conservatively.
     """
 
     # Local names map to unambiguous qualified module/value bindings.
@@ -443,6 +436,7 @@ class _Candidate:
     symbol: str | None
     reason: str
     qualified: str | None = None
+    binding: str | None = None
 
 
 def _candidate_for_reference(
@@ -456,6 +450,7 @@ def _candidate_for_reference(
     qualified = table.symbol_aliases.get(local_name) or table.module_names.get(local_name)
     if qualified is None:
         return _Candidate(symbol=None, reason="provider binding is not statically recovered")
+    binding = qualified
     current: ast.expr = name_node
     attributes: list[str] = []
     while True:
@@ -468,10 +463,10 @@ def _candidate_for_reference(
         qualified += "." + ".".join(attributes)
     elif local_name not in table.symbol_aliases:
         return _Candidate(symbol=None, reason="module reference (no attribute access)")
-    return _Candidate(symbol=qualified.rsplit(".", 1)[-1], reason="qualified import binding", qualified=qualified)
+    return _Candidate(symbol=qualified.rsplit(".", 1)[-1], reason="qualified import binding", qualified=qualified, binding=binding)
 
 
-def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str], frozenset[str]]:
+def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str], frozenset[str], dict[str, frozenset[str]]]:
     """Recover source-backed names and explicit module-level reexports.
 
     Ambiguous module layouts, conditional/star exports and dynamic mutations
@@ -505,6 +500,7 @@ def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str
             if public not in ambiguous and qualified.startswith(module + "."):
                 known.add(public + qualified[len(module):])
     aliases: dict[str, str] = {}
+    imports: dict[str, frozenset[str]] = {}
     total = 0
     for module, relative in sorted(paths.items())[:MAX_TARGET_FILES]:
         if module in ambiguous:
@@ -521,6 +517,7 @@ def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str
         except (OSError, ValueError, SyntaxError):
             continue
         package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+        loaded: set[str] = set()
         for statement in tree.body:
             if isinstance(statement, ast.ImportFrom):
                 if statement.level:
@@ -531,12 +528,16 @@ def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str
                     target = prefix + ("." + statement.module if statement.module else "")
                 else:
                     target = statement.module or ""
+                loaded.add(target)
                 for alias in statement.names:
                     if alias.name != "*" and target:
+                        loaded.add(target + "." + alias.name)
                         aliases[module + "." + (alias.asname or alias.name)] = target + "." + alias.name
             elif isinstance(statement, ast.Import):
                 for alias in statement.names:
+                    loaded.add(alias.name)
                     aliases[module + "." + (alias.asname or alias.name.split(".")[0])] = alias.name if alias.asname else alias.name.split(".")[0]
+        imports[module] = frozenset(loaded)
     # Module imports require actual module/namespace paths. A class exported
     # at requests.Session cannot authorize `import requests.Session`.
     modules = {
@@ -546,12 +547,51 @@ def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str
         for parts in (name.split("."),)
         for length in range(1, len(parts) + 1)
     }
-    return frozenset(known), aliases, frozenset(modules)
+    return frozenset(known), aliases, frozenset(modules), imports
 
 
-def _has_qualified_api(qualified: str | None, known: frozenset[str], aliases: dict[str, str]) -> bool:
+def _loaded_modules(
+    tree: ast.Module, reference: CodeReference, binding: str | None,
+    modules: frozenset[str], imports: dict[str, frozenset[str]],
+) -> frozenset[str]:
+    """Prove module loading from this binding and preceding unconditional imports.
+
+    A source file's existence does not bind it on its parent package. Imports
+    in later statements or other scopes cannot establish an earlier access.
+    """
+    requested = {binding} if binding else set()
+    for statement in tree.body:
+        if (statement.end_lineno or statement.lineno, statement.end_col_offset or 0) >= (
+            reference.span.start_line, reference.span.start_col
+        ):
+            continue
+        if isinstance(statement, ast.Import):
+            requested.update(alias.name for alias in statement.names)
+        elif isinstance(statement, ast.ImportFrom) and not statement.level and statement.module:
+            requested.add(statement.module)
+            requested.update(statement.module + "." + alias.name for alias in statement.names)
+    loaded: set[str] = set()
+    while requested:
+        name = min(requested)
+        requested.remove(name)
+        parts = name.split(".")
+        for length in range(1, len(parts) + 1):
+            module = ".".join(parts[:length])
+            if module in modules and module not in loaded:
+                loaded.add(module)
+                requested.update(imports.get(module, ()))
+    return frozenset(loaded)
+
+
+def _has_qualified_api(
+    qualified: str | None, known: frozenset[str], aliases: dict[str, str],
+    modules: frozenset[str], loaded: frozenset[str],
+) -> bool:
     visited: set[str] = set()
     while qualified and qualified not in visited and len(visited) < 32:
+        parts = qualified.split(".")
+        if any(".".join(parts[:length]) in modules - loaded for length in range(1, len(parts))):
+            return False
         if qualified in known:
             return True
         visited.add(qualified)
@@ -627,7 +667,7 @@ def run_check(
     resolved_roots = resolve_import_roots(materialized_root, package_name)
     import_roots_determinable = resolved_roots is not None
     import_roots = tuple(sorted(resolved_roots)) if resolved_roots else ()
-    qualified_names, aliases, known_modules = _qualified_api_evidence(index, materialized_root, import_roots)
+    qualified_names, aliases, known_modules, module_imports = _qualified_api_evidence(index, materialized_root, import_roots)
     result = resolve_consumer(
         consumer_root=consumer_root,
         import_roots={root: against for root in import_roots},
@@ -711,7 +751,10 @@ def run_check(
                 )
             )
             continue
-        if _has_qualified_api(candidate.qualified, qualified_names, aliases):
+        if _has_qualified_api(
+            candidate.qualified, qualified_names, aliases, known_modules,
+            _loaded_modules(tree, reference, candidate.binding, known_modules, module_imports),
+        ):
             ok_sites.append(
                 CheckSite(file=relpath, line=line, col=col, symbol=symbol, outcome="ok", reason="qualified binding is present in the source-backed API index")
             )

@@ -1,0 +1,14 @@
+2026-09-05T09:35:20.2059570Z [gw1] [ 99%] PASSED tests/test_differential_eval.py::test_check_bridge_measures_clean_via_local_fixture 
+2026-09-05T09:35:20.4302120Z [gw1] [ 99%] PASSED tests/test_differential_eval.py::test_check_bridge_nothing_examined_is_unavailable_not_zero 
+2026-09-05T09:35:27.8599640Z [gw1] [ 99%] PASSED tests/test_differential_eval.py::test_check_bridge_unreachable_network_is_unavailable 
+2026-09-05T09:37:05.5243000Z [gw0] [ 99%] PASSED tests/test_differential_eval.py::test_end_to_end_stub_run_all_arms_offline 
+2026-09-05T09:37:24.7931330Z [gw2] [ 99%] PASSED tests/test_differential_eval.py::test_uncomputable_metric_is_unavailable_never_zero 
+2026-09-05T09:37:29.4999100Z [gw1] [ 99%] PASSED tests/test_differential_eval.py::test_exit_corpus_manifest_digest_unchanged_after_a_run 
+2026-09-05T09:37:51.9682900Z [gw2] [ 99%] PASSED tests/test_differential_eval.py::test_infrastructure_invalid_never_reported_as_a_pass_or_fail 
+2026-09-05T09:37:52.3792310Z [gw2] [ 99%] PASSED tests/test_differential_eval.py::test_check_bridge_measures_a_real_violation_via_local_fixture 
+2026-09-05T09:37:52.3883330Z [gw2] [ 99%] PASSED tests/test_differential_eval.py::test_harness_aborts_run_if_a_leak_is_ever_constructed 
+2026-09-05T09:39:08.7162240Z [gw0] [ 99%] PASSED tests/test_differential_eval.py::test_contract_test_bytes_never_appear_in_any_prompt_payload 
+2026-09-05T09:39:32.9355370Z [gw0] [ 99%] PASSED tests/test_differential_eval.py::test_assert_no_evaluator_leak_is_not_vacuous 
+2026-09-05T09:39:32.9370080Z [gw1] [ 99%] PASSED tests/test_differential_eval.py::test_load_tasks_does_not_write_under_exit_corpus 
+2026-09-05T09:41:08.7551040Z [gw1] [100%] PASSED tests/test_differential_eval.py::test_deterministic_across_pythonhashseed 
+2026-09-05T09:41:08.9005550Z ========== 3682 passed, 218 skipped, 8 warnings in 445.24s (0:07:25) ===========

@@ -13,6 +13,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from threading import Lock
 from typing import Protocol, runtime_checkable
 
 from leitir import _http
@@ -97,6 +98,7 @@ class GitHubTreeSource:
         max_rate_limit_delay: float = 300.0,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
+        self._tree_cache_lock = Lock()
         self._tree_cache: OrderedDict[tuple[str, str], tuple[tuple[BlobEntry, ...], bool]] = OrderedDict()
         self._token = token
         if token:
@@ -150,10 +152,11 @@ class GitHubTreeSource:
     def _remember_tree(self, key: tuple[str, str], result: tuple[tuple[BlobEntry, ...], bool]) -> tuple[tuple[BlobEntry, ...], bool]:
         # Complete immutable listings only; never publish a failed walk's
         # partial_blobs. Bound both the shelf count and retained entry count.
-        self._tree_cache[key] = result
-        self._tree_cache.move_to_end(key)
-        while len(self._tree_cache) > 4 or sum(len(value[0]) for value in self._tree_cache.values()) > MAX_TREE_ENTRIES:
-            self._tree_cache.popitem(last=False)
+        with self._tree_cache_lock:
+            self._tree_cache[key] = result
+            self._tree_cache.move_to_end(key)
+            while len(self._tree_cache) > 4 or sum(len(value[0]) for value in self._tree_cache.values()) > MAX_TREE_ENTRIES:
+                self._tree_cache.popitem(last=False)
         return result
 
     def list_blobs_ex(
@@ -161,9 +164,11 @@ class GitHubTreeSource:
     ) -> tuple[tuple[BlobEntry, ...], bool]:
         commit_sha = _require_hex_sha(commit_sha)
         cache_key = (slug, commit_sha)
-        if cache_key in self._tree_cache:
-            self._tree_cache.move_to_end(cache_key)
-            return self._tree_cache[cache_key]
+        with self._tree_cache_lock:
+            cached = self._tree_cache.get(cache_key)
+            if cached is not None:
+                self._tree_cache.move_to_end(cache_key)
+                return cached
         url = f"{self._base_url}/repos/{slug}/git/trees/{commit_sha}?recursive=1"
         logger.debug("tree API url=%s", url)
         payload = self._get_json(url, self._headers())

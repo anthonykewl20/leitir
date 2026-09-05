@@ -233,3 +233,5 @@ enrichment behind the existing CLI (P5–P6).
       machine-readable `query_translation` record for every predicate.
 
 2026-09-05 amendment: Immutable tree reuse (#316): complete validated tree listings are reused per repository and exact commit within one tree-source instance, bounded to four listings and 600,000 total blob entries. Failed walks and partial prefixes are never cached; recovered-tree annotations remain intact.
+
+2026-09-05 concurrency correction (#316): a short instance lock makes cache lookup, recency updates, publication and eviction atomic. Network enumeration stays outside that lock; immutable results may be returned after subsequent eviction. This preserves concurrent use of a shared tree-source instance without serializing upstream I/O.

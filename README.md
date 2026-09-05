@@ -651,3 +651,5 @@ Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.
 snapshots are never scorer evidence.
 
 Immutable tree reuse (#316): one GitHub tree-source instance reuses successfully validated listings by repository and exact commit. The cache retains at most four listings and 600,000 total blob entries. Failed or incomplete walks are never cached; recovered-tree coverage annotations are preserved.
+
+Shared tree-source instances (#316): cache hits and eviction are atomic under a short lock. Network enumeration runs outside the lock. Concurrent callers cannot lose a listing between membership and read.

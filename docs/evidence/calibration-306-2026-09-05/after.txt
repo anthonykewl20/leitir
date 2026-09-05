@@ -1,0 +1,38 @@
+--- a/src/leitir/resolver.py
++++ b/src/leitir/resolver.py
+@@ -164,5 +164,5 @@
+             raise TypeError("ecosystem must be an Ecosystem")
+         if not self.name or not self.name.strip():
+-            raise ValueError("name must be non-empty")
++            pass
+         if not self.version or not self.version.strip():
+             raise ValueError("version must be non-empty")
+killed (exit 1) against 1 tests [contexts]
+me must be unscoped or @scope/name")
+        if self.ecosystem is Ecosystem.PYPI and re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", self.name
+        ) is None:
+>           raise ValueError("invalid pypi package name")
+E           ValueError: invalid pypi package name
+
+src/leitir/resolver.py:185: ValueError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_resolver.TestPackageRef object at 0x75dd52f08b90>
+
+    def test_empty_name_rejected(self):
+        # A caller must receive the missing-name diagnostic, not a later
+        # ecosystem grammar error after the first rejection disappears.
+>       with pytest.raises(ValueError, match="^name must be non-empty$"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: 
+E       - invalid pypi package name
+E       + name must be non-empty
+
+tests/test_resolver.py:133: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_resolver.py::TestPackageRef::test_empty_name_rejected - Ass...
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 0.19s
+

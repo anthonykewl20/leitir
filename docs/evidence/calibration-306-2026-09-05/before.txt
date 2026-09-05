@@ -1,0 +1,13 @@
+--- a/src/leitir/resolver.py
++++ b/src/leitir/resolver.py
+@@ -164,5 +164,5 @@
+             raise TypeError("ecosystem must be an Ecosystem")
+         if not self.name or not self.name.strip():
+-            raise ValueError("name must be non-empty")
++            pass
+         if not self.version or not self.version.strip():
+             raise ValueError("version must be non-empty")
+survived (exit 0) against 1 tests [contexts]
+.                                                                        [100%]
+1 passed in 0.07s
+

@@ -128,7 +128,9 @@ class TestPackageRef:
             PackageRef(Ecosystem.GO, "testify", "v1.8.1")
 
     def test_empty_name_rejected(self):
-        with pytest.raises(ValueError):
+        # A caller must receive the missing-name diagnostic, not a later
+        # ecosystem grammar error after the first rejection disappears.
+        with pytest.raises(ValueError, match="^name must be non-empty$"):
             PackageRef(Ecosystem.PYPI, "", "1.0")
 
     def test_empty_version_rejected(self):

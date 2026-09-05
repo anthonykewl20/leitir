@@ -463,6 +463,7 @@ def test_concurrent_materializations_publish_once_without_cache_gap(tmp_path):
         if server is not None:
             assert server.state.served_count == 1
     results = [queue.get(timeout=2), queue.get(timeout=2)]
+    assert all(isinstance(result, tuple) for result in results), results
     target = tmp_path / "repos/github.com/example/demo" / SHA
     assert sorted(results) == [(str(target), False), (str(target), True)]
     assert (target / "src/example.py").read_bytes() == b"pinned source\n"

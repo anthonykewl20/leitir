@@ -24,6 +24,7 @@ here is `66b88c24ff97f18669fe1c48e18c74e949cc84e1`.
 | Platform cache isolation and lock-order assumptions in validation | #330 / #331 | Actual concurrent Packaging materialization/trust succeeds; changed bytes reject. PR331 merged and issue330 auto-closed. |
 | Intermittent macOS full-suite timeout | #334 / #335 | Identical source/test trees: baseline 768.21 seconds, worksteal 445.24 seconds, identical outcomes. Actual PR macOS run passed in 425.93 seconds with the original deadline. |
 | Existing diagnostic mutations escaped observation | #306–308 / #317–319 | Production rejection remains intact; diagnostic mutations are now detected. |
+| PR merge-ref artifact could qualify under a different head SHA | #332 / #333 | Historical green CI31579743105 built a wheel with three files absent from its reported head. The actual workflow step accepted it before the correction and rejects it afterward; release qualification requires exact-commit push/dispatch CI. |
 | Public/distribution/release version mismatch | #332 / #333 | Actual wheel/sdist builds and installs agree on public `0.2.000` and Python metadata `0.2.0`; modified archive identities reject. |
 
 Per-issue pins, commands, before/after output and rejection evidence are in the
@@ -64,6 +65,17 @@ two implemented its Flask correction. Root independently reviewed PR335,
 implemented by reviewer one. No reviewer approved their own implementation.
 Exact head records and full review reports remain in the session's remediation
 evidence directory; final merge readiness must recheck the current heads.
+
+## Release source binding
+
+[Actual artifact and gate evidence](issue-332-2026-09-05/release-ci-source/README.md)
+establishes a historical publication-admission defect: PR CI metadata names the
+head while the default checkout builds a merge ref. Matching that head SHA and
+a successful run did not prove the artifact came from the tagged source.
+The corrected gate admits only successful push/workflow-dispatch CI runs for
+that exact commit. The current release head/PR merge trees were independently
+compared and match; the historical defect is not misrepresented as a current
+candidate mismatch. Final publication requires an actual qualifying branch run.
 
 ## Containment and authority
 

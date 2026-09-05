@@ -27,10 +27,16 @@ mismatched or malformed identity fields reject. Artifact symlinks and unexpected
 files reject. Do not rename wheel files to circumvent packaging normalization.
 
 CI builds and tests the distributions. Publication consumes those exact bytes
-from a successful CI run for the exact tagged commit, verifies identity, records
+from a successful push or workflow-dispatch CI run for the exact tagged commit, verifies identity, records
 SHA-256 digests, waits for successful provenance attestation, rechecks digests,
 and uses `docs/releases/<public-version>.md` from that commit as release notes.
-A missing notes document rejects publication. Existing containment authority,
+A missing notes document rejects publication. Pull-request runs are ineligible:
+GitHub reports their head SHA while the default checkout builds the PR merge
+ref. Real CI run31579743105 produced a wheel with three files absent from its
+reported head; matching run metadata alone did not establish source identity.
+The final release branch therefore receives an actual manually dispatched full
+CI run before tagging, or publication uses the successful exact main-push run.
+See GitHub's [pull-request event checkout semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request). Existing containment authority,
 review and live-evidence gates remain in force.
 
 ## Validation and consequences

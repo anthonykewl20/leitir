@@ -1,0 +1,35 @@
+{
+  "head": "9d61335fe19176dc1facda3182913ae1305a5252",
+  "base": "82e2304ac9007ae334b11b1739122d3337037d42",
+  "head_project_version": "0.1.1",
+  "wheel_metadata_version": "0.1.1",
+  "files": [
+    {
+      "path": "leitir/benchmarks/ast-vs-regex-v1/README.md",
+      "artifact_equals_base_source": true,
+      "sha256": "eac7f84b2c54634c73dd5c996f0353921f380d9bce1a1501de40cdc720791386"
+    },
+    {
+      "path": "leitir/benchmarks/ast-vs-regex-v1/comparison.json",
+      "artifact_equals_base_source": true,
+      "sha256": "563f147a6c5638d6b8d3e6f5a38cddd447b480bfceeab09f2591cf236447252c"
+    },
+    {
+      "path": "leitir/benchmarks/ast-vs-regex-v1/corpus/Lib/urllib/parse.py.txt",
+      "artifact_equals_base_source": true,
+      "sha256": "9da7c507c12349f16264fbf765228a4976d8a26946a79ce96c53eb45f7d612f2"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "leitir-0.1.1-py3-none-any.whl",
+      "bytes": 231203,
+      "sha256": "03b472725911ff610354684d4eaed144c0975008fd8761e8213e31fe0f4f0135"
+    },
+    {
+      "name": "leitir-0.1.1.tar.gz",
+      "bytes": 404443,
+      "sha256": "683633cb66e6b36c5bed4791f8c97f09d6ba605ae7c57a821b74bd65d598480e"
+    }
+  ]
+}

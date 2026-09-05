@@ -1,0 +1,14 @@
+[
+  {
+    "stage": "before",
+    "returncode": 0,
+    "commit_sha": "9d61335fe19176dc1facda3182913ae1305a5252",
+    "execution": "Exact production workflow step, actual live GitHub API, local shell; no tag or publication executed."
+  },
+  {
+    "stage": "after",
+    "returncode": 1,
+    "commit_sha": "9d61335fe19176dc1facda3182913ae1305a5252",
+    "execution": "Exact production workflow step, actual live GitHub API, local shell; no tag or publication executed."
+  }
+]

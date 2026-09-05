@@ -3,7 +3,7 @@ name: Release
 # Audit fix (2026-08-23): a v* tag used to rebuild artifacts with floating
 # pip/build/twine and publish them unverified, with no CI gate. Publication is
 # now gated end-to-end:
-#   gate    - a CI workflow run for the EXACT tagged commit must have succeeded;
+#   gate    - push/dispatch CI for the EXACT tagged commit must have succeeded;
 #   package - the CI-tested wheel/sdist artifact is reused (never rebuilt),
 #             tag<->file-name<->METADATA version is verified, and twine comes
 #             from the hash-locked .github/workflows/requirements-release.lock;
@@ -43,7 +43,7 @@ jobs:
           commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           echo "commit=${commit}" >> "$GITHUB_OUTPUT"
           echo "${GITHUB_REF_NAME} (GITHUB_SHA=${GITHUB_SHA}) -> commit ${commit}"
-      - name: Require a successful CI run for that exact commit
+      - name: Require successful push or dispatch CI for that exact commit
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,8 +52,11 @@ jobs:
           set -euo pipefail
           # NOTE: the workflow file is ci.yml - the GitHub API resolves
           # workflow file names case-sensitively, so 'CI.yml' would 404.
-          runs="$(gh run list --workflow ci.yml --commit "$COMMIT_SHA" --json databaseId,headSha,conclusion,status)"
-          run_id="$(printf '%s' "$runs" | jq -r --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c) | select(.status == "completed" and .conclusion == "success")] | .[0].databaseId // empty')"
+          runs="$(gh run list --workflow ci.yml --commit "$COMMIT_SHA" --json databaseId,headSha,conclusion,status,event)"
+          # PR run.headSha names the head, but default checkout builds its
+          # merge ref. Only push/dispatch checkout is the named commit itself.
+          eligible_runs="$(printf '%s' "$runs" | jq --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c and (.event == "push" or .event == "workflow_dispatch"))]')"
+          run_id="$(printf '%s' "$eligible_runs" | jq -r '[.[] | select(.status == "completed" and .conclusion == "success")] | .[0].databaseId // empty')"
           if [ -n "$run_id" ]; then
             echo "Green CI run for commit ${COMMIT_SHA} (audit trail):"
             echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
@@ -61,13 +64,13 @@ jobs:
             exit 0
           fi
           # No green run: fail closed with a precise reason.
-          pending="$(printf '%s' "$runs" | jq --arg c "$COMMIT_SHA" '[.[] | select(.headSha == $c and .status != "completed")] | length')"
+          pending="$(printf '%s' "$eligible_runs" | jq '[.[] | select(.status != "completed")] | length')"
           if [ "${pending:-0}" -gt 0 ]; then
-            echo "::error::CI for commit ${COMMIT_SHA} is still in progress; re-run this workflow after it completes." >&2
-          elif [ -n "$runs" ] && [ "$runs" != "[]" ]; then
-            echo "::error::CI ran for commit ${COMMIT_SHA} but no run concluded 'success'; refusing to publish." >&2
+            echo "::error::Push/dispatch CI for commit ${COMMIT_SHA} is still in progress; re-run this workflow after it completes." >&2
+          elif [ "$eligible_runs" != "[]" ]; then
+            echo "::error::Push/dispatch CI ran for commit ${COMMIT_SHA} but no run concluded 'success'; refusing to publish." >&2
           else
-            echo "::error::No CI workflow run found for commit ${COMMIT_SHA}; publication requires a green CI run for the exact tagged commit." >&2
+            echo "::error::No release-qualified CI run found for commit ${COMMIT_SHA}; run CI with workflow_dispatch on this commit or use its successful main push. Pull-request merge-ref builds cannot qualify a release." >&2
           fi
           exit 1
 

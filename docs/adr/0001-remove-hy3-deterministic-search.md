@@ -233,3 +233,8 @@ enrichment behind the existing CLI (P5–P6).
       machine-readable `query_translation` record for every predicate.
 
 2026-09-05 search semantic correction (#312): optional predicates boost independently. Content must_not predicates filter documents in buffered, indexed and streamed scoring. Serialized matches retain AST/heuristic method provenance. Closed JSON predicate objects preserve arbitrary literal values, and generated ask commands replay their exact typed query.
+
+The CLI help and capability documentation name the same masking boundary:
+JavaScript, TypeScript, Java, C and C++ mask comments and strings. Python's
+default heuristic, Rust and Go scan raw text; Python AST structural predicates
+retain their separate parsed-source semantics.

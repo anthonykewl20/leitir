@@ -1,0 +1,75 @@
+usage: leitir search [-h] [--json] [--repo REPO | --package PACKAGE |
+                     --global | --corpus] [--commit COMMIT]
+                     [--version VERSION] [--ecosystem {npm,pypi,crates,go}]
+                     [--must MUST] [--should SHOULD] [--must-not MUST_NOT]
+                     [--whole-file] [--ast] [--max-results MAX_RESULTS]
+                     [--max-pages MAX_PAGES] [--language LANGUAGE] [--index]
+                     [--require-index] [--root ROOT | --local]
+
+options:
+  -h, --help            show this help message and exit
+  --json                accepted for flag-shape compatibility with other
+                        verbs; has no effect. search always writes its
+                        machine-readable report to stdout and the human
+                        summary to stderr, regardless of this flag
+  --repo REPO           repository slug (owner/repo); requires --commit
+  --package PACKAGE     package name; requires --version and --ecosystem
+  --global              global discovery via GitHub Code Search; coverage is
+                        bounded, not total: output reports pages fetched,
+                        matches returned, and an incomplete flag with the
+                        bound that fired (e.g. page cap, server-side
+                        truncation, or a result budget)
+  --corpus              search every eligible materialized shelf in the corpus
+                        (offline, commit- and blob-pinned); a shelf that is
+                        unindexed (with --require-index), drift-parity,
+                        registry-derived, on an unsupported host, or fails
+                        load-time verification is excluded and named in the
+                        output, and corpus_status is never reported complete
+                        when any shelf was excluded
+  --commit COMMIT       40-char git SHA
+  --version VERSION     exact package version
+  --ecosystem {npm,pypi,crates,go}
+                        package ecosystem
+  --must MUST           required predicate (kind:value[:language])
+  --should SHOULD       optional boosting predicate (kind:value[:language])
+  --must-not MUST_NOT   exclusion predicate (kind:value[:language])
+  --whole-file          match required predicates anywhere in the same file
+                        (not just the same line)
+  --ast                 use the Python AST adapter (opt-in structural
+                        matching)
+  --max-results MAX_RESULTS
+                        global search result/candidate budget (requires
+                        --global)
+  --max-pages MAX_PAGES
+                        global search page budget (requires --global)
+  --language LANGUAGE   global search language filter, copied into every
+                        required predicate (requires --global)
+  --index               use verified local trigram indexes with scoped
+                        fallback
+  --require-index       fail closed unless a verified index covers every scope
+  --root ROOT           corpus root directory for indexed search
+  --local               use ./.leitir-refs for indexed search
+
+predicate matching and comments/strings:
+  For JavaScript, TypeScript, Java, C and C++, content
+  predicates (exact_text, regex, identifier, token_sequence, signature, call,
+  import, symbol_definition, symbol_reference) are matched against source with
+  comments and string/template literals masked out first -- an occurrence that
+  exists only inside a comment or a string literal is never returned, even
+  though a plain-text tool like grep would report it.
+  Python (default heuristic), Rust and Go match raw, unmasked source lines;
+  their predicates CAN match inside comments and string literals.
+  Python `--ast`'s structural predicate kinds
+  (symbol_definition, symbol_reference, call, import, signature) consult the
+  parsed AST instead and so cannot match inside a comment, but any other
+  content predicate on a Python file (e.g. exact_text, regex) still falls back
+  to the same raw, unmasked line scan.
+  If a diff against grep looks like leitir is 'missing' matches on one of the
+  five masked languages, check comments and string literals first --
+  that is expected, by-design behavior. See docs/search-capabilities.md.
+
+output streams:
+  Unlike every other verb, `search` always writes its full machine-readable
+  report to stdout and the human summary to stderr -- this is not conditional
+  on any flag. `--json` is accepted for shape-compatibility with other verbs
+  but is a no-op: output is identical with or without it.

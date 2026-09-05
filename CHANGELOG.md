@@ -49,6 +49,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - let the full-surface mypy run resolve tools/calibration (`calibration`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
+- make shared immutable tree-cache access atomic (#316)
 - parse quoted Go requirements and report direct-only coverage (#314)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - preserve documented search layers and pin method-bearing evidence (#312)

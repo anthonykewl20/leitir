@@ -38,6 +38,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - give the check-bridge demo fixture a real top_level.txt (`bench`)
 - have build_port_attribution verify its own source root (`bts`)
 - inherit the ambient environment in the differential check bridge (#285) (`bench`)
+- isolate platform caches and order paused validation writers (#330)
 - land the strict epoch parse the round-3 message claimed (#272) (`materialize`)
 - let the full-surface mypy run resolve tools/calibration (`calibration`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)

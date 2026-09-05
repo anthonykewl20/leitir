@@ -60,8 +60,7 @@ class _LocalShelfReader:
     @property
     def fully_verified(self) -> bool:
         return (self._manifest.get("materialized_tree_hash_scope") == "full"
-                and self._manifest.get("source") == "git-commit"
-                and self._manifest.get("parity") == "exact")
+                and self._manifest.get("source") == "git-commit")
 
     @property
     def drift_git_only_count(self) -> int:

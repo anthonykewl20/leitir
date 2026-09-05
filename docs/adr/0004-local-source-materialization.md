@@ -349,4 +349,6 @@ started / in progress / done (with gate result).
 | M6 | done | offline 40 targeted; full 894 passed, 36 skipped (3.11) |
 | M7 | done | full 900 passed, 37 skipped (3.11); live 38 passed, 1 skipped, 898 deselected |
 
-Shelf provenance and indexing (#311): only full, exact Git materializations supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.
+Shelf provenance and indexing (#311): only full, verified Git materializations supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.
+
+Registry artifacts without recorded upstream blob bindings cannot supply offline Git search citations. Their checksum-verified info/API/example views remain available. Existing corrupt Git shelves reject instead of silently switching to remote source. The regression fixture for offline ask explicitly represents a Git-bound package shelf.

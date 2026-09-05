@@ -50,6 +50,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - parse quoted Go requirements and report direct-only coverage (#314)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - preserve the empty package-name diagnostic (#306) (`calibration`)
+- preserve verified Git shelf reuse and reject corrupt local shelves (#311)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)

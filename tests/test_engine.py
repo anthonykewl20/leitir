@@ -681,7 +681,7 @@ class TestLocalMaterializedShelf:
         assert report.matches
         assert source.read_calls == [PY_BLOB_SHA]
 
-    def test_invalid_shelf_uses_api_blob_path(self, tmp_path):
+    def test_invalid_shelf_rejects_without_silent_api_fallback(self, tmp_path):
         data = SAMPLE_PY.encode()
         source = FakeTreeSource(
             blobs={
@@ -696,12 +696,9 @@ class TestLocalMaterializedShelf:
         )
         (target / "Lib/urllib/parse.py").write_bytes(b"invalid shelf\n")
 
-        report = ScopedSearcher(
-            source, (PythonAdapter(),), corpus_root=tmp_path
-        ).search(_spec())
-
-        assert report.matches
-        assert source.read_calls == [_blob_sha(data)]
+        with pytest.raises(VerificationError, match="invalid or missing integrity metadata"):
+            ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(_spec())
+        assert source.read_calls == []
 
     def test_local_shelf_report_is_deterministic(self, tmp_path, monkeypatch):
         data = SAMPLE_PY.encode()

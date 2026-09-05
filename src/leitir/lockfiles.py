@@ -329,24 +329,7 @@ def _go(root: Path, name: str) -> str | None:
     text = _read_text(root / "go.mod")
     if text is None:
         return None
-    in_require = False
-    for raw in text.splitlines():
-        line = raw.split("//", 1)[0].strip()
-        if line == "require (":
-            in_require = True
-            continue
-        if in_require and line == ")":
-            in_require = False
-            continue
-        if line.startswith("require "):
-            candidate = line[len("require ") :].split()
-        elif in_require:
-            candidate = line.split()
-        else:
-            continue
-        if len(candidate) == 2 and candidate[0] == name and _GO_VERSION.fullmatch(candidate[1]):
-            return candidate[1]
-    return None
+    return next((edge.version for edge in _go_requirements(text) if edge.name == name), None)
 
 
 def _identity(package: dict[object, object]) -> str | None:
@@ -531,23 +514,98 @@ def _cargo_closure(root: Path) -> DependencyClosure | None:
     return closure
 
 
+def _go_mod_tokens(line: str) -> list[str]:
+    """Tokenize one go.mod line; comments do not split quoted strings.
+
+    Double-quoted tokens follow strconv.Unquote's Go escape vocabulary.
+    Backticks and single quotes are reserved by modfile.parseString.
+    """
+    tokens: list[str] = []
+    position = 0
+    while position < len(line):
+        if line[position].isspace():
+            position += 1
+            continue
+        if line.startswith("//", position):
+            break
+        if line[position] in "()":
+            tokens.append(line[position])
+            position += 1
+            continue
+        if line[position] == '"':
+            position += 1
+            value: list[str] = []
+            while position < len(line) and line[position] != '"':
+                character = line[position]
+                position += 1
+                if character == "\\":
+                    if position >= len(line):
+                        raise ValueError("unterminated Go string")
+                    escape = line[position]
+                    position += 1
+                    simple = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", '"': '"'}
+                    if escape in simple:
+                        character = simple[escape]
+                    else:
+                        if escape in "xXuU" and escape != "X":
+                            width = {"x": 2, "u": 4, "U": 8}[escape]
+                            digits = line[position:position + width]
+                            position += width
+                            valid = re.fullmatch(r"[0-9a-fA-F]+", digits)
+                            radix = 16
+                        elif escape in "01234567":
+                            width = 3
+                            digits = escape + line[position:position + 2]
+                            position += 2
+                            valid = re.fullmatch(r"[0-7]+", digits)
+                            radix = 8
+                        else:
+                            raise ValueError("invalid Go escape")
+                        if len(digits) != width or valid is None:
+                            raise ValueError("invalid Go escape digits")
+                        code = int(digits, radix)
+                        if (radix == 8 and code > 255) or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                            raise ValueError("invalid Go escape value")
+                        character = chr(code)
+                value.append(character)
+            if position >= len(line):
+                raise ValueError("unterminated Go string")
+            position += 1
+            tokens.append("".join(value))
+        else:
+            start = position
+            while position < len(line) and not line[position].isspace() and line[position] not in "()" and not line.startswith("//", position):
+                if line[position] in "\"'`" or line.startswith("/*", position):
+                    raise ValueError("invalid Go token")
+                position += 1
+            tokens.append(line[start:position])
+    return tokens
+
+
 def _go_requirements(
     text: str, diagnostics: list[tuple[str, ManifestDiagnosticKind]] | None = None
 ) -> list[DependencyEdge]:
     edges: list[DependencyEdge] = []
     in_require = False
     for line_number, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("//", 1)[0].strip()
-        if line == "require (":
+        try:
+            tokens = _go_mod_tokens(raw)
+        except ValueError:
+            if diagnostics is not None:
+                diagnostics.append((f"line:{line_number}", ManifestDiagnosticKind.MALFORMED))
+            continue
+        if not tokens:
+            continue
+        if tokens == ["require", "("]:
             in_require = True
             continue
-        if in_require and line == ")":
+        if in_require and tokens == [")"]:
             in_require = False
             continue
-        if line.startswith("require "):
-            candidate = line[len("require ") :].split()
+        if tokens[0] == "require":
+            candidate = tokens[1:]
         elif in_require:
-            candidate = line.split()
+            candidate = tokens
         else:
             continue
         if len(candidate) != 2 or _GO_VERSION.fullmatch(candidate[1]) is None:
@@ -569,7 +627,7 @@ def _go_closure(root: Path) -> DependencyClosure | None:
     text = _read_text(root / "go.mod")
     if text is None:
         return None
-    return DependencyClosure("go", "complete", "go.mod", _ordered(_go_requirements(text)))
+    return DependencyClosure("go", "direct-only", "go.mod", _ordered(_go_requirements(text)))
 
 
 def _python_edges(
@@ -634,7 +692,7 @@ def dependency_closures(directory: str | Path) -> tuple[DependencyClosure, ...]:
 
 _MANIFEST_SOURCE_NAMES: dict[str, tuple[str, str, str, str]] = {
     "Cargo.lock": ("crates", "leitir-cargo-lock", "1", "complete"),
-    "go.mod": ("go", "leitir-go-mod", "1", "complete"),
+    "go.mod": ("go", "leitir-go-mod", "2", "direct-only"),
     "package-lock.json": ("npm", "leitir-package-lock", "1", "complete"),
     "pyproject.toml": ("pypi", "leitir-pyproject", "1", "direct_only"),
     "requirements.txt": ("pypi", "leitir-requirements", "1", "direct_only"),

@@ -403,7 +403,7 @@ except when interrupted:
 - `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check. `ratified_manifest_digest` is record-level content binding; `ratified_runtime_digest` is the separate out-of-band authority value consumed only by `exit-gate-run`.
 
 ### Closure and reproducibility
-- `lock`: materialize the project's transitive dependency closure.
+- `lock`: materialize the project's transitive dependency closure. Go `go.mod` inputs are `direct-only`: required modules (including `// indirect`) are collected, but recursively selected dependencies are not implied. Quoted module paths and versions are supported.
 - `export`: write a v2 `corpus.lock` plus compressed snapshot and emit the lock digest.
 - `import`: verify and rehydrate a v2 snapshot into an empty destination; the trusted
   `--lock-sha256` is mandatory. Existing v1 snapshots must be re-exported.

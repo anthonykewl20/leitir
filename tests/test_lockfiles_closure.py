@@ -66,7 +66,7 @@ def test_go_module_graph_and_pseudo_version_revision(tmp_path):
         " github.com/b/two v0.0.0-20240102030405-abcdef123456 // indirect\n)\n"
     )
     closure = _closure(tmp_path, "go")
-    assert closure.graph == "complete"
+    assert closure.graph == "direct-only"
     assert [edge.resolved_sha for edge in closure.deps] == [None, "abcdef123456"]
 
 

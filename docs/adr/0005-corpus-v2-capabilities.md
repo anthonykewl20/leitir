@@ -44,7 +44,7 @@ Extend ADR-004's `fetch, pin, verify, shelve` pipeline with a second source of t
 
 4. **Immutable snapshot corpora.** `leitir export [-o corpus.lock] [--root ROOT | --local]` writes a corpus lock file and a gzip tarball of trees/manifests/POINTERS. `corpus.lock` includes format version, corpus version, per-source spec, `version_source`, resolved commit SHA, artifact checksum, tree SHA, and shelf path. `leitir import corpus.lock` verifies all tree SHAs/checksums before shelving; import is fail-closed with no partial success on any checksum mismatch. This enables byte-identical rehydration anywhere, independent of network availability.
 
-5. **Transitive dependency closure.** `leitir lock [--cwd <dir>]` computes the transitive dependency graph from lockfiles. npm package-lock and Cargo are complete; go.mod is complete; requirements.txt/pyproject are direct-only. Each manifest records closure metadata per source: `graph: complete|direct-only` and `deps` edges (`name`, `version`, `resolved_sha`, `spec`). After lock, `leitir get` for transitive dependencies is guaranteed cache-hit. Locking behavior is extension work in `src/leitir/lockfiles.py`.
+5. **Transitive dependency closure.** `leitir lock [--cwd <dir>]` computes the transitive dependency graph from lockfiles. npm package-lock and Cargo are complete; go.mod is direct-only; requirements.txt/pyproject are direct-only. Each manifest records closure metadata per source: `graph: complete|direct-only` and `deps` edges (`name`, `version`, `resolved_sha`, `spec`). After lock, `leitir get` for transitive dependencies is guaranteed cache-hit. Locking behavior is extension work in `src/leitir/lockfiles.py`.
 
 6. **License detection + SBOM.** `leitir sbom [--format spdx|cyclonedx] [--cwd]` emits SPDX 2.3 JSON or CycloneDX 1.5 JSON from the materialized closure, including package nodes, versions, resolved SHAs, checksums, license fields, and dependency edges. License inference is explicit and deterministic: metadata field first, then LICENSE*/COPYING scans; every result records `method` and `confidence`; unresolved is `unknown`, never guessed.
 
@@ -129,7 +129,7 @@ Ordered by dependency (matching decision 12): C1-C10.
       Gate: offline targeted 68 passed; full suite 968 passed, 45 skipped
       (Python 3.11); live not added (closure is offline-fixture covered;
       materialization is live-tested in C1–C3). `dependency_closures` computes
-      npm package-lock v2/v3, Cargo.lock, and go.mod as `complete` and
+      npm package-lock v2/v3 and Cargo.lock as `complete`, and go.mod and
       requirements.txt/pyproject as `direct-only`; edges are deterministic
       `{name, version, resolved_sha, spec}` with `resolved_sha` honest (null when
       the lockfile has only a version). `leitir lock [--cwd]` resolves+materializes
@@ -234,3 +234,5 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C8 | done | offline targeted 50; full 1000 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C9 | done | offline targeted 35, 1 skipped; full 1007 passed, 46 skipped (3.11); live 3 (PyPI) |
 | C10 | done | offline targeted 37; full 1013 passed, 46 skipped (3.11); live n/a (cached/offline) |
+
+2026-09-05 correction (#314): `go.mod` records requirements of one module, not the recursively selected module graph. Both filesystem and verified-manifest parsing label this scope `direct-only`; the Go manifest parser identity is version 2. Quoted module paths and versions use the Go string grammar. Full transitive/MVS resolution is not claimed. Reference: https://go.dev/ref/mod#go-mod-file.

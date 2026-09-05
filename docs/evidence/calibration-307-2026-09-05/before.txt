@@ -1,0 +1,13 @@
+--- a/src/leitir/spec.py
++++ b/src/leitir/spec.py
+@@ -134,5 +134,5 @@
+         slug, ref = value.split(delimiter, 1)
+         if delimiter in ref or not ref:
+-            raise _fail(raw, "repository ref is malformed")
++            pass
+         kind = "branch" if delimiter == "#" else "tag"
+     else:
+survived (exit 0) against 1 tests [contexts]
+.                                                                        [100%]
+1 passed in 0.04s
+

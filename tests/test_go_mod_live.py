@@ -1,11 +1,13 @@
 """Published rsc/quote metadata checked against the installed Go toolchain."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -24,6 +26,15 @@ def test_published_quoted_go_mod_and_actual_module_graph(tmp_path: Path) -> None
     pin = "c4d4236f92427c64bfbcf1cc3f8142ab18f30b22"
     with urlopen(f"https://raw.githubusercontent.com/rsc/quote/{pin}/go.mod", timeout=60) as response:
         raw = response.read()
+    from leitir.bts_errors import BTSError
+    from leitir.lockfiles import DependencyManifestPolicy, VerifiedManifestBytes, dependency_closures_from_manifest
+
+    bound = VerifiedManifestBytes("go.mod", "dependency", len(raw), "sha256:" + hashlib.sha256(raw).hexdigest(), raw)
+    policy = DependencyManifestPolicy(("go.mod",))
+    verified = dependency_closures_from_manifest((bound,), policy)
+    assert verified.sources[0].graph == "direct-only"
+    with pytest.raises(BTSError):
+        dependency_closures_from_manifest((replace(bound, content=raw + b"\n// altered upstream bytes\n"),), policy)
     (tmp_path / "go.mod").write_bytes(raw)
     parsed = subprocess.run([go, "mod", "edit", "-json"], cwd=tmp_path, capture_output=True, text=True, timeout=60, check=True)
     requirements = json.loads(parsed.stdout)["Require"]

@@ -256,9 +256,10 @@ def _report(value: object, family: str) -> SearchReport:
             _input_error(family, "report.matches must be an array")
         matches = tuple(
             SourceMatch(
-                _source(_mapping(item, frozenset({"source", "score", "matched_kinds"}), f"report.matches[{index}]", family)["source"], f"report.matches[{index}].source", family),
+                _source(_mapping(item, frozenset({"source", "score", "matched_kinds"} | ({"method"} if "method" in item else set())), f"report.matches[{index}]", family)["source"], f"report.matches[{index}].source", family),
                 item["score"],
                 tuple(_enum(kind, PredicateKind, f"report.matches[{index}].matched_kinds", family) for kind in item["matched_kinds"]),
+                _text(item.get("method", "heuristic"), f"report.matches[{index}].method", family),
             )
             for index, item in enumerate(raw_matches)
             if isinstance(item, dict) and isinstance(item.get("matched_kinds"), list)

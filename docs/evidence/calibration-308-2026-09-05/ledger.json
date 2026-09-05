@@ -1,0 +1,95 @@
+{
+  "dispositions": {},
+  "findings": {
+    "93eaf287ce91ab53": {
+      "category": "surviving-mutant",
+      "evidence": {
+        "identity": "5f2b304416c41125",
+        "mutant": {
+          "col": 16,
+          "id": "5f2b304416c41125",
+          "lineno": 261,
+          "module": "leitir.spec",
+          "mutated": "pass",
+          "operator": "raise-drop",
+          "original": "raise _fail(raw, \"package name is empty\")",
+          "path": "src/leitir/spec.py"
+        },
+        "selection_mode": "contexts",
+        "tests": [
+          "tests/test_corpus_cli.py::test_unknown_specs_name_supported_forms[pypi:]",
+          "tests/test_spec.py::test_malformed_or_unsafe_specs_raise_typed_error[npm:]"
+        ]
+      },
+      "first_seen": "20260905T032931Z-0006",
+      "fixed_in": "20260905T061527Z-0001",
+      "id": "93eaf287ce91ab53",
+      "issue": 308,
+      "last_seen": "20260905T032931Z-0006",
+      "location": "src/leitir/spec.py:261",
+      "probe": "mutation",
+      "reproducer": "python tools/calibrate.py mutant 5f2b304416c41125 --path src/leitir/spec.py",
+      "seen_runs": 1,
+      "severity": "high",
+      "status": "fixed",
+      "title": "tests blind to raise-drop: `raise _fail(raw, \"package name is empty\")` -> `pass`"
+    }
+  },
+  "runs": [
+    {
+      "blind_spot_index": 0,
+      "fixed": [
+        "93eaf287ce91ab53"
+      ],
+      "git_sha": "73f57b66fd7f471c9326495afc374f792cfb2dec",
+      "metrics": {
+        "mutation": {
+          "control_failures": 0,
+          "enumerated": 189,
+          "error": 0,
+          "executed": 1,
+          "files": 1,
+          "kill_rate": 1.0,
+          "kill_rate_wilson95": [
+            0.2065,
+            1.0
+          ],
+          "killed": 1,
+          "per_module": {
+            "leitir.spec": {
+              "killed": 1,
+              "survived": 0
+            }
+          },
+          "per_operator": {
+            "raise-drop": {
+              "killed": 1,
+              "survived": 0
+            }
+          },
+          "rechecked": 1,
+          "sampled": 1,
+          "selection_mode": "contexts",
+          "survived": 0,
+          "timeout": 0,
+          "uncovered_in_sample": 0
+        }
+      },
+      "new": [],
+      "open_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "info": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "probes": [
+        "mutation"
+      ],
+      "regressed": [],
+      "run_id": "20260905T061527Z-0001",
+      "started_at": "2026-09-05T06:15:27Z"
+    }
+  ],
+  "schema_version": "leitir-calibration-ledger-v1"
+}

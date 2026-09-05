@@ -1,0 +1,58 @@
+[
+  {
+    "scheduler": "baseline",
+    "run": 33957602315,
+    "head": "c033ffdfdfe2fbeeed30e0c16e76e5320e3a8a3f",
+    "source_tree": "39f6f37fe404472ce0851fe952631be411b325da",
+    "tests_tree": "f3de7881df99c655f0bd29b8ef81f42c6db022aa",
+    "log_sha256": "019ae5543448f5700419433060cb44c0eb0134802eec775d71c3560de7c40411",
+    "summary": "2026-09-05T09:34:44.9964330Z ========== 3682 passed, 218 skipped, 8 warnings in 768.21s (0:12:48) ===========",
+    "differential_assignments": {
+      "gw2": [
+        "tests/test_differential_eval.py::test_end_to_end_stub_run_all_arms_offline",
+        "tests/test_differential_eval.py::test_contract_test_bytes_never_appear_in_any_prompt_payload",
+        "tests/test_differential_eval.py::test_assert_no_evaluator_leak_is_not_vacuous",
+        "tests/test_differential_eval.py::test_harness_aborts_run_if_a_leak_is_ever_constructed",
+        "tests/test_differential_eval.py::test_uncomputable_metric_is_unavailable_never_zero",
+        "tests/test_differential_eval.py::test_infrastructure_invalid_never_reported_as_a_pass_or_fail",
+        "tests/test_differential_eval.py::test_check_bridge_measures_a_real_violation_via_local_fixture",
+        "tests/test_differential_eval.py::test_check_bridge_measures_clean_via_local_fixture",
+        "tests/test_differential_eval.py::test_check_bridge_nothing_examined_is_unavailable_not_zero",
+        "tests/test_differential_eval.py::test_check_bridge_unreachable_network_is_unavailable",
+        "tests/test_differential_eval.py::test_exit_corpus_manifest_digest_unchanged_after_a_run",
+        "tests/test_differential_eval.py::test_load_tasks_does_not_write_under_exit_corpus",
+        "tests/test_differential_eval.py::test_deterministic_across_pythonhashseed"
+      ]
+    }
+  },
+  {
+    "scheduler": "worksteal",
+    "run": 33958241644,
+    "head": "1274dcc05583c89bc6548f74e4b27b840b905311",
+    "source_tree": "39f6f37fe404472ce0851fe952631be411b325da",
+    "tests_tree": "f3de7881df99c655f0bd29b8ef81f42c6db022aa",
+    "log_sha256": "907bb3a0d8531a0447a152f22d4d0b6a706af83ee466dcc908cc2e476136ffb0",
+    "summary": "2026-09-05T09:41:08.9005550Z ========== 3682 passed, 218 skipped, 8 warnings in 445.24s (0:07:25) ===========",
+    "differential_assignments": {
+      "gw1": [
+        "tests/test_differential_eval.py::test_check_bridge_measures_clean_via_local_fixture",
+        "tests/test_differential_eval.py::test_check_bridge_nothing_examined_is_unavailable_not_zero",
+        "tests/test_differential_eval.py::test_check_bridge_unreachable_network_is_unavailable",
+        "tests/test_differential_eval.py::test_exit_corpus_manifest_digest_unchanged_after_a_run",
+        "tests/test_differential_eval.py::test_load_tasks_does_not_write_under_exit_corpus",
+        "tests/test_differential_eval.py::test_deterministic_across_pythonhashseed"
+      ],
+      "gw0": [
+        "tests/test_differential_eval.py::test_end_to_end_stub_run_all_arms_offline",
+        "tests/test_differential_eval.py::test_contract_test_bytes_never_appear_in_any_prompt_payload",
+        "tests/test_differential_eval.py::test_assert_no_evaluator_leak_is_not_vacuous"
+      ],
+      "gw2": [
+        "tests/test_differential_eval.py::test_uncomputable_metric_is_unavailable_never_zero",
+        "tests/test_differential_eval.py::test_infrastructure_invalid_never_reported_as_a_pass_or_fail",
+        "tests/test_differential_eval.py::test_check_bridge_measures_a_real_violation_via_local_fixture",
+        "tests/test_differential_eval.py::test_harness_aborts_run_if_a_leak_is_ever_constructed"
+      ]
+    }
+  }
+]

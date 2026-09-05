@@ -1,0 +1,13 @@
+--- a/src/leitir/spec.py
++++ b/src/leitir/spec.py
+@@ -259,5 +259,5 @@
+         if canonical is not None:
+             if not remainder:
+-                raise _fail(raw, "package name is empty")
++                pass
+             return _split_package(raw, canonical, remainder)
+         host = _REPOSITORY_HOSTS.get(prefix.lower())
+survived (exit 0) against 1 tests [contexts]
+.                                                                        [100%]
+1 passed in 0.04s
+

@@ -174,16 +174,14 @@ and also marks the result incomplete; the engine converts either condition to
 `src/leitir/adapters/python_ast.py:273-290`,
 `src/leitir/engine.py:369-395`.)
 
-**Comments and string literals are excluded from matches on every non-Python
-language.** All five Tier-2 adapters (JavaScript, TypeScript, Java, C, C++) run
+**Comments and string literals are excluded by the five Tier-2 adapters.** All five Tier-2 adapters (JavaScript, TypeScript, Java, C, C++) run
 `mask_comments_and_strings()` on the file before evaluating any content
 predicate (`exact_text`, `regex`, `identifier`, `token_sequence`, `signature`,
 `call`, `import`, `symbol_definition`/`symbol_reference`); an occurrence that
 exists only inside a comment or a string/template literal is never returned,
 even though the raw bytes are present in the file and a plain-text tool such as
 `grep` would report them. (`src/leitir/adapters/_tier2/_base.py:48`,
-`src/leitir/adapters/_tier2_patterns.py`.) **Python is the one language where
-this does not apply.** The default heuristic Python adapter matches against
+`src/leitir/adapters/_tier2_patterns.py`.) **Python, Rust and Go heuristic adapters instead scan raw text.** The default heuristic Python adapter matches against
 raw, unmasked source lines, so a required predicate can match text inside a
 Python string literal or `#` comment. `--ast`'s structural predicate kinds
 (`symbol_definition`, `symbol_reference`, `call`, `import`, `signature`)
@@ -192,7 +190,7 @@ nodes) or, for those kinds specifically, inside a string; but any *content*
 predicate on a Python file that is not one of those structural kinds (for
 example `exact_text` or `regex`) still falls back to the same raw, unmasked
 line scan as the non-AST default. (`src/leitir/adapters/__init__.py:119`,
-`src/leitir/adapters/python_ast.py:233-244`.) In short: if a diff against
+`src/leitir/adapters/python_ast.py:233-244`.) If a diff against
 `grep` shows leitir "missing" matches on a JS/TS/Java/C/C++ file, check whether
 they are inside a comment or string literal first -- that is expected,
 by-design behavior, not a bug.
@@ -370,7 +368,7 @@ a partial, integrity-compromised result as if it were a complete one.
   coverage, not silently treated as parser-backed completeness.
   (`src/leitir/adapters/python_ast.py:207-226`,
   `src/leitir/engine.py:369-395`.)
-- Non-Python content predicates silently exclude matches inside comments and
+- Tier-2 (JavaScript, TypeScript, Java, C, C++) content predicates exclude matches inside comments and
   string/template literals (the Tier-2 adapters mask them out before
   matching); Python content predicates other than the structural `--ast`
   kinds do not, and match raw source text including comments and string
@@ -426,3 +424,6 @@ global budgets. The remaining opportunities are:
 
 GitHub-side behavior can change independently of Leitir; re-check the linked
 documentation before treating it as a current operational contract.
+
+Search corrections (#312, 2026-09-05): `should` predicates contribute independently, once per overlapping predicate. `must_not` content predicates exclude documents in buffered, indexed and streamed searches. The lower-level span evaluator intentionally leaves document filtering to its caller. Each serialized match carries `method: ast|heuristic`, including fallback results. CLI predicates accept a closed JSON object (`kind`, `value`, optional `language`) for unambiguous literals; shorthand uses a recognized final language suffix. `ask` emits JSON predicates whenever needed for exact replay.
+C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.

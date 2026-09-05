@@ -1,0 +1,35 @@
+{
+  "rebound": {
+    "check_exit": 0,
+    "check_counts": {
+      "sites_examined": 1,
+      "sites_ok": 1,
+      "sites_unresolved": 0,
+      "sites_violation": 0
+    },
+    "oracle_exit": 1,
+    "oracle_error": "AttributeError: module 'requests' has no attribute 'parse_header_links'"
+  },
+  "nested_shadow": {
+    "check_exit": 0,
+    "check_counts": {
+      "sites_examined": 1,
+      "sites_ok": 1,
+      "sites_unresolved": 0,
+      "sites_violation": 0
+    },
+    "oracle_exit": 1,
+    "oracle_error": "AttributeError: module 'requests' has no attribute 'parse_header_links'"
+  },
+  "module_class": {
+    "check_exit": 0,
+    "check_counts": {
+      "sites_examined": 1,
+      "sites_ok": 1,
+      "sites_unresolved": 0,
+      "sites_violation": 0
+    },
+    "oracle_exit": 1,
+    "oracle_error": "ModuleNotFoundError: No module named 'requests.Session'"
+  }
+}

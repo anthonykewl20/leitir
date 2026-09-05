@@ -79,33 +79,31 @@ vocabulary for free, but not symbol-name recovery at a usage site.
   the API index alone, treating any index miss as a violation.
 - Three-way outcome using bare-name matching against the API index,
   corroborated by a raw full-text scan of the pinned source before ever
-  declaring a violation (chosen).
+  declaring a violation (original decision, amended below).
 - Attempt arity/signature checking using the index's formatted `signature`
   string.
 
 ## Decision Outcome
 
-Chosen option: **a three-way outcome (`ok` / `violation` / `unresolved`),
-existence-only, matched by bare symbol name and corroborated by a raw text
-scan of the pinned source before any violation is declared**, because it is
-the only option that is both honest about what the evidence supports and
-safe against the extractor's documented blind spots.
+Amended decision (2026-09-05, #315): **three outcomes (`ok` / `violation` /
+`unresolved`), with `ok` requiring an exact qualified definition or an explicit
+module-level reexport**. A raw text scan of pinned source still corroborates
+absence before a violation is declared. A bare-name collision cannot prove
+that the consumer's qualified access exists.
 
-### Why bare-name matching, not qualified-name matching
+### Qualified binding evidence (amended 2026-09-05, issue #315)
 
-Real-world public APIs are overwhelmingly re-exported: `flask.Flask` is
-defined in `flask.app` (or a `sansio` submodule depending on version), not
-literally in `flask/__init__.py`. The API index has no re-export tracking
-at all -- it indexes a symbol at its *definition* site only. Matching on
-`qualified_name` would therefore reject the overwhelming majority of
-real, correct usages of virtually every well-known package's public API --
-exactly the fatal false-positive failure mode this gate must avoid.
-Matching on the bare `name` field anywhere in the whole materialized
-index sidesteps this: if `Flask` is defined anywhere in the pinned source
-tree, however it is re-exported to the top level, the bare name is found.
-The cost is a strictly *conservative* one: a name collision with an
-unrelated symbol elsewhere in the tree can produce a false `ok` (never a
-false violation), which is the safe direction to err in.
+Consumer imports and complete attribute chains identify the accessed provider
+name. The gate maps module paths to the distribution's evidence-backed import
+roots, accepts exact indexed definitions, and follows explicit module-level
+reexports such as `requests.get` to `requests.api.get`. Ambiguous module layouts,
+conditional/star exports and dynamic bindings without exact proof remain
+`unresolved`. A bare-name match in another module cannot establish `ok`.
+
+The original bare-name design accepted `requests.parse_header_links` because
+`requests.utils.parse_header_links` existed. Actual Requests rejects the first
+access. The qualified gate preserves the valid `requests.utils` access and
+ordinary public reexports while refusing the false `ok`.
 
 ### Why a text-scan corroboration gate, not the index alone
 
@@ -302,7 +300,7 @@ to trust.
 ## Positive Consequences
 
 - The gate is safe to run unattended and often: its false-positive risk is
-  bounded by two independent conservative mechanisms (bare-name matching,
+  bounded by independent conservative mechanisms (qualified binding evidence,
   text-scan corroboration) rather than one.
 - E1's hallucination-rate counts fall out of the same implementation with
   no separate instrumentation.
@@ -339,3 +337,9 @@ to trust.
   `src/leitir/check.py`.
 - `tests/test_check_cli_e2e.py`.
 - Issue #266, tasks B3 and E1.
+
+2026-09-05 amendment: Qualified API checking (#315): qualified imports and full attribute chains must reach the exact indexed definition or an explicit module-level reexport. Bare-name collisions in other modules cannot yield ok. Unproven dynamic, conditional or star exports remain unresolved.
+
+Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.
+
+Module loading and impact (#315): the checker requires evidence that intermediate modules were loaded by the consumer binding, an earlier unconditional top-level import, or source-backed imports of an already loaded module. A module file alone cannot authorize a parent-package attribute; later imports and imports in other scopes do not establish that access. `diff --impact` preserves removal evidence for imported owners and source-backed ancestors, including inherited attribute accesses; a removed owner cannot become a clean terminal-member result.

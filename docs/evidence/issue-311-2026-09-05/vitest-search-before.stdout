@@ -1,0 +1,82 @@
+{
+  "spec_digest": "7d45a9871a416aebe1b9ad48b0aaccae87c035277fd945e30ce96b140a49a376",
+  "coverage": {
+    "status": "complete_for_declared_universe",
+    "files_eligible": 1,
+    "files_indexed": 1,
+    "files_excluded": 0,
+    "incomplete_results": false,
+    "exclusions": {}
+  },
+  "matches": [
+    {
+      "source": {
+        "slug": "vitest-dev/vitest",
+        "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+        "path": "test/reporters/fixtures/indicator-position.test.js",
+        "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+        "start_line": 3,
+        "end_line": 3,
+        "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L3-L3"
+      },
+      "score": 1.0,
+      "matched_kinds": [
+        "identifier"
+      ],
+      "method": "heuristic"
+    },
+    {
+      "source": {
+        "slug": "vitest-dev/vitest",
+        "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+        "path": "test/reporters/fixtures/indicator-position.test.js",
+        "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+        "start_line": 12,
+        "end_line": 12,
+        "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L12-L12"
+      },
+      "score": 1.0,
+      "matched_kinds": [
+        "identifier"
+      ],
+      "method": "heuristic"
+    },
+    {
+      "source": {
+        "slug": "vitest-dev/vitest",
+        "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+        "path": "test/reporters/fixtures/indicator-position.test.js",
+        "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+        "start_line": 13,
+        "end_line": 13,
+        "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L13-L13"
+      },
+      "score": 1.0,
+      "matched_kinds": [
+        "identifier"
+      ],
+      "method": "heuristic"
+    },
+    {
+      "source": {
+        "slug": "vitest-dev/vitest",
+        "commit_sha": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+        "path": "test/reporters/fixtures/indicator-position.test.js",
+        "blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+        "start_line": 14,
+        "end_line": 14,
+        "permalink": "https://github.com/vitest-dev/vitest/blob/c9e59a089d94642eea29a43f2ee1986a5afb99c6/test/reporters/fixtures/indicator-position.test.js#L14-L14"
+      },
+      "score": 1.0,
+      "matched_kinds": [
+        "identifier"
+      ],
+      "method": "heuristic"
+    }
+  ],
+  "resolution": {
+    "strategy": "declared_scope",
+    "as_of": "2026-09-05T08:18:58.464751Z"
+  },
+  "query_translation": []
+}

@@ -92,10 +92,10 @@ def _registry_only_scope(
     """Build the degraded (registry-only) shelf scope for one package.
 
     The slug is the registry's own package identity — ``registry/<name>`` —
-    which satisfies the repository-slug grammar while never colliding with
-    a real hosted ``owner/repo`` (hosted owners may not contain ``/`` in the
-    first segment). The commit SHA is the deterministic registry-identity
-    digest, so two different artifacts never share a shelf.
+    which satisfies the repository-slug grammar. A hosted owner named
+    ``registry`` can have the same textual slug; the registry digest and
+    explicit degraded provenance distinguish this artifact identity, and
+    consumers must never treat it as a Git pin.
     """
 
     return RepoScope(
@@ -1958,8 +1958,18 @@ class PyPIResolver:
         docs_urls = tuple(extract_docs_urls(ref.ecosystem, payload))
         registry_url = f"https://pypi.org/project/{ref.name}/{ref.version}/"
         if slug is None:
-            raise ResolutionError(
-                f"no GitHub repository found for {ref.name}=={ref.version}"
+            if artifact is None:
+                raise ResolutionError(f"no GitHub repository found and no checksum-verified artifact for {ref.name}=={ref.version}")
+            reason = "no supported source repository declared"
+            return ResolvedPackage(
+                ref=ref,
+                scope=_registry_only_scope(ref, artifact, reason),
+                tag=None,
+                registry_url=registry_url,
+                docs_urls=docs_urls,
+                artifact=artifact,
+                published_at=self._published_at(payload),
+                degraded_provenance=reason,
             )
 
         try:
@@ -2047,24 +2057,37 @@ class PyPIResolver:
     def _extract_github_slug(self, payload: dict) -> str | None:
         info = payload.get("info")
         info = info if isinstance(info, dict) else {}
-        urls_to_check = []
-        if info.get("project_url"):
-            urls_to_check.append(info["project_url"])
+        # Metadata order is not repository authority: funding links commonly
+        # precede Source, and github.com/sponsors/<name> is not a repository.
+        from urllib.parse import urlsplit
+
+        candidates: list[tuple[int, str, str]] = []
         project_urls = info.get("project_urls")
         if isinstance(project_urls, dict):
-            for url_entry in project_urls.values():
-                if url_entry:
-                    urls_to_check.append(url_entry)
-        if info.get("home_page"):
-            urls_to_check.append(info["home_page"])
-
-        for candidate in urls_to_check:
-            if not isinstance(candidate, str):
+            for label, value in project_urls.items():
+                if not isinstance(label, str) or not isinstance(value, str):
+                    continue
+                normalized = label.lower().replace("_", " ").replace("-", " ")
+                if any(word in normalized for word in ("fund", "sponsor", "donat")):
+                    continue
+                priority = 0 if normalized.strip() in {"source", "source code", "sourcecode", "repository", "source repository", "code", "github"} else 2
+                candidates.append((priority, normalized, value))
+        for label in ("home_page", "project_url"):
+            value = info.get(label)
+            if isinstance(value, str):
+                candidates.append((1, label, value))
+        for _, _, candidate in sorted(candidates):
+            try:
+                url = urlsplit(candidate)
+            except ValueError:
                 continue
-            m = _GITHUB_URL_RE.search(candidate)
-            if m:
-                slug = m.group(1).rstrip("/")
-                slug = slug.removesuffix(".git")
+            if url.scheme not in {"http", "https"} or url.hostname != "github.com" or url.username is not None:
+                continue
+            parts = url.path.strip("/").split("/")
+            if len(parts) < 2 or parts[0].lower() in {"sponsors", "settings", "features", "topics", "orgs", "users", "marketplace", "collections", "search"}:
+                continue
+            slug = "/".join(parts[:2]).removesuffix(".git")
+            if _GITHUB_URL_RE.fullmatch("https://github.com/" + slug):
                 return slug
         return None
 

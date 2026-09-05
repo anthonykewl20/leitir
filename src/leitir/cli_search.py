@@ -38,21 +38,21 @@ def register_search(commands: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "predicate matching and comments/strings:\n"
-            "  On every non-Python language (JavaScript, TypeScript, Java, C, C++), content\n"
+            "  For JavaScript, TypeScript, Java, C and C++, content\n"
             "  predicates (exact_text, regex, identifier, token_sequence, signature, call,\n"
             "  import, symbol_definition, symbol_reference) are matched against source with\n"
             "  comments and string/template literals masked out first -- an occurrence that\n"
             "  exists only inside a comment or a string literal is never returned, even\n"
             "  though a plain-text tool like grep would report it.\n"
-            "  Python does not mask: the default heuristic Python adapter matches raw,\n"
-            "  unmasked source lines, so a predicate CAN match inside a Python string\n"
-            "  literal or '#' comment. `--ast`'s structural predicate kinds\n"
+            "  Python (default heuristic), Rust and Go match raw, unmasked source lines;\n"
+            "  their predicates CAN match inside comments and string literals.\n"
+            "  Python `--ast`'s structural predicate kinds\n"
             "  (symbol_definition, symbol_reference, call, import, signature) consult the\n"
             "  parsed AST instead and so cannot match inside a comment, but any other\n"
             "  content predicate on a Python file (e.g. exact_text, regex) still falls back\n"
             "  to the same raw, unmasked line scan.\n"
-            "  If a diff against grep looks like leitir is 'missing' matches on a non-Python\n"
-            "  file, check whether they are inside a comment or string literal first --\n"
+            "  If a diff against grep looks like leitir is 'missing' matches on one of the\n"
+            "  five masked languages, check comments and string literals first --\n"
             "  that is expected, by-design behavior. See docs/search-capabilities.md.\n"
             "\n"
             "output streams:\n"
@@ -192,19 +192,35 @@ def register_search(commands: argparse._SubParsersAction) -> None:
     search_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs for indexed search")
 
 def _parse_predicate(raw: str) -> Predicate:
-    parts = raw.split(":", 2)
-    if len(parts) < 2:
-        raise argparse.ArgumentTypeError(f"predicate must be kind:value, got {raw!r}")
-    kind_str, value = parts[0], parts[1]
-    language = parts[2] if len(parts) == 3 else None
     try:
-        kind = PredicateKind(kind_str)
-    except ValueError:
-        valid = ", ".join(k.value for k in PredicateKind)
-        raise argparse.ArgumentTypeError(
-            f"unknown predicate kind {kind_str!r}; valid kinds: {valid}"
-        ) from None
-    return Predicate(kind=kind, value=value, language=language)
+        if raw.startswith("{"):
+            def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                fields: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in fields:
+                        raise ValueError(f"duplicate predicate field: {key}")
+                    fields[key] = item
+                return fields
+
+            data = json.loads(raw, object_pairs_hook=unique_fields)
+            if not isinstance(data, dict) or set(data) not in ({"kind", "value"}, {"kind", "value", "language"}):
+                raise ValueError("predicate JSON requires kind, value and optional language")
+            if not isinstance(data.get("kind"), str) or not isinstance(data.get("value"), str):
+                raise ValueError("predicate kind and value must be strings")
+            if "language" in data and not isinstance(data["language"], str):
+                raise ValueError("predicate language must be a string")
+            return Predicate(PredicateKind(data["kind"]), data["value"], data.get("language"))
+        kind_str, separator, value = raw.partition(":")
+        if not separator:
+            raise ValueError("predicate must be kind:value or a JSON object")
+        language = None
+        prefix, separator, suffix = value.rpartition(":")
+        from .adapters.languages import canonicalize_language
+        if separator and canonicalize_language(suffix) in {"python", "rust", "go", "javascript", "typescript", "java", "c", "cpp"}:
+            value, language = prefix, suffix
+        return Predicate(PredicateKind(kind_str), value, language)
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError(f"invalid predicate {raw!r}: {exc}") from exc
 
 
 def _bounded_search_budget(raw: str, *, maximum: int) -> int:

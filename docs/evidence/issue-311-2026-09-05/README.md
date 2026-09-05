@@ -1,0 +1,9 @@
+# Live remediation evidence for #311
+
+Artifact integrity alone previously authorized Git citations; Go index inspection used the wrong shelf path; a real Requests certificate symlink prevented indexing. Only exact Git shelves provide local Git listings, artifact-backed reads are checked against upstream blob identities, Go readers/writers share the existing canonical path, and indexes use link text as Git blob bytes without following links.
+
+Inputs come from actual published sources and the production CLI/transports. `live.txt` is the live-gated regression execution, not a mocked provider. Default-suite and static checks are regression/hygiene gates and do not substitute for that evidence. The initial raw audit is retained in the assigned workspace under `/tmp/leitir-audit-20260905`; the issue records the original pins and defect. Full-suite/CI output and review disposition are recorded in the PR.
+
+Additional real source identity defect: the published Vitest 2.1.9 archive has a CRLF file with local Git-style digest 558b112d0971c5690a53afd66633073e7b0a1846, while the upstream Git tree binds that path to 21caeafdf1ac09d869e12f5e8e6d16928e0bde13. The previous fast path reported COMPLETE with the false blob identity. Local Git enumeration now requires full upstream verification and exact parity; other valid shelves use real upstream identities and check queried bytes. The real live probe verifies rejection for the normalized file and successful lookup of byte-exact source in the same shelf. Positive offline fixtures now explicitly declare exact parity; the former drift-universe assertion was corrected because it required the unsound behavior.
+
+The corpus and warm-session positive fixtures now explicitly carry full upstream verification and exact parity. Existing tamper assertions are retained; real sampled Vitest bytes still reject Git citation reuse. `corpus-warm.txt` records all 53 focused checks passing.

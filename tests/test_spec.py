@@ -136,6 +136,10 @@ def test_all_repository_hosts_treat_full_sha_as_immutable(prefix):
 def test_malformed_or_unsafe_specs_raise_typed_error(raw):
     with pytest.raises(SpecParseError) as caught:
         parse_corpus_spec(raw)
+    if raw == "owner/repo#":
+        assert "repository ref is malformed" in str(caught.value)
+    if raw == "npm:":
+        assert "package name is empty" in str(caught.value)
     assert caught.value.spec == raw
     assert repr(raw) in str(caught.value)
 

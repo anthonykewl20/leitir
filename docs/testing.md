@@ -79,6 +79,13 @@ ruff check .
 mypy src
 ```
 
+The macOS CI full-suite leg uses xdist's `worksteal` scheduler so idle workers
+can take pending long-running tests. Other platforms retain `load`; the local
+canonical gate remains serial. Scheduling must preserve collection, assertions,
+environment gates, and the normal job deadline. Validate scheduler changes with
+complete hosted runs and recorded worker assignments, not a synthetic timing
+test or a larger timeout.
+
 The gate is zero failures; skips appear only where an environment gate holds
 them back. The live pass/skip count is recorded in README's dated status
 paragraph, not here. Live tests remain gated by `LEITIR_ENABLE_LIVE_E2E=1`.

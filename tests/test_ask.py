@@ -54,12 +54,13 @@ def _shelve_pypi_demo(
         "owner": "acme",
         "repo": "demo",
         "commit_sha": sha,
-        "fetch_method": "registry-artifact",
-        "source": "registry-artifact",
+        # Offline Git citations require a Git-bound shelf. An artifact
+        # checksum alone cannot establish these repository/blob identities.
+        "fetch_method": "codeload-tarball",
+        "source": "git-commit",
+        "parity": "exact",
         "repo_url": "https://github.com/acme/demo",
         "registry_url": f"https://pypi.org/project/demo/{version}/",
-        "artifact_kind": "sdist",
-        "artifact_checksum": "sha256:" + "1" * 64,
         "fetched_at": "2026-08-23T00:00:00Z",
         "verified": True,
         "verified_at": "2026-08-23T00:00:00Z",

@@ -63,16 +63,38 @@ class VerifiedIndexShelf:
     postings: dict[str, tuple[int, ...]]
 
     def read_document(self, document: IndexDocument) -> bytes:
-        path = self.target / Path(document.path)
-        try:
-            if not path.resolve().is_relative_to(self.target.resolve()):
-                raise VerificationError(f"indexed source escapes its shelf: {document.path}")
-            data = _read_regular(path)
-        except OSError as exc:
-            raise VerificationError(f"cannot read indexed source: {document.path}") from exc
+        data = _read_source_blob(self.target, document.path)
         if len(data) != document.size or _git_blob_sha(data) != document.blob_sha:
             raise VerificationError(f"indexed source bytes changed: {document.path}")
         return data
+
+
+def _read_source_blob(target: Path, relative: str) -> bytes:
+    """Read Git blob bytes: a symbolic link's bytes are its link text.
+
+    Never traverse a link, including a parent component. The verified source
+    tree and document digest bind these bytes, as for regular documents.
+    """
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or ".." in parts:
+        raise VerificationError("unsafe indexed source path")
+    path = target
+    try:
+        for component in parts[:-1]:
+            path /= component
+            if not stat.S_ISDIR(path.lstat().st_mode):
+                raise VerificationError("indexed source parent is not a directory")
+        path /= parts[-1]
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode):
+            data = os.fsencode(os.readlink(path))
+            after = path.lstat()
+            if (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+                raise VerificationError("indexed symbolic link changed while reading")
+            return data
+        return _read_regular(path)
+    except OSError as exc:
+        raise VerificationError(f"cannot read indexed source: {relative}") from exc
 
 
 def _git_blob_sha(data: bytes) -> str:

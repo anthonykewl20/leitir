@@ -1,0 +1,4 @@
+..........................................................s.             [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_bts_cli.py:447: requires tree-sitter extra
+59 passed, 1 skipped in 3.11s

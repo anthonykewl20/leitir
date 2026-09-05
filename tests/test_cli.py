@@ -570,6 +570,7 @@ def test_search_uses_passed_root_for_verified_local_shelf(tmp_path: Path):
         "repo": "cpython",
         "repo_url": "https://github.com/python/cpython",
         "source": "git-commit",
+        "parity": "exact",
         "spec": "github:python/cpython",
         "tag": None,
         "verified": True,

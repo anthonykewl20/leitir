@@ -4,7 +4,7 @@ Leitir is a deterministic, provenance-bound dependency-source corpus plus a dete
 
 **Status: released — [`v0.1.6`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6)
 is the latest release (2026-08-25); v0.1.4 was the first `v*` tag (2026-08-17); current milestone v0.1.6 is complete and
-`pyproject.toml` is 0.1.6. Production-readiness evidence is complete.**
+`pyproject.toml` is 0.1.6. Release validation evidence is recorded below.**
 
 ## Why
 
@@ -349,6 +349,7 @@ except when interrupted:
   `search --index` reports uncovered fallback scopes as partial;
   `search --require-index` rejects them. Search never builds or repairs an index.
   Export/import excludes index artifacts and `gc` preserves them.
+- Search predicates also accept JSON: `--must '{"kind":"regex","value":"(?:Session|Request)"}'`. Optional predicates boost independently; `must_not` content predicates filter documents in every search path. Match JSON labels AST versus heuristic evidence with `method`. JavaScript, TypeScript, Java, C and C++ mask comments/strings; Python's default heuristic, Rust and Go scan raw text. `search --help` describes the same language boundary.
 - `bench`: run the pinned `search-v1` benchmark with fixed tasks and strict output shape.
 
 ### Diagnostics
@@ -391,19 +392,23 @@ except when interrupted:
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
 - `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance.
+API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under the target lock before accepting its derived caches. A tampered cache is rebuilt; an unchanged cache is not rewritten.
+
 - `examples`: extract and rank usage snippets for that source.
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
 - `diff`: compare two resolved versions with file and API-symbol deltas.
-- `check <path> --against <spec> [--json] [--root ROOT|--local] [--cwd DIR] [--no-verify]`: validate written Python source (a file or directory) against one materialized, pinned source's API surface, e.g. `leitir check ./src/app.py --against pypi:flask@3.0.3`. Python-only: a non-`.py` file or a directory with no `.py` files rejects (`MALFORMED_USAGE`). Every examined usage site gets one of three outcomes, never two: `ok` (the symbol was statically recovered *and* confirmed present), `violation` (provably absent from both the extracted API index and the pinned source's own text), or `unresolved` (statically undecidable — dynamic dispatch, `getattr`, an alias handed to a function, a re-export, a private `_name`, a star import). The gate fails (exit 1, `CORPUS_FAILURE`) only on `violation`; `unresolved` never fails it, but its count is real signal, not noise — a run with a high `sites_unresolved` verified little, so read `counts.sites_unresolved` alongside `counts.sites_violation` before trusting a clean result. **It checks symbol existence only — not arity, parameter types, or return types.** The API index carries no structured signature model, so a call with the right name and the wrong number or kind of arguments is not caught. The import root(s) to check are derived from the *materialized distribution's own evidence* (issue #269, [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md)), not guessed from its registry name: a real `top_level.txt` (`*.dist-info`/`*.egg-info`), or a static parse of `setup.cfg`/`pyproject.toml` packaging metadata. This correctly recovers renamed distributions that a name-based guess gets wrong (`pypi:pillow` imports as `PIL`, `beautifulsoup4` as `bs4`, `pyyaml` as `yaml`, `python-dateutil` as `dateutil`, `scikit-learn` as `sklearn`) whenever the materialization carries one of those declarations. There is deliberately **no** fallback tier that guesses an import root purely from the materialized tree's own directory layout: an earlier version did, but it could still bind a *wrong* root to `--against` and produce a false violation against a consumer's own, unrelated code (see ADR-0032's "Tier 4 was retired as an authority" and "Negative Consequences") — a materialization with no `top_level.txt`/`setup.cfg`/`pyproject.toml` packaging declaration at all (common for a GitHub-sourced source tree with no wheel metadata) is reported undeterminable rather than guessed from its layout. A distribution can legitimately declare **more than one** import root (e.g. `attrs` ships both `attr` and `attrs`); every declared root is checked against the same pinned target. If the import root genuinely cannot be determined from any of that evidence, or the evidence is ambiguous, the run still fails safe: zero sites examined, `NOTHING_INDEXED` (4) — never a guessed violation, never a silent `ok`. If zero sites were examined for any reason (including a genuinely undeterminable root, or code that simply never uses any of the derived roots), the run exits 4 (`NOTHING_INDEXED`), not 0, and stderr names the derived import root(s) it searched for (or explains that none could be determined) — this is not "clean," it is "nothing was checked." It fails closed (`CORPUS_FAILURE`) if the pinned source's own API index is empty or unverifiable, before checking a single site. The JSON payload (`schema_version: "leitir-check-report-v1"`) carries `status` (`"nothing_examined"` / `"violations_found"` / `"clean"`), `counts` (`sites_examined`/`sites_ok`/`sites_violation`/`sites_unresolved`), per-site `violations`/`unresolved`/`ok` arrays (`file`, `line`, `col`, `symbol`, `outcome`, `reason`), `files_examined`, `files_excluded`, `target_corroboration_capped` (true if the absence-corroboration text scan hit its byte budget, in which case no violation may be declared from the remaining unscanned text), `import_roots` (the derived roots actually searched for, empty if undeterminable), and `import_roots_determinable` (false only when no evidence tier could determine any root at all). See [ADR-0030](docs/adr/0030-check-command-conservative-symbol-existence-gate.md) for the symbol-existence gate design and [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md) for import-root evidence derivation.
+- `check <path> --against <spec> [--json] [--root ROOT|--local] [--cwd DIR] [--no-verify]`: validate written Python source (a file or directory) against one materialized, pinned source's API surface, e.g. `leitir check ./src/app.py --against pypi:flask@3.0.3`. Python-only: a non-`.py` file or a directory with no `.py` files rejects (`MALFORMED_USAGE`). Every examined usage site gets one of three outcomes, never two: `ok` (the complete qualified access was recovered and bound to an exact definition or explicit module-level reexport), `violation` (provably absent from both the extracted API index and the pinned source's own text), or `unresolved` (statically undecidable — dynamic dispatch, `getattr`, an alias handed to a function, an unproven re-export, a private `_name`, a star import). The gate fails (exit 1, `CORPUS_FAILURE`) only on `violation`; `unresolved` never fails it, but its count is real signal, not noise — a run with a high `sites_unresolved` verified little, so read `counts.sites_unresolved` alongside `counts.sites_violation` before trusting a clean result. **It checks symbol existence only — not arity, parameter types, or return types.** The API index carries no structured signature model, so a call to the right qualified symbol with the wrong number or kind of arguments is not caught. The import root(s) to check are derived from the *materialized distribution's own evidence* (issue #269, [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md)), not guessed from its registry name: a real `top_level.txt` (`*.dist-info`/`*.egg-info`), or a static parse of `setup.cfg`/`pyproject.toml` packaging metadata. This correctly recovers renamed distributions that a name-based guess gets wrong (`pypi:pillow` imports as `PIL`, `beautifulsoup4` as `bs4`, `pyyaml` as `yaml`, `python-dateutil` as `dateutil`, `scikit-learn` as `sklearn`) whenever the materialization carries one of those declarations. There is deliberately **no** fallback tier that guesses an import root purely from the materialized tree's own directory layout: an earlier version did, but it could still bind a *wrong* root to `--against` and produce a false violation against a consumer's own, unrelated code (see ADR-0032's "Tier 4 was retired as an authority" and "Negative Consequences") — a materialization with no `top_level.txt`/`setup.cfg`/`pyproject.toml` packaging declaration at all (common for a GitHub-sourced source tree with no wheel metadata) is reported undeterminable rather than guessed from its layout. A distribution can legitimately declare **more than one** import root (e.g. `attrs` ships both `attr` and `attrs`); every declared root is checked against the same pinned target. If the import root genuinely cannot be determined from any of that evidence, or the evidence is ambiguous, the run still fails safe: zero sites examined, `NOTHING_INDEXED` (4) — never a guessed violation, never a silent `ok`. If zero sites were examined for any reason (including a genuinely undeterminable root, or code that simply never uses any of the derived roots), the run exits 4 (`NOTHING_INDEXED`), not 0, and stderr names the derived import root(s) it searched for (or explains that none could be determined) — this is not "clean," it is "nothing was checked." It fails closed (`CORPUS_FAILURE`) if the pinned source's own API index is empty or unverifiable, before checking a single site. The JSON payload (`schema_version: "leitir-check-report-v1"`) carries `status` (`"nothing_examined"` / `"violations_found"` / `"clean"`), `counts` (`sites_examined`/`sites_ok`/`sites_violation`/`sites_unresolved`), per-site `violations`/`unresolved`/`ok` arrays (`file`, `line`, `col`, `symbol`, `outcome`, `reason`), `files_examined`, `files_excluded`, `target_corroboration_capped` (true if the absence-corroboration text scan hit its byte budget, in which case no violation may be declared from the remaining unscanned text), `import_roots` (the derived roots actually searched for, empty if undeterminable), and `import_roots_determinable` (false only when no evidence tier could determine any root at all). See [ADR-0030](docs/adr/0030-check-command-conservative-symbol-existence-gate.md) for the symbol-existence gate design and [ADR-0032](docs/adr/0032-import-root-evidence-derivation.md) for import-root evidence derivation.
 - `bts-compute owner/repo@commit --root ROOT --seed-module MODULE --seed-name NAME --out DIR [--policy POLICY.json]`: compute BTS graph and summary artifacts from one verified exact shelf; for example, `leitir bts-compute acme/widget@0123456789abcdef0123456789abcdef01234567 --root .leitir --seed-module widget.api --seed-name widget.api.run --out bts-out --json`. `--list-seeds` instead lists selectable donor definition seeds and cannot be combined with seed or output arguments. Without `--allow-reject`, a written REJECT result exits nonzero; `--allow-reject` retains the artifact but exits successfully. Without `--policy`, it uses a pinned empty resolution policy, so donors that reach stdlib or external interfaces will normally not be COMPLETE. A policy is closed-schema JSON: `{"schema_version":"leitir-bts-cli-policy-v1","stdlib_modules":[...],"adapters":[{"module":"...","disposition":"adapter"|"pinned-exact"}]}`; arrays must be sorted and unique.
 - `occupied-validate artifact.json`: validate a canonical occupied-recipient attachment artifact offline. A committed, self-validating example lives at `tests/fixtures/occupied_validate/example-artifact.json` (regenerate deterministically with `PYTHONPATH=src python tests/fixtures/occupied_validate/generate.py`); for example, `leitir occupied-validate tests/fixtures/occupied_validate/example-artifact.json --json`.
+Whole-definition BTS closure (issue #309): included classes and nested definitions carry their owned runtime dependencies. Unresolved constructor or method dependencies reject completion under the active policy; resolver identity is `leitir-bts-walk-v2`.
+
 - `analysis-architecture graph.json --subject SUBJECT [--catalog CATALOG]`: assess a canonical graph with a non-empty slug-like caller label (`letters`, digits, `-`, `_`, `.`); JSON labels it `caller-declared-label`, not derived authority. For example, `leitir analysis-architecture graph.json --subject widget --json`.
 - `analysis-lineage manifest.json`: validate a canonical lineage manifest; for example, `leitir analysis-lineage lineage.json --json`.
 - `exit-gate-validate corpus.json`: validate pinned exit-corpus evidence and its standalone gate cross-check. `ratified_manifest_digest` is record-level content binding; `ratified_runtime_digest` is the separate out-of-band authority value consumed only by `exit-gate-run`.
 
 ### Closure and reproducibility
-- `lock`: materialize the project's transitive dependency closure.
+- `lock`: materialize the project's transitive dependency closure. Go `go.mod` inputs are `direct-only`: required modules (including `// indirect`) are collected, but recursively selected dependencies are not implied. Quoted module paths and versions are supported.
 - `export`: write a v2 `corpus.lock` plus compressed snapshot and emit the lock digest.
 - `import`: verify and rehydrate a v2 snapshot into an empty destination; the trusted
   `--lock-sha256` is mandatory. Existing v1 snapshots must be re-exported.
@@ -579,6 +584,10 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Tests
 
+The macOS CI full suite redistributes pending tests with xdist's `worksteal`
+scheduler. The canonical local command remains serial. See the
+[actual worker/timing evidence for issue #334](docs/evidence/issue-334-2026-09-05/README.md).
+
 ```bash
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
@@ -590,17 +599,16 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - Production-readiness gate #42 has recorded dogfood and 116-package load-test
   evidence. Two independent security reviews recorded no P0/P1 findings; PR #166
   remediated the reported P2 findings.
-- The contained Phase-A exit corpus has repeatedly completed all five donors
-  (each 2/0/0). Its most recent honest run,
-  [31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924),
-  rejects solely because runtime ratification is deliberately pending: the
-  run-to-run drift of the donor mount-source tree digest is removed by the
-  manifest-free donor mount projection of ADR-0021, so the runtime digest is
-  now a pure function of pinned inputs and awaits a fresh owner measurement
-  and signature. The published `containment-rootfs-v1` asset is pinned to
-  `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  The next owner step is re-measuring the stabilized runtime digest, followed
-  by a fresh signature.
+- The 2026-09-05 BTS walk correction was executed against all five pinned
+  donors under real nsjail containment in
+  [Phase A run 33953061013](https://github.com/anthonykewl20/leitir/actions/runs/33953061013).
+  Each donor completed with exact rerun parity, donor-import rejection proof,
+  and 2 passed / 0 failed / 0 skipped outcomes. The aggregate report remains
+  REJECT pending independent owner ratification of runtime digest
+  `sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`,
+  also measured in run 33951188380. The prior `72949674…` signature cannot
+  authorize the changed runtime. The published rootfs was authenticated and
+  reused; no substrate rebuild or publication occurred.
 - BTS benchmark evidence is published at
   `benchmarks/bts-v1/runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/`:
   five of six tasks have exact baselines and metrics; the
@@ -608,8 +616,9 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
   `bts_cli_parity_v1` provenance mismatch. The E5b timing envelope remains
   intentionally deferred offline.
 - The credential-gated live provider canary is enabled on its daily schedule.
-  Its main-branch probes are green; three v2 probes intentionally skip because
-  their test files have not landed.
+  Optional v2 surfaces are controlled by workflow environment gates; their
+  test files are present. Gate configuration and actual run outcomes must be
+  read separately from test availability.
 - **Local-verification boundary (2026-08-23 audit):** the full contained
   donor-execution pipeline (`bts-run` under nsjail) was *not* re-executed
   locally for this audit round; its acceptance evidence remains the milestone
@@ -649,3 +658,24 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.md](docs/operations.md), [docs/smoke-evaluation.md](docs/smoke-evaluation.md), plus the manual v1 scorecards — [docs/leitir-engine-scorecard.html](docs/leitir-engine-scorecard.html), its [historical PNG snapshot](docs/leitir-engine-scorecard.png), and the manual [v2 editorial scorecard](docs/leitir-engine-scorecard-v2.html). These manual
 snapshots are never scorer evidence.
+
+
+Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.
+
+Shelf provenance and indexing (#311): only full Git materializations with full upstream verification and exact parity supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.
+
+Registry artifacts without recorded upstream blob bindings cannot supply offline Git search citations. Their checksum-verified info/API/example views remain available. Existing corrupt Git shelves reject instead of silently switching to remote source. The regression fixture for offline ask explicitly represents a Git-bound package shelf.
+
+PyPI repository selection (issue #313): source/repository metadata takes priority over other links; funding and reserved GitHub routes cannot identify a donor. Packages without a supported repository, such as BeautifulSoup4, may materialize only through checksum-verified registry artifacts with explicit degraded provenance. A missing checksum still rejects; repository-dependent operations still require full provenance.
+Qualified API checking (#315): `check` preserves the consumer import path and complete attribute chain, then verifies that qualified symbol or an explicit source-level reexport. A same-named definition in another module does not establish `ok`. Conditional/star/dynamic exports without exact binding evidence remain `unresolved`; arity and runtime behavior are not inferred.
+Immutable tree reuse (#316): one GitHub tree-source instance reuses successfully validated listings by repository and exact commit. The cache retains at most four listings and 600,000 total blob entries. Failed or incomplete walks are never cached; recovered-tree coverage annotations are preserved.
+C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.
+
+Normalized Git archives (#311): the real Vitest 2.1.9 archive carries a CRLF file whose Git blob identity differs. Sampled, unverified, unknown-parity and drift shelves must use the upstream tree listing and verify queried bytes against it. A full local tree hash alone cannot authorize Git citations. Legacy shelves without an explicit exact-parity proof also take that checked path.
+
+Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.
+Known BTS blockers (#309): unresolved dependencies on each accepted owner are recorded before later nested-owner work can exhaust the budget. Known rejection continues to dominate partial budget exhaustion.
+
+Shared tree-source instances (#316): cache hits and eviction are atomic under a short lock. Network enumeration runs outside the lock. Concurrent callers cannot lose a listing between membership and read.
+
+Module loading and impact (#315): the checker requires evidence that intermediate modules were loaded by the consumer binding, an earlier unconditional top-level import, or source-backed imports of an already loaded module. A module file alone cannot authorize a parent-package attribute; later imports and imports in other scopes do not establish that access. `diff --impact` preserves removal evidence for imported owners and source-backed ancestors, including inherited attribute accesses; a removed owner cannot become a clean terminal-member result.

@@ -59,7 +59,10 @@ class _LocalShelfReader:
 
     @property
     def fully_verified(self) -> bool:
-        return self._manifest.get("materialized_tree_hash_scope") == "full"
+        return (self._manifest.get("materialized_tree_hash_scope") == "full"
+                and self._manifest.get("source") == "git-commit"
+                and self._manifest.get("verified") is True
+                and self._manifest.get("parity") == "exact")
 
     @property
     def drift_git_only_count(self) -> int:
@@ -336,12 +339,12 @@ def _score_content_ex(
     if not spans and content_must:
         return [], parser_unavailable
     if not spans and not content_must:
-        should_result = adapter.find_matches_ex(content, should) if should else None
-        if should_result is not None:
-            spans = should_result.spans
-            parser_unavailable = (
-                parser_unavailable or should_result.parser_unavailable
-            )
+        optional_spans: list[SpanMatch] = []
+        for predicate in should:
+            optional = adapter.find_matches_ex(content, (predicate,))
+            optional_spans.extend(optional.spans)
+            parser_unavailable = parser_unavailable or optional.parser_unavailable
+        spans = tuple(dict.fromkeys(optional_spans))
 
     whole_file_should_kinds: set[PredicateKind] = set()
     whole_file_should_boost = 0
@@ -372,14 +375,15 @@ def _score_content_ex(
         if whole_file:
             matched_kinds.update(whole_file_should_kinds)
         elif should:
-            should_result = adapter.find_matches_ex(content, should)
-            parser_unavailable = (
-                parser_unavailable or should_result.parser_unavailable
-            )
-            for ss in should_result.spans:
-                if ss.start_line == span.start_line:
-                    matched_kinds.update(ss.matched_kinds)
-                    should_boost += len(ss.matched_kinds)
+            for predicate in should:
+                optional = adapter.find_matches_ex(content, (predicate,))
+                parser_unavailable = parser_unavailable or optional.parser_unavailable
+                overlapping = [item for item in optional.spans
+                               if item.start_line <= span.end_line and span.start_line <= item.end_line]
+                if overlapping:
+                    should_boost += 1
+                    for item in overlapping:
+                        matched_kinds.update(item.matched_kinds)
 
         score = float(len(content_must) + should_boost)
         ref = SourceRef(
@@ -395,6 +399,7 @@ def _score_content_ex(
                 source=ref,
                 score=score,
                 matched_kinds=tuple(sorted(matched_kinds, key=lambda k: k.value)),
+                method=span.method.value,
             )
         )
     return matches, parser_unavailable
@@ -450,15 +455,14 @@ class ScopedSearcher:
             with self._local_shelf(scope.slug, scope.commit_sha) as local_shelf:
                 enumeration_excluded = 0
                 if local_shelf is not None and local_shelf.fully_verified:
-                    # A full verified shelf is a local immutable representation
-                    # of the declared donor tree.  Do not burn API budget merely
-                    # to rediscover its listing; drift is explicitly accounted
-                    # for below rather than silently treated as a read failure.
+                    # Only fully upstream-verified, exact Git shelves establish local Git blob provenance.
+                    # An artifact tree hash authenticates artifact bytes, not
+                    # equivalence to the declared upstream commit.
                     blobs = local_shelf.list_local_blobs()
                     recovered = False
                     drift_excluded = local_shelf.drift_git_only_count
                 else:
-                    drift_excluded = 0
+                    drift_excluded = local_shelf.drift_git_only_count if local_shelf is not None else 0
                     try:
                         blobs, recovered = self._tree.list_blobs_ex(
                             scope.slug, scope.commit_sha
@@ -669,8 +673,7 @@ class ScopedSearcher:
                     target, owner, repo, commit_sha, host="github.com"
                 )
                 if manifest is None:
-                    yield None
-                    return
+                    raise VerificationError("existing local shelf has invalid or missing integrity metadata")
                 yield _LocalShelfReader(target, manifest)
             return
 
@@ -702,8 +705,7 @@ class ScopedSearcher:
                         host="github.com",
                     )
             if manifest is None:
-                yield None
-                return
+                raise VerificationError("existing local shelf has invalid or missing integrity metadata")
             yield _LocalShelfReader(target, manifest)
 
     def _adapter_for(

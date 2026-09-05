@@ -174,3 +174,5 @@ the weaker binding at the point of use.
   converts degradation into a typed rejection.
 - Atomicity and integrity channels unchanged (ADR-0004 `_write_manifest`
   pattern; checksum verification before extraction).
+
+PyPI repository selection (issue #313): source/repository metadata takes priority over other links; funding and reserved GitHub routes cannot identify a donor. Packages without a supported repository, such as BeautifulSoup4, may materialize only through checksum-verified registry artifacts with explicit degraded provenance. A missing checksum still rejects; repository-dependent operations still require full provenance.

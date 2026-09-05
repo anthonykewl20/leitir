@@ -31,8 +31,7 @@ Two existing modules were read before anything here was written:
   evidence, not symbol-level evidence. This module reuses ``resolve_consumer``
   for what it already gives for free -- correct, conservative distribution
   attribution and the closed :class:`~leitir.usage.UnresolvedState` outcomes
-  for anything statically unknowable -- and adds a small, local, top-level
-  import-table pass (see ``_ImportTable``) only to recover *which* symbol a
+  for anything statically unknowable -- and adds a conservative import-table pass across scopes (see ``_ImportTable``) only to recover *which* symbol a
   resolved reference names. That recovery is intentionally best-effort and
   conservative: whenever it cannot pin down a candidate symbol with
   confidence it falls back to treating the site as ``unresolved`` (never a
@@ -367,42 +366,55 @@ def _appears_in_text(name: str, texts: tuple[str, ...]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _ImportTable:
-    """Best-effort, module-top-level-only recovery of what a bound name
-    actually names, for one consumer file.
+    """Unambiguous provider bindings recovered from consumer imports.
 
-    ``resolve_consumer`` already conservatively guarantees *that* a name at
-    a given position is certainly bound to the target distribution; this
-    table only recovers, on a best-effort basis, *which* provider symbol
-    that binding names, by re-reading the file's own top-level
-    import/from-import statements. Anything not resolvable at the top level
-    (a deeper-scope import, a re-bound alias) falls back at lookup time to
-    the attribute-access heuristic in ``_candidate_for_reference``, which is
-    always safe: it either recovers a concrete attribute name or reports a
-    bare module reference, never a guess.
+    The scope-aware resolver determines distribution attribution. Conflicting
+    qualified bindings are omitted here; module loading is proven separately
+    for each reference, preserving statement order and scope conservatively.
     """
 
-    # local name -> original provider symbol name, or None if this local
-    # name is the *module* itself (so an attribute access off of it is what
-    # names a symbol).
-    module_names: frozenset[str]
+    # Local names map to unambiguous qualified module/value bindings.
+    module_names: dict[str, str]
     symbol_aliases: dict[str, str]
 
 
-def _build_import_table(tree: ast.Module, import_roots: frozenset[str]) -> _ImportTable:
-    module_names: set[str] = set()
-    symbol_aliases: dict[str, str] = {}
-    for stmt in tree.body:
+def _build_import_table(
+    tree: ast.Module, import_roots: frozenset[str], *, modules: frozenset[str] | None = None,
+) -> _ImportTable:
+    # Distribution attribution is scope-aware, but its public reference does
+    # not carry a qualified binding. Reuse a name only when every provider
+    # import of that name agrees; rebinding/shadowing remains unresolved.
+    bindings: dict[str, tuple[str, bool]] = {}
+    required_modules: dict[str, set[str]] = {}
+    ambiguous: set[str] = set()
+
+    def record(local: str, qualified: str, is_module: bool, required: str) -> None:
+        value = (qualified, is_module)
+        if local in bindings and bindings[local] != value:
+            ambiguous.add(local)
+        bindings[local] = value
+        required_modules.setdefault(local, set()).add(required)
+
+    for stmt in ast.walk(tree):
         if isinstance(stmt, ast.Import):
             for alias in stmt.names:
                 if alias.name.split(".")[0] in import_roots:
-                    module_names.add(alias.asname or alias.name.split(".")[0])
+                    record(alias.asname or alias.name.split(".")[0],
+                           alias.name if alias.asname else alias.name.split(".")[0],
+                           True, alias.name)
         elif isinstance(stmt, ast.ImportFrom):
             if stmt.level == 0 and stmt.module and stmt.module.split(".")[0] in import_roots:
                 for alias in stmt.names:
-                    if alias.name == "*":
-                        continue
-                    symbol_aliases[alias.asname or alias.name] = alias.name
-    return _ImportTable(module_names=frozenset(module_names), symbol_aliases=symbol_aliases)
+                    if alias.name != "*":
+                        record(alias.asname or alias.name, stmt.module + "." + alias.name,
+                               False, stmt.module)
+    module_names: dict[str, str] = {}
+    symbol_aliases: dict[str, str] = {}
+    for local, (qualified, is_module) in sorted(bindings.items()):
+        if local in ambiguous or (modules is not None and not required_modules[local] <= modules):
+            continue
+        (module_names if is_module else symbol_aliases)[local] = qualified
+    return _ImportTable(module_names=module_names, symbol_aliases=symbol_aliases)
 
 
 def _find_name_node(tree: ast.Module, *, line: int, col: int) -> ast.Name | None:
@@ -423,6 +435,8 @@ def _find_enclosing_attribute(tree: ast.Module, name_node: ast.Name) -> str | No
 class _Candidate:
     symbol: str | None
     reason: str
+    qualified: str | None = None
+    binding: str | None = None
 
 
 def _candidate_for_reference(
@@ -433,12 +447,164 @@ def _candidate_for_reference(
     if name_node is None:
         return _Candidate(symbol=None, reason="module reference (symbol site not statically located)")
     local_name = name_node.id
-    if local_name in table.symbol_aliases:
-        return _Candidate(symbol=table.symbol_aliases[local_name], reason="from-import usage")
-    attr = _find_enclosing_attribute(tree, name_node)
-    if attr is not None:
-        return _Candidate(symbol=attr, reason="attribute access")
-    return _Candidate(symbol=None, reason="module reference (no attribute access)")
+    qualified = table.symbol_aliases.get(local_name) or table.module_names.get(local_name)
+    if qualified is None:
+        return _Candidate(symbol=None, reason="provider binding is not statically recovered")
+    binding = qualified
+    current: ast.expr = name_node
+    attributes: list[str] = []
+    while True:
+        parent = next((item for item in ast.walk(tree) if isinstance(item, ast.Attribute) and item.value is current), None)
+        if parent is None:
+            break
+        attributes.append(parent.attr)
+        current = parent
+    if attributes:
+        qualified += "." + ".".join(attributes)
+    elif local_name not in table.symbol_aliases:
+        return _Candidate(symbol=None, reason="module reference (no attribute access)")
+    return _Candidate(symbol=qualified.rsplit(".", 1)[-1], reason="qualified import binding", qualified=qualified, binding=binding)
+
+
+def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str], frozenset[str], dict[str, frozenset[str]]]:
+    """Recover source-backed names and explicit module-level reexports.
+
+    Ambiguous module layouts, conditional/star exports and dynamic mutations
+    remain unknown. A matching bare name in another module is never proof.
+    """
+    module_records = index.get("modules", [])
+    normalized: dict[str, str] = {}
+    paths: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for record in module_records if isinstance(module_records, list) else []:
+        if not isinstance(record, dict) or not isinstance(record.get("name"), str) or not isinstance(record.get("path"), str):
+            continue
+        name, path = record["name"], record["path"]
+        pieces = name.split(".")
+        candidates = [".".join(pieces[position:]) for position, part in enumerate(pieces) if part in import_roots]
+        if len(candidates) != 1:
+            continue
+        public = candidates[0]
+        if public in paths and paths[public] != path:
+            ambiguous.add(public)
+        normalized[name] = public
+        paths[public] = path
+    known: set[str] = set()
+    symbols = index.get("symbols", [])
+    for symbol in symbols if isinstance(symbols, list) else []:
+        if not isinstance(symbol, dict):
+            continue
+        module, qualified = symbol.get("module"), symbol.get("qualified_name")
+        if isinstance(module, str) and isinstance(qualified, str) and module in normalized:
+            public = normalized[module]
+            if public not in ambiguous and qualified.startswith(module + "."):
+                known.add(public + qualified[len(module):])
+    aliases: dict[str, str] = {}
+    imports: dict[str, frozenset[str]] = {}
+    total = 0
+    for module, relative in sorted(paths.items())[:MAX_TARGET_FILES]:
+        if module in ambiguous:
+            continue
+        try:
+            path = root / relative
+            if not path.resolve().is_relative_to(root.resolve()):
+                continue
+            raw = read_regular_file(path, maximum_bytes=MAX_TARGET_FILE_BYTES, no_follow=True)
+            total += len(raw)
+            if total > MAX_TARGET_TOTAL_BYTES:
+                break
+            tree = ast.parse(raw)
+        except (OSError, ValueError, SyntaxError):
+            continue
+        package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+        loaded: set[str] = set()
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom):
+                if statement.level:
+                    parts = package.split(".")
+                    if statement.level > len(parts):
+                        continue
+                    prefix = ".".join(parts[:len(parts) - statement.level + 1])
+                    target = prefix + ("." + statement.module if statement.module else "")
+                else:
+                    target = statement.module or ""
+                loaded.add(target)
+                for alias in statement.names:
+                    if alias.name != "*" and target:
+                        loaded.add(target + "." + alias.name)
+                        aliases[module + "." + (alias.asname or alias.name)] = target + "." + alias.name
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    loaded.add(alias.name)
+                    aliases[module + "." + (alias.asname or alias.name.split(".")[0])] = alias.name if alias.asname else alias.name.split(".")[0]
+        imports[module] = frozenset(loaded)
+    # Module imports require actual module/namespace paths. A class exported
+    # at requests.Session cannot authorize `import requests.Session`.
+    modules = {
+        ".".join(parts[:length])
+        for name in paths
+        if not any(name == item or name.startswith(item + ".") for item in ambiguous)
+        for parts in (name.split("."),)
+        for length in range(1, len(parts) + 1)
+    }
+    return frozenset(known), aliases, frozenset(modules), imports
+
+
+def _loaded_modules(
+    tree: ast.Module, reference: CodeReference, binding: str | None,
+    modules: frozenset[str], imports: dict[str, frozenset[str]],
+) -> frozenset[str]:
+    """Prove module loading from this binding and preceding unconditional imports.
+
+    A source file's existence does not bind it on its parent package. Imports
+    in later statements or other scopes cannot establish an earlier access.
+    """
+    requested = {binding} if binding else set()
+    for statement in tree.body:
+        if (statement.end_lineno or statement.lineno, statement.end_col_offset or 0) >= (
+            reference.span.start_line, reference.span.start_col
+        ):
+            continue
+        if isinstance(statement, ast.Import):
+            requested.update(alias.name for alias in statement.names)
+        elif isinstance(statement, ast.ImportFrom) and not statement.level and statement.module:
+            requested.add(statement.module)
+            requested.update(statement.module + "." + alias.name for alias in statement.names)
+    loaded: set[str] = set()
+    while requested:
+        name = min(requested)
+        requested.remove(name)
+        parts = name.split(".")
+        for length in range(1, len(parts) + 1):
+            module = ".".join(parts[:length])
+            if module in modules and module not in loaded:
+                loaded.add(module)
+                requested.update(imports.get(module, ()))
+    return frozenset(loaded)
+
+
+def _has_qualified_api(
+    qualified: str | None, known: frozenset[str], aliases: dict[str, str],
+    modules: frozenset[str], loaded: frozenset[str],
+) -> bool:
+    visited: set[str] = set()
+    while qualified and qualified not in visited and len(visited) < 32:
+        parts = qualified.split(".")
+        if any(".".join(parts[:length]) in modules - loaded for length in range(1, len(parts))):
+            return False
+        if qualified in known:
+            return True
+        visited.add(qualified)
+        parts = qualified.split(".")
+        for count in range(len(parts), 0, -1):
+            prefix = ".".join(parts[:count])
+            if prefix in aliases:
+                qualified = aliases[prefix] + ("." + ".".join(parts[count:]) if count < len(parts) else "")
+                break
+        else:
+            return False
+    return False
+
 
 
 # --------------------------------------------------------------------------
@@ -486,7 +652,6 @@ def run_check(
     consumer_root, files = discover_python_files(consumer_path)
     index = extract_check_index(materialized_root)
     _require_checkable_index(index, against=against)
-    index_names = _index_symbol_names(index)
     target_text = _read_target_text(materialized_root)
 
     # Issue #269: derive the import root(s) from the materialized
@@ -502,6 +667,7 @@ def run_check(
     resolved_roots = resolve_import_roots(materialized_root, package_name)
     import_roots_determinable = resolved_roots is not None
     import_roots = tuple(sorted(resolved_roots)) if resolved_roots else ()
+    qualified_names, aliases, known_modules, module_imports = _qualified_api_evidence(index, materialized_root, import_roots)
     result = resolve_consumer(
         consumer_root=consumer_root,
         import_roots={root: against for root in import_roots},
@@ -547,7 +713,10 @@ def run_check(
                 )
             )
             continue
-        table = table_cache.setdefault(relpath, _build_import_table(tree, frozenset(import_roots)))
+        table = table_cache.get(relpath)
+        if table is None:
+            table = _build_import_table(tree, frozenset(import_roots), modules=known_modules)
+            table_cache[relpath] = table
         candidate = _candidate_for_reference(tree, table, reference)
         line = reference.span.start_line
         col = reference.span.start_col
@@ -582,9 +751,12 @@ def run_check(
                 )
             )
             continue
-        if symbol in index_names:
+        if _has_qualified_api(
+            candidate.qualified, qualified_names, aliases, known_modules,
+            _loaded_modules(tree, reference, candidate.binding, known_modules, module_imports),
+        ):
             ok_sites.append(
-                CheckSite(file=relpath, line=line, col=col, symbol=symbol, outcome="ok", reason="present in extracted API index")
+                CheckSite(file=relpath, line=line, col=col, symbol=symbol, outcome="ok", reason="qualified binding is present in the source-backed API index")
             )
             continue
         if target_text.capped:
@@ -607,7 +779,7 @@ def run_check(
                     col=col,
                     symbol=symbol,
                     outcome="unresolved",
-                    reason="not in the API index, but present in the pinned source text "
+                    reason="qualified binding is not established, but the bare name is present in pinned source text "
                     "(likely a conditional definition, alias, or module constant the "
                     "def/class-only extractor cannot see)",
                 )

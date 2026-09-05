@@ -439,6 +439,7 @@ def compute_impact(
     from leitir.check import (
         _build_import_table,
         _candidate_for_reference,
+        _find_name_node,
         _require_checkable_index,
         discover_python_files,
         extract_check_index,
@@ -511,12 +512,34 @@ def compute_impact(
             if tree is None:
                 unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<file>"))
                 continue
-            table = table_cache.setdefault(relpath, _build_import_table(tree, frozenset({import_root})))
+            table = table_cache.get(relpath)
+            if table is None:
+                table = _build_import_table(tree, frozenset({import_root}))
+                table_cache[relpath] = table
             candidate = _candidate_for_reference(tree, table, reference)
             if candidate.symbol is None:
                 unresolved_sites.append(ImpactSite(file=relpath, line=line, col=col, symbol="<module>"))
                 continue
             symbol_name = candidate.symbol
+            # An attribute access also depends on its imported owner. A
+            # removed JSONEncoder breaks JSONEncoder.encode even though the
+            # inherited `encode` method was never in the donor's API index.
+            name_node = _find_name_node(tree, line=line, col=col)
+            imported = table.symbol_aliases.get(name_node.id) if name_node else None
+            imported_name = imported.rsplit(".", 1)[-1] if imported else None
+            if imported_name is not None and imported_name in removed_by_name:
+                symbol_name = imported_name
+            elif candidate.qualified is not None:
+                parts = candidate.qualified.split(".")
+                for length in range(2, len(parts)):
+                    ancestor = ".".join(parts[:length])
+                    if any(
+                        isinstance(qualified := item.get("qualified_name"), str)
+                        and (qualified == ancestor or qualified.endswith("." + ancestor))
+                        for item in removed_symbols
+                    ):
+                        symbol_name = parts[length - 1]
+                        break
             if symbol_name in removed_by_name:
                 impacted_sites.setdefault(symbol_name, []).append(
                     ImpactSite(file=relpath, line=line, col=col, symbol=symbol_name)

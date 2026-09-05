@@ -1,0 +1,65 @@
+2026-09-05T09:37:04.2486570Z Timeout (0:02:00)!
+2026-09-05T09:37:04.2488350Z Thread 0x00000001707af000 (most recent call first):
+2026-09-05T09:37:04.2493610Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 534 in read
+2026-09-05T09:37:04.2496200Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 567 in from_io
+2026-09-05T09:37:04.2499180Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 1160 in _thread_receiver
+2026-09-05T09:37:04.2501740Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 341 in run
+2026-09-05T09:37:04.2504530Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 411 in _perform_spawn
+2026-09-05T09:37:04.2505900Z 
+2026-09-05T09:37:04.2506150Z Thread 0x00000001f468dd80 (most recent call first):
+2026-09-05T09:37:04.2507560Z   File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/selectors.py", line 398 in select
+2026-09-05T09:37:04.2509510Z   File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 2154 in _communicate
+2026-09-05T09:37:04.2517620Z   File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 1222 in communicate
+2026-09-05T09:37:04.2519580Z   File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 556 in run
+2026-09-05T09:37:04.2521400Z   File "/Users/runner/work/leitir/leitir/benchmarks/differential/check_bridge.py", line 86 in run_leitir_check
+2026-09-05T09:37:04.2523320Z   File "/Users/runner/work/leitir/leitir/benchmarks/differential/harness.py", line 188 in _measure_hallucination
+2026-09-05T09:37:04.2525260Z   File "/Users/runner/work/leitir/leitir/benchmarks/differential/harness.py", line 139 in _run_one_arm
+2026-09-05T09:37:04.2526910Z   File "/Users/runner/work/leitir/leitir/benchmarks/differential/harness.py", line 221 in run_all
+2026-09-05T09:37:04.2528660Z   File "/Users/runner/work/leitir/leitir/tests/test_differential_eval.py", line 67 in _run_full_harness
+2026-09-05T09:37:04.2530600Z   File "/Users/runner/work/leitir/leitir/tests/test_differential_eval.py", line 85 in test_end_to_end_stub_run_all_arms_offline
+2026-09-05T09:37:04.2533040Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/python.py", line 166 in pytest_pyfunc_call
+2026-09-05T09:37:04.2535570Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+2026-09-05T09:37:04.2538100Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+2026-09-05T09:37:04.2540860Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+2026-09-05T09:37:04.2543290Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/python.py", line 1720 in runtest
+2026-09-05T09:37:04.2545870Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 179 in pytest_runtest_call
+2026-09-05T09:37:04.2548380Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+2026-09-05T09:37:04.2560530Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+2026-09-05T09:37:04.2563000Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+2026-09-05T09:37:04.2565510Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 245 in <lambda>
+2026-09-05T09:37:04.2568140Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 353 in from_call
+2026-09-05T09:37:04.2570640Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 244 in call_and_report
+2026-09-05T09:37:04.2573290Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 137 in runtestprotocol
+2026-09-05T09:37:04.2575990Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/runner.py", line 118 in pytest_runtest_protocol
+2026-09-05T09:37:04.2578570Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+2026-09-05T09:37:04.2581120Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+2026-09-05T09:37:04.2583570Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+2026-09-05T09:37:04.2587220Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/xdist/remote.py", line 227 in run_one_test
+2026-09-05T09:37:04.2589980Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/xdist/remote.py", line 206 in pytest_runtestloop
+2026-09-05T09:37:04.2592490Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+2026-09-05T09:37:04.2595030Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+2026-09-05T09:37:04.2597440Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+2026-09-05T09:37:04.2599860Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/main.py", line 372 in _main
+2026-09-05T09:37:04.2602240Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/main.py", line 318 in wrap_session
+2026-09-05T09:37:04.2604810Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/_pytest/main.py", line 365 in pytest_cmdline_main
+2026-09-05T09:37:04.2607500Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+2026-09-05T09:37:04.2610250Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+2026-09-05T09:37:04.2612760Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+2026-09-05T09:37:04.2615130Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/xdist/remote.py", line 427 in <module>
+2026-09-05T09:37:04.2617700Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 1291 in executetask
+2026-09-05T09:37:04.2620830Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 341 in run
+2026-09-05T09:37:04.2623360Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 411 in _perform_spawn
+2026-09-05T09:37:04.2626160Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 389 in integrate_as_primary_thread
+2026-09-05T09:37:04.2628810Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 1273 in serve
+2026-09-05T09:37:04.2631330Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 1806 in serve
+2026-09-05T09:37:04.2633550Z   File "<string>", line 8 in <module>
+2026-09-05T09:37:04.2634390Z   File "<string>", line 1 in <module>
+2026-09-05T09:37:05.5236830Z tests/test_differential_eval.py::test_exit_corpus_manifest_digest_unchanged_after_a_run 
+2026-09-05T09:37:05.5243000Z [gw0] [ 99%] PASSED tests/test_differential_eval.py::test_end_to_end_stub_run_all_arms_offline 
+2026-09-05T09:37:24.7445840Z Timeout (0:02:00)!
+2026-09-05T09:37:24.7448060Z Thread 0x000000016e557000 (most recent call first):
+2026-09-05T09:37:24.7452070Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 534 in read
+2026-09-05T09:37:24.7455280Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 567 in from_io
+2026-09-05T09:37:24.7459110Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 1160 in _thread_receiver
+2026-09-05T09:37:24.7461850Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 341 in run
+2026-09-05T09:37:24.7464890Z   File "/Users/runner/work/_temp/setup-uv-cache/archive-v0/0AWwANfuDgeqWruv/lib/python3.13/site-packages/execnet/gateway_base.py", line 411 in _perform_spawn

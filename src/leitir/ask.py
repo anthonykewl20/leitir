@@ -16,6 +16,7 @@ and re-run it by hand with ``leitir search``.
 
 from __future__ import annotations
 
+import json
 import re
 
 from .search import Predicate, PredicateKind
@@ -125,7 +126,9 @@ def rerun_search_command(
         "--ecosystem", ecosystem,
     ]
     for predicate in predicates:
-        value = f"{predicate.kind.value}:{predicate.value}"
+        value = (json.dumps(predicate.to_dict(), sort_keys=True, separators=(",", ":"))
+                 if ":" in predicate.value or predicate.language is not None
+                 else f"{predicate.kind.value}:{predicate.value}")
         parts.extend(["--must", value])
     return " ".join(_shell_quote(part) for part in parts)
 

@@ -76,7 +76,8 @@ def _materialize(
         "repo_url": f"https://{host}/{owner}/{repo}",
         "source": "git-commit",
         "spec": f"{owner}/{repo}@{commit}",
-        "verified": False,
+        "verified": True,
+        "verified_at": "2026-08-27T00:00:00Z",
     }
     (target / "leitir-manifest.json").write_text(
         json.dumps(manifest, sort_keys=True), encoding="utf-8"

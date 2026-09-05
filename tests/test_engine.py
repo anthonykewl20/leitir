@@ -152,6 +152,7 @@ def _write_shelf(
         "repo": "cpython",
         "repo_url": "https://github.com/python/cpython",
         "source": "git-commit",
+        "parity": "exact",
         "spec": "github:python/cpython",
         "tag": None,
         "verified": True,
@@ -681,7 +682,7 @@ class TestLocalMaterializedShelf:
         assert report.matches
         assert source.read_calls == [PY_BLOB_SHA]
 
-    def test_invalid_shelf_uses_api_blob_path(self, tmp_path):
+    def test_invalid_shelf_rejects_without_silent_api_fallback(self, tmp_path):
         data = SAMPLE_PY.encode()
         source = FakeTreeSource(
             blobs={
@@ -696,12 +697,9 @@ class TestLocalMaterializedShelf:
         )
         (target / "Lib/urllib/parse.py").write_bytes(b"invalid shelf\n")
 
-        report = ScopedSearcher(
-            source, (PythonAdapter(),), corpus_root=tmp_path
-        ).search(_spec())
-
-        assert report.matches
-        assert source.read_calls == [_blob_sha(data)]
+        with pytest.raises(VerificationError, match="invalid or missing integrity metadata"):
+            ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(_spec())
+        assert source.read_calls == []
 
     def test_local_shelf_report_is_deterministic(self, tmp_path, monkeypatch):
         data = SAMPLE_PY.encode()
@@ -723,7 +721,7 @@ class TestLocalMaterializedShelf:
         assert first.to_dict() == second.to_dict()
         assert source.read_calls == []
 
-    def test_full_drift_shelf_uses_local_artifact_and_reports_git_only_exclusion(self, tmp_path):
+    def test_full_drift_shelf_cannot_substitute_its_local_git_universe(self, tmp_path):
         data = SAMPLE_PY.encode()
         target = _write_shelf(tmp_path, files={"parse.py": data})
         manifest = json.loads((target / "leitir-manifest.json").read_text())
@@ -735,11 +733,11 @@ class TestLocalMaterializedShelf:
         (target / "leitir-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         source = _fake_source()
 
-        report = ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(_spec())
-
-        assert report.matches
-        assert source.list_calls == 0
-        assert report.coverage.exclusions == {"registry_artifact_git_only": 3}
+        # A full local hash cannot establish upstream identity for a drift
+        # shelf. The actual Git listing names a missing local path here.
+        with pytest.raises(VerificationError, match="cannot safely stat local blob"):
+            ScopedSearcher(source, (PythonAdapter(),), corpus_root=tmp_path).search(_spec())
+        assert source.list_calls == 1
 
     def test_exact_shelf_missing_remote_blob_fails_when_given_remote_listing(self, tmp_path):
         data = SAMPLE_PY.encode()

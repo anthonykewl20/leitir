@@ -1,0 +1,228 @@
+{
+  "consumer_programs": {
+    "alias": "from flask.json import JSONEncoder as Encoder\nprint(Encoder.encode)\n",
+    "direct": "from flask.json import JSONEncoder\nprint(JSONEncoder.encode)\n",
+    "module": "import flask.json\nprint(flask.json.JSONEncoder.encode)\n",
+    "retained": "from flask import Flask\nprint(Flask)\n"
+  },
+  "focused_regression": "34 passed in2.23s; ruff passed; mypy src/leitir/diff.py passed",
+  "live_regression": "Four actual CLI programs plus downloaded-source tamper rejection; 1 passed in13.89s",
+  "public_cli": [
+    "python",
+    "-m",
+    "leitir.cli",
+    "diff",
+    "pypi:flask@2.2.5",
+    "pypi:flask@2.3.0",
+    "--impact",
+    "consumer.py",
+    "--root",
+    "corpus",
+    "--json"
+  ],
+  "public_cli_results": {
+    "after": {
+      "after": {
+        "commit_sha": "8728c3e4cd4e929a4327d917acd4b96c75f963d0",
+        "name": "flask",
+        "repository": "pallets/flask",
+        "spec": "pypi:flask@2.3.0",
+        "version": "2.3.0"
+      },
+      "before": {
+        "commit_sha": "47af817c8fe01045c641b97f8fb784c7ad864eee",
+        "name": "flask",
+        "repository": "pallets/flask",
+        "spec": "pypi:flask@2.2.5",
+        "version": "2.2.5"
+      },
+      "impact": {
+        "against": "pypi:flask@2.2.5",
+        "counts": {
+          "removed_total": 26,
+          "sites_examined": 1,
+          "sites_impacted": 1,
+          "sites_other": 0,
+          "sites_unresolved": 0
+        },
+        "impacted": [
+          {
+            "name": "JSONEncoder",
+            "qualified_name": "src.flask.json.JSONEncoder",
+            "sites": [
+              {
+                "col": 6,
+                "file": "consumer.py",
+                "line": 2,
+                "symbol": "JSONEncoder"
+              }
+            ]
+          }
+        ],
+        "not_impacted": [
+          "JSONDecoder",
+          "before_app_first_request",
+          "before_first_request",
+          "default",
+          "env",
+          "get_env",
+          "htmlsafe_dump",
+          "htmlsafe_dumps",
+          "invoke_no_routes",
+          "json_decoder",
+          "json_encoder",
+          "propagate_exceptions",
+          "send_file_max_age_default",
+          "session_cookie_name",
+          "templates_auto_reload",
+          "test_before_first_request_functions",
+          "test_before_first_request_functions_concurrent",
+          "test_config_from_file",
+          "test_session_ip_warning",
+          "test_session_localhost_warning",
+          "test_session_refresh_vary",
+          "test_session_using_server_name",
+          "test_session_using_server_name_and_port",
+          "test_session_using_server_name_port_and_path",
+          "use_x_sendfile"
+        ],
+        "package_name": "flask",
+        "status": "impact_found",
+        "unresolved_sites": []
+      },
+      "source_head": "same worktree with imported-owner impact fix"
+    },
+    "before": {
+      "after": {
+        "commit_sha": "8728c3e4cd4e929a4327d917acd4b96c75f963d0",
+        "name": "flask",
+        "repository": "pallets/flask",
+        "spec": "pypi:flask@2.3.0",
+        "version": "2.3.0"
+      },
+      "before": {
+        "commit_sha": "47af817c8fe01045c641b97f8fb784c7ad864eee",
+        "name": "flask",
+        "repository": "pallets/flask",
+        "spec": "pypi:flask@2.2.5",
+        "version": "2.2.5"
+      },
+      "impact": {
+        "against": "pypi:flask@2.2.5",
+        "counts": {
+          "removed_total": 26,
+          "sites_examined": 1,
+          "sites_impacted": 0,
+          "sites_other": 1,
+          "sites_unresolved": 0
+        },
+        "impacted": [],
+        "not_impacted": [
+          "JSONDecoder",
+          "JSONEncoder",
+          "before_app_first_request",
+          "before_first_request",
+          "default",
+          "env",
+          "get_env",
+          "htmlsafe_dump",
+          "htmlsafe_dumps",
+          "invoke_no_routes",
+          "json_decoder",
+          "json_encoder",
+          "propagate_exceptions",
+          "send_file_max_age_default",
+          "session_cookie_name",
+          "templates_auto_reload",
+          "test_before_first_request_functions",
+          "test_before_first_request_functions_concurrent",
+          "test_config_from_file",
+          "test_session_ip_warning",
+          "test_session_localhost_warning",
+          "test_session_refresh_vary",
+          "test_session_using_server_name",
+          "test_session_using_server_name_and_port",
+          "test_session_using_server_name_port_and_path",
+          "use_x_sendfile"
+        ],
+        "package_name": "flask",
+        "status": "clean",
+        "unresolved_sites": []
+      },
+      "source_head": "54400dc0a7b34403fd6828df34cf3c1d5e5a0f6b"
+    }
+  },
+  "real_registry_source_verification": [
+    {
+      "filename": "Flask-2.2.5.tar.gz",
+      "flask": "2.2.5",
+      "sha256_verified_before_extraction": "edee9b0a7ff26621bd5a8c10ff484ae28737a2410d99b0bb9a6850c7fb977aa0",
+      "url": "https://files.pythonhosted.org/packages/5f/76/a4d2c4436dda4b0a12c71e075c508ea7988a1066b06a575f6afe4fecc023/Flask-2.2.5.tar.gz"
+    },
+    {
+      "filename": "Flask-2.3.0.tar.gz",
+      "flask": "2.3.0",
+      "sha256_verified_before_extraction": "4088b4986f13cae23e02081e67df7e4e434ec6f85a5238bce5e6db6d1de61e06",
+      "url": "https://files.pythonhosted.org/packages/04/f4/22384e109d9b7e295b20580bc6af5f45b78730d03f41f826639a5c006d1a/Flask-2.3.0.tar.gz"
+    }
+  ],
+  "recorded_at": "2026-09-05",
+  "runtime_oracles": [
+    {
+      "case": "direct",
+      "exception": null,
+      "exit_code": 0,
+      "flask": "2.2.5",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "direct",
+      "exception": "ImportError: cannot import name 'JSONEncoder' from 'flask.json' (/home/soultransit/.cache/uv/archive-v0/tTraZuj0kmlG9KYH/lib/python3.11/site-packages/flask/json/__init__.py)",
+      "exit_code": 1,
+      "flask": "2.3.0",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "alias",
+      "exception": null,
+      "exit_code": 0,
+      "flask": "2.2.5",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "alias",
+      "exception": "ImportError: cannot import name 'JSONEncoder' from 'flask.json' (/home/soultransit/.cache/uv/archive-v0/tTraZuj0kmlG9KYH/lib/python3.11/site-packages/flask/json/__init__.py)",
+      "exit_code": 1,
+      "flask": "2.3.0",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "module",
+      "exception": null,
+      "exit_code": 0,
+      "flask": "2.2.5",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "module",
+      "exception": "AttributeError: module 'flask.json' has no attribute 'JSONEncoder'",
+      "exit_code": 1,
+      "flask": "2.3.0",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "retained",
+      "exception": null,
+      "exit_code": 0,
+      "flask": "2.2.5",
+      "werkzeug_constraint": "<3"
+    },
+    {
+      "case": "retained",
+      "exception": null,
+      "exit_code": 0,
+      "flask": "2.3.0",
+      "werkzeug_constraint": "<3"
+    }
+  ]
+}

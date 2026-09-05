@@ -601,7 +601,7 @@ jobs:
           path = Path("benchmarks/exit-corpus/corpus-v1.1.json")
           manifest = json.loads(path.read_text())
           manifest["ratified_runtime_digest"] = None
-          path.write_text(json.dumps(manifest, indent=2) + "\n")
+          path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n")
           PYTHON
       - name: Run exit gate
         id: exit_gate

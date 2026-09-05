@@ -5,3 +5,9 @@ Evaluate optional predicates independently, preserve AST/heuristic method in ser
 Inputs come from actual published sources and the production CLI/transports. `live.txt` is the live-gated regression execution, not a mocked provider. Default-suite and static checks are regression/hygiene gates and do not substitute for that evidence. The initial raw audit is retained in the assigned workspace under `/tmp/leitir-audit-20260905`; the issue records the original pins and defect. Full-suite/CI output and review disposition are recorded in the PR.
 
 Correction to initial audit F04: it compared the low-level span evaluator with the full streaming file processor. Both public file-processing paths already apply document exclusions. A new real Linux probe compares the complete buffered and streaming scope paths with actual GitHub reads and proves they agree. No exclusion behavior change is needed; the valid fixes concern optional scoring, method labels, predicate replay and documentation.
+
+Final integration review found the old broad masking claim also survived in
+`search --help`. The actual CLI output and independently verified official Go
+source comment match are retained in `cli-help-before.json`;
+`cli-help-after.txt` records the corrected production help. This aligns the
+advertised language boundary without changing matching behavior.

@@ -4,7 +4,8 @@ Leitir is a deterministic, provenance-bound dependency-source corpus plus a dete
 
 **Release preparation (2026-09-05): `pyproject.toml` is 0.2.000.
 The latest published release remains [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6).
-[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.**
+[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.
+Independent runtime ratification and publication are tracked in [#338](https://github.com/anthonykewl20/leitir/issues/338).**
 
 Release verification checks archive payload CRCs and gzip trailers as well as
 version metadata; malformed or duplicate wheel members reject before publication.

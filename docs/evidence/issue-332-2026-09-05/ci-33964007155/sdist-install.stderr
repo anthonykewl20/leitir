@@ -1,0 +1,7 @@
+Using Python 3.11.15 environment at: venv-sdist
+Resolved 1 package in 37ms
+   Building leitir @ file:///tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-dist/leitir-0.2.0.tar.gz
+      Built leitir @ file:///tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-dist/leitir-0.2.0.tar.gz
+Prepared 1 package in 682ms
+Installed 1 package in 2ms
+ + leitir==0.2.0 (from file:///tmp/leitir-remediation-20260905/release-evidence/ci-33964007155-dist/leitir-0.2.0.tar.gz)

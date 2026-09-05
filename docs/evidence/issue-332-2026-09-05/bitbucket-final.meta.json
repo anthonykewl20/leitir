@@ -1,0 +1,19 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_resolver_bitbucket.py::test_live_midsize_enumeration_is_page_bounded",
+    "-q",
+    "-s",
+    "--tb=short"
+  ],
+  "head": "dbd9293fc53851d10eccdc82c5e1bc3d5223ab2f",
+  "seconds": 29.169933529978152,
+  "returncode": 0
+}

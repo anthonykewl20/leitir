@@ -1,9 +1,12 @@
 # Release 0.2.000 validation record — 2026-09-05
 
 This record covers the code/specification remediation and release preparation.
-Publication, one final large-tree live probe and signed Phase C remain pending.
-The original audit examined commit `73f57b66`; the latest combined source tested
-here is `66b88c24ff97f18669fe1c48e18c74e949cc84e1`.
+All selected live probes have completed; three explicit skips remain.
+Independent signed Phase C and publication are tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
+The original audit examined commit `73f57b66`; runtime, verifier and final help runs below identify their exact source heads.
+Application integration [PR337](https://github.com/anthonykewl20/leitir/pull/337)
+merged as `bf886e1eb59f9e3126826e8a940c94fd28b38a0b`; all13 component PRs
+were indirectly merged and their linked issues automatically closed.
 
 ## Defect disposition and independent oracles
 
@@ -16,7 +19,7 @@ here is `66b88c24ff97f18669fe1c48e18c74e949cc84e1`.
 | Streaming-exclusion allegation | Withdrawn | The original comparison mixed span and file processing. Actual pinned Linux bytes through both complete file-processing paths agree. No public exclusion change was needed. |
 | Go syntax and dependency-coverage overclaim | #314 / #323 | Official Go 1.27.1 and actual published module files establish valid quoted/escaped grammar and distinguish direct requirements from the MVS graph. |
 | PyPI funding links displaced source metadata; repository-free artifacts rejected | #313 / #322 | Actual attrs source-purpose links select the repository. BeautifulSoup4 materializes from its checksum-verified artifact with explicit degraded provenance. |
-| Query replay, optional boosts, method evidence and masking documentation diverged | #312 / #326 | Actual Requests query replay and independently optional boosts agree; AST/heuristic method survives output. Actual Linux buffered/streamed exclusions agree. |
+| Query replay, optional boosts, method evidence and masking documentation diverged | #312 / #326 | Actual Requests query replay and independently optional boosts agree; AST/heuristic method survives output. Actual Linux buffered/streamed exclusions agree; final CLI help matches actual official Go comment behavior. |
 | Bare-name/qualified-path checking falsely reported valid APIs | #315 / #324 | Actual Requests consumers and installed runtime controls distinguish reexports, loaded modules, missing attributes, class-as-module imports and ambiguous bindings. |
 | Qualified checking regressed removed-owner impact reporting | #315 / #324 | Actual Flask 2.2.5→2.3.0 runtime/CLI controls detect removed `JSONEncoder` through direct, aliased and member accesses; retained Flask use stays unaffected. |
 | Repeated complete tree walks and shared cache eviction race | #316 / #327 | Complete CLI benchmark reuses immutable listings. Actual concurrent calls using five upstream pins reproduce and then reject the lost-hit race through atomic cache access. |
@@ -39,25 +42,32 @@ withdrawn there rather than silently erased.
 | Surface | Actual evidence |
 |---|---|
 | Canonical serial suite | 3,742 passed, 159 gated skips, four warnings in 840.97 seconds on `66b88c24`. [Output](issue-332-2026-09-05/suite.txt), [command/head](issue-332-2026-09-05/suite.meta.json). |
+| Final verifier canonical suite | 3,742 passed, 159 gated skips, four warnings in846.32s. The recorded command started from cc134194 with the uncommitted verifier/test bytes later committed at64a90ef; SHA2564818d3d7ec4b8450cc0f7357e2e322800644607656ec8614fa792f37b74c7059 identifies that exact verifier. This is not misreported as a clean64a checkout. [Output](issue-332-2026-09-05/verifier-suite.txt), [command and hashes](issue-332-2026-09-05/verifier-suite.meta.json). |
+| Final application integration suite | Exact a2dafae659b0bdbb7ed2fba427adc24247b4b972: 3,742 passed, 158 gated skips, four warnings in851.34s, including the final CLI help correction. [Output](issue-332-2026-09-05/integration-help-suite.txt), [command/head](issue-332-2026-09-05/integration-help-suite.meta.json). Hosted CI33965309804 and CodeQL33965309789 passed. |
 | Static gates | Ruff and mypy passed. These and the existing suite are regression gates; they do not replace real upstream proof. |
 | Distribution installation and rejection | Actual wheel and sdist installed into separate environments, reported the expected versions and materialized pinned Packaging. Wrong tags, extra artifacts and altered metadata rejected. [Identities](issue-332-2026-09-05/artifact-identities.json), [live result](issue-332-2026-09-05/live.txt). |
 | Archive corruption and malformed metadata | Independent final rerun: 38 unchanged real archive cases, 36 clean rejections, two valid controls, zero tracebacks. Fresh wheel/source builds, isolated installs and the expanded live rejection cases passed in 9.53 seconds. [Before/after proof](issue-332-2026-09-05/archive-rejections/README.md), [final matrix](issue-332-2026-09-05/archive-rejections/final-results.json). |
 | Exact-commit CI artifacts | Actual workflow-dispatch run 33962193988 passed its complete hosted matrix. Downloaded wheel/source archive match the exact commit: 127/326 tracked packaged files, all 119 runtime Python files. Separate installations complete real Packaging get/info/API operations. [Source comparison and install evidence](issue-332-2026-09-05/ci-33962193988/README.md), [complete CI result](issue-332-2026-09-05/ci-33962193988/run.json). |
+| Corrected verifier CI artifacts | Exact head64a90ef completed CI33964007155 and CodeQL33964008898. Both downloaded artifacts match all127 packaged src/data files, pass payload verification and complete14 install/version/live Packaging commands. [Evidence](issue-332-2026-09-05/ci-33964007155/README.md). |
 | MCP | Actual MCP 2.1.1 client/server exercised all five tools, 12 concurrent calls, malformed arguments, unknown tool and source tamper/recovery. Actual Flask diff matched independent hashes: seven added, 12 removed and 77 modified files. [Protocol cases](issue-332-2026-09-05/mcp-sad-paths.json), [diff oracle](issue-332-2026-09-05/mcp-diff-summary.json). |
 | Process crash recovery | SIGKILL during actual Packaging extraction left three complete files and a fourth partial file, without a published manifest/shelf/catalog. Incomplete staging rejected. A normal exact-pin rerun reclaimed staging and produced a fully verified exact-parity shelf. [Evidence](issue-332-2026-09-05/crash-recovery/README.md). |
 | SBOM | Four actual Requests/Packaging CLI documents passed official SPDX 2.3/CycloneDX 1.5 schemas, external references and format validators. Two altered actual outputs rejected. Generation/final validation ran without network access. [Evidence](issue-332-2026-09-05/sbom-validation/README.md). |
 | Broad live cohort | 82 passed, three environment/provider skips, zero failures. Two heavy tree cases were separated to reserve provider quota. [Output](issue-332-2026-09-05/live-rest.stdout), [command/head](issue-332-2026-09-05/live-rest.meta.json). The 2,970-second wall time includes an intentional 1,125-second quota pause; it is not application performance. |
 | Complete tree recovery | Actual TypeScript pin `b465fdbfe175304d9b977da137b2c178ae1091d3`: 53,309 visible blobs expanded to 81,368 recovered blobs; sorted/unique full universe passed in 1,376.90 seconds. [Output](issue-332-2026-09-05/recovery-live.stdout), [source head/command](issue-332-2026-09-05/recovery-live.meta.json). |
+| Public tree-listing wrapper | Actual TypeScript pin enumerated81,368blobs using2,486APIcalls; passed in1,422.43s. [Output](issue-332-2026-09-05/fallback-live.stdout), [command/head](issue-332-2026-09-05/fallback-live.meta.json). |
+| Complete unique live inventory | 87 selected nodes:84passes, three explicit skips, zero failures/pending across separately recorded runs. [Per-node ledger](issue-332-2026-09-05/live-coverage-ledger.json). Final Bitbucket retry remained skipped after28.92s: [output](issue-332-2026-09-05/bitbucket-final.stdout), [command/head](issue-332-2026-09-05/bitbucket-final.meta.json). |
 | Full installed-wheel CLI benchmark | 32 tasks, 33 results, every expected source record found in 1,435.41 seconds. Twenty-eight complete reports and four recovered-TypeScript PARTIAL reports conform to ADR-0001. Complete output is byte-identical to the earlier successful run. [Record-by-record validation](issue-332-2026-09-05/benchmark-validation.json), [actual output](issue-332-2026-09-05/bench.stdout), [installed artifact/command](issue-332-2026-09-05/bench.meta.json). |
 | Determinism and concurrency | Actual Requests search/index output agrees across seeds 0/1/42, UTC/Kathmandu and C/C.UTF-8 except observation timestamps. Actual concurrent Packaging get/trust and info/API/example views preserve verified source and stable API output. |
 
 The broad live suite completed separately from two heavy tree cases to respect
-provider quota. Its three skips are two local nsjail/donor environment gates and
-one anonymous Bitbucket rate limit. Hosted containment has separate real donor
+provider quota. Its three skips are two local placeholder entries that defer to the dedicated
+nsjail/donor workflow and one anonymous Bitbucket rate limit; those two local
+functions are not counted as executed donor proof. Hosted containment has separate real donor
 evidence below. The initial attempt's quota failures remain preserved;
 subsequent successful runs are recorded separately. Provider/environment skips
-are not converted into passes. The final public tree-listing wrapper probe
-remains pending; the independent full-universe recovery case passed.
+are not converted into passes. Both the final public tree-listing wrapper and independent full-universe recovery
+cases passed. The final Bitbucket retry still skipped; provider limitations are
+not counted as successful validation.
 
 ## Independent review
 
@@ -70,11 +80,26 @@ reviewer-hy3/reviewer-qwen. Reviewers one and two reviewed the sensitive changes
 PR324's final whole-diff reviews are by reviewers one and three because reviewer
 two implemented its Flask correction. Root independently reviewed PR335,
 implemented by reviewer one. No reviewer approved their own implementation.
-PR333 release-only head `cc134194` also completed both independent sensitive
-reviews after its exact-commit branch CI and CodeQL passed, including the
-release source-binding correction. Subsequent documentation changes need their
-final checks and review. Exact head records and full review reports remain in the session's remediation
-evidence directory; final merge readiness must recheck the current heads.
+PR333 release-only head `cc134194` completed two independent sensitive reviews.
+A subsequent production verifier correction added complete archive payload checks;
+it was not merely a documentation change. Both reviewers one/two independently
+reviewed exact corrected head `64a90ef978ca9c3485a9b767c9076a0202ea2856` after
+CI33964007155 and CodeQL33964008898 passed, and each reran the unchanged38-case
+actual archive matrix:36cleanrejections, two valid controls, zero tracebacks.
+Final application integration `a2dafae` completed independent reviews by one/three
+after its exact CI/CodeQL passed; corrected component326 also completed one/two.
+The final preparation documentation head needs its own hosted checks and review;
+those exact records are maintained in PR333 to avoid claiming this document
+already proves its own future commit. No self-authored component is self-approved.
+
+## Completion scope
+
+Implementation issues306–316,328,330,334 and integration336 are closed through
+merged PRs. Release preparation332/333 includes the version, curated notes,
+release verifier and publisher. Issue338 separately requires the independent
+signed sidecar, actual PhaseC, exact-commit CI artifacts, attested publication,
+downloaded-asset verification and tag-dependent documentation. No tag or release
+has been published, and the latest published version remains v0.1.6.
 
 ## Release source binding
 

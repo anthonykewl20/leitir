@@ -1,0 +1,4 @@
+s
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_resolver_bitbucket.py:666: anonymous Bitbucket rate limit (set BITBUCKET_TOKEN)
+1 skipped in 28.92s

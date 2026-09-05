@@ -1,0 +1,19 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_tree.py::test_live_list_blobs_truncated_tree_fallback",
+    "-q",
+    "-s",
+    "--tb=short"
+  ],
+  "head": "64a90ef978ca9c3485a9b767c9076a0202ea2856",
+  "seconds": 1422.6983600829844,
+  "returncode": 0
+}

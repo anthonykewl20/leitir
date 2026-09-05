@@ -1,0 +1,3 @@
+Using CPython 3.11.15
+Creating virtual environment at: venv-sdist
+Activate with: source venv-sdist/bin/activate

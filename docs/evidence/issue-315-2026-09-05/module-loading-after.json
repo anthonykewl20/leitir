@@ -1,0 +1,275 @@
+[
+  {
+    "source": "import requests\nrequests.help.info()\n",
+    "expected_supported": false,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 0,
+        "sites_violation": 0,
+        "sites_unresolved": 1
+      },
+      "violations": [],
+      "unresolved": [
+        {
+          "file": "corrected0.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "unresolved",
+          "reason": "qualified binding is not established, but the bare name is present in pinned source text (likely a conditional definition, alias, or module constant the def/class-only extractor cannot see)"
+        }
+      ],
+      "ok": [],
+      "files_examined": [
+        "corrected0.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 1,
+    "runtime_stderr": "Traceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/review-one-check-modules/corrected0.py\", line 2, in <module>\n    requests.help.info()\n    ^^^^^^^^^^^^^\nAttributeError: module 'requests' has no attribute 'help'\n"
+  },
+  {
+    "source": "import requests.help\nrequests.help.info()\n",
+    "expected_supported": true,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "corrected1.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "corrected1.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 0,
+    "runtime_stderr": ""
+  },
+  {
+    "source": "import requests.help as helper\nhelper.info()\n",
+    "expected_supported": true,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "corrected2.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "corrected2.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 0,
+    "runtime_stderr": ""
+  },
+  {
+    "source": "from requests import help\nhelp.info()\n",
+    "expected_supported": true,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "corrected3.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "corrected3.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 0,
+    "runtime_stderr": ""
+  },
+  {
+    "source": "import requests\nrequests.help.info()\nimport requests.help\n",
+    "expected_supported": false,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 0,
+        "sites_violation": 0,
+        "sites_unresolved": 1
+      },
+      "violations": [],
+      "unresolved": [
+        {
+          "file": "corrected4.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "unresolved",
+          "reason": "qualified binding is not established, but the bare name is present in pinned source text (likely a conditional definition, alias, or module constant the def/class-only extractor cannot see)"
+        }
+      ],
+      "ok": [],
+      "files_examined": [
+        "corrected4.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 1,
+    "runtime_stderr": "Traceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/review-one-check-modules/corrected4.py\", line 2, in <module>\n    requests.help.info()\n    ^^^^^^^^^^^^^\nAttributeError: module 'requests' has no attribute 'help'\n"
+  },
+  {
+    "source": "import requests\ndef other():\n    import requests.help\nrequests.help.info()\n",
+    "expected_supported": false,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 0,
+        "sites_violation": 0,
+        "sites_unresolved": 1
+      },
+      "violations": [],
+      "unresolved": [
+        {
+          "file": "corrected5.py",
+          "line": 4,
+          "col": 0,
+          "symbol": "info",
+          "outcome": "unresolved",
+          "reason": "qualified binding is not established, but the bare name is present in pinned source text (likely a conditional definition, alias, or module constant the def/class-only extractor cannot see)"
+        }
+      ],
+      "ok": [],
+      "files_examined": [
+        "corrected5.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 1,
+    "runtime_stderr": "Traceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/review-one-check-modules/corrected5.py\", line 4, in <module>\n    requests.help.info()\n    ^^^^^^^^^^^^^\nAttributeError: module 'requests' has no attribute 'help'\n"
+  },
+  {
+    "source": "import requests\nrequests.utils.parse_header_links(\"\")\n",
+    "expected_supported": true,
+    "report": {
+      "schema_version": "leitir-check-report-v1",
+      "against": "pypi:requests@2.32.3",
+      "language": "python",
+      "status": "clean",
+      "counts": {
+        "sites_examined": 1,
+        "sites_ok": 1,
+        "sites_violation": 0,
+        "sites_unresolved": 0
+      },
+      "violations": [],
+      "unresolved": [],
+      "ok": [
+        {
+          "file": "corrected6.py",
+          "line": 2,
+          "col": 0,
+          "symbol": "parse_header_links",
+          "outcome": "ok",
+          "reason": "qualified binding is present in the source-backed API index"
+        }
+      ],
+      "files_examined": [
+        "corrected6.py"
+      ],
+      "files_excluded": [],
+      "target_corroboration_capped": false,
+      "import_roots": [
+        "requests"
+      ],
+      "import_roots_determinable": true
+    },
+    "runtime_exit": 0,
+    "runtime_stderr": ""
+  }
+]

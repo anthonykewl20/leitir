@@ -2,10 +2,11 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Release preparation (2026-09-05): `pyproject.toml` is 0.2.000.
-The latest published release remains [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6).
-[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.
-Independent runtime ratification and publication are tracked in [#338](https://github.com/anthonykewl20/leitir/issues/338).**
+**Latest published release: [v0.2.000](https://github.com/anthonykewl20/leitir/releases/tag/v0.2.000)
+(2026-09-05, `pyproject.toml` 0.2.000, distribution `leitir-0.2.0`).
+[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates;
+the tagged commit, CI-tested archives, provenance attestations and installed-wheel probes are recorded in
+[the #338 evidence](docs/evidence/issue-338-2026-09-05/README.md).**
 
 Release verification checks archive payload CRCs and gzip trailers as well as
 version metadata; malformed or duplicate wheel members reject before publication.
@@ -122,8 +123,8 @@ provenance attestation, and committed version-specific notes. See
 ## Installation
 
 ```bash
-# Install the latest released tag (v0.1.6, 2026-08-25)
-pip install git+https://github.com/anthonykewl20/leitir.git@v0.1.6
+# Install the latest released tag (v0.2.000, 2026-09-05)
+pip install git+https://github.com/anthonykewl20/leitir.git@v0.2.000
 
 # Or the latest from main
 pip install git+https://github.com/anthonykewl20/leitir.git

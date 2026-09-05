@@ -2,7 +2,7 @@
 
 This record covers the code/specification remediation and release preparation.
 All selected live probes have completed; three explicit skips remain.
-Signed Phase C completed on 2026-09-05 (see Containment and authority below); tag publication is tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
+Signed Phase C completed and `v0.2.000` was published on 2026-09-05; the publication evidence is in [issue-338-2026-09-05/](issue-338-2026-09-05/README.md).
 The original audit examined commit `73f57b66`; runtime, verifier and final help runs below identify their exact source heads.
 Application integration [PR337](https://github.com/anthonykewl20/leitir/pull/337)
 merged as `bf886e1eb59f9e3126826e8a940c94fd28b38a0b`; all13 component PRs
@@ -98,8 +98,10 @@ Implementation issues306–316,328,330,334 and integration336 are closed through
 merged PRs. Release preparation332/333 includes the version, curated notes,
 release verifier and publisher. Issue338 separately requires the independent
 signed sidecar, actual PhaseC, exact-commit CI artifacts, attested publication,
-downloaded-asset verification and tag-dependent documentation. No tag or release
-has been published, and the latest published version remains v0.1.6.
+downloaded-asset verification and tag-dependent documentation. At the time of
+this preparation record no tag or release had been published; `v0.2.000` was
+published later on 2026-09-05 (see the Independent review and Containment
+sections, and [issue-338-2026-09-05/](issue-338-2026-09-05/README.md)).
 
 ## Release source binding
 

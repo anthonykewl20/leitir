@@ -1,0 +1,30 @@
+{
+ "file": "leitir-0.2.0-py3-none-any.whl",
+ "subjects": [
+  {
+   "name": "leitir-0.2.0-py3-none-any.whl",
+   "sha256": "c575fe3d94ba40d531c8624819961a6d34fac854a60663365c9a6a80517abe47"
+  },
+  {
+   "name": "leitir-0.2.0.tar.gz",
+   "sha256": "6d496e10f741813ab9141f03b780f2c9fffea9bf6c89a859121baaa962e81055"
+  }
+ ],
+ "workflow_ref": "refs/tags/v0.2.000",
+ "invocation": "https://github.com/anthonykewl20/leitir/actions/runs/33976141410/attempts/1"
+}
+{
+ "file": "leitir-0.2.0.tar.gz",
+ "subjects": [
+  {
+   "name": "leitir-0.2.0-py3-none-any.whl",
+   "sha256": "c575fe3d94ba40d531c8624819961a6d34fac854a60663365c9a6a80517abe47"
+  },
+  {
+   "name": "leitir-0.2.0.tar.gz",
+   "sha256": "6d496e10f741813ab9141f03b780f2c9fffea9bf6c89a859121baaa962e81055"
+  }
+ ],
+ "workflow_ref": "refs/tags/v0.2.000",
+ "invocation": "https://github.com/anthonykewl20/leitir/actions/runs/33976141410/attempts/1"
+}

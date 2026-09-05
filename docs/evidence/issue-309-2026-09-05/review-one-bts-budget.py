@@ -1,8 +1,12 @@
-from pathlib import Path
-from dataclasses import replace
+from __future__ import annotations
+
 import json
-from leitir.bts_cli import load_donor_snapshot,python_graph_provider,_default_budget,_default_resolution_policy
+from dataclasses import replace
+from pathlib import Path
+
 from leitir.bts import compute_bts
+from leitir.bts_cli import _default_budget, _default_resolution_policy, load_donor_snapshot, python_graph_provider
+
 root=Path('/tmp/leitir-remediation-20260905/final-evidence/concurrent-views/corpus')
 s=load_donor_snapshot(root,'pypa','packaging','85442b8032cb7bae72866dfd7782234a98dd2fb7')
 g=python_graph_provider(s)(s.source_root)

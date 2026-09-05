@@ -22,4 +22,3 @@ else
   echo "::error::No release-qualified CI run found for commit ${COMMIT_SHA}; run CI with workflow_dispatch on this commit or use its successful main push. Pull-request merge-ref builds cannot qualify a release." >&2
 fi
 exit 1
-

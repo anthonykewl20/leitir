@@ -100,22 +100,22 @@
 2026-08-20T15:51:03.9141197Z ##[group]Checking out the ref
 2026-08-20T15:51:03.9143440Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/225/merge
 2026-08-20T15:51:03.9668919Z Note: switching to 'refs/remotes/pull/225/merge'.
-2026-08-20T15:51:03.9669830Z 
+2026-08-20T15:51:03.9669830Z
 2026-08-20T15:51:03.9670823Z You are in 'detached HEAD' state. You can look around, make experimental
 2026-08-20T15:51:03.9672717Z changes and commit them, and you can discard any commits you make in this
 2026-08-20T15:51:03.9674553Z state without impacting any branches by switching back to a branch.
-2026-08-20T15:51:03.9675639Z 
+2026-08-20T15:51:03.9675639Z
 2026-08-20T15:51:03.9676685Z If you want to create a new branch to retain commits you create, you may
 2026-08-20T15:51:03.9678627Z do so (now or later) by using -c with the switch command. Example:
-2026-08-20T15:51:03.9680248Z 
+2026-08-20T15:51:03.9680248Z
 2026-08-20T15:51:03.9681016Z   git switch -c <new-branch-name>
-2026-08-20T15:51:03.9682345Z 
+2026-08-20T15:51:03.9682345Z
 2026-08-20T15:51:03.9683058Z Or undo this operation with:
-2026-08-20T15:51:03.9684215Z 
+2026-08-20T15:51:03.9684215Z
 2026-08-20T15:51:03.9684885Z   git switch -
-2026-08-20T15:51:03.9685825Z 
+2026-08-20T15:51:03.9685825Z
 2026-08-20T15:51:03.9687512Z Turn off this advice by setting config variable advice.detachedHead to false
-2026-08-20T15:51:03.9689745Z 
+2026-08-20T15:51:03.9689745Z
 2026-08-20T15:51:03.9692247Z HEAD is now at c1297bc Merge 33dd0a18e1cc2baba4f19903016e59e967ff3cb7 into 6472c4247850344b64825ce38f140fed049a4402
 2026-08-20T15:51:03.9699131Z ##[endgroup]
 2026-08-20T15:51:03.9740601Z [command]/usr/bin/git log -1 --format=%H
@@ -1010,15 +1010,15 @@
 2026-08-20T15:51:15.7668697Z Processing ./dist/leitir-0.1.4-py3-none-any.whl
 2026-08-20T15:51:15.7734978Z Installing collected packages: leitir
 2026-08-20T15:51:16.1573851Z Successfully installed leitir-0.1.4
-2026-08-20T15:51:16.2785389Z 
+2026-08-20T15:51:16.2785389Z
 2026-08-20T15:51:16.2786349Z [notice] A new release of pip is available: 24.0 -> 26.2.1
 2026-08-20T15:51:16.2787215Z [notice] To update, run: python -m pip install --upgrade pip
 2026-08-20T15:51:16.4128949Z usage: leitir [-h] [--debug] [--version]
 2026-08-20T15:51:16.4131557Z               {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc,bts-compute,analysis-architecture,analysis-lineage,exit-gate-validate,bts-funnel,bts-run,exit-gate-run,occupied-validate}
 2026-08-20T15:51:16.4133680Z               ...
-2026-08-20T15:51:16.4133849Z 
+2026-08-20T15:51:16.4133849Z
 2026-08-20T15:51:16.4133997Z Leitir deterministic code-search kernel
-2026-08-20T15:51:16.4134266Z 
+2026-08-20T15:51:16.4134266Z
 2026-08-20T15:51:16.4134408Z positional arguments:
 2026-08-20T15:51:16.4136774Z   {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc,bts-compute,analysis-architecture,analysis-lineage,exit-gate-validate,bts-funnel,bts-run,exit-gate-run,occupied-validate}
 2026-08-20T15:51:16.4138876Z     doctor              diagnose the leitir environment and cache integrity
@@ -1065,7 +1065,7 @@
 2026-08-20T15:51:16.4157567Z                         ratified_runtime_digest
 2026-08-20T15:51:16.4158004Z     occupied-validate   validate a canonical occupied-recipient attachment
 2026-08-20T15:51:16.4158382Z                         artifact
-2026-08-20T15:51:16.4158533Z 
+2026-08-20T15:51:16.4158533Z
 2026-08-20T15:51:16.4158616Z options:
 2026-08-20T15:51:16.4158861Z   -h, --help            show this help message and exit
 2026-08-20T15:51:16.4159241Z   --debug               emit detailed redacted diagnostics to stderr

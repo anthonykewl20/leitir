@@ -19,4 +19,3 @@ else
   echo "::error::No CI workflow run found for commit ${COMMIT_SHA}; publication requires a green CI run for the exact tagged commit." >&2
 fi
 exit 1
-

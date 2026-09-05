@@ -68,6 +68,7 @@ version and publication contract.
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)
+- require CI built from the exact tagged source (`release`)
 - require upstream exactness before reusing local Git identities (#311)
 - resolve the epoch identity and cover the round-3 findings (#272) (`warm`)
 - restrict repository link priority to source labels (#313)

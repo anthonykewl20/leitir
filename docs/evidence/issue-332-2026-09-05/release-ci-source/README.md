@@ -46,3 +46,5 @@ preserved in `production-gate-*`; no tag or publication was performed.
 
 `evidence.tar.gz` preserves original filenames, logs and the actual downloaded
 PR106 distributions. Loose log copies use `.txt` for repository retention.
+
+Loose log/script copies omit trailing whitespace for repository formatting. The archive retains the exact captured bytes and original hashes.

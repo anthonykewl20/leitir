@@ -100,22 +100,22 @@
 2026-08-12T08:45:04.4090914Z ##[group]Checking out the ref
 2026-08-12T08:45:04.4094611Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/106/merge
 2026-08-12T08:45:04.4383108Z Note: switching to 'refs/remotes/pull/106/merge'.
-2026-08-12T08:45:04.4384603Z 
+2026-08-12T08:45:04.4384603Z
 2026-08-12T08:45:04.4385966Z You are in 'detached HEAD' state. You can look around, make experimental
 2026-08-12T08:45:04.4388448Z changes and commit them, and you can discard any commits you make in this
 2026-08-12T08:45:04.4390803Z state without impacting any branches by switching back to a branch.
-2026-08-12T08:45:04.4392121Z 
+2026-08-12T08:45:04.4392121Z
 2026-08-12T08:45:04.4393422Z If you want to create a new branch to retain commits you create, you may
 2026-08-12T08:45:04.4396290Z do so (now or later) by using -c with the switch command. Example:
-2026-08-12T08:45:04.4397782Z 
+2026-08-12T08:45:04.4397782Z
 2026-08-12T08:45:04.4398392Z   git switch -c <new-branch-name>
-2026-08-12T08:45:04.4399397Z 
+2026-08-12T08:45:04.4399397Z
 2026-08-12T08:45:04.4399962Z Or undo this operation with:
-2026-08-12T08:45:04.4400868Z 
+2026-08-12T08:45:04.4400868Z
 2026-08-12T08:45:04.4401336Z   git switch -
-2026-08-12T08:45:04.4401904Z 
+2026-08-12T08:45:04.4401904Z
 2026-08-12T08:45:04.4402900Z Turn off this advice by setting config variable advice.detachedHead to false
-2026-08-12T08:45:04.4404298Z 
+2026-08-12T08:45:04.4404298Z
 2026-08-12T08:45:04.4406394Z HEAD is now at 2f997ee Merge 9d61335fe19176dc1facda3182913ae1305a5252 into 82e2304ac9007ae334b11b1739122d3337037d42
 2026-08-12T08:45:04.4411047Z ##[endgroup]
 2026-08-12T08:45:04.4435882Z [command]/usr/bin/git log -1 --format=%H
@@ -788,15 +788,15 @@
 2026-08-12T08:45:17.3774724Z Processing ./dist/leitir-0.1.1-py3-none-any.whl
 2026-08-12T08:45:17.3832819Z Installing collected packages: leitir
 2026-08-12T08:45:17.5577650Z Successfully installed leitir-0.1.1
-2026-08-12T08:45:17.6734741Z 
+2026-08-12T08:45:17.6734741Z
 2026-08-12T08:45:17.6735657Z [notice] A new release of pip is available: 24.0 -> 26.2.1
 2026-08-12T08:45:17.6736404Z [notice] To update, run: python -m pip install --upgrade pip
 2026-08-12T08:45:17.8037840Z usage: leitir [-h] [--debug] [--version]
 2026-08-12T08:45:17.8039118Z               {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc}
 2026-08-12T08:45:17.8040232Z               ...
-2026-08-12T08:45:17.8040448Z 
+2026-08-12T08:45:17.8040448Z
 2026-08-12T08:45:17.8040627Z Leitir deterministic code-search kernel
-2026-08-12T08:45:17.8040935Z 
+2026-08-12T08:45:17.8040935Z
 2026-08-12T08:45:17.8041082Z positional arguments:
 2026-08-12T08:45:17.8042105Z   {doctor,search,index,bench,get,fetch,list,upgrade-cache,trust,remove,clean,lock,sbom,api,examples,info,diff,export,import,gc}
 2026-08-12T08:45:17.8043286Z     doctor              diagnose the leitir environment and cache integrity
@@ -827,7 +827,7 @@
 2026-08-12T08:45:17.8059765Z     export              export an immutable corpus snapshot
 2026-08-12T08:45:17.8060366Z     import              import an immutable corpus snapshot
 2026-08-12T08:45:17.8061002Z     gc                  remove abandoned materialization staging directories
-2026-08-12T08:45:17.8061437Z 
+2026-08-12T08:45:17.8061437Z
 2026-08-12T08:45:17.8061573Z options:
 2026-08-12T08:45:17.8061969Z   -h, --help            show this help message and exit
 2026-08-12T08:45:17.8062601Z   --debug               emit detailed redacted diagnostics to stderr

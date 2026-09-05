@@ -79,17 +79,17 @@ vocabulary for free, but not symbol-name recovery at a usage site.
   the API index alone, treating any index miss as a violation.
 - Three-way outcome using bare-name matching against the API index,
   corroborated by a raw full-text scan of the pinned source before ever
-  declaring a violation (chosen).
+  declaring a violation (original decision, amended below).
 - Attempt arity/signature checking using the index's formatted `signature`
   string.
 
 ## Decision Outcome
 
-Chosen option: **a three-way outcome (`ok` / `violation` / `unresolved`),
-existence-only, matched by bare symbol name and corroborated by a raw text
-scan of the pinned source before any violation is declared**, because it is
-the only option that is both honest about what the evidence supports and
-safe against the extractor's documented blind spots.
+Amended decision (2026-09-05, #315): **three outcomes (`ok` / `violation` /
+`unresolved`), with `ok` requiring an exact qualified definition or an explicit
+module-level reexport**. A raw text scan of pinned source still corroborates
+absence before a violation is declared. A bare-name collision cannot prove
+that the consumer's qualified access exists.
 
 ### Qualified binding evidence (amended 2026-09-05, issue #315)
 

@@ -77,12 +77,14 @@ The 0.2.000 release source changed the contained runtime (the #309 BTS walk
 correction and the release fixes), so the runtime digest moved and the
 2026-08-17 signature could no longer authorize it. The re-measured digest is
 `sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`.
-It was measured identically by four unratified Phase-A runs —
-[33951188380](https://github.com/anthonykewl20/leitir/actions/runs/33951188380),
+It was measured identically by four runs. Run
+[33951188380](https://github.com/anthonykewl20/leitir/actions/runs/33951188380)
+reported it only in its `ManifestAuthProjectionMismatchError` against the
+stale sidecar and stopped before the gate. The three unratified Phase-A runs
 [33953061013](https://github.com/anthonykewl20/leitir/actions/runs/33953061013),
 [33956771092](https://github.com/anthonykewl20/leitir/actions/runs/33956771092)
 and [33960563929](https://github.com/anthonykewl20/leitir/actions/runs/33960563929)
-(final release source) — each completing all five donors at 2/0/0 with exact
+(final release source) each completed all five donors at 2/0/0 with exact
 rerun parity, donor-ban proof and complete probes.
 
 `corpus-v1.1.json` now records that digest in `ratified_runtime_digest`, and

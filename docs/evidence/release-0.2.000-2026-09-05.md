@@ -2,7 +2,7 @@
 
 This record covers the code/specification remediation and release preparation.
 All selected live probes have completed; three explicit skips remain.
-Independent signed Phase C and publication are tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
+Signed Phase C completed on 2026-09-05 (see Containment and authority below); tag publication is tracked in [issue338](https://github.com/anthonykewl20/leitir/issues/338).
 The original audit examined commit `73f57b66`; runtime, verifier and final help runs below identify their exact source heads.
 Application integration [PR337](https://github.com/anthonykewl20/leitir/pull/337)
 merged as `bf886e1eb59f9e3126826e8a940c94fd28b38a0b`; all13 component PRs

@@ -670,6 +670,10 @@ def target_path(
     if host not in _HOST_METADATA:
         raise ValueError(f"unsupported repository host {host!r}")
     _owner, _repo, parts = _normalize_identity(owner, repo, commit_sha, host)
+    if host == "go-module-zip":
+        if repo != commit_sha:
+            raise ValueError("Go module shelf repository must equal its content identity")
+        return Path(root).joinpath("repos", host, owner, commit_sha)
     return Path(root).joinpath("repos", host, *parts, commit_sha)
 
 
@@ -1808,7 +1812,7 @@ def materialize_go_module_zip(
     # A Go module's synthetic scope has the content hash as both its repository
     # name and commit. Do not expose that implementation detail as duplicate
     # shelf directories: module content belongs directly under its one hash.
-    target = Path(root) / "repos" / "go-module-zip" / owner / scope.commit_sha
+    target = target_path(root, owner, repo, scope.commit_sha, host="go-module-zip")
     with _target_lock(Path(root), target, scope.commit_sha):
         existing = read_valid_manifest(target, owner, repo, scope.commit_sha, host="go-module-zip") if target.is_dir() else None
         if existing is not None and existing.get("module_path") == module and existing.get("module_version") == version:

@@ -60,7 +60,9 @@ class _LocalShelfReader:
     @property
     def fully_verified(self) -> bool:
         return (self._manifest.get("materialized_tree_hash_scope") == "full"
-                and self._manifest.get("source") == "git-commit")
+                and self._manifest.get("source") == "git-commit"
+                and self._manifest.get("verified") is True
+                and self._manifest.get("parity") == "exact")
 
     @property
     def drift_git_only_count(self) -> int:
@@ -451,7 +453,7 @@ class ScopedSearcher:
             with self._local_shelf(scope.slug, scope.commit_sha) as local_shelf:
                 enumeration_excluded = 0
                 if local_shelf is not None and local_shelf.fully_verified:
-                    # Only exact Git shelves establish Git blob provenance.
+                    # Only fully upstream-verified, exact Git shelves establish local Git blob provenance.
                     # An artifact tree hash authenticates artifact bytes, not
                     # equivalence to the declared upstream commit.
                     blobs = local_shelf.list_local_blobs()

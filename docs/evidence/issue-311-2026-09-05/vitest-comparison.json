@@ -1,0 +1,21 @@
+{
+  "pin": "c9e59a089d94642eea29a43f2ee1986a5afb99c6",
+  "manifest": {
+    "source": "git-commit",
+    "verified": "sampled",
+    "parity": "unknown",
+    "verification_notes": [
+      "text-normalized: 1 file(s)"
+    ],
+    "materialized_tree_hash_scope": "full"
+  },
+  "entries": 1992,
+  "mismatches": [
+    {
+      "path": "test/reporters/fixtures/indicator-position.test.js",
+      "git_blob_sha": "21caeafdf1ac09d869e12f5e8e6d16928e0bde13",
+      "local_blob_sha": "558b112d0971c5690a53afd66633073e7b0a1846",
+      "size": 241
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+coverage=complete_for_declared_universe eligible=1 indexed=1 excluded=0 matches=4
+  test/reporters/fixtures/indicator-position.test.js:3-3 score=1.0 [identifier] vitest-dev/vitest@c9e59a089d94 routing=transplant-ok/permissive:MIT
+  test/reporters/fixtures/indicator-position.test.js:12-12 score=1.0 [identifier] vitest-dev/vitest@c9e59a089d94 routing=transplant-ok/permissive:MIT
+  test/reporters/fixtures/indicator-position.test.js:13-13 score=1.0 [identifier] vitest-dev/vitest@c9e59a089d94 routing=transplant-ok/permissive:MIT
+  test/reporters/fixtures/indicator-position.test.js:14-14 score=1.0 [identifier] vitest-dev/vitest@c9e59a089d94 routing=transplant-ok/permissive:MIT

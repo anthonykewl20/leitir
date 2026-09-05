@@ -1,0 +1,34 @@
+[
+  {
+    "case": "sdist_trailer_crc_corrupt",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/verifier-before.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_crc_corrupt",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "returncode": 0,
+    "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba\",\n    \"leitir-0.2.0.tar.gz\": \"9f0ec9eab6365e89d200e3a113f2701b29b1737f44041f90e1357f450333252b\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+    "stderr": ""
+  },
+  {
+    "case": "sdist_trailer_truncated",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/verifier-before.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_truncated",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "returncode": 0,
+    "stdout": "{\n  \"distribution_version\": \"0.2.0\",\n  \"public_version\": \"0.2.000\",\n  \"sha256\": {\n    \"leitir-0.2.0-py3-none-any.whl\": \"ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba\",\n    \"leitir-0.2.0.tar.gz\": \"b8fc490f3830259978e6199ef9e13c0ceeef0f3c098fcd07a09614bded00cd78\"\n  },\n  \"tag\": \"v0.2.000\"\n}\n",
+    "stderr": ""
+  }
+]

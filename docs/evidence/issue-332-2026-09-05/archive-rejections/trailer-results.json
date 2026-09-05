@@ -1,0 +1,36 @@
+[
+  {
+    "case": "sdist_trailer_crc_corrupt",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_crc_corrupt",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: CRC check failed 0x2944ab89 != 0x2944ab88\n",
+    "archive_sha256": "9f0ec9eab6365e89d200e3a113f2701b29b1737f44041f90e1357f450333252b"
+  },
+  {
+    "case": "sdist_trailer_truncated",
+    "command": [
+      "python",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+      "--tag",
+      "v0.2.000",
+      "--dist",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/sdist_trailer_truncated",
+      "--project",
+      "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+    ],
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "release verification rejected: Compressed file ended before the end-of-stream marker was reached\n",
+    "archive_sha256": "b8fc490f3830259978e6199ef9e13c0ceeef0f3c098fcd07a09614bded00cd78"
+  }
+]

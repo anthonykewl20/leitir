@@ -1,0 +1,34 @@
+[
+  {
+    "command": [
+      "uv",
+      "run",
+      "--offline",
+      "--no-project",
+      "--with",
+      "twine",
+      "python",
+      "-m",
+      "twine",
+      "check",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_corrupt_payload/leitir-0.2.0-py3-none-any.whl"
+    ],
+    "returncode": 0,
+    "stdout": "Checking \n/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/whee\nl_corrupt_payload/leitir-0.2.0-py3-none-any.whl: PASSED\n",
+    "stderr": "Installed 27 packages in 10ms\n"
+  },
+  {
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "--no-index",
+      "--no-deps",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_corrupt_payload/leitir-0.2.0-py3-none-any.whl"
+    ],
+    "returncode": 2,
+    "stdout": "Processing /tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_corrupt_payload/leitir-0.2.0-py3-none-any.whl\nInstalling collected packages: leitir\n",
+    "stderr": "ERROR: Exception:\nTraceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/cli/base_command.py\", line 109, in _run_wrapper\n    status = _inner_run()\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/cli/base_command.py\", line 102, in _inner_run\n    return self.run(options, args)\n           ~~~~~~~~^^^^^^^^^^^^^^^\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/cli/req_command.py\", line 101, in wrapper\n    return func(self, options, args)\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/commands/install.py\", line 556, in run\n    installed = install_given_reqs(\n        to_install,\n    ...<6 lines>...\n        progress_bar=options.progress_bar,\n    )\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/req/__init__.py\", line 84, in install_given_reqs\n    requirement.install(\n    ~~~~~~~~~~~~~~~~~~~^\n        root=root,\n        ^^^^^^^^^^\n    ...<4 lines>...\n        pycompile=pycompile,\n        ^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/req/req_install.py\", line 791, in install\n    install_wheel(\n    ~~~~~~~~~~~~~^\n        self.req.name,\n        ^^^^^^^^^^^^^^\n    ...<6 lines>...\n        requested=self.user_supplied,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/operations/install/wheel.py\", line 750, in install_wheel\n    _install_wheel(\n    ~~~~~~~~~~~~~~^\n        name=name,\n        ^^^^^^^^^^\n    ...<6 lines>...\n        requested=requested,\n        ^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/operations/install/wheel.py\", line 608, in _install_wheel\n    file.save()\n    ~~~~~~~~~^^\n  File \"/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/corrupt-install-venv/lib/python3.14/site-packages/pip/_internal/operations/install/wheel.py\", line 372, in save\n    shutil.copyfileobj(f, dest, blocksize)\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/shutil.py\", line 256, in copyfileobj\n    while buf := fsrc_read(length):\n                 ~~~~~~~~~^^^^^^^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1105, in read\n    data = self._read1(n)\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1195, in _read1\n    self._update_crc(data)\n    ~~~~~~~~~~~~~~~~^^^^^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1123, in _update_crc\n    raise BadZipFile(\"Bad CRC-32 for file %r\" % self.name)\nzipfile.BadZipFile: Bad CRC-32 for file 'leitir/__init__.py'\n"
+  }
+]

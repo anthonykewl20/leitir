@@ -1,0 +1,9 @@
+{
+  "source_head": "cc134194e6528c34dd364d8a1dae15939093ed16",
+  "source_head_end": "cc134194e6528c34dd364d8a1dae15939093ed16",
+  "source_tool_sha256": "7797087fd0b3d9fede63b6140616032c47fda49a0335d65e3e3a83a1b00b2faf",
+  "original_artifacts": {
+    "leitir-0.2.0-py3-none-any.whl": "ef94803da3591ae9fdb22ea9710137b9f15aa4738c7c125692411abed2b0edba",
+    "leitir-0.2.0.tar.gz": "da353e4093117caaf9127cb2d1b403efc345ab8aaa7ad1a9e627f283418543b5"
+  }
+}

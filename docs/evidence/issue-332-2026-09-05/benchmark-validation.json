@@ -1,0 +1,282 @@
+{
+  "installed_artifact": {
+    "installed_artifact_source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+    "installed_wheel_sha256": "d7a19527869b14546e7cf896479b001f1d4ab835fd62ad690d9821e1b8a3460b",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/live-work/test_real_distributions_instal0/venv-0/bin/python",
+      "-m",
+      "leitir.cli",
+      "bench"
+    ],
+    "head": "5459b3fe89f077c5681c442e73861d85221a654c",
+    "seconds": 1435.4068176000146,
+    "returncode": 0
+  },
+  "tasks": 32,
+  "results": 33,
+  "all_expected_results_found": true,
+  "complete_tasks": 28,
+  "partial_tasks": 4,
+  "partial_reason": "ADR0001 preserves PARTIAL after an initially truncated tree requires recovery; every expected TypeScript source is present.",
+  "records": [
+    {
+      "task": "c-redis-db-add-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "c-redis-lookup-key-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "c-redis-mstime-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "c-redis-ustime-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "cpp-fmt-compile-string-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "cpp-fmt-digit-grouping-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "cpp-fmt-dynamic-spec-getter-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "cpp-fmt-locale-ref-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "go-testify-contains-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "go-testify-elements-match-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "go-testify-equal-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "go-testify-no-error-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "java-gson-create-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "java-gson-deep-copy-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "java-gson-new-builder-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "java-gson-parse-string-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "javascript-commander-argument-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "javascript-commander-dual-options-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "javascript-commander-name-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "javascript-commander-option-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "python-cpython-quote-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "python-cpython-urlencode-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "python-cpython-urlparse-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "python-cpython-urlsplit-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "rust-serde-deserialize-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "rust-serde-deserializer-definition",
+      "expected": 1,
+      "actual": 2,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "rust-serde-serialize-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "rust-serde-serializer-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "complete_for_declared_universe",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "typescript-typescript-create-compiler-host-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "partial",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "typescript-typescript-find-config-file-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "partial",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "typescript-typescript-first-defined-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "partial",
+      "coverage_matches_ADR0001": true
+    },
+    {
+      "task": "typescript-typescript-length-definition",
+      "expected": 1,
+      "actual": 1,
+      "missing_expected": [],
+      "coverage": "partial",
+      "coverage_matches_ADR0001": true
+    }
+  ],
+  "raw_sha256": "e13666436f743da2d94a459e2c75de390c87152f012d48a81882103ccbfa01a6",
+  "canonical_artifact_sha256": "9200c0986751ed5a9768677509780829e64b41ccea3e39746e779884d8255e1c",
+  "identical_to_earlier_full_benchmark_output": true
+}

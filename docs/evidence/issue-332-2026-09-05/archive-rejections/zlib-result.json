@@ -1,0 +1,18 @@
+{
+  "case": "wheel_invalid_deflate_metadata",
+  "mutation": "Set first compressed METADATA deflate block BTYPE bits to reserved3 on actual downloaded wheel",
+  "command": [
+    "python",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+    "--tag",
+    "v0.2.000",
+    "--dist",
+    "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_invalid_deflate_metadata",
+    "--project",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+  ],
+  "returncode": 1,
+  "stdout": "",
+  "stderr": "Traceback (most recent call last):\n  File \"/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py\", line 91, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py\", line 83, in main\n    result = verify_release(args.tag, args.dist, args.project)\n  File \"/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py\", line 46, in verify_release\n    _check_metadata(wheel.read(expected), normalized)\n                    ~~~~~~~~~~^^^^^^^^^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1691, in read\n    return fp.read()\n           ~~~~~~~^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1091, in read\n    buf += self._read1(self.MAX_N)\n           ~~~~~~~~~~~^^^^^^^^^^^^\n  File \"/home/soultransit/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/zipfile/__init__.py\", line 1181, in _read1\n    data = self._decompressor.decompress(data, n)\nzlib.error: Error -3 while decompressing data: invalid block type\n",
+  "sha256": "727b64c99b098da8fc9b28fb883ecbbf55fc28006cdbd451c66e90332d6e9126"
+}

@@ -1,0 +1,200 @@
+[
+  {
+    "label": "wheel-venv",
+    "command": [
+      "uv",
+      "venv",
+      "--python",
+      "3.11",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "wheel-install",
+    "command": [
+      "uv",
+      "pip",
+      "install",
+      "--python",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "--no-deps",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-dist/leitir-0.2.0-py3-none-any.whl"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "wheel-version",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "-m",
+      "leitir.cli",
+      "--version"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "a37473527cc73a7207cfdd69b945281fcd4a67426511862da74a8159f3bd4937"
+  },
+  {
+    "label": "wheel-metadata",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "-c",
+      "import importlib.metadata,json,leitir; print(json.dumps({'distribution_version':importlib.metadata.version('leitir'),'module_path':leitir.__file__}))"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "0d73b6809be275aa7f476c331be61f644fe2a6e031f836e9ab18d94a73291843"
+  },
+  {
+    "label": "wheel-get",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "-m",
+      "leitir.cli",
+      "get",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-wheel",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "5c7c5ec335a5b36dae6f04f5fdac17c02f855bd76f68ba72d2399d698919b0bb"
+  },
+  {
+    "label": "wheel-info",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "-m",
+      "leitir.cli",
+      "info",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-wheel",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "f3f374e2fdeff77da8cee434394048ae76fefaf29471842dde0705fc69350688"
+  },
+  {
+    "label": "wheel-api",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+      "-m",
+      "leitir.cli",
+      "api",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-wheel",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "f0855bdf804817bb7eae5f48221df7b191d2846e2199d5a92b8ec40a8907693c"
+  },
+  {
+    "label": "sdist-venv",
+    "command": [
+      "uv",
+      "venv",
+      "--python",
+      "3.11",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "sdist-install",
+    "command": [
+      "uv",
+      "pip",
+      "install",
+      "--python",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "--no-deps",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-dist/leitir-0.2.0.tar.gz"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "sdist-version",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "-m",
+      "leitir.cli",
+      "--version"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "a37473527cc73a7207cfdd69b945281fcd4a67426511862da74a8159f3bd4937"
+  },
+  {
+    "label": "sdist-metadata",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "-c",
+      "import importlib.metadata,json,leitir; print(json.dumps({'distribution_version':importlib.metadata.version('leitir'),'module_path':leitir.__file__}))"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "913ff34aebffac573e6626ad589c81e78c3e87b4d77205273aafdc26858e74fd"
+  },
+  {
+    "label": "sdist-get",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "-m",
+      "leitir.cli",
+      "get",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-sdist",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "6fc4e29264214dc70a3541574e4a7a101d47d55bacb8c1eb164b5c4b1efaff0d"
+  },
+  {
+    "label": "sdist-info",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "-m",
+      "leitir.cli",
+      "info",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-sdist",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "abae4348054685418ce16e221a92fa77434070bf05366839eef2918a6a6c3265"
+  },
+  {
+    "label": "sdist-api",
+    "command": [
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-sdist/bin/python",
+      "-m",
+      "leitir.cli",
+      "api",
+      "github:pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-sdist",
+      "--json"
+    ],
+    "cwd": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation",
+    "exit_code": 0,
+    "stdout_sha256": "c44ab2bc7ea3d90739fe7c65e84e1654687eb6c1c4f598df8b7bdea0c3671033"
+  }
+]

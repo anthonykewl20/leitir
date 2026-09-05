@@ -24,7 +24,14 @@ The stdlib release verifier requires exact project/tag agreement, exactly the
 normalized wheel and sdist, matching wheel METADATA and sdist PKG-INFO, and the
 matching public version in the sdist's project metadata. Missing, duplicate,
 mismatched or malformed identity fields reject. Artifact symlinks and unexpected
-files reject. Do not rename wheel files to circumvent packaging normalization.
+files reject. Wheel member paths must be unique, wheel metadata must have a
+regular or unspecified file type, and every wheel payload CRC is checked.
+The complete gzip stream is consumed so a damaged or missing source-archive
+trailer cannot escape tar parsing. Non-table project metadata and malformed
+archive/decompression errors produce a clean rejection diagnostic. Actual CI
+wheel payload corruption passed both the former verifier and Twine but failed
+installation; archive integrity therefore cannot rely on metadata checks alone.
+Do not rename wheel files to circumvent packaging normalization.
 
 CI builds and tests the distributions. Publication consumes those exact bytes
 from a successful push or workflow-dispatch CI run for the exact tagged commit, verifies identity, records

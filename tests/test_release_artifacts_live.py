@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -41,7 +42,10 @@ def test_real_distributions_install_and_reject_version_tampering(tmp_path: Path)
     project = str(root / "pyproject.toml")
 
     def verify(directory: Path, *, tag: str = "v" + public, ok: bool = True) -> None:
-        run(sys.executable, verifier, "--tag", tag, "--dist", str(directory), "--project", project, ok=ok)
+        checked = run(sys.executable, verifier, "--tag", tag, "--dist", str(directory), "--project", project, ok=ok)
+        if not ok:
+            assert checked.stderr.startswith("release verification rejected:")
+            assert "Traceback" not in checked.stderr
 
     verify(dist)
     for number, archive in enumerate(sorted(dist.iterdir())):
@@ -66,7 +70,7 @@ def test_real_distributions_install_and_reject_version_tampering(tmp_path: Path)
     shutil.copytree(dist, extra)
     (extra / "unexpected.txt").write_text("unexpected artifact")
     verify(extra, ok=False)
-    for kind in ("wheel", "sdist"):
+    for kind in ("wheel", "sdist", "sdist-project-list", "sdist-project-string"):
         altered = tmp_path / kind
         shutil.copytree(dist, altered)
         if kind == "wheel":
@@ -91,7 +95,37 @@ def test_real_distributions_install_and_reject_version_tampering(tmp_path: Path)
             with tarfile.open(archive, "w:gz") as changed:
                 for item, data in entries:
                     if item.name == f"leitir-{normalized}/PKG-INFO" and data is not None:
-                        data = data.replace(f"Version: {normalized}\n".encode(), b"Version: 999.999.999\n")
+                        if kind == "sdist":
+                            data = data.replace(f"Version: {normalized}\n".encode(), b"Version: 999.999.999\n")
+                        item.size = len(data)
+                    if item.name == f"leitir-{normalized}/pyproject.toml" and kind.startswith("sdist-project-"):
+                        data = b"project = []\n" if kind.endswith("list") else b'project = "invalid"\n'
                         item.size = len(data)
                     changed.addfile(item, io.BytesIO(data) if data is not None else None)
+        verify(altered, ok=False)
+    for kind in ("wheel-payload", "wheel-duplicate-payload", "sdist-gzip-trailer", "sdist-truncated"):
+        altered = tmp_path / kind
+        shutil.copytree(dist, altered)
+        if kind.startswith("wheel-"):
+            archive = next(altered.glob("*.whl"))
+            with zipfile.ZipFile(archive) as wheel:
+                member = wheel.getinfo("leitir/tree.py")
+            data = bytearray(archive.read_bytes())
+            name_size, extra_size = struct.unpack_from("<HH", data, member.header_offset + 26)
+            payload_start = member.header_offset + 30 + name_size + extra_size
+            data[payload_start + member.compress_size // 2] ^= 1
+        else:
+            archive = next(altered.glob("*.tar.gz"))
+            data = bytearray(archive.read_bytes())
+            if kind == "sdist-gzip-trailer":
+                data[-8] ^= 1
+            else:
+                del data[-1:]
+        archive.write_bytes(data)
+        if kind == "wheel-duplicate-payload":
+            with zipfile.ZipFile(next(dist.glob("*.whl"))) as original:
+                unaltered = original.read("leitir/tree.py")
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                with zipfile.ZipFile(archive, "a") as changed:
+                    changed.writestr(member, unaltered)
         verify(altered, ok=False)

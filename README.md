@@ -6,6 +6,9 @@ Leitir is a deterministic, provenance-bound dependency-source corpus plus a dete
 The latest published release remains [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6).
 [0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.**
 
+Release verification checks archive payload CRCs and gzip trailers as well as
+version metadata; malformed or duplicate wheel members reject before publication.
+
 ## Why
 
 LLM coding agents frequently hallucinate library internals, edge cases, and version-specific behavior. Public type signatures only show declarations, not control flow. Even docs can miss implementation detail, deprecated paths, and calling conventions.
@@ -58,7 +61,7 @@ flowchart TD
   recipient-incompatible evidence fails closed.
 - Deterministic trust scoring on a 0–100 scale, with factor weights (20,15,15,10,10,15,15) fixed to verification, parity, license, documentation, tests, checksum, and age (sum 100).
 - Version diffing for file changes plus API-symbol changes between two resolved versions, including release-note notes when available.
-- Transitive dependency closure via `leitir lock` and closure metadata in manifests.
+- Dependency closure via `leitir lock`, with explicit direct-only coverage for Go module manifests.
 - Immutable `export`/`import` snapshots with fail-closed rehydration checks.
 - Optional, anonymous-by-default credentials: per-host tokens (GitHub/GitLab/Bitbucket incl. app-password Basic, Codeberg, Sourcehut) and registry tokens (npm/PyPI/crates) for private/authenticated access — HTTPS-only, never logged.
 - Deterministic, stdlib-only code-search kernel from ADR-001.

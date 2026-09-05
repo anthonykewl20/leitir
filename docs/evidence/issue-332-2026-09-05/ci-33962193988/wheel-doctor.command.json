@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/venv-wheel/bin/python",
+    "-m",
+    "leitir.cli",
+    "doctor",
+    "--json",
+    "--no-network"
+  ],
+  "environment": {
+    "LEITIR_HOME": "/tmp/leitir-remediation-20260905/release-evidence/ci-33962193988-validation/corpus-wheel"
+  },
+  "returncode": 0
+}

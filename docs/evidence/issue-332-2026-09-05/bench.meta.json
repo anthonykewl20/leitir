@@ -1,0 +1,13 @@
+{
+  "installed_artifact_source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "installed_wheel_sha256": "d7a19527869b14546e7cf896479b001f1d4ab835fd62ad690d9821e1b8a3460b",
+  "command": [
+    "/tmp/leitir-remediation-20260905/release-evidence/live-work/test_real_distributions_instal0/venv-0/bin/python",
+    "-m",
+    "leitir.cli",
+    "bench"
+  ],
+  "head": "5459b3fe89f077c5681c442e73861d85221a654c",
+  "seconds": 1435.4068176000146,
+  "returncode": 0
+}

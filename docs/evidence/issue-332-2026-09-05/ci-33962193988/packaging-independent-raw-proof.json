@@ -1,0 +1,16 @@
+{
+  "url": "https://raw.githubusercontent.com/pypa/packaging/85442b8032cb7bae72866dfd7782234a98dd2fb7/src/packaging/version.py",
+  "bytes": 16198,
+  "sha256": "5741f748e8fff307abaefa2badbe900cb46195ca9212b3534e40afbdfb338432",
+  "git_blob_sha1": "46bc2613086732e34b8863b7ea562ffb6918865b",
+  "installed_artifact_sources": {
+    "wheel": {
+      "equals_raw_pinned_upstream": true,
+      "sha256": "5741f748e8fff307abaefa2badbe900cb46195ca9212b3534e40afbdfb338432"
+    },
+    "sdist": {
+      "equals_raw_pinned_upstream": true,
+      "sha256": "5741f748e8fff307abaefa2badbe900cb46195ca9212b3534e40afbdfb338432"
+    }
+  }
+}

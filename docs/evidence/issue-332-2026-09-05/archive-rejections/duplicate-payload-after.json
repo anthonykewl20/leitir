@@ -1,0 +1,16 @@
+{
+  "case": "duplicate_runtime_member_shadows_corrupt_first_payload",
+  "command": [
+    "python",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/tools/verify_release.py",
+    "--tag",
+    "v0.2.000",
+    "--dist",
+    "/tmp/leitir-remediation-20260905/release-evidence/ci-artifact-reject-review/wheel_duplicate_payload",
+    "--project",
+    "/tmp/leitir-remediation-20260905/release-0.2.000/pyproject.toml"
+  ],
+  "returncode": 1,
+  "stdout": "",
+  "stderr": "release verification rejected: wheel contains duplicate member paths\n"
+}

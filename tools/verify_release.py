@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import re
+import stat
 import tarfile
 import tomllib
 import zipfile
+import zlib
 from email.parser import BytesParser
 from pathlib import Path
 
@@ -29,7 +32,7 @@ def verify_release(tag: str, dist: Path, project: Path) -> dict[str, object]:
     public = tag[1:]
     normalized = ".".join(str(int(part)) for part in public.split("."))
     metadata = tomllib.loads(project.read_text(encoding="utf-8"))["project"]
-    if metadata.get("name") != "leitir" or metadata.get("version") != public:
+    if not isinstance(metadata, dict) or metadata.get("name") != "leitir" or metadata.get("version") != public:
         raise ValueError("project name/version does not match the release tag")
     wheel_name = f"leitir-{normalized}-py3-none-any.whl"
     sdist_name = f"leitir-{normalized}.tar.gz"
@@ -39,11 +42,23 @@ def verify_release(tag: str, dist: Path, project: Path) -> dict[str, object]:
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise ValueError("distribution artifacts must be regular files, not symbolic links")
     with zipfile.ZipFile(dist / wheel_name) as wheel:
+        if len(set(wheel.namelist())) != len(wheel.infolist()):
+            raise ValueError("wheel contains duplicate member paths")
         names = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
         expected = f"leitir-{normalized}.dist-info/METADATA"
         if names != [expected] or wheel.getinfo(expected).file_size > _MAX_METADATA:
             raise ValueError("wheel metadata path/count/size does not match the release")
+        if stat.S_IFMT(wheel.getinfo(expected).external_attr >> 16) not in (0, stat.S_IFREG):
+            raise ValueError("wheel metadata must be a regular file")
         _check_metadata(wheel.read(expected), normalized)
+        bad_member = wheel.testzip()
+        if bad_member is not None:
+            raise ValueError(f"wheel payload checksum mismatch: {bad_member}")
+    # Tar readers may stop at the end-of-archive blocks before checking the
+    # gzip trailer. Consume the compressed stream to verify its CRC and size.
+    with gzip.open(dist / sdist_name, "rb") as gzip_stream:
+        while gzip_stream.read(1024 * 1024):
+            pass
     with tarfile.open(dist / sdist_name, "r:gz") as sdist:
         prefix = f"leitir-{normalized}/"
         for relative in ("PKG-INFO", "pyproject.toml"):
@@ -59,7 +74,7 @@ def verify_release(tag: str, dist: Path, project: Path) -> dict[str, object]:
                 _check_metadata(data, normalized)
             else:
                 source_project = tomllib.loads(data.decode("utf-8"))["project"]
-                if source_project.get("name") != "leitir" or source_project.get("version") != public:
+                if not isinstance(source_project, dict) or source_project.get("name") != "leitir" or source_project.get("version") != public:
                     raise ValueError("sdist project name/version does not match the release tag")
     digests: dict[str, str] = {}
     for path in paths:
@@ -81,7 +96,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         result = verify_release(args.tag, args.dist, args.project)
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as exc:
+    except (OSError, ValueError, KeyError, TypeError, EOFError, RuntimeError,
+            tarfile.TarError, zipfile.BadZipFile, zlib.error) as exc:
         parser.exit(1, f"release verification rejected: {exc}\n")
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

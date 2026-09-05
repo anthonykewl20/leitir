@@ -2,4 +2,4 @@
 ...........................................                              [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_resolver.py:422: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
-114 passed, 1 skipped in 0.65s
+114 passed, 1 skipped in 0.43s

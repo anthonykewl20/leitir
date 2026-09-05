@@ -92,10 +92,10 @@ def _registry_only_scope(
     """Build the degraded (registry-only) shelf scope for one package.
 
     The slug is the registry's own package identity — ``registry/<name>`` —
-    which satisfies the repository-slug grammar while never colliding with
-    a real hosted ``owner/repo`` (hosted owners may not contain ``/`` in the
-    first segment). The commit SHA is the deterministic registry-identity
-    digest, so two different artifacts never share a shelf.
+    which satisfies the repository-slug grammar. A hosted owner named
+    ``registry`` can have the same textual slug; the registry digest and
+    explicit degraded provenance distinguish this artifact identity, and
+    consumers must never treat it as a Git pin.
     """
 
     return RepoScope(
@@ -2070,7 +2070,7 @@ class PyPIResolver:
                 normalized = label.lower().replace("_", " ").replace("-", " ")
                 if any(word in normalized for word in ("fund", "sponsor", "donat")):
                     continue
-                priority = 0 if any(word in normalized for word in ("source", "repository", "code", "github")) else 2
+                priority = 0 if normalized.strip() in {"source", "source code", "sourcecode", "repository", "source repository", "code", "github"} else 2
                 candidates.append((priority, normalized, value))
         for label in ("home_page", "project_url"):
             value = info.get(label)

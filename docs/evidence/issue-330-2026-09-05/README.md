@@ -1,0 +1,5 @@
+# Live remediation evidence for #330
+
+CI exposed cross-test update-cache reuse on Windows/macOS and a deadlock caused by assuming threading.Lock acquisition order. Isolate platform cache paths, explicitly order the already-serialized paused writers, suppress only expected client socket disconnects, and surface materialization worker errors before sorting results. All production code and integrity assertions are preserved. Eight actual concurrent Packaging downloads and eight trust CLI calls complete against one verified shelf; altered upstream source still rejects.
+
+Inputs come from actual published sources and the production CLI/transports. `live.txt` is the live-gated regression execution, not a mocked provider. Default-suite and static checks are regression/hygiene gates and do not substitute for that evidence. The initial raw audit is retained in the assigned workspace under `/tmp/leitir-audit-20260905`; the issue records the original pins and defect. Full-suite/CI output and review disposition are recorded in the PR.

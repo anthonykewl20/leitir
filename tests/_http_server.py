@@ -15,6 +15,7 @@ Per-request introspection is available via ``state.request_paths`` and
 from __future__ import annotations
 
 import json as _json
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -72,6 +73,15 @@ class ServerState:
         return len(self.request_paths)
 
 
+class _DisconnectTolerantServer(ThreadingHTTPServer):
+    def handle_error(self, request: object, client_address: object) -> None:
+        # Timeout and truncated-response probes deliberately close sockets.
+        # Unexpected handler failures retain the standard traceback.
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class _ScriptedHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -118,7 +128,7 @@ def scripted_server(responses: list[Response]) -> Iterator[ServerHandle]:
     loudly (issue #205 C-3) — a discarded join result is prohibited.
     """
     state = ServerState(responses)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ScriptedHandler)
+    httpd = _DisconnectTolerantServer(("127.0.0.1", 0), _ScriptedHandler)
     httpd.daemon_threads = True
     httpd.state = state  # type: ignore[attr-defined]
     port = httpd.server_address[1]
@@ -172,7 +182,7 @@ def routed_server(routes: dict[str, Response]) -> Iterator[ServerHandle]:
     urllib's auto-follow consumes multiple server requests per attempt.
     """
     state = ServerState([])
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _RoutedHandler)
+    httpd = _DisconnectTolerantServer(("127.0.0.1", 0), _RoutedHandler)
     httpd.daemon_threads = True
     httpd.state = state  # type: ignore[attr-defined]
     httpd.routes = routes  # type: ignore[attr-defined]

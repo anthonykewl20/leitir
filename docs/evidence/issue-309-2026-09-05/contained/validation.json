@@ -1,0 +1,120 @@
+{
+  "workflow": "https://github.com/anthonykewl20/leitir/actions/runs/33953061013",
+  "source_head": "2ae5b1ed290f4a515808e03d7f8154a1f5a737a7",
+  "prior_observed_digest_run": 33951188380,
+  "runtime_digest_stable": true,
+  "gate_status": "reject",
+  "remaining_gate": "Independent out-of-band signature under existing trusted ratifier key",
+  "donors": [
+    {
+      "case_id": "backoff-full-jitter",
+      "status": "complete",
+      "complete_bts": true,
+      "exact_rerun_parity": true,
+      "donor_ban_proved": true,
+      "probes_complete": true,
+      "recorded_counts": [
+        [
+          "failed",
+          0
+        ],
+        [
+          "passed",
+          2
+        ],
+        [
+          "skipped",
+          0
+        ]
+      ]
+    },
+    {
+      "case_id": "haversine-avg-earth-radius",
+      "status": "complete",
+      "complete_bts": true,
+      "exact_rerun_parity": true,
+      "donor_ban_proved": true,
+      "probes_complete": true,
+      "recorded_counts": [
+        [
+          "failed",
+          0
+        ],
+        [
+          "passed",
+          2
+        ],
+        [
+          "skipped",
+          0
+        ]
+      ]
+    },
+    {
+      "case_id": "luhn-checksum",
+      "status": "complete",
+      "complete_bts": true,
+      "exact_rerun_parity": true,
+      "donor_ban_proved": true,
+      "probes_complete": true,
+      "recorded_counts": [
+        [
+          "failed",
+          0
+        ],
+        [
+          "passed",
+          2
+        ],
+        [
+          "skipped",
+          0
+        ]
+      ]
+    },
+    {
+      "case_id": "url-normalize-fragment",
+      "status": "complete",
+      "complete_bts": true,
+      "exact_rerun_parity": true,
+      "donor_ban_proved": true,
+      "probes_complete": true,
+      "recorded_counts": [
+        [
+          "failed",
+          0
+        ],
+        [
+          "passed",
+          2
+        ],
+        [
+          "skipped",
+          0
+        ]
+      ]
+    },
+    {
+      "case_id": "webcolors-rgb-to-hex",
+      "status": "complete",
+      "complete_bts": true,
+      "exact_rerun_parity": true,
+      "donor_ban_proved": true,
+      "probes_complete": true,
+      "recorded_counts": [
+        [
+          "failed",
+          0
+        ],
+        [
+          "passed",
+          2
+        ],
+        [
+          "skipped",
+          0
+        ]
+      ]
+    }
+  ]
+}

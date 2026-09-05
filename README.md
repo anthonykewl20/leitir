@@ -4,7 +4,7 @@ Leitir is a deterministic, provenance-bound dependency-source corpus plus a dete
 
 **Status: released — [`v0.1.6`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6)
 is the latest release (2026-08-25); v0.1.4 was the first `v*` tag (2026-08-17); current milestone v0.1.6 is complete and
-`pyproject.toml` is 0.1.6. Production-readiness evidence is complete.**
+`pyproject.toml` is 0.1.6. Release validation evidence is recorded below.**
 
 ## Why
 
@@ -595,17 +595,16 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - Production-readiness gate #42 has recorded dogfood and 116-package load-test
   evidence. Two independent security reviews recorded no P0/P1 findings; PR #166
   remediated the reported P2 findings.
-- The contained Phase-A exit corpus has repeatedly completed all five donors
-  (each 2/0/0). Its most recent honest run,
-  [31967278924](https://github.com/anthonykewl20/leitir/actions/runs/31967278924),
-  rejects solely because runtime ratification is deliberately pending: the
-  run-to-run drift of the donor mount-source tree digest is removed by the
-  manifest-free donor mount projection of ADR-0021, so the runtime digest is
-  now a pure function of pinned inputs and awaits a fresh owner measurement
-  and signature. The published `containment-rootfs-v1` asset is pinned to
-  `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  The next owner step is re-measuring the stabilized runtime digest, followed
-  by a fresh signature.
+- The 2026-09-05 BTS walk correction was executed against all five pinned
+  donors under real nsjail containment in
+  [Phase A run 33953061013](https://github.com/anthonykewl20/leitir/actions/runs/33953061013).
+  Each donor completed with exact rerun parity, donor-import rejection proof,
+  and 2 passed / 0 failed / 0 skipped outcomes. The aggregate report remains
+  REJECT pending independent owner ratification of runtime digest
+  `sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69`,
+  also measured in run 33951188380. The prior `72949674…` signature cannot
+  authorize the changed runtime. The published rootfs was authenticated and
+  reused; no substrate rebuild or publication occurred.
 - BTS benchmark evidence is published at
   `benchmarks/bts-v1/runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/`:
   five of six tasks have exact baselines and metrics; the
@@ -613,8 +612,9 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
   `bts_cli_parity_v1` provenance mismatch. The E5b timing envelope remains
   intentionally deferred offline.
 - The credential-gated live provider canary is enabled on its daily schedule.
-  Its main-branch probes are green; three v2 probes intentionally skip because
-  their test files have not landed.
+  Optional v2 surfaces are controlled by workflow environment gates; their
+  test files are present. Gate configuration and actual run outcomes must be
+  read separately from test availability.
 - **Local-verification boundary (2026-08-23 audit):** the full contained
   donor-execution pipeline (`bts-run` under nsjail) was *not* re-executed
   locally for this audit round; its acceptance evidence remains the milestone

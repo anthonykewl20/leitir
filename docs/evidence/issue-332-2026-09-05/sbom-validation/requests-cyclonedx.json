@@ -1,0 +1,119 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:pypi-requests-2.31.0-147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "942c5a758f98d790eaed1a29cb6eefc7ffb0d1cf7af05c3d2791656dbd6ad1e1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "requests",
+      "properties": [
+        {
+          "name": "leitir:license_method",
+          "value": "license-file"
+        },
+        {
+          "name": "leitir:license_confidence",
+          "value": "high"
+        },
+        {
+          "name": "leitir:source",
+          "value": "registry-artifact"
+        },
+        {
+          "name": "leitir:parity",
+          "value": "drift"
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.31.0",
+      "type": "library",
+      "version": "2.31.0"
+    },
+    {
+      "bom-ref": "pkg:pypi-requests-2.32.3-0e322af87745eff34caffe4df68456ebc20d9068",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "0e322af87745eff34caffe4df68456ebc20d9068"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "requests",
+      "properties": [
+        {
+          "name": "leitir:license_method",
+          "value": "license-file"
+        },
+        {
+          "name": "leitir:license_confidence",
+          "value": "high"
+        },
+        {
+          "name": "leitir:source",
+          "value": "registry-artifact"
+        },
+        {
+          "name": "leitir:parity",
+          "value": "drift"
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.32.3",
+      "type": "library",
+      "version": "2.32.3"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [],
+      "ref": "leitir:project"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi-requests-2.31.0-147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi-requests-2.32.3-0e322af87745eff34caffe4df68456ebc20d9068"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "leitir:project",
+      "name": "project",
+      "type": "application"
+    },
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tools": [
+      {
+        "name": "leitir",
+        "vendor": "leitir"
+      }
+    ]
+  },
+  "specVersion": "1.5",
+  "version": 1
+}

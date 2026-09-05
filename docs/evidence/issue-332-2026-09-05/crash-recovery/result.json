@@ -1,0 +1,35 @@
+{
+  "source_head_start": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "source_head_end": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "spec": "pypa/packaging#85442b8032cb7bae72866dfd7782234a98dd2fb7",
+  "pin": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+  "killed_exit": -9,
+  "recovery_exit": 0,
+  "staging_files_at_kill": 4,
+  "incomplete_manifest_rejected": true,
+  "published_target_absent_after_kill": true,
+  "stale_staging_after_recovery": [],
+  "verified": true,
+  "parity": "exact",
+  "materialized_tree_hash": "h1:only4Jqg2nQVRSHqtx3pyJnpIR81v84hZmgXYWQGf3U=",
+  "materialized_tree_hash_scope": "full",
+  "staged_vs_recovered_files": [
+    {
+      "path": ".github/dependabot.yml",
+      "matches_recovered_source": true
+    },
+    {
+      "path": ".github/workflows/codeql.yml",
+      "matches_recovered_source": true
+    },
+    {
+      "path": ".github/workflows/docs.yml",
+      "matches_recovered_source": true
+    },
+    {
+      "path": ".github/workflows/lint.yml",
+      "matches_recovered_source": false
+    }
+  ],
+  "elapsed_seconds": 2.981
+}

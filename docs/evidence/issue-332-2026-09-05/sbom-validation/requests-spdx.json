@@ -1,0 +1,101 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "1970-01-01T00:00:00Z",
+    "creators": [
+      "Tool: leitir"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-Package-pypi-requests-2.31.0-147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+    "SPDXRef-Package-pypi-requests-2.32.3-0e322af87745eff34caffe4df68456ebc20d9068"
+  ],
+  "documentNamespace": "https://leitir.dev/spdx/corpus/fe6cb2dc99f8857fe454d519ac33b008f0edeedc86515cd4aacf300948b02036",
+  "name": "leitir-corpus",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-pypi-requests-2.31.0-147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+      "annotations": [
+        {
+          "annotationDate": "1970-01-01T00:00:00Z",
+          "annotationType": "OTHER",
+          "annotator": "Tool: leitir",
+          "comment": "license_method=license-file;license_confidence=high"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA1",
+          "checksumValue": "147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4"
+        },
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "942c5a758f98d790eaed1a29cb6eefc7ffb0d1cf7af05c3d2791656dbd6ad1e1"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/psf/requests",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:pypi/requests@2.31.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "requests",
+      "versionInfo": "2.31.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pypi-requests-2.32.3-0e322af87745eff34caffe4df68456ebc20d9068",
+      "annotations": [
+        {
+          "annotationDate": "1970-01-01T00:00:00Z",
+          "annotationType": "OTHER",
+          "annotator": "Tool: leitir",
+          "comment": "license_method=license-file;license_confidence=high"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA1",
+          "checksumValue": "0e322af87745eff34caffe4df68456ebc20d9068"
+        },
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/psf/requests",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:pypi/requests@2.32.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "requests",
+      "versionInfo": "2.32.3"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pypi-requests-2.31.0-147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pypi-requests-2.32.3-0e322af87745eff34caffe4df68456ebc20d9068",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

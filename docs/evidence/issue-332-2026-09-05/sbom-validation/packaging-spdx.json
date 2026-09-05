@@ -1,0 +1,50 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "1970-01-01T00:00:00Z",
+    "creators": [
+      "Tool: leitir"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-Package-git-pypa-packaging-85442b8032cb7bae72866dfd7782234a98dd2fb7-85442b8032cb7bae72866dfd7782234a98dd2fb7"
+  ],
+  "documentNamespace": "https://leitir.dev/spdx/corpus/620043d9d11191928e63650535cacf0bf8dafb68604540881690ce0162367c61",
+  "name": "leitir-corpus",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-git-pypa-packaging-85442b8032cb7bae72866dfd7782234a98dd2fb7-85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "annotations": [
+        {
+          "annotationDate": "1970-01-01T00:00:00Z",
+          "annotationType": "OTHER",
+          "annotator": "Tool: leitir",
+          "comment": "license_method=unknown;license_confidence=low"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA1",
+          "checksumValue": "85442b8032cb7bae72866dfd7782234a98dd2fb7"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "https://github.com/pypa/packaging",
+      "externalRefs": [],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "pypa/packaging",
+      "versionInfo": "85442b8032cb7bae72866dfd7782234a98dd2fb7"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-git-pypa-packaging-85442b8032cb7bae72866dfd7782234a98dd2fb7-85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

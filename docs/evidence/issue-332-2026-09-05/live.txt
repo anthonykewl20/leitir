@@ -1,2 +1,2 @@
 .                                                                        [100%]
-1 passed in 8.50s
+1 passed in 10.47s

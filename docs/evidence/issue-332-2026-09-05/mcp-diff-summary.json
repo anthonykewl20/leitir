@@ -1,0 +1,20 @@
+{
+  "version": "0.2.000",
+  "actual_flask_diff": true,
+  "malformed_spec_rejected": true,
+  "keys": [
+    "after",
+    "api",
+    "before",
+    "files",
+    "release_notes",
+    "schema_version"
+  ],
+  "file_diff_matches_independent_sha256_inventory": true,
+  "file_counts": {
+    "added": 7,
+    "removed": 12,
+    "modified": 77
+  },
+  "removed_JSONEncoder": true
+}

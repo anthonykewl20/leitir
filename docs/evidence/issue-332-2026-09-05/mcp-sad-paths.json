@@ -1,0 +1,96 @@
+{
+  "server_version": "0.2.000",
+  "concurrent_calls": 12,
+  "observations": [
+    {
+      "tool": "info",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "api",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "info",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "api",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "info",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "api",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "examples",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "examples",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "api",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "examples",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "examples",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "info",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "info",
+      "expected_error": true,
+      "is_error": true
+    },
+    {
+      "tool": "search",
+      "expected_error": true,
+      "is_error": true
+    },
+    {
+      "tool": "not-a-leitir-tool",
+      "is_error": true
+    },
+    {
+      "tool": "search",
+      "expected_error": false,
+      "is_error": false
+    },
+    {
+      "tool": "search",
+      "expected_error": true,
+      "is_error": true
+    },
+    {
+      "tool": "search",
+      "expected_error": false,
+      "is_error": false
+    }
+  ],
+  "source_restored": true
+}

@@ -1,0 +1,19 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_tree_recovery_e2e_live.py::test_truncated_listing_recovery_walk_completes_with_full_universe",
+    "-q",
+    "-s",
+    "--tb=short"
+  ],
+  "head": "d543388df17f5edb34cb09f62e0cbe7ee7b0a246",
+  "seconds": 1377.45184822398,
+  "returncode": 0
+}

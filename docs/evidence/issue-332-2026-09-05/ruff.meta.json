@@ -1,0 +1,10 @@
+{
+  "head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "command": [
+    "/home/soultransit/devtony/leitir/.venv/bin/ruff",
+    "check",
+    "."
+  ],
+  "seconds": 0.014167768007609993,
+  "returncode": 0
+}

@@ -1,0 +1,23 @@
+{
+  "recorded_at": "2026-09-05T10:33:16.070095+00:00",
+  "command": [
+    "uv",
+    "run",
+    "--offline",
+    "--no-project",
+    "--with",
+    "jsonschema[format]==4.26.0",
+    "--with",
+    "referencing==0.37.0",
+    "unshare",
+    "-Urn",
+    "python",
+    "validate.py"
+  ],
+  "cwd": "/tmp/leitir-remediation-20260905/release-evidence/sbom-validation",
+  "exit_code": 0,
+  "stdout": "validation.stdout",
+  "stderr": "validation.stderr",
+  "network": "unshare -Urn blocks network in validator subprocess",
+  "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+}

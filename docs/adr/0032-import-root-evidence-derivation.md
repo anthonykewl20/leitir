@@ -331,10 +331,15 @@ guess.
 ### `guess_import_root` is retained, but demoted
 
 `leitir.check.guess_import_root` is no longer consulted to decide what
-`run_check` looks for. It is kept only as a display/diagnostic helper (the
+`run_check` looks for. Within `check`, it is kept as a display/diagnostic helper (the
 CLI's undeterminable-root message can still show what a naive name-based
 guess would have produced, for a user's own troubleshooting) and its
 docstring now says so explicitly.
+
+Scope clarification (2026-09-05 release review): `diff --impact` still uses
+normalized distribution-name roots. This ADR changes `run_check`; it does not
+establish evidence-derived roots for impact analysis. Unmatched renamed roots
+yield `no_sites_examined`, without a compatibility claim.
 
 ### Bounds
 

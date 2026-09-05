@@ -2,11 +2,14 @@
 
 All notable changes to leitir will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
-within the 0.x series, patch releases (0.1.1, 0.1.2, ...) carry all incremental
-work — audit fixes, bug fixes, and feature/behavior increments alike. Breaking
-changes are permitted within 0.x (pre-1.0) and must be called out here.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Public versions use `MAJOR.MINOR.PATCH` with exactly three patch digits, such as
+`0.2.000`; Python distributions normalize the same identity to `0.2.0`.
+Substantial capabilities or compatibility changes increment the minor version
+and reset the patch during 0.x. Corrective releases increment the patch
+(`0.2.001`, `0.2.002`, …). Breaking changes must be called out here.
+See [ADR-0038](docs/adr/0038-release-versioning-and-publication.md) for the
+version and publication contract.
 
 <!-- leitir-sync-changelog start -->
 

@@ -1,0 +1,50 @@
+[
+  {
+    "event": "cli_started",
+    "elapsed_seconds": 0.00066,
+    "utc": "2026-09-05T10:31:23.143774+00:00",
+    "pid": 2642095,
+    "command": [
+      "python",
+      "-m",
+      "leitir.cli",
+      "get",
+      "pypa/packaging#85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "--root",
+      "/tmp/leitir-remediation-20260905/release-evidence/crash-recovery/corpus",
+      "--json"
+    ],
+    "source_head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1"
+  },
+  {
+    "event": "sigstop_after_real_files_observed",
+    "elapsed_seconds": 1.489407,
+    "utc": "2026-09-05T10:31:24.632520+00:00",
+    "staging": "/tmp/leitir-remediation-20260905/release-evidence/crash-recovery/corpus/repos/github.com/pypa/packaging/.85442b8032cb7bae72866dfd7782234a98dd2fb7.tmp-2642095-4opjfx2h"
+  },
+  {
+    "event": "stopped_snapshot",
+    "elapsed_seconds": 1.512139,
+    "utc": "2026-09-05T10:31:24.655252+00:00",
+    "regular_files": 4,
+    "valid_manifest": false,
+    "target_exists": false
+  },
+  {
+    "event": "sigkill_completed",
+    "elapsed_seconds": 1.519647,
+    "utc": "2026-09-05T10:31:24.662761+00:00",
+    "exit": -9
+  },
+  {
+    "event": "normal_recovery_started",
+    "elapsed_seconds": 1.520047,
+    "utc": "2026-09-05T10:31:24.663155+00:00"
+  },
+  {
+    "event": "normal_recovery_completed",
+    "elapsed_seconds": 2.970767,
+    "utc": "2026-09-05T10:31:26.113879+00:00",
+    "exit": 0
+  }
+]

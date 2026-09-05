@@ -9,12 +9,8 @@
     "python",
     "-m",
     "pytest",
-    "tests/test_release_artifacts_live.py",
-    "--basetemp",
-    "/tmp/leitir-remediation-20260905/release-evidence/live-work",
-    "-q",
-    "--tb=short"
+    "-q"
   ],
-  "seconds": 10.888106285012327,
+  "seconds": 842.1779486210435,
   "returncode": 0
 }

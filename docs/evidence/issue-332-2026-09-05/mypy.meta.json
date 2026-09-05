@@ -1,0 +1,10 @@
+{
+  "head": "66b88c24ff97f18669fe1c48e18c74e949cc84e1",
+  "command": [
+    "/home/soultransit/devtony/leitir/.venv/bin/mypy",
+    "src",
+    "tools/verify_release.py"
+  ],
+  "seconds": 0.4692725969944149,
+  "returncode": 0
+}

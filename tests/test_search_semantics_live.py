@@ -19,9 +19,8 @@ pytestmark = pytest.mark.skipif(os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
 @pytest.mark.live
 def test_live_linux_stream_exclusions_match_buffered_scoring() -> None:
     from leitir.adapters.registry import build_adapters
-    from leitir.engine import _score_content_ex
+    from leitir.engine import ScopedSearcher
     from leitir.search import Predicate, PredicateKind, RepoScope, SearchMode, SearchSpec
-    from leitir.streaming import score_blob_stream
     from leitir.tree import BlobEntry, GitHubTreeSource
 
     slug, commit = "torvalds/linux", "d58772d8520c7ef247c4b95c9bd76d3a25da9ff5"
@@ -37,11 +36,15 @@ def test_live_linux_stream_exclusions_match_buffered_scoring() -> None:
     adapter = build_adapters(("c",))[0]
     for excluded in ((), (Predicate(PredicateKind.IDENTIFIER, names[-1]),)):
         spec = SearchSpec(SearchMode.SCOPED_EXHAUSTIVE, must=(Predicate(PredicateKind.IDENTIFIER, names[0]),), must_not=excluded, scopes=(RepoScope(slug, commit),))
-        regular, unavailable = _score_content_ex(content, adapter, slug, commit, path, sha, spec.must, spec.should, spec.must_not)
-        streamed, unsupported, parser = score_blob_stream(source, BlobEntry(path, sha, size), slug=slug, commit_sha=commit, path=path, adapter=adapter, spec=spec, retry=lambda operation: operation())
+        blob = BlobEntry(path, sha, size)
+        # Compare the complete production file-processing paths, including
+        # document exclusions, with actual GitHub buffered/streamed reads.
+        regular = ScopedSearcher(source, (adapter,), max_blob_size=size + 1)._search_scope(slug, commit, (blob,), spec, "c", None)
+        streamed = ScopedSearcher(source, (adapter,), max_blob_size=0)._search_scope(slug, commit, (blob,), spec, "c", None)
         assert streamed == regular
-        assert not (unavailable or unsupported or parser)
-        assert len(regular) == (0 if excluded else 2)
+        assert regular[2] == 0 and not regular[4]
+        assert len(regular[3]) == (0 if excluded else 2)
+
 
 
 @pytest.mark.live

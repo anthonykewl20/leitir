@@ -90,7 +90,10 @@ sidecar. The Phase-C gate then reached `complete` — branch run
 and canonical main run
 [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262),
 both with `corpus_manifest_digest sha256:72949674…` and 5/5 donors complete —
-closing #73 and #52 on that evidence. See
+closing #73 and #52 on that evidence. On 2026-09-05 the 0.2.000 release
+source changed the contained runtime; the owner re-signed the re-measured
+digest `sha256:901bf7ac…` with the same key and the Phase-C gate completed
+again on run 33974049348 (#338). See
 [`benchmarks/exit-corpus/README.md`](../benchmarks/exit-corpus/README.md).
 
 2026-08-14: ADR-0017 trust-binding hardening pins occupied-gate authority to policy, requires bound rerun receipts, and requires complete dependency evidence for composition acceptance.
@@ -186,7 +189,7 @@ the real network and drives the real pipeline and CLI end to end.
 | Live canary | **GREEN** | `GH_TOKEN`-gated probes are enabled daily; main runs 31934680140 and 31934798266 are green. Three v2 surfaces skip by design because their test files are not landed. |
 | Security sign-off | **DONE** | Two independent reviews on post-#163 state recorded no P0/P1; PR #166 remediated all reported P2 findings. |
 | Phase-A containment | **5/5 COMPLETE** | Each donor repeatedly completed contained baseline/rerun at 2/0/0. Run 31967278924 was intentionally overall-reject only for pending runtime ratification. |
-| Runtime ratification | **RATIFIED + GATE COMPLETE (2026-08-17)** | Owner key `7baec2e9…` signs digest `sha256:72949674…` (runs 32008683557 + 32009633642 byte-identical) via `ratification-v1.json`; Phase-C `complete` on branch run 32018653190 and canonical main run 32018948262 (5/5 donors). #73/#52 closed on that evidence. |
+| Runtime ratification | **RE-RATIFIED + GATE COMPLETE (2026-09-05)** | Owner key `7baec2e9…` re-signed the 0.2.000 runtime digest `sha256:901bf7ac…` (four Phase-A runs agree, final 33960563929) via `ratification-v1.json`; Phase-C `complete` on branch run 33974049348 (5/5 donors), evidence in `evidence/issue-338-2026-09-05/`. The 2026-08-17 ceremony (`sha256:72949674…`, runs 32018653190/32018948262) is archived as `ratification-v1-superseded-2026-08-17.json`; #73/#52 stay closed on it. |
 | BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
 Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;

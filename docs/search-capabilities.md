@@ -426,3 +426,5 @@ global budgets. The remaining opportunities are:
 
 GitHub-side behavior can change independently of Leitir; re-check the linked
 documentation before treating it as a current operational contract.
+
+C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.

@@ -231,3 +231,5 @@ enrichment behind the existing CLI (P5–P6).
       to bare terms, while PATH compiles with the honored `path:` qualifier.
       Before G6 can be implemented, the report contract must include a
       machine-readable `query_translation` record for every predicate.
+
+C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.

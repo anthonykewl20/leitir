@@ -5,7 +5,7 @@ The prior release workflow expected `leitir-0.2.000-*` artifact names and would
 reject these legitimate archives. The new verifier accepts the exact normalized
 identities, then rejects altered wheel and sdist metadata, malformed/mismatched
 tags, and unexpected artifacts. See `tests/test_release_artifacts_live.py` and
-`live.log`: actual builds, isolated installs, CLI versions and live pinned
+`live.txt`: actual builds, isolated installs, CLI versions and live pinned
 Packaging materializations. No fake upstream responses are used.
 
 The actual installed MCP2.1.1 SDK client initialized the installed wheel server

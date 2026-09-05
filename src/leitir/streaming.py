@@ -25,6 +25,7 @@ def _merge_match(existing: SourceMatch, incoming: SourceMatch) -> SourceMatch:
     return SourceMatch(
         source=existing.source,
         score=max(existing.score, incoming.score),
+        method="ast" if existing.method == incoming.method == "ast" else "heuristic",
         matched_kinds=tuple(
             sorted(
                 set(existing.matched_kinds) | set(incoming.matched_kinds),
@@ -114,6 +115,7 @@ def score_blob_stream(
                     ),
                     score=match.score,
                     matched_kinds=match.matched_kinds,
+                    method=match.method,
                 )
                 identity = source_identity(rebased.source)
                 prior = pending.get(identity)

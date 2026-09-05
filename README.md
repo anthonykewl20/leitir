@@ -349,6 +349,7 @@ except when interrupted:
   `search --index` reports uncovered fallback scopes as partial;
   `search --require-index` rejects them. Search never builds or repairs an index.
   Export/import excludes index artifacts and `gc` preserves them.
+- Search predicates also accept JSON: `--must '{"kind":"regex","value":"(?:Session|Request)"}'`. Optional predicates boost independently; `must_not` content predicates filter documents in every search path. Match JSON labels AST versus heuristic evidence with `method`.
 - `bench`: run the pinned `search-v1` benchmark with fixed tasks and strict output shape.
 
 ### Diagnostics

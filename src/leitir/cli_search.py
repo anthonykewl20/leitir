@@ -192,19 +192,27 @@ def register_search(commands: argparse._SubParsersAction) -> None:
     search_roots.add_argument("--local", action="store_true", help="use ./.leitir-refs for indexed search")
 
 def _parse_predicate(raw: str) -> Predicate:
-    parts = raw.split(":", 2)
-    if len(parts) < 2:
-        raise argparse.ArgumentTypeError(f"predicate must be kind:value, got {raw!r}")
-    kind_str, value = parts[0], parts[1]
-    language = parts[2] if len(parts) == 3 else None
     try:
-        kind = PredicateKind(kind_str)
-    except ValueError:
-        valid = ", ".join(k.value for k in PredicateKind)
-        raise argparse.ArgumentTypeError(
-            f"unknown predicate kind {kind_str!r}; valid kinds: {valid}"
-        ) from None
-    return Predicate(kind=kind, value=value, language=language)
+        if raw.startswith("{"):
+            data = json.loads(raw)
+            if not isinstance(data, dict) or set(data) not in ({"kind", "value"}, {"kind", "value", "language"}):
+                raise ValueError("predicate JSON requires kind, value and optional language")
+            if not isinstance(data.get("kind"), str) or not isinstance(data.get("value"), str):
+                raise ValueError("predicate kind and value must be strings")
+            if "language" in data and not isinstance(data["language"], str):
+                raise ValueError("predicate language must be a string")
+            return Predicate(PredicateKind(data["kind"]), data["value"], data.get("language"))
+        kind_str, separator, value = raw.partition(":")
+        if not separator:
+            raise ValueError("predicate must be kind:value or a JSON object")
+        language = None
+        prefix, separator, suffix = value.rpartition(":")
+        from .adapters.languages import canonicalize_language
+        if separator and canonicalize_language(suffix) in {"python", "rust", "go", "javascript", "typescript", "java", "c", "cpp"}:
+            value, language = prefix, suffix
+        return Predicate(PredicateKind(kind_str), value, language)
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError(f"invalid predicate {raw!r}: {exc}") from exc
 
 
 def _bounded_search_budget(raw: str, *, maximum: int) -> int:

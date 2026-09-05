@@ -345,8 +345,11 @@ class SourceMatch:
     source: SourceRef
     score: float
     matched_kinds: tuple[PredicateKind, ...]
+    method: str = "heuristic"
 
     def __post_init__(self) -> None:
+        if self.method not in {"ast", "heuristic"}:
+            raise ValueError("match method must be ast or heuristic")
         if not isinstance(self.source, SourceRef):
             raise TypeError("source must be a SourceRef")
         if isinstance(self.score, bool) or not isinstance(self.score, (int, float)):
@@ -363,6 +366,7 @@ class SourceMatch:
             "source": self.source.to_dict(),
             "score": self.score,
             "matched_kinds": [k.value for k in self.matched_kinds],
+            "method": self.method,
         }
 
 

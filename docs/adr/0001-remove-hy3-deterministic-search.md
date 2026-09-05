@@ -231,3 +231,5 @@ enrichment behind the existing CLI (P5–P6).
       to bare terms, while PATH compiles with the honored `path:` qualifier.
       Before G6 can be implemented, the report contract must include a
       machine-readable `query_translation` record for every predicate.
+
+2026-09-05 amendment: Immutable tree reuse (#316): complete validated tree listings are reused per repository and exact commit within one tree-source instance, bounded to four listings and 600,000 total blob entries. Failed walks and partial prefixes are never cached; recovered-tree annotations remain intact.

@@ -1,0 +1,5 @@
+................s....................................................... [ 94%]
+....                                                                     [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_tree.py:365: set LEITIR_ENABLE_LIVE_E2E=1 to run live verification
+75 passed, 1 skipped in 0.36s

@@ -59,6 +59,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - retire the tree-layout import-root tier as an authority (`check`)
 - retry EDEADLK lock acquisition on Windows like other msvcrt contention (`tests`)
 - select PyPI source metadata and permit verified artifact-only packages (#313)
+- reuse complete immutable Git tree listings (#316)
 - stage manifest rewrites outside the verified shelf tree (#282) (`materialize`)
 - stop laundering a corrupt catalog into absence across process boundaries (`corpus`)
 - stop tier-4 import-root heuristic from guessing multi-root (`check`)

@@ -44,6 +44,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
+- preserve documented search layers and pin method-bearing evidence (#312)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)

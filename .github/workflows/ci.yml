@@ -63,5 +63,5 @@ jobs:
         # -n auto: tests are process-isolated (tmp_path fixtures, subprocess
         # runners); xdist workers are separate processes, so in-test
         # thread-concurrency coverage (warm/safeio) is unaffected.
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -vv --tb=short -n auto -o faulthandler_timeout=120 --durations=30
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -vv --tb=short -n auto --dist=worksteal -o faulthandler_timeout=120 --durations=30
 

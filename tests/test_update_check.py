@@ -34,6 +34,8 @@ class _Response:
 @pytest.fixture(autouse=True)
 def _isolated_update_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.delenv("LEITIR_NO_UPDATE_CHECK", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setattr(update, "_result", None)
@@ -385,9 +387,7 @@ def test_stale_cache_temp_is_swept_on_next_run(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     path = update._cache_path()
     assert path is not None
-    # XDG_CACHE_HOME only redirects the cache on non-darwin/non-win32 hosts;
-    # on macOS/Windows the platform cache directory may already exist from
-    # earlier tests in the same run.
+    # The autouse fixture isolates the platform-specific cache root.
     path.parent.mkdir(parents=True, exist_ok=True)
     stale = path.parent / ".update-check.json.tmp-orphaned"
     stale.write_text("{}", encoding="utf-8")

@@ -339,3 +339,5 @@ to trust.
 - Issue #266, tasks B3 and E1.
 
 2026-09-05 amendment: Qualified API checking (#315): qualified imports and full attribute chains must reach the exact indexed definition or an explicit module-level reexport. Bare-name collisions in other modules cannot yield ok. Unproven dynamic, conditional or star exports remain unresolved.
+
+Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.

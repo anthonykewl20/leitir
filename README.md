@@ -651,3 +651,5 @@ Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.
 snapshots are never scorer evidence.
 
 Qualified API checking (#315): `check` preserves the consumer import path and complete attribute chain, then verifies that qualified symbol or an explicit source-level reexport. A same-named definition in another module does not establish `ok`. Conditional/star/dynamic exports without exact binding evidence remain `unresolved`; arity and runtime behavior are not inferred.
+
+Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.

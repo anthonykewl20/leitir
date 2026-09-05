@@ -194,7 +194,15 @@ def register_search(commands: argparse._SubParsersAction) -> None:
 def _parse_predicate(raw: str) -> Predicate:
     try:
         if raw.startswith("{"):
-            data = json.loads(raw)
+            def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                fields: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in fields:
+                        raise ValueError(f"duplicate predicate field: {key}")
+                    fields[key] = item
+                return fields
+
+            data = json.loads(raw, object_pairs_hook=unique_fields)
             if not isinstance(data, dict) or set(data) not in ({"kind", "value"}, {"kind", "value", "language"}):
                 raise ValueError("predicate JSON requires kind, value and optional language")
             if not isinstance(data.get("kind"), str) or not isinstance(data.get("value"), str):

@@ -656,3 +656,5 @@ snapshots are never scorer evidence.
 
 
 Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.
+
+Shelf provenance and indexing (#311): only full, exact Git materializations supply a local Git tree listing. Registry artifacts require upstream blob identities before producing Git citations; missing or mismatched local bytes fail closed. Go proxy shelves use their existing single-content-hash path for every reader and writer. Indexes store symbolic-link text as Git blob content and never follow links.

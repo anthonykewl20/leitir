@@ -20,6 +20,7 @@ from leitir.index.verify import (
     _digest,
     _git_blob_sha,
     _read_regular,
+    _read_source_blob,
     canonical_json,
     index_shelf_path,
     require_eligible,
@@ -52,11 +53,9 @@ def _source_documents(target: Path, shelf: ShelfRef) -> tuple[tuple[IndexDocumen
                 continue
             if stat.S_ISDIR(metadata.st_mode):
                 continue
-            if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
                 raise VerificationError(f"source tree contains unsafe index document: {relative}")
-            if not path.resolve().is_relative_to(target.resolve()):
-                raise VerificationError(f"source document escapes shelf: {relative}")
-            data = path.read_bytes()
+            data = _read_source_blob(target, relative)
             records.append(
                 (
                     IndexDocument(

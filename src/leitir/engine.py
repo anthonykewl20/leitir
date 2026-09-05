@@ -59,7 +59,9 @@ class _LocalShelfReader:
 
     @property
     def fully_verified(self) -> bool:
-        return self._manifest.get("materialized_tree_hash_scope") == "full"
+        return (self._manifest.get("materialized_tree_hash_scope") == "full"
+                and self._manifest.get("source") == "git-commit"
+                and self._manifest.get("parity") == "exact")
 
     @property
     def drift_git_only_count(self) -> int:
@@ -450,15 +452,14 @@ class ScopedSearcher:
             with self._local_shelf(scope.slug, scope.commit_sha) as local_shelf:
                 enumeration_excluded = 0
                 if local_shelf is not None and local_shelf.fully_verified:
-                    # A full verified shelf is a local immutable representation
-                    # of the declared donor tree.  Do not burn API budget merely
-                    # to rediscover its listing; drift is explicitly accounted
-                    # for below rather than silently treated as a read failure.
+                    # Only exact Git shelves establish Git blob provenance.
+                    # An artifact tree hash authenticates artifact bytes, not
+                    # equivalence to the declared upstream commit.
                     blobs = local_shelf.list_local_blobs()
                     recovered = False
                     drift_excluded = local_shelf.drift_git_only_count
                 else:
-                    drift_excluded = 0
+                    drift_excluded = local_shelf.drift_git_only_count if local_shelf is not None else 0
                     try:
                         blobs, recovered = self._tree.list_blobs_ex(
                             scope.slug, scope.commit_sha
@@ -669,8 +670,7 @@ class ScopedSearcher:
                     target, owner, repo, commit_sha, host="github.com"
                 )
                 if manifest is None:
-                    yield None
-                    return
+                    raise VerificationError("existing local shelf has invalid or missing integrity metadata")
                 yield _LocalShelfReader(target, manifest)
             return
 
@@ -702,8 +702,7 @@ class ScopedSearcher:
                         host="github.com",
                     )
             if manifest is None:
-                yield None
-                return
+                raise VerificationError("existing local shelf has invalid or missing integrity metadata")
             yield _LocalShelfReader(target, manifest)
 
     def _adapter_for(

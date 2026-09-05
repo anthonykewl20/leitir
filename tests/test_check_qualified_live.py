@@ -22,6 +22,12 @@ def test_requests_qualified_calls_and_public_reexports(tmp_path: Path) -> None:
         ('from requests.utils import parse_header_links\nparse_header_links("value")\n', True),
         ('import requests\nrequests.get("https://example.com")\n', True),
         ('from requests import Session\nSession()\n', True),
+        ('import requests as lib\nlib.parse_header_links("")\nimport requests.utils as lib\n', False),
+        ('import requests.utils as lib\ndef use():\n    import requests as lib\n    return lib.parse_header_links("")\nuse()\n', False),
+        ('import requests.Session as S\nS.get(None, "")\n', False),
+        ('from requests.Session import get\nget(None, "")\n', False),
+        ('def use():\n    import requests.utils as lib\n    return lib.parse_header_links("")\nuse()\n', True),
+        ('import requests.utils as lib\nlib.parse_header_links("")\nimport requests.utils as lib\nlib.parse_header_links("")\n', True),
     ]
     for position, (consumer, supported) in enumerate(cases):
         path = tmp_path / f"consumer{position}.py"

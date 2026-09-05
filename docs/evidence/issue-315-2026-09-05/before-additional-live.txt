@@ -1,0 +1,41 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_requests_qualified_calls_and_public_reexports ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-soultransit/pytest-1354/test_requests_qualified_calls_0')
+
+    @pytest.mark.live
+    def test_requests_qualified_calls_and_public_reexports(tmp_path: Path) -> None:
+        root = tmp_path / "corpus"
+        cases = [
+            ('import requests\nrequests.parse_header_links("value")\n', False),
+            ('from requests import parse_header_links\nparse_header_links("value")\n', False),
+            ('import requests.utils\nrequests.utils.parse_header_links("value")\n', True),
+            ('from requests.utils import parse_header_links\nparse_header_links("value")\n', True),
+            ('import requests\nrequests.get("https://example.com")\n', True),
+            ('from requests import Session\nSession()\n', True),
+            ('import requests as lib\nlib.parse_header_links("")\nimport requests.utils as lib\n', False),
+            ('import requests.utils as lib\ndef use():\n    import requests as lib\n    return lib.parse_header_links("")\nuse()\n', False),
+            ('import requests.Session as S\nS.get(None, "")\n', False),
+            ('from requests.Session import get\nget(None, "")\n', False),
+            ('def use():\n    import requests.utils as lib\n    return lib.parse_header_links("")\nuse()\n', True),
+            ('import requests.utils as lib\nlib.parse_header_links("")\nimport requests.utils as lib\nlib.parse_header_links("")\n', True),
+        ]
+        for position, (consumer, supported) in enumerate(cases):
+            path = tmp_path / f"consumer{position}.py"
+            path.write_text(consumer)
+            result = subprocess.run([sys.executable, "-m", "leitir.cli", "check", str(path), "--against", "pypi:requests@2.32.3", "--root", str(root), "--json"], capture_output=True, text=True, timeout=180, check=False)
+            assert result.returncode in {0, 1}, result.stderr
+            report = json.loads(result.stdout)
+            assert report["counts"]["sites_examined"] > 0
+            if supported:
+                assert report["counts"]["sites_ok"] > 0, report
+            else:
+>               assert report["counts"]["sites_ok"] == 0, report
+E               AssertionError: {'against': 'pypi:requests@2.32.3', 'counts': {'sites_examined': 1, 'sites_ok': 1, 'sites_unresolved': 0, 'sites_violation': 0}, 'files_examined': ['consumer6.py'], 'files_excluded': [], ...}
+E               assert 1 == 0
+
+tests/test_check_qualified_live.py:42: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_check_qualified_live.py::test_requests_qualified_calls_and_public_reexports
+1 failed in 4.43s

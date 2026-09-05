@@ -31,8 +31,7 @@ Two existing modules were read before anything here was written:
   evidence, not symbol-level evidence. This module reuses ``resolve_consumer``
   for what it already gives for free -- correct, conservative distribution
   attribution and the closed :class:`~leitir.usage.UnresolvedState` outcomes
-  for anything statically unknowable -- and adds a small, local, top-level
-  import-table pass (see ``_ImportTable``) only to recover *which* symbol a
+  for anything statically unknowable -- and adds a conservative import-table pass across scopes (see ``_ImportTable``) only to recover *which* symbol a
   resolved reference names. That recovery is intentionally best-effort and
   conservative: whenever it cannot pin down a candidate symbol with
   confidence it falls back to treating the site as ``unresolved`` (never a
@@ -381,27 +380,47 @@ class _ImportTable:
     bare module reference, never a guess.
     """
 
-    # local name -> original provider symbol name, or None if this local
-    # name is the *module* itself (so an attribute access off of it is what
-    # names a symbol).
+    # Local names map to unambiguous qualified module/value bindings.
     module_names: dict[str, str]
     symbol_aliases: dict[str, str]
 
 
-def _build_import_table(tree: ast.Module, import_roots: frozenset[str]) -> _ImportTable:
-    module_names: dict[str, str] = {}
-    symbol_aliases: dict[str, str] = {}
-    for stmt in tree.body:
+def _build_import_table(
+    tree: ast.Module, import_roots: frozenset[str], *, modules: frozenset[str] | None = None,
+) -> _ImportTable:
+    # Distribution attribution is scope-aware, but its public reference does
+    # not carry a qualified binding. Reuse a name only when every provider
+    # import of that name agrees; rebinding/shadowing remains unresolved.
+    bindings: dict[str, tuple[str, bool]] = {}
+    required_modules: dict[str, set[str]] = {}
+    ambiguous: set[str] = set()
+
+    def record(local: str, qualified: str, is_module: bool, required: str) -> None:
+        value = (qualified, is_module)
+        if local in bindings and bindings[local] != value:
+            ambiguous.add(local)
+        bindings[local] = value
+        required_modules.setdefault(local, set()).add(required)
+
+    for stmt in ast.walk(tree):
         if isinstance(stmt, ast.Import):
             for alias in stmt.names:
                 if alias.name.split(".")[0] in import_roots:
-                    module_names[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
+                    record(alias.asname or alias.name.split(".")[0],
+                           alias.name if alias.asname else alias.name.split(".")[0],
+                           True, alias.name)
         elif isinstance(stmt, ast.ImportFrom):
             if stmt.level == 0 and stmt.module and stmt.module.split(".")[0] in import_roots:
                 for alias in stmt.names:
-                    if alias.name == "*":
-                        continue
-                    symbol_aliases[alias.asname or alias.name] = stmt.module + "." + alias.name
+                    if alias.name != "*":
+                        record(alias.asname or alias.name, stmt.module + "." + alias.name,
+                               False, stmt.module)
+    module_names: dict[str, str] = {}
+    symbol_aliases: dict[str, str] = {}
+    for local, (qualified, is_module) in sorted(bindings.items()):
+        if local in ambiguous or (modules is not None and not required_modules[local] <= modules):
+            continue
+        (module_names if is_module else symbol_aliases)[local] = qualified
     return _ImportTable(module_names=module_names, symbol_aliases=symbol_aliases)
 
 
@@ -452,7 +471,7 @@ def _candidate_for_reference(
     return _Candidate(symbol=qualified.rsplit(".", 1)[-1], reason="qualified import binding", qualified=qualified)
 
 
-def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str]]:
+def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str, ...]) -> tuple[frozenset[str], dict[str, str], frozenset[str]]:
     """Recover source-backed names and explicit module-level reexports.
 
     Ambiguous module layouts, conditional/star exports and dynamic mutations
@@ -518,7 +537,16 @@ def _qualified_api_evidence(index: ApiIndex, root: Path, import_roots: tuple[str
             elif isinstance(statement, ast.Import):
                 for alias in statement.names:
                     aliases[module + "." + (alias.asname or alias.name.split(".")[0])] = alias.name if alias.asname else alias.name.split(".")[0]
-    return frozenset(known), aliases
+    # Module imports require actual module/namespace paths. A class exported
+    # at requests.Session cannot authorize `import requests.Session`.
+    modules = {
+        ".".join(parts[:length])
+        for name in paths
+        if not any(name == item or name.startswith(item + ".") for item in ambiguous)
+        for parts in (name.split("."),)
+        for length in range(1, len(parts) + 1)
+    }
+    return frozenset(known), aliases, frozenset(modules)
 
 
 def _has_qualified_api(qualified: str | None, known: frozenset[str], aliases: dict[str, str]) -> bool:
@@ -599,7 +627,7 @@ def run_check(
     resolved_roots = resolve_import_roots(materialized_root, package_name)
     import_roots_determinable = resolved_roots is not None
     import_roots = tuple(sorted(resolved_roots)) if resolved_roots else ()
-    qualified_names, aliases = _qualified_api_evidence(index, materialized_root, import_roots)
+    qualified_names, aliases, known_modules = _qualified_api_evidence(index, materialized_root, import_roots)
     result = resolve_consumer(
         consumer_root=consumer_root,
         import_roots={root: against for root in import_roots},
@@ -645,7 +673,10 @@ def run_check(
                 )
             )
             continue
-        table = table_cache.setdefault(relpath, _build_import_table(tree, frozenset(import_roots)))
+        table = table_cache.get(relpath)
+        if table is None:
+            table = _build_import_table(tree, frozenset(import_roots), modules=known_modules)
+            table_cache[relpath] = table
         candidate = _candidate_for_reference(tree, table, reference)
         line = reference.span.start_line
         col = reference.span.start_col

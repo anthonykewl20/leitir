@@ -668,3 +668,5 @@ Immutable tree reuse (#316): one GitHub tree-source instance reuses successfully
 C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.
 
 Normalized Git archives (#311): the real Vitest 2.1.9 archive carries a CRLF file whose Git blob identity differs. Sampled, unverified, unknown-parity and drift shelves must use the upstream tree listing and verify queried bytes against it. A full local tree hash alone cannot authorize Git citations. Legacy shelves without an explicit exact-parity proof also take that checked path.
+
+Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.

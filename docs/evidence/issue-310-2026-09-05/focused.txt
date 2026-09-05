@@ -1,0 +1,5 @@
+Installed 14 packages in 11ms
+..............s......                                                    [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_info.py:404: set LEITIR_ENABLE_LIVE_E2E=1 to run live license-routing verification
+20 passed, 1 skipped in 3.86s

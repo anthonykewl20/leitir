@@ -211,3 +211,5 @@ metadata displays as tamper-evident.
 - [ADR-0011 — Reuse packet and attribution](0011-reuse-packet-and-attribution.md)
 - [ADR-0012 — Polyglot graph via tree-sitter](0012-polyglot-graph-via-tree-sitter.md)
 - [Python 3.14 Cryptographic Services](https://docs.python.org/3.14/library/crypto.html)
+
+API evidence integrity (issue #310): `info` derives signatures from the verified source under its shelf lock and compares derived cache content before reuse. Altered cache entries are rebuilt; unchanged cache files are not rewritten. Publisher manifest authentication does not authenticate independently mutable API-cache JSON. No cache-local checksum substitutes for verified source evidence.

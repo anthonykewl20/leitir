@@ -651,3 +651,5 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.md](docs/operations.md), [docs/smoke-evaluation.md](docs/smoke-evaluation.md), plus the manual v1 scorecards — [docs/leitir-engine-scorecard.html](docs/leitir-engine-scorecard.html), its [historical PNG snapshot](docs/leitir-engine-scorecard.png), and the manual [v2 editorial scorecard](docs/leitir-engine-scorecard-v2.html). These manual
 snapshots are never scorer evidence.
+
+Known BTS blockers (#309): unresolved dependencies on each accepted owner are recorded before later nested-owner work can exhaust the budget. Known rejection continues to dominate partial budget exhaustion.

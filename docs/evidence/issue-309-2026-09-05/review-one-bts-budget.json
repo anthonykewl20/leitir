@@ -1,0 +1,29 @@
+[
+  {
+    "slug": "pypa/packaging",
+    "commit": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+    "seed": "noxfile.tests",
+    "work_budget": 2,
+    "status": "partial",
+    "unresolved": 0,
+    "known_seed_unresolved": 6
+  },
+  {
+    "slug": "pypa/packaging",
+    "commit": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+    "seed": "noxfile.tests",
+    "work_budget": 3,
+    "status": "reject",
+    "unresolved": 7,
+    "known_seed_unresolved": 6
+  },
+  {
+    "slug": "pypa/packaging",
+    "commit": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+    "seed": "noxfile.tests",
+    "work_budget": 1000000,
+    "status": "reject",
+    "unresolved": 7,
+    "known_seed_unresolved": 6
+  }
+]

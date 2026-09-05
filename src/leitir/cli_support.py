@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import errno
-import importlib.metadata
 import json
 import logging
 import os
@@ -27,6 +26,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TextIO, TypedDict, cast
 
+from ._version import installed_version
 from .credentials import github_token_from_env
 from .search import RepoScope, SearchReport, SearchSpec
 from .spec import (
@@ -127,10 +127,7 @@ def _protect_stdout_shutdown(out: TextIO) -> TextIO:
 
 
 def _installed_version() -> str:
-    try:
-        return importlib.metadata.version("leitir")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+    return installed_version()
 
 
 class TreeSourceFactory(Protocol):

@@ -2,9 +2,9 @@
 
 Leitir is a deterministic, provenance-bound dependency-source corpus plus a deterministic code-search kernel for AI coding agents.
 
-**Status: released — [`v0.1.6`](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6)
-is the latest release (2026-08-25); v0.1.4 was the first `v*` tag (2026-08-17); current milestone v0.1.6 is complete and
-`pyproject.toml` is 0.1.6. Release validation evidence is recorded below.**
+**Release preparation (2026-09-05): `pyproject.toml` is 0.2.000.
+The latest published release remains [v0.1.6](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.6).
+[0.2.000 release notes](docs/releases/0.2.000.md) describe the accumulated changes and validation gates.**
 
 ## Why
 
@@ -101,6 +101,19 @@ flowchart LR
     EXP -. reads .-> TREE
     IMP -. writes .-> TREE
 ```
+
+## Versioning
+
+Public versions and Git tags use `MAJOR.MINOR.PATCH` with exactly three patch digits:
+`0.2.000`, `0.2.001`, and so on. Substantial capability or compatibility changes
+advance the minor version and reset the patch; corrective releases advance the
+patch. Patch `999` rolls over to the next minor release. Major and minor
+components are unpadded integers. Python packaging normalizes `0.2.000` to
+`0.2.0` in wheel/sdist names and metadata; these identify the same release.
+CLI, doctor and MCP display the padded public version. Release publication
+requires green CI for the exact commit, verified CI artifacts, successful
+provenance attestation, and committed version-specific notes. See
+[ADR-0038](docs/adr/0038-release-versioning-and-publication.md).
 
 ## Installation
 

@@ -1,0 +1,10 @@
+[
+  {
+    "phase": "before",
+    "contains_padded_release": false
+  },
+  {
+    "phase": "after",
+    "contains_padded_release": true
+  }
+]

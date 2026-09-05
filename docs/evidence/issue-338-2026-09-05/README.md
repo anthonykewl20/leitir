@@ -1,7 +1,7 @@
-# Issue #338 — runtime re-ratification and Phase C for 0.2.000 (2026-09-05)
+# Issue #338 — runtime re-ratification, Phase C and publication of 0.2.000 (2026-09-05)
 
-This directory retains the owner ceremony and the authenticated Phase-C gate
-result that close the ratification half of #338. Nothing here was produced
+This directory retains the owner ceremony, the authenticated Phase-C gate
+result and the publication evidence that close #338. Nothing here was produced
 by an unsigned or self-made trust root; the trust root is the unchanged
 `benchmarks/exit-corpus/trusted-keys-v1.json`.
 

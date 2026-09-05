@@ -391,6 +391,8 @@ except when interrupted:
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
 - `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance.
+API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under the target lock before accepting its derived caches. A tampered cache is rebuilt; an unchanged cache is not rewritten.
+
 - `examples`: extract and rank usage snippets for that source.
 - `trust`: compute cached trust score and factor breakdown.
 - `sbom`: emit SPDX 2.3 or CycloneDX 1.5 SBOM artifacts from the corpus.
@@ -651,3 +653,6 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 
 Historical, retired v1 references: [docs/PRD.md](docs/PRD.md), [docs/operations.md](docs/operations.md), [docs/smoke-evaluation.md](docs/smoke-evaluation.md), plus the manual v1 scorecards — [docs/leitir-engine-scorecard.html](docs/leitir-engine-scorecard.html), its [historical PNG snapshot](docs/leitir-engine-scorecard.png), and the manual [v2 editorial scorecard](docs/leitir-engine-scorecard-v2.html). These manual
 snapshots are never scorer evidence.
+
+
+Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.

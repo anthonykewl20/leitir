@@ -234,3 +234,7 @@ Tracked here and mirrored in `docs/STATUS.md`. Slice status values: not started 
 | C8 | done | offline targeted 50; full 1000 passed, 45 skipped (3.11); live n/a (network-independent) |
 | C9 | done | offline targeted 35, 1 skipped; full 1007 passed, 46 skipped (3.11); live 3 (PyPI) |
 | C10 | done | offline targeted 37; full 1013 passed, 46 skipped (3.11); live n/a (cached/offline) |
+
+API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under its shelf lock and compares derived cache content before reuse. Altered cache entries are rebuilt; unchanged cache files are not rewritten. Publisher manifest authentication does not authenticate independently mutable API-cache JSON. No cache-local checksum substitutes for verified source evidence.
+
+Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.

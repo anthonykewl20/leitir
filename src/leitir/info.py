@@ -294,32 +294,42 @@ def build_info(
     subpath = raw_subpath if isinstance(raw_subpath, str) else None
     scan_path = target / subpath if subpath else target
 
-    api_index = read_api_index(root, entry, manifest)
-    wrote_cache = False
-    if not _valid_api(api_index):
+    # A source signature authenticates the shelf, not mutable derived JSON
+    # beside it. Re-derive the API under the source lock and compare exact
+    # content; a cache digest stored beside the cache is not an authority.
+    with _target_lock(root, target, str(entry["commit_sha"])):
+        from .materialize import VerificationError, read_valid_manifest
+
+        verified = read_valid_manifest(
+            target, str(entry["owner"]), str(entry["repo"]),
+            str(entry["commit_sha"]), host=str(entry["host"]),
+        )
+        if verified is None:
+            raise VerificationError("API source failed load-time integrity verification")
+        manifest = verified
+        raw_subpath = manifest.get("subpath")
+        subpath = raw_subpath if isinstance(raw_subpath, str) else None
+        scan_path = target / subpath if subpath else target
         hint = manifest.get("ecosystem")
-        api_index = extract_api_surface(
+        derived_api = extract_api_surface(
             scan_path, str(hint) if hint in {"pypi", "npm"} else None
         )
-        api_path = write_api_index(root, entry, manifest, api_index)
-        wrote_cache = True
-    else:
-        api_path = api_index_path(root, entry, manifest).absolute()
+        cached_api = read_api_index(root, entry, manifest)
+        wrote_cache = not _valid_api(cached_api) or cached_api != derived_api
+        api_index = derived_api
+        if wrote_cache:
+            api_path = write_api_index(root, entry, manifest, api_index)
+        else:
+            api_path = api_index_path(root, entry, manifest).absolute()
 
-    examples_index = read_examples_index(root, entry, manifest)
-    if not _valid_examples(examples_index):
+        cached_examples = read_examples_index(root, entry, manifest)
         examples_index = extract_examples(target, api_index)
-        examples_path = write_examples_index(root, entry, manifest, examples_index)
-        wrote_cache = True
-    else:
-        examples_path = examples_index_path(root, entry, manifest).absolute()
+        if not _valid_examples(cached_examples) or cached_examples != examples_index:
+            examples_path = write_examples_index(root, entry, manifest, examples_index)
+            wrote_cache = True
+        else:
+            examples_path = examples_index_path(root, entry, manifest).absolute()
 
-    if wrote_cache:
-        from .docpointers import regenerate_pointers
-
-        regenerate_pointers(root)
-
-    with _target_lock(root, target, str(entry["commit_sha"])):
         original_license = tuple(
             manifest.get(field)
             for field in ("license_identifier", "license_method", "license_confidence")
@@ -337,6 +347,11 @@ def build_info(
             manifest = update_manifest(target, trust.as_dict())
         else:
             trust_score, trust_breakdown = cached_trust
+
+    if wrote_cache:
+        from .docpointers import regenerate_pointers
+
+        regenerate_pointers(root)
 
     license_result = infer_license(manifest, target)
     raw_snippets = examples_index.get("snippets")

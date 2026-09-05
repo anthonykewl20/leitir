@@ -1,0 +1,29 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_packaging_parse_does_not_hide_constructor_dependencies __________
+
+tmp_path = PosixPath('/tmp/pytest-of-soultransit/pytest-1227/test_packaging_parse_does_not_0')
+
+    def test_packaging_parse_does_not_hide_constructor_dependencies(tmp_path: Path) -> None:
+        pin = "pypa/packaging@85442b8032cb7bae72866dfd7782234a98dd2fb7"
+        def invoke(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-m", "leitir.cli", *args, "--root", str(tmp_path / "corpus"), "--json"],
+                capture_output=True, text=True, timeout=180, check=False,
+            )
+        fetched = invoke("get", "github:" + pin)
+        assert fetched.returncode == 0, fetched.stderr
+        computed = invoke("bts-compute", pin, "--seed-module", "src.packaging.version",
+                          "--seed-name", "src.packaging.version.parse", "--out", str(tmp_path / "bts"))
+        # This real class contains unresolved receiver dispatch and stdlib calls
+        # not authorized by the empty default policy. COMPLETE is unsound.
+>       assert computed.returncode != 0, computed.stdout
+E       AssertionError: {"analysis_digest": "sha256:00f7d9c428eb3af6c3beed43ecaf5d4d2b261a2280415f2503f80131f7b429cb", "bts_digest": "sha256:5c170a346483796c174e037c63fab0ff3326617954b36561f7f0f4b18332b3d7", "commit": "85442b8032cb7bae72866dfd7782234a98dd2fb7", "detail_code": null, "graph_sha256": "sha256:11076f573f06fa102ae5fa7fa6814f7f0703637520777c1dbde84667d0a26120", "language": "python", "member_equivalence_digest": "sha256:e984875326478dd31b867219846da908f1e6ea51084d38b611f6ad1c2e9a4f21", "reason": null, "schema_version": "leitir-bts-cli-compute-v1", "seed": {"location_key": "src/packaging/version.py:47:src.packaging.version.parse", "module": "src.packaging.version", "qualified_name": "src.packaging.version.parse"}, "slug": "pypa/packaging", "status": "COMPLETE"}
+E         
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['/home/soultransit/.cache/uv/builds-v0/.tmpBQbjBF/bin/python', '-m', 'leitir.cli', 'bts-compute...sion", "qualified_name": "src.packaging.version.parse"}, "slug": "pypa/packaging", "status": "COMPLETE"}\n', stderr='').returncode
+
+tests/test_bts_class_closure_live.py:31: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_bts_class_closure_live.py::test_packaging_parse_does_not_hide_constructor_dependencies
+1 failed in 4.16s

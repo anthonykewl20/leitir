@@ -34,7 +34,7 @@ from leitir.materialize import _target_lock
 from leitir.treehash import FULL, TREE_HASH_ALGORITHM, TreeHashError, verify_materialized_tree_hash
 
 BTS_SCHEMA_VERSION = "leitir-bts-v1"
-BTS_RESOLVER_VERSION = "leitir-bts-walk-v1"
+BTS_RESOLVER_VERSION = "leitir-bts-walk-v2"
 _RUNTIME_KINDS = frozenset(
     {EdgeKind.CALLS, EdgeKind.INSTANTIATES, EdgeKind.READS, EdgeKind.INHERITS, EdgeKind.RAISES}
 )
@@ -913,6 +913,28 @@ def _compute_bts(
         report = _report(BTSStatus.REJECT, inputs, [], [disposition], [], [], [disposition], [], initial_counters)
         return BTSResult(BTSStatus.REJECT, report, None)
 
+    # Index lexical ownership once. A whole definition carries the runtime
+    # dependencies of its nested source, even when no call targets that owner.
+    lexical = {(item.id.origin, item.id.module, item.id.qualified_name): item for item in graph.nodes}
+    nested_owners: dict[NodeId, list[NodeId]] = {}
+    definition_kinds = {NodeKind.CLASS, NodeKind.FUNCTION, NodeKind.ASYNC_FUNCTION,
+                        NodeKind.METHOD, NodeKind.ASYNC_METHOD}
+    for lexical_node in graph.nodes:
+        ref = lexical_node.source
+        if ref is None:
+            continue
+        prefix = lexical_node.id.qualified_name.rpartition(".")[0]
+        while prefix:
+            parent = lexical.get((lexical_node.id.origin, lexical_node.id.module, prefix))
+            if parent is not None and parent.id.kind in definition_kinds and parent.source is not None:
+                outer = parent.source
+                if ((ref.slug, ref.commit_sha, ref.path, ref.blob_sha)
+                    == (outer.slug, outer.commit_sha, outer.path, outer.blob_sha)
+                    and (outer.start_line, outer.start_col) <= (ref.start_line, ref.start_col)
+                    and (ref.end_line, ref.end_col) <= (outer.end_line, outer.end_col)):
+                    nested_owners.setdefault(parent.id, []).append(lexical_node.id)
+            prefix = prefix.rpartition(".")[0]
+
     outgoing: dict[NodeId, list[Edge]] = {}
     imports: list[Edge] = []
     for edge in graph.edges:
@@ -986,14 +1008,28 @@ def _compute_bts(
             break
         members.append(candidate)
 
-        # A known blocker at an accepted included node is terminal and is
-        # collected before spending budget on any outgoing work.
-        local_unresolved = unresolved_by_source.get(current, [])
-        if local_unresolved:
-            reached_unresolved.extend(local_unresolved)
-            blockers.extend(local_unresolved)
-
-        current_edges = sorted(outgoing.get(current, []), key=_edge_key)
+        # Including a definition includes its entire source span, including
+        # constructors, class assignments and nested definitions. Their graph
+        # owners remain distinct, but their runtime dependencies cannot vanish
+        # merely because the enclosing definition is the selected member.
+        owners = [current]
+        for nested_id in sorted(nested_owners.get(current, []), key=lambda item: (item.origin.value, item.module, item.qualified_name, item.kind.value, item.location_key)):
+            work_units += 1
+            if work_units > budget.max_work_units:
+                frontier.append(FrontierEvidence(depth, current, incoming))
+                budget_hit = True
+                break
+            if nested_id not in visited or visited[nested_id] > depth:
+                owners.append(nested_id)
+                visited[nested_id] = depth
+        if budget_hit:
+            break
+        local_unresolved = [item for owner in owners for item in unresolved_by_source.get(owner, [])]
+        reached_unresolved.extend(local_unresolved)
+        blockers.extend(local_unresolved)
+        current_edges = sorted(
+            (edge for owner in owners for edge in outgoing.get(owner, [])), key=_edge_key,
+        )
         for edge in current_edges:
             work_units += 2  # examined edge + exact policy lookup
             edges_examined += 1

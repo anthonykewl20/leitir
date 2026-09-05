@@ -597,6 +597,10 @@ no username, repository path, project data, command arguments, or telemetry. Set
 
 ## Tests
 
+The macOS CI full suite redistributes pending tests with xdist's `worksteal`
+scheduler. The canonical local command remains serial. See the
+[actual worker/timing evidence for issue #334](docs/evidence/issue-334-2026-09-05/README.md).
+
 ```bash
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
@@ -686,3 +690,5 @@ Qualified binding limits (#315): conflicting provider aliases across import orde
 Known BTS blockers (#309): unresolved dependencies on each accepted owner are recorded before later nested-owner work can exhaust the budget. Known rejection continues to dominate partial budget exhaustion.
 
 Shared tree-source instances (#316): cache hits and eviction are atomic under a short lock. Network enumeration runs outside the lock. Concurrent callers cannot lose a listing between membership and read.
+
+Module loading and impact (#315): the checker requires evidence that intermediate modules were loaded by the consumer binding, an earlier unconditional top-level import, or source-backed imports of an already loaded module. A module file alone cannot authorize a parent-package attribute; later imports and imports in other scopes do not establish that access. `diff --impact` preserves removal evidence for imported owners and source-backed ancestors, including inherited attribute accesses; a removed owner cannot become a clean terminal-member result.

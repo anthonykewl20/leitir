@@ -16,6 +16,13 @@ pytestmark = pytest.mark.skipif(os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1",
 def test_requests_qualified_calls_and_public_reexports(tmp_path: Path) -> None:
     root = tmp_path / "corpus"
     cases = [
+        ('import requests\nrequests.help.info()\n', False),
+        ('import requests.help\nrequests.help.info()\n', True),
+        ('import requests.help as helper\nhelper.info()\n', True),
+        ('from requests import help\nhelp.info()\n', True),
+        ('import requests\nrequests.help.info()\nimport requests.help\n', False),
+        ('import requests\ndef other():\n    import requests.help\nrequests.help.info()\n', False),
+        ('import requests\nrequests.utils.parse_header_links("")\n', True),
         ('import requests\nrequests.parse_header_links("value")\n', False),
         ('from requests import parse_header_links\nparse_header_links("value")\n', False),
         ('import requests.utils\nrequests.utils.parse_header_links("value")\n', True),

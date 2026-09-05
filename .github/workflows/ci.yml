@@ -63,7 +63,11 @@ jobs:
         # -n auto: tests are process-isolated (tmp_path fixtures, subprocess
         # runners); xdist workers are separate processes, so in-test
         # thread-concurrency coverage (warm/safeio) is unaffected.
-        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short -n auto
+        # macOS: rebalance pending long subprocess tests instead of leaving
+        # one worker to drain the differential module while others sit idle.
+        env:
+          PYTEST_DISTRIBUTION: ${{ matrix.os == 'macos-latest' && 'worksteal' || 'load' }}
+        run: PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q --tb=short -n auto --dist "$PYTEST_DISTRIBUTION"
 
   determinism:
     # Widened from hash-seed-only to a bounded 3×2 cross: every seed runs

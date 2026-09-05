@@ -21,6 +21,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - derive import roots from materialized evidence, not name (`check`)
 - expose leitir to non-Claude-Code agents via an optional MCP server (`mcp`)
 - put the agent-facing skill under the docs-truth gate (`docs-truth`)
+- release 0.2.000 with padded public versions and verified publication (#332)
 - replace in-memory lock epochs with writer-visible on-disk epochs (#272) (`warm`)
 - thread optional WarmSession through engine and corpus read paths (#272) (`warm`)
 - thread the active warm session into verb owners (#272) (`cli`)

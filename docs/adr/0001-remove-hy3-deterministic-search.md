@@ -233,3 +233,4 @@ enrichment behind the existing CLI (P5–P6).
       machine-readable `query_translation` record for every predicate.
 
 2026-09-05 amendment: Immutable tree reuse (#316): complete validated tree listings are reused per repository and exact commit within one tree-source instance, bounded to four listings and 600,000 total blob entries. Failed walks and partial prefixes are never cached; recovered-tree annotations remain intact.
+C++ header eligibility (#328): explicit `cpp` language selection includes ordinary `.h` headers, including the pinned fmt benchmark sources. With no explicit language, the existing adapter order keeps C as the default for ambiguous `.h` files.

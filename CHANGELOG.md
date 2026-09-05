@@ -64,6 +64,7 @@ version and publication contract.
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - prove module loading and preserve removed owner impact (`check`)
 - reject ambiguous imports and non-module import targets (#315)
+- reject corrupt archives and malformed identity records (`release`)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)

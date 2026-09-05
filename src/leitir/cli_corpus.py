@@ -1702,7 +1702,7 @@ def _run_corpus_command(
                     continue
                 if args.command in {"api", "examples"}:
                     from .apisurface import extract_api_surface
-                    from .corpus import load_sources, read_api_index, write_api_index
+                    from .corpus import load_sources, write_api_index
 
                     # issue #268: deliberately non-strict. `path` was
                     # produced moments earlier in this same command by
@@ -1725,20 +1725,16 @@ def _run_corpus_command(
                         else path
                     )
                     language_hint = manifest.get("ecosystem")
-                    index = read_api_index(root, entry, manifest)
-                    if index is None or args.command == "api":
-                        print(f"leitir: extracting API surface for {raw}", file=err)
-                        index = extract_api_surface(
-                            scan_path,
-                            str(language_hint)
-                            if language_hint in {"pypi", "npm"}
-                            else None,
-                        )
-                        api_path = write_api_index(root, entry, manifest, index)
-                    else:
-                        from .corpus import api_index_path
-
-                        api_path = api_index_path(root, entry, manifest).absolute()
+                    # Mutable API JSON cannot authorize example selection.
+                    # Both consumers derive their evidence from source bytes.
+                    print(f"leitir: extracting API surface for {raw}", file=err)
+                    index = extract_api_surface(
+                        scan_path,
+                        str(language_hint)
+                        if language_hint in {"pypi", "npm"}
+                        else None,
+                    )
+                    api_path = write_api_index(root, entry, manifest, index)
                     if args.command == "api":
                         from .info import _top_symbols
 

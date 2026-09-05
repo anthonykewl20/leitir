@@ -212,4 +212,8 @@ metadata displays as tamper-evident.
 - [ADR-0012 — Polyglot graph via tree-sitter](0012-polyglot-graph-via-tree-sitter.md)
 - [Python 3.14 Cryptographic Services](https://docs.python.org/3.14/library/crypto.html)
 
-API evidence integrity (issue #310): `info` derives signatures from the verified source under its shelf lock and compares derived cache content before reuse. Altered cache entries are rebuilt; unchanged cache files are not rewritten. Publisher manifest authentication does not authenticate independently mutable API-cache JSON. No cache-local checksum substitutes for verified source evidence.
+API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under its shelf lock and compares derived cache content before reuse. Altered cache entries are rebuilt; unchanged cache files are not rewritten. Publisher manifest authentication does not authenticate independently mutable API-cache JSON. No cache-local checksum substitutes for verified source evidence.
+
+Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.
+
+2026-09-05 cache evidence amendment (#310): cached API signatures and example snippets are mutable derived content. Source signatures do not authenticate them. `info` derives both from the verified source under its target lock and compares before reuse; locally recomputed example classifications cannot authorize fabricated code.

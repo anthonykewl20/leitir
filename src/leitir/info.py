@@ -306,6 +306,10 @@ def build_info(
         )
         if verified is None:
             raise VerificationError("API source failed load-time integrity verification")
+        manifest = verified
+        raw_subpath = manifest.get("subpath")
+        subpath = raw_subpath if isinstance(raw_subpath, str) else None
+        scan_path = target / subpath if subpath else target
         hint = manifest.get("ecosystem")
         derived_api = extract_api_surface(
             scan_path, str(hint) if hint in {"pypi", "npm"} else None
@@ -318,9 +322,9 @@ def build_info(
         else:
             api_path = api_index_path(root, entry, manifest).absolute()
 
-        examples_index = read_examples_index(root, entry, manifest)
-        if not _valid_examples(examples_index):
-            examples_index = extract_examples(target, api_index)
+        cached_examples = read_examples_index(root, entry, manifest)
+        examples_index = extract_examples(target, api_index)
+        if not _valid_examples(cached_examples) or cached_examples != examples_index:
             examples_path = write_examples_index(root, entry, manifest, examples_index)
             wrote_cache = True
         else:

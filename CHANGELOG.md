@@ -45,6 +45,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- prove module loading and preserve removed owner impact (`check`)
 - reject ambiguous imports and non-module import targets (#315)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)

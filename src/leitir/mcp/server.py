@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from .._version import installed_version
 from . import MissingExtraError, bridge
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ def build_server() -> MCPServer:
 
     server = _MCPServer(
         name="leitir",
-        version="0.1.6",
+        version=installed_version(),
         instructions=(
             "Deterministic, provenance-tracked code search over pinned source "
             "corpora. See the leitir skill for when to use each tool."

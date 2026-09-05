@@ -1,0 +1,19 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--no-project",
+    "--with-requirements",
+    "requirements.txt",
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_release_artifacts_live.py",
+    "--basetemp",
+    "/tmp/leitir-remediation-20260905/release-evidence/live-work",
+    "-q",
+    "--tb=short"
+  ],
+  "seconds": 8.793758600950241,
+  "returncode": 0
+}

@@ -1013,6 +1013,9 @@ def _compute_bts(
         # owners remain distinct, but their runtime dependencies cannot vanish
         # merely because the enclosing definition is the selected member.
         owners = [current]
+        local_unresolved = unresolved_by_source.get(current, [])
+        reached_unresolved.extend(local_unresolved)
+        blockers.extend(local_unresolved)
         for nested_id in sorted(nested_owners.get(current, []), key=lambda item: (item.origin.value, item.module, item.qualified_name, item.kind.value, item.location_key)):
             work_units += 1
             if work_units > budget.max_work_units:
@@ -1022,11 +1025,11 @@ def _compute_bts(
             if nested_id not in visited or visited[nested_id] > depth:
                 owners.append(nested_id)
                 visited[nested_id] = depth
+                local_unresolved = unresolved_by_source.get(nested_id, [])
+                reached_unresolved.extend(local_unresolved)
+                blockers.extend(local_unresolved)
         if budget_hit:
             break
-        local_unresolved = [item for owner in owners for item in unresolved_by_source.get(owner, [])]
-        reached_unresolved.extend(local_unresolved)
-        blockers.extend(local_unresolved)
         current_edges = sorted(
             (edge for owner in owners for edge in outgoing.get(owner, [])), key=_edge_key,
         )

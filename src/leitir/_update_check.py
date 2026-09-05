@@ -31,6 +31,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from leitir._version import display_version
 from leitir.safeio import atomic_text_writer
 
 _DISTRIBUTION_NAME = "leitir"
@@ -56,7 +57,7 @@ _check_started: bool | None = None
 
 def _installed_version() -> str | None:
     try:
-        return importlib.metadata.version(_DISTRIBUTION_NAME)
+        return display_version(importlib.metadata.version(_DISTRIBUTION_NAME))
     except importlib.metadata.PackageNotFoundError:
         return None
 

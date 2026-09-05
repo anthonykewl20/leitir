@@ -42,6 +42,7 @@ please use [`template.md`](template.md) as the basis.
 | [0035](0035-warm-process-invalidation-contract.md) | Warm process mode — the invalidation contract for verified state held in memory | Proposed | 2026-08-27 |
 | [0036](0036-go-containment-substrate.md) | Go containment substrate — proving an executed Go port under containment | Proposed | 2026-09-02 |
 | [0037](0037-self-calibration-loop.md) | Self-calibration loop — bounded blind-spot hunting with a convergence ledger | Accepted | 2026-09-04 |
+| [0038](0038-release-versioning-and-publication.md) | Padded public versions and verified release publication | Accepted | 2026-09-05 |
 
 ## Status vocabulary
 

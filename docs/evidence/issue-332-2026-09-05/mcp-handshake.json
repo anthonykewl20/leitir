@@ -1,0 +1,19 @@
+{
+  "server": {
+    "name": "leitir",
+    "title": null,
+    "version": "0.2.000",
+    "description": null,
+    "website_url": null,
+    "icons": null
+  },
+  "protocol": "2025-11-25",
+  "tools": [
+    "api",
+    "diff",
+    "examples",
+    "info",
+    "search"
+  ],
+  "real_packaging_info_error": false
+}

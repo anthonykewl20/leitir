@@ -43,6 +43,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - include .h headers in explicitly selected C++ searches (#328)
 - include nested runtime owners in BTS closure (#309)
 - inherit the ambient environment in the differential check bridge (#285) (`bench`)
+- isolate platform caches and order paused validation writers (#330)
 - land the strict epoch parse the round-3 message claimed (#272) (`materialize`)
 - let the full-surface mypy run resolve tools/calibration (`calibration`)
 - make malformed specs, search flags, and default-root creation legible (`cli`)

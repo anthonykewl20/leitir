@@ -237,3 +237,8 @@ C++ header eligibility (#328): explicit `cpp` language selection includes ordina
 2026-09-05 search semantic correction (#312): optional predicates boost independently. Content must_not predicates filter documents in buffered, indexed and streamed scoring. Serialized matches retain AST/heuristic method provenance. Closed JSON predicate objects preserve arbitrary literal values, and generated ask commands replay their exact typed query.
 
 2026-09-05 concurrency correction (#316): a short instance lock makes cache lookup, recency updates, publication and eviction atomic. Network enumeration stays outside that lock; immutable results may be returned after subsequent eviction. This preserves concurrent use of a shared tree-source instance without serializing upstream I/O.
+
+The CLI help and capability documentation name the same masking boundary:
+JavaScript, TypeScript, Java, C and C++ mask comments and strings. Python's
+default heuristic, Rust and Go scan raw text; Python AST structural predicates
+retain their separate parsed-source semantics.

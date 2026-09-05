@@ -55,3 +55,43 @@ The measured digest equals the digest of the unratified Phase-A runs
 authorizes exactly the runtime that was observed, and the gate flipped from
 `reject` (Phase A) to `complete` (Phase C) with no other change than the
 recorded authority.
+
+## Publication
+
+* Tag `v0.2.000` (annotated) points at merge commit
+  `bed62edba760a1378c0b7971ca6c79851885af24` (PR #339 into `main`). The
+  canonical Phase-C run on that commit,
+  [33975487102](https://github.com/anthonykewl20/leitir/actions/runs/33975487102),
+  is `complete` with the same `corpus_manifest_digest` and `report_digest
+  sha256:4dadccbe…` as the branch run.
+* Release gate: the release workflow
+  [33976141410](https://github.com/anthonykewl20/leitir/actions/runs/33976141410)
+  selected the successful `push` CI run
+  [33975473875](https://github.com/anthonykewl20/leitir/actions/runs/33975473875)
+  for that exact SHA (full seven-leg matrix; CodeQL run 33975473857 also
+  succeeded), reused its `python-package-distributions` artifact without
+  rebuilding, verified tag/file-name/METADATA identities and archive payloads
+  with `tools/verify_release.py`, attested build provenance for both files,
+  re-checked the recorded digests and published the committed notes
+  (`published-assets/release-run.json`, `release.json`).
+* Downloaded published assets (`published-assets/SHA256SUMS`):
+
+  | Asset | SHA-256 |
+  | --- | --- |
+  | `leitir-0.2.0-py3-none-any.whl` | `c575fe3d94ba40d531c8624819961a6d34fac854a60663365c9a6a80517abe47` |
+  | `leitir-0.2.0.tar.gz` | `6d496e10f741813ab9141f03b780f2c9fffea9bf6c89a859121baaa962e81055` |
+
+  Both digests equal the digests the release workflow recorded and the
+  digests of the CI run's own `python-package-distributions` artifact
+  downloaded independently.
+* `gh attestation verify --repo anthonykewl20/leitir` succeeds for both files;
+  the statement names both subjects with those digests and was produced by
+  `refs/tags/v0.2.000` in run 33976141410 (`published-assets/attestations.json`).
+* `tools/verify_release.py --tag v0.2.000` accepts the downloaded assets
+  (`published-assets/verify-release.json`).
+* Isolated install: a fresh Python 3.11 venv with only the published wheel
+  reports `leitir 0.2.000` and completes `leitir info npm:zod@3.22.0 --json`
+  against live npm (`published-assets/isolated-cli.txt`). With the
+  hash-locked `requirements-mcp.lock` added, `python -m leitir.mcp` answers
+  `initialize` as `leitir 0.2.000`, lists the five tools and completes a live
+  `info` call for `pypi:attrs@23.2.0` (`published-assets/isolated-mcp.txt`).

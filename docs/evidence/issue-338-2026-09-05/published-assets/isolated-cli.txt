@@ -1,0 +1,76 @@
+$ leitir --version
+leitir 0.2.000
+
+$ leitir info npm:zod@3.22.0 --json (isolated venv from the published wheel; live npm)
+{
+ "api": {
+  "by_kind": {
+   "class": 0,
+   "constant": 16,
+   "function": 1,
+   "method": 0
+  },
+  "index_path": "/tmp/claude-1000/-home-soultransit-devtony-leitir/ce9a0be8-4a23-4315-85d9-e5ac38433e67/scratchpad/isohome/.leitir/api/npm/zod/3.22.0/index.json",
+  "method": "heuristic",
+  "symbols": 17,
+  "top_symbols": [
+   {
+    "docstring": null,
+    "kind": "function",
+    "line": 6,
+    "name": "assertNever",
+    "path": "lib/helpers/util.d.ts",
+    "qualified_name": "lib/helpers/util.d.assertNever",
+    "signature": "(_x: never): never"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 123,
+    "name": "quotelessJson",
+    "path": "lib/ZodError.d.ts",
+    "qualified_name": "lib/ZodError.d.quotelessJson",
+    "signature": ": (obj: any)"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 66,
+    "name": "DIRTY",
+    "path": "lib/helpers/parseUtil.d.ts",
+    "qualified_name": "lib/helpers/parseUtil.d.DIRTY",
+    "signature": ": <T>(value: T)"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 71,
+    "name": "OK",
+    "path": "lib/helpers/parseUtil.d.ts",
+    "qualified_name": "lib/helpers/parseUtil.d.OK",
+    "signature": ": <T>(value: T)"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 75,
+    "name": "isAborted",
+    "path": "lib/helpers/parseUtil.d.ts",
+    "qualified_name": "lib/helpers/parseUtil.d.isAborted",
+    "signature": ": (x: ParseReturnType<any>)"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 78,
+    "name": "isAsync",
+    "path": "lib/helpers/parseUtil.d.ts",
+    "qualified_name": "lib/helpers/parseUtil.d.isAsync",
+    "signature": ": <T>(x: ParseReturnType<T>)"
+   },
+   {
+    "docstring": null,
+    "kind": "constant",
+    "line": 76,
+    "name": "isD
+leitir @ file:///tmp/claude-1000/-home-soultransit-devtony-leitir/ce9a0be8-4a23-4315-85d9-e5ac38433e67/scratchpad/rel/leitir-0.2.0-py3-none-any.whl

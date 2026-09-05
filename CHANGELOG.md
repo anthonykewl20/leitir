@@ -15,6 +15,8 @@ version and publication contract.
 
 ## [Unreleased]
 
+## [0.2.000]
+
 ### Added
 - add --impact to intersect version deltas with real usage (`diff`)
 - add a docs-truth gate for command, version, and tag claims (`ci`)
@@ -375,7 +377,8 @@ version and publication contract.
 - reject global reports with substituted slug, commit, path, or blob identity (`security`)
 - reject plaintext HTTP for credentialled resolution (#26) (`resolver`)
 
-[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/anthonykewl20/leitir/compare/v0.2.000...HEAD
+[0.2.000]: https://github.com/anthonykewl20/leitir/compare/v0.1.6...v0.2.000
 [0.1.6]: https://github.com/anthonykewl20/leitir/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/anthonykewl20/leitir/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4

@@ -330,20 +330,27 @@ def _score_content_ex(
     must_not: tuple[Predicate, ...],
     whole_file: bool = False,
 ) -> tuple[list[SourceMatch], bool]:
+    # Exclusions are document filters throughout search (remote, index and
+    # streaming). Direct scoring must obey that same boundary.
+    exclusion_unavailable = False
+    if must_not:
+        excluded, exclusion_unavailable = document_excluded_ex(content, adapter, must_not)
+        if excluded:
+            return [], exclusion_unavailable
     result = adapter.find_matches_ex(
         content, content_must, whole_file=whole_file
     )
     spans = result.spans
-    parser_unavailable = result.parser_unavailable
+    parser_unavailable = result.parser_unavailable or exclusion_unavailable
     if not spans and content_must:
         return [], parser_unavailable
     if not spans and not content_must:
-        should_result = adapter.find_matches_ex(content, should) if should else None
-        if should_result is not None:
-            spans = should_result.spans
-            parser_unavailable = (
-                parser_unavailable or should_result.parser_unavailable
-            )
+        optional_spans: list[SpanMatch] = []
+        for predicate in should:
+            optional = adapter.find_matches_ex(content, (predicate,))
+            optional_spans.extend(optional.spans)
+            parser_unavailable = parser_unavailable or optional.parser_unavailable
+        spans = tuple(dict.fromkeys(optional_spans))
 
     whole_file_should_kinds: set[PredicateKind] = set()
     whole_file_should_boost = 0
@@ -374,14 +381,15 @@ def _score_content_ex(
         if whole_file:
             matched_kinds.update(whole_file_should_kinds)
         elif should:
-            should_result = adapter.find_matches_ex(content, should)
-            parser_unavailable = (
-                parser_unavailable or should_result.parser_unavailable
-            )
-            for ss in should_result.spans:
-                if ss.start_line == span.start_line:
-                    matched_kinds.update(ss.matched_kinds)
-                    should_boost += len(ss.matched_kinds)
+            for predicate in should:
+                optional = adapter.find_matches_ex(content, (predicate,))
+                parser_unavailable = parser_unavailable or optional.parser_unavailable
+                overlapping = [item for item in optional.spans
+                               if item.start_line <= span.end_line and span.start_line <= item.end_line]
+                if overlapping:
+                    should_boost += 1
+                    for item in overlapping:
+                        matched_kinds.update(item.matched_kinds)
 
         score = float(len(content_must) + should_boost)
         ref = SourceRef(
@@ -397,6 +405,7 @@ def _score_content_ex(
                 source=ref,
                 score=score,
                 matched_kinds=tuple(sorted(matched_kinds, key=lambda k: k.value)),
+                method=span.method.value,
             )
         )
     return matches, parser_unavailable

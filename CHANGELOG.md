@@ -28,6 +28,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - WarmSession verified-manifest cache with lock-epoch invalidation (#272) (`warm`)
 
 ### Fixed
+- align search scoring, query replay and method evidence (#312)
 - attribute verification failures correctly under concurrent writers (#272) (`warm`)
 - bind port attribution to measured BTS evidence, not caller claims (`bts`)
 - close the strict-defeating laundering gap and audit IndexedSearcher (P1/P2 review findings) (`corpus`)
@@ -48,6 +49,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - preserve the empty package-name diagnostic (#306) (`calibration`)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)
 - report benchmark progress and guard usage determinism (`bench,ci`)

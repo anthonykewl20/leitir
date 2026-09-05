@@ -128,6 +128,10 @@ def test_concurrent_trust_writers_never_break_lock_free_readers(
     readers = 4
     maximum_reads_per_pause = 1_000
     writer_lock = threading.Lock()
+    # The controller and readers visit paused writers in numeric order.
+    # threading.Lock does not promise that acquisition order.
+    writer_turn = [threading.Event() for _ in range(writers)]
+    writer_turn[0].set()
     pause_events = [threading.Event() for _ in range(writers)]
     release_events = [threading.Event() for _ in range(writers)]
     writer_completed = [threading.Event() for _ in range(writers)]
@@ -248,6 +252,8 @@ def test_concurrent_trust_writers_never_break_lock_free_readers(
     def writer(index: int) -> None:
         writer_ids[threading.get_ident()] = index
         try:
+            if not writer_turn[index].wait(10):
+                raise TimeoutError("timed out waiting for the next ordered writer")
             with writer_lock:
                 record_trust(SPEC, tmp_path)
         except BaseException as exc:  # noqa: BLE001 - propagated to main thread
@@ -255,6 +261,8 @@ def test_concurrent_trust_writers_never_break_lock_free_readers(
                 worker_failures.append(exc)
         finally:
             writer_completed[index].set()
+            if index + 1 < writers:
+                writer_turn[index + 1].set()
 
     def reader(reader_index: int) -> None:
         try:

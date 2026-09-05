@@ -56,6 +56,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - preserve the malformed repository-ref diagnostic (#307) (`calibration`)
 - preserve verified Git shelf reuse and reject corrupt local shelves (#311)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
+- reject ambiguous imports and non-module import targets (#315)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)

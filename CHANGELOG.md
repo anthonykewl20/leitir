@@ -65,6 +65,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - treat non-string cached license confidence as unknown (`trust`)
 - treat non-string cached parity state as unknown (`trust`)
 - verify shelf provenance and index Git link bytes (#311)
+- verify qualified Python API access and explicit reexports (#315)
 
 ### Security
 - advance the epoch on gc shelf recovery; pin the under-lock rejection (#272) (`warm`)

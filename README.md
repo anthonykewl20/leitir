@@ -671,3 +671,5 @@ Normalized Git archives (#311): the real Vitest 2.1.9 archive carries a CRLF fil
 
 Qualified binding limits (#315): conflicting provider aliases across import order or nested scopes remain unresolved; later or outer imports cannot authorize an earlier or shadowed use. Module imports must name a source-backed module or namespace, so exporting a class does not make that class importable as a module. Unambiguous nested imports and repeated identical bindings remain supported.
 Known BTS blockers (#309): unresolved dependencies on each accepted owner are recorded before later nested-owner work can exhaust the budget. Known rejection continues to dominate partial budget exhaustion.
+
+Shared tree-source instances (#316): cache hits and eviction are atomic under a short lock. Network enumeration runs outside the lock. Concurrent callers cannot lose a listing between membership and read.

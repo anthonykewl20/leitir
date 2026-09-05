@@ -1,0 +1,49 @@
+{
+  "source_file": "/tmp/leitir-remediation-20260905/issue-316/src/leitir/tree.py",
+  "paused_line": 165,
+  "real_upstream_listings": [
+    {
+      "slug": "pypa/packaging",
+      "commit": "85442b8032cb7bae72866dfd7782234a98dd2fb7",
+      "entries": 85,
+      "recovered": false,
+      "listing_sha256": "47a3fee4988e52d95327fe2000d19787a39a914635daeb26a7711fc08624957b"
+    },
+    {
+      "slug": "fmtlib/fmt",
+      "commit": "6c285ba88a22e287f8d33a4e15b43c0095160181",
+      "entries": 142,
+      "recovered": false,
+      "listing_sha256": "ba96621f841cf2531f548158e91330929d9557360202d517e94bb1ec646fabc0"
+    },
+    {
+      "slug": "stretchr/testify",
+      "commit": "b747d7c5f853d017ddbc5e623d026d7fc2770a58",
+      "entries": 59,
+      "recovered": false,
+      "listing_sha256": "436dc6845db56c5e1957792ac4c4844cb35fc0c950fcfc04ec35db0d5d5da3ae"
+    },
+    {
+      "slug": "google/gson",
+      "commit": "310ac341f2f92a454b229bf21f70d2d18b2b6db7",
+      "entries": 313,
+      "recovered": false,
+      "listing_sha256": "aeac0e7319124163e8a36ae77afc1e7a2c4094e1b5081ffe9e282d8f46c2c546"
+    },
+    {
+      "slug": "tj/commander.js",
+      "commit": "ba6d13ddb4243e5913367734f8c159089ffe7834",
+      "entries": 219,
+      "recovered": false,
+      "listing_sha256": "db01139422aaed442b6e7f704bb22cf35a5e2e140e19bdb373f1d6d7959ea417"
+    }
+  ],
+  "reader_errors": [
+    {
+      "type": "KeyError",
+      "message": "('pypa/packaging', '85442b8032cb7bae72866dfd7782234a98dd2fb7')"
+    }
+  ],
+  "thread_completed": true,
+  "scope": "shared GitHubTreeSource public Python API; trace only controls an allowed interleaving; no data or methods replaced"
+}

@@ -35,3 +35,15 @@ def test_requests_qualified_calls_and_public_reexports(tmp_path: Path) -> None:
         else:
             assert report["counts"]["sites_ok"] == 0, report
             assert report["counts"]["sites_unresolved"] + report["counts"]["sites_violation"] > 0
+
+    # The qualified checker still relies on the same authenticated shelf gate.
+    # Mutate actual downloaded bytes and exercise that gate directly, without
+    # allowing the CLI's normal online re-materialization to repair the donor.
+    from leitir.materialize import read_valid_manifest
+
+    entry = json.loads((root / "sources.json").read_text())[0]
+    target = root / entry["path"]
+    assert read_valid_manifest(target, entry["owner"], entry["repo"], entry["commit_sha"], host=entry["host"]) is not None
+    source = next(target.rglob("api.py"))
+    source.write_bytes(source.read_bytes() + b"\n# altered downloaded source\n")
+    assert read_valid_manifest(target, entry["owner"], entry["repo"], entry["commit_sha"], host=entry["host"]) is None

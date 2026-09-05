@@ -593,6 +593,16 @@ jobs:
           printf 'config_schema_digest=sha256:%s\n' "$(printf '%s' leitir-containment-policy-v1 | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
           printf 'rootfs_digest=%s\n' "$(ROOTFS_SOURCE="$rootfs" python -c 'import os; from pathlib import Path; from leitir.exec_sandbox import _verified_directory_tree_digest; print(_verified_directory_tree_digest(Path(os.environ["ROOTFS_SOURCE"])))')" >>"$GITHUB_OUTPUT"
           printf 'python_version<<EOF\n%s\nEOF\n' "$(cat "$RUNNER_TEMP/leitir-python-version.txt")" >>"$GITHUB_OUTPUT"
+      - name: Prepare unratified Phase A observation
+        run: |
+          python - <<'PYTHON'
+          import json
+          from pathlib import Path
+          path = Path("benchmarks/exit-corpus/corpus-v1.1.json")
+          manifest = json.loads(path.read_text())
+          manifest["ratified_runtime_digest"] = None
+          path.write_text(json.dumps(manifest, indent=2) + "\n")
+          PYTHON
       - name: Run exit gate
         id: exit_gate
         env:

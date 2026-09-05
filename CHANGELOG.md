@@ -43,6 +43,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - make malformed specs, search flags, and default-root creation legible (`cli`)
 - make polyglot rejections actionable and wire --debug into seed resolution (`bts`)
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
+- preserve verified Git shelf reuse and reject corrupt local shelves (#311)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)
 - renumber ADR to 0034, add strict-failure recovery guidance, and document the amended test contract (`corpus`)

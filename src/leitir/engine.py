@@ -329,18 +329,11 @@ def _score_content_ex(
     must_not: tuple[Predicate, ...],
     whole_file: bool = False,
 ) -> tuple[list[SourceMatch], bool]:
-    # Exclusions are document filters throughout search (remote, index and
-    # streaming). Direct scoring must obey that same boundary.
-    exclusion_unavailable = False
-    if must_not:
-        excluded, exclusion_unavailable = document_excluded_ex(content, adapter, must_not)
-        if excluded:
-            return [], exclusion_unavailable
     result = adapter.find_matches_ex(
         content, content_must, whole_file=whole_file
     )
     spans = result.spans
-    parser_unavailable = result.parser_unavailable or exclusion_unavailable
+    parser_unavailable = result.parser_unavailable
     if not spans and content_must:
         return [], parser_unavailable
     if not spans and not content_must:

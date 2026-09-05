@@ -51,6 +51,7 @@ changes are permitted within 0.x (pre-1.0) and must be called out here.
 - pass a frozenset, not a raw string, to _build_import_table (`diff`)
 - preserve the empty package-name diagnostic (#306) (`calibration`)
 - preserve verified Git shelf reuse and reject corrupt local shelves (#311)
+- preserve documented search layers and pin method-bearing evidence (#312)
 - probe the crates.io API endpoint instead of the 404-ing root (`doctor`)
 - reject duplicate query fields and retain exclusion parser status (#312)
 - remove the caller-controlled donor-bytes channel entirely (`bts`)

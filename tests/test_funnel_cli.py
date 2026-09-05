@@ -102,6 +102,8 @@ def test_recipient_manifest_rejects_noncanonical_base64(tmp_path: Path, entry: d
 
 
 def test_discovery_and_full_funnel_have_pinned_summaries() -> None:
+    # Search evidence now includes method provenance in its canonical digest;
+    # retain exact pins for the complete resulting candidate/survivor chain.
     discovery = run_discovery(_SPEC, _RECIPIENT, _STAGES)
     assert {
         "schema_version": discovery["schema_version"],
@@ -110,7 +112,7 @@ def test_discovery_and_full_funnel_have_pinned_summaries() -> None:
         "proposal_count": len(discovery["candidate_set"]["proposals"]),
     } == {
         "schema_version": "leitir-funnel-discovery-summary-v1",
-        "candidate_set_digest": "sha256:e77ad6e98670b8d5e38ebf41a4ffa9db4a415664c9088ccb181eef6eee5e7e30",
+        "candidate_set_digest": "sha256:9500222d1a65faaf87a91ca53aaa91e8e512f1485e999fc85410c25eda359a65",
         "status": "comparison_ready",
         "proposal_count": 3,
     }
@@ -136,9 +138,9 @@ def test_bts_funnel_cli_wires_the_pure_funnel_surface() -> None:
         "role_statuses": [role["status"] for role in summary["best3_report"]["roles"]],
     } == {
         "schema_version": "leitir-funnel-summary-v1",
-        "candidate_set_digest": "sha256:e77ad6e98670b8d5e38ebf41a4ffa9db4a415664c9088ccb181eef6eee5e7e30",
-        "survivor_set_digest": "sha256:585a5e17593bee261aced276012462023dd8fcf66232754814199fcfed6434d1",
-        "report_digest": "sha256:fd18e62b0faa2d73c17a659b9a92c717c8261b2fac25ab556d4e590c90707d13",
+        "candidate_set_digest": "sha256:9500222d1a65faaf87a91ca53aaa91e8e512f1485e999fc85410c25eda359a65",
+        "survivor_set_digest": "sha256:dcdef1d4dc019c96a69c2a290af09336fb938062d82d58524c73eb2465f01617",
+        "report_digest": "sha256:b19d6ef52cfe86114a4d02857f6ada83ccad33e4a5ad71b76d282367afb98f5c",
         "role_statuses": ["equal_identity_tiebreak"] * 3,
     }
 

@@ -415,4 +415,4 @@ the multi-seed gate.
 * GitHub REST/GraphQL and client evidence: links in the research document's
   References section.
 
-2026-09-05 clarification (#312): `SourceMatch` JSON retains the matched span's `method` as `ast` or `heuristic`. Content `must_not` predicates are document filters across direct, buffered, indexed, and streaming scoring. Optional `should` predicates contribute independently at the active span/file boundary. CLI JSON predicate objects preserve literal colons and language values without shorthand ambiguity.
+2026-09-05 clarification (#312): `SourceMatch` JSON retains the matched span's `method` as `ast` or `heuristic`. Content `must_not` predicates are document filters across buffered, indexed, and streaming scoring. Optional `should` predicates contribute independently at the active span/file boundary. CLI JSON predicate objects preserve literal colons and language values without shorthand ambiguity.

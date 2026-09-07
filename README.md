@@ -172,6 +172,28 @@ uv pip install --require-hashes --only-binary :all: -r requirements-auth.lock
 Unsigned, malformed, unknown-key, or invalidly signed shelves reject; this is
 an optional authenticity layer, separate from tree-integrity verification.
 
+For automatic skill discovery, copy the canonical skill folder into your
+agent's user skill directory (the Leitir CLI must also be available):
+
+```bash
+# Codex: available across projects, with implicit invocation enabled.
+mkdir -p "$HOME/.agents/skills"
+cp -R skills/leitir "$HOME/.agents/skills/"
+
+# Claude Code: user-scoped skill discovery.
+mkdir -p "$HOME/.claude/skills"
+cp -R skills/leitir "$HOME/.claude/skills/"
+```
+
+The description triggers source research for relevant implementation,
+debugging, adaptation, and API tasks without requiring an explicit skill name.
+`AGENTS.md` also directs agents working in this repository to load it when
+upstream evidence is needed. Retrieved source remains reference material;
+automatic activation does not authorize dependency changes or donor execution.
+Codex discovers user skills and supports implicit selection as described in
+[its skill documentation](https://learn.chatgpt.com/docs/build-skills).
+If a running session does not discover the installed skill, refresh or restart it.
+
 For any MCP-capable agent runtime other than Claude Code's skill surface (Claude
 Code's own integration is the `skills/leitir/SKILL.md` path above, not this
 server):
@@ -664,7 +686,11 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
 - `src/leitir/benchmarks/corpus-v1/` — corpus fetch-correctness benchmark manifest.
 - `tools/score_engine.py` — standalone ADR-002 scorer.
 - `scorecard/` — policy, assessment schema, and published canonical outputs.
-- `skills/leitir/SKILL.md` — normative corpus workflow for AI coding agents.
+- `skills/leitir/SKILL.md` — reference-first source research for AI coding agents.
+  Retrieved code and donor dependency graphs are reference evidence; they do not
+  become target dependencies through search or materialization. The skill keeps
+  source research, an explicitly selected library integration, and governed code
+  transplantation separate.
 - `docs/` — ADRs, status, scoring docs, and historical notes.
 - `tests/` — offline suite with opt-in live gates and fixtures.
 - `requirements.txt` — pinned development/CI dependency closure, not a runtime requirement.

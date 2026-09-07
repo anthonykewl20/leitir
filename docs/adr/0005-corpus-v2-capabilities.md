@@ -271,3 +271,24 @@ provider tree-read failures through its existing search-error path. The JSON
 retains source-backed signatures/examples, sets matches and coverage to null,
 and exits `CORPUS_FAILURE`; no GitHub query or complete-coverage claim is made
 for an unsupported host. This does not add non-GitHub search support.
+
+
+### Agent skill: reference identity versus target dependencies (issue #347)
+
+Leitir acquisition and analysis establish source evidence, not a dependency
+relationship with the target application. Package specs, corpus lock entries,
+donor manifests/SBOMs, and advisory routing verdicts describe retrieved sources;
+they do not authorize installation, runtime imports, vendoring, or donor
+execution. The skill starts from the target behavior and constraints, uses
+reference logic to inform implementation, and establishes actual target
+dependencies separately from project evidence and the requested integration.
+An explicitly governed transplant remains distinct from ordinary research.
+This clarification changes agent guidance, not CLI or admission behavior.
+
+Automatic discovery uses a task-oriented skill description and explicit
+`allow_implicit_invocation: true` metadata. Repository instructions require
+loading the skill when upstream evidence is relevant, without waiting for its
+name or a dependency choice. Personal installation uses each agent's scanned
+skill directory; a description alone cannot install or universally guarantee
+model selection. Unrelated prose and mechanical local edits do not trigger
+source research.

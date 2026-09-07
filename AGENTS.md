@@ -24,6 +24,16 @@
 11. Never close an issue manually; its PR's merge closes it.
 12. Follow-ups are finished inside the PR or filed as issues with acceptance criteria — never untracked TODOs.
 
+## Automatic source-reference research
+
+When implementation, debugging, adaptation, or API work needs upstream source
+evidence, automatically load `skills/leitir/SKILL.md`; do not wait for the owner
+to mention Leitir or select a library. Retrieved code is reference material,
+not a target dependency. Keep installation, imports, dependency-file changes,
+and governed transplants separate from research and within the assigned scope.
+Skip this workflow for unrelated prose/formatting and mechanical local changes
+whose behavior is already established.
+
 ## Definition of done (what stops the loop)
 
 A task is done when its PR is green (full suite, ruff, mypy), its checklist is

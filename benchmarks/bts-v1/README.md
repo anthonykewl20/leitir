@@ -53,8 +53,10 @@ the remaining tasks.
 ## Current state
 
 Published [run `88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860`](runs/88330e29d91e5aa6786be3079f79357a7df5e0583832487765d84c2991747860/)
-records a green run with exact baselines and metrics for five of the six real
-tasks. `worker-shutdown-predicate` is honestly partial:
+records a completed measurement run, not successful task integration.
+Five tasks were evaluated: integration success is 0/5, adaptation integrity
+is 0/9, and helper recall is 2/11. The real hosted rerun on 2026-09-07
+reproduced these same metrics; a green workflow means the measurement completed. `worker-shutdown-predicate` is honestly partial:
 its selected `python/mypy` snapshot is sampled and therefore rejects execution
 with `bts_cli_parity_v1`. E5b timing-envelope comparison is deliberately
 deferred while the owner is offline.

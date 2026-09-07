@@ -2,8 +2,7 @@
 
 The `live` marker (registered in tests/conftest.py) is the authoritative
 inventory of live-gated tests: ``pytest -m live --collect-only -q`` lists
-exactly the tests that are gated on ``LEITIR_ENABLE_LIVE_E2E``.  The two
-tests here keep that statement mechanically true:
+exactly the tests that are gated on ``LEITIR_ENABLE_LIVE_E2E``.  The tests here keep that statement mechanically true:
 
 - the inventory command's file set must equal an independently derived
   env-gated set (AST over the test sources — the grep cross-check upgraded
@@ -89,6 +88,7 @@ def _inventory_files() -> set[str]:
         text=True,
         timeout=300,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
     files: set[str] = set()
     for line in result.stdout.splitlines():
         nodeid = re.match(r"^(tests[/\\][^\s:]+\.py)::", line)
@@ -126,3 +126,20 @@ def test_live_marker_is_registered() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "@pytest.mark.live" in result.stdout, "live marker must be registered"
+
+
+def test_live_tests_do_not_have_unconditional_skip_bodies() -> None:
+    """A named live test must execute a check when its environment gate opens."""
+    placeholders: list[str] = []
+    for path in sorted(_TESTS.rglob("test_*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_live_"):
+                continue
+            for statement in node.body:
+                if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                    continue
+                call = statement.value.func
+                if (isinstance(call, ast.Attribute) and call.attr == "skip"
+                        and isinstance(call.value, ast.Name) and call.value.id == "pytest"):
+                    placeholders.append(f"{path.relative_to(_ROOT).as_posix()}::{node.name}")
+    assert not placeholders, f"unconditional live placeholders are not validation: {placeholders}"

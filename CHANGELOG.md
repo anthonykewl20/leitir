@@ -15,6 +15,10 @@ version and publication contract.
 
 ## [Unreleased]
 
+### Fixed
+- exclude uncalled expression assignments from CommonJS API
+- reject ambiguous CommonJS scope and retain real-world validation evidence
+
 ## [0.2.000]
 
 ### Added

@@ -19,12 +19,11 @@ two pinned public fixtures, read-only:
   surface asserts the walk completes, reports ``recovered=True``, and returns
   a strictly larger blob universe than the truncated listing exposed.
 
-Status disclosure (2026-08-21): the ~2k-request recovery walk below has NOT
-yet produced a green live run end-to-end; until it does, the workflow
-variable ``LEITIR_CANARY_TREE_V2`` stays ``false`` (owner-gated, see the
-``truncated-tree-recovery`` job and ``gate`` outputs in
-``.github/workflows/live-canary.yml``). Building this surface is the
-prerequisite; observing it green is the promotion evidence.
+Observed 2026-09-07 in issue #343: the recovery completed with 81,368 blobs
+versus 53,309 visible in the truncated listing. The two recovery assertions
+shared one actual immutable source cache. Retained run evidence is in
+``docs/evidence/issue-343-2026-09-07/``. Workflow variable promotion remains
+owner-controlled; this observation does not change workflow configuration.
 
 API/host failures propagate as typed tree errors; the canary plugin then
 classifies them honestly (infra-failure/configuration-failure) — never a
@@ -135,7 +134,7 @@ def test_pinned_fixture_recursive_listing_arrives_truncated() -> None:
     assert payload.get("sha") == TRUNCATION_COMMIT
 
 
-def test_truncated_listing_recovery_walk_completes_with_full_universe() -> None:
+def test_truncated_listing_recovery_walk_completes_with_full_universe(live_github_tree_source: GitHubTreeSource) -> None:
     listing = _fetch_recursive_listing(RECOVERY_REPO, RECOVERY_COMMIT)
     assert listing.get("truncated") is True, (
         f"{RECOVERY_REPO}@{RECOVERY_COMMIT} must arrive truncated for the "
@@ -147,7 +146,7 @@ def test_truncated_listing_recovery_walk_completes_with_full_universe() -> None:
         if isinstance(entry, dict) and entry.get("type") == "blob"
     }
 
-    source = GitHubTreeSource(token=_token())
+    source = live_github_tree_source
     blobs, recovered = source.list_blobs_ex(RECOVERY_REPO, RECOVERY_COMMIT)
 
     # Recovery actually happened via the paginated walk, not a silent sample.

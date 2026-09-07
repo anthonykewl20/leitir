@@ -18,6 +18,7 @@ from .cli_support import ExitCode, _corpus_root, _github_token, _Searcher, mark_
 from .logging import redact
 from .materialize import VerificationError
 from .search import RepoScope, SearchMode, SearchSpec, SearchSpecError, canonical_predicates
+from .tree import TreeReadError
 
 
 def register_ask(commands: argparse._SubParsersAction) -> None:
@@ -166,6 +167,12 @@ def _run_ask_command(
         repo = provenance.get("repo")
         commit_sha = provenance.get("commit_sha")
         try:
+            if provenance.get("host") != "github.com":
+                raise VerificationError(
+                    "ask search requires GitHub-bound source provenance; "
+                    f"this shelf uses host {provenance.get('host')!r}. "
+                    "Source-backed signatures and examples remain available."
+                )
             scope = RepoScope(
                 slug=f"{owner}/{repo}", commit_sha=cast(str, commit_sha)
             )
@@ -181,7 +188,7 @@ def _run_ask_command(
                 _Searcher, searcher_factory(tree_source, corpus_root=corpus_root)
             )
             report = searcher.search(spec)
-        except (SearchSpecError, ValueError, VerificationError) as exc:
+        except (SearchSpecError, ValueError, VerificationError, TreeReadError) as exc:
             search_error = redact(str(exc))
         else:
             matches_payload = [match.to_dict() for match in report.matches]

@@ -383,9 +383,5 @@ print(report.to_json(),end='')
     assert outputs[0] == outputs[1] == outputs[2]
 
 
-@pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_DONOR_EXECUTION") != "1" or not Path("/usr/bin/nsjail").exists(),
-    reason="live rerun requires exact donor opt-in and nsjail",
-)
-def test_live_rerun_requires_release_pinned_runner_and_rootfs() -> None:
-    pytest.skip("release-pinned runner/rootfs artifact is not available in the source tree")
+# Live execution evidence is produced by .github/workflows/bts-containment.yml.
+# Do not replace that workflow with a pytest body that always skips.

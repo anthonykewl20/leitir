@@ -452,12 +452,5 @@ def test_live_pinned_external_donor_is_rematerialized(tmp_path: Path) -> None:
     assert (target / "requests" / "utils.py").is_file()
 
 
-@pytest.mark.live
-@pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1"
-    or os.environ.get("LEITIR_ENABLE_DONOR_EXECUTION") != "1"
-    or shutil.which("nsjail") is None,
-    reason="real external donor execution requires live opt-in, donor opt-in, and nsjail",
-)
-def test_live_untrusted_pipeline_requires_release_pinned_s2_artifacts() -> None:
-    pytest.skip("release-pinned nsjail rootfs/runner policy is supplied by the dedicated containment job")
+# Live execution evidence is produced by .github/workflows/bts-containment.yml.
+# Do not replace that workflow with a pytest body that always skips.

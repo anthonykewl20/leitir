@@ -1,0 +1,124 @@
+{
+  "ci_run": "https://github.com/anthonykewl20/leitir/actions/runs/34112161741",
+  "containment": {
+    "donors": 5,
+    "exit_gate": {
+      "corpus_content_digest": "a969398a87266a85051006ee776607e456a951f2422e34b13431b71d7e4caea5",
+      "corpus_manifest_digest": "sha256:901bf7ac3cdfc5e7fcb59a9f6c153d24724c7525d7398174478d3d1322b40f69",
+      "report_digest": "sha256:4dadccbe450ca2c329fa72948bd8a14b111e33e5fa3856f9f2c4aadf75b2a03d",
+      "schema_version": "leitir-pipeline-cli-v1",
+      "status": "complete"
+    },
+    "passed_contract_cases": 10,
+    "run": "https://github.com/anthonykewl20/leitir/actions/runs/34111446544",
+    "task_benchmark": "Measurement completed; canonical payload equals historical publication, integration 0/5, adaptation integrity 0/9, sixth task rejects unknown parity. Not a successful integration result."
+  },
+  "counts_note": "Lanes and retries overlap; do not sum their counts as unique product guarantees.",
+  "date": "2026-09-07",
+  "existing_live": {
+    "benchmark_targeted": {
+      "errors": 0,
+      "failures": 0,
+      "seconds": 28.376,
+      "skipped": 0,
+      "tests": 1
+    },
+    "bitbucket_retry": {
+      "errors": 0,
+      "failures": 0,
+      "seconds": 0.43,
+      "skipped": 1,
+      "tests": 1
+    },
+    "full_tree_group": {
+      "errors": 0,
+      "failures": 0,
+      "recovered_blobs": 81368,
+      "recovery_walks_observed": 1,
+      "seconds": 1483.738,
+      "skipped": 0,
+      "tests": 8,
+      "truncated_visible_blobs": 53309
+    },
+    "go_retry": {
+      "errors": 0,
+      "failures": 0,
+      "seconds": 3.299,
+      "skipped": 0,
+      "tests": 1
+    },
+    "remainder": {
+      "errors": 0,
+      "failures": 0,
+      "seconds": 1374.64,
+      "skipped": 4,
+      "tests": 78
+    },
+    "remainder_interrupted": true
+  },
+  "followups": [
+    345,
+    346
+  ],
+  "installed": {
+    "linux": {
+      "artifact": {
+        "git_diff": "",
+        "git_sha": "2e150dc3ec49a20082365dc202f7388cfa168cad",
+        "installed_module": "/tmp/pytest-of-runner/pytest-0/installed-real-journeys0/venv/lib/python3.13/site-packages/leitir/__init__.py",
+        "python": "3.13.15 (main, Aug  6 2026, 02:15:18) [GCC 13.3.0]",
+        "wheel": "leitir-0.2.0-py3-none-any.whl",
+        "wheel_sha256": "f0a80bc7ef7f024ff3ab0f512dd66a54f3c70fc481140e85fdd284f16236a697"
+      },
+      "commands": 71,
+      "journals": 12,
+      "run": "https://github.com/anthonykewl20/leitir/actions/runs/34112163911",
+      "stream_hash_mismatches": 0,
+      "suite": {
+        "errors": 0,
+        "failures": 0,
+        "seconds": 50.208,
+        "skipped": 0,
+        "tests": 11
+      },
+      "unexpected_exits": 0
+    },
+    "windows": {
+      "artifact": {
+        "git_diff": "",
+        "git_sha": "2e150dc3ec49a20082365dc202f7388cfa168cad",
+        "installed_module": "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-of-runneradmin\\pytest-0\\installed-real-journeys0\\venv\\Lib\\site-packages\\leitir\\__init__.py",
+        "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+        "wheel": "leitir-0.2.0-py3-none-any.whl",
+        "wheel_sha256": "6a1e1b2ca0afa120a982e143c91d45c9c4181aa707e89e5212f0f488939286c3"
+      },
+      "commands": 71,
+      "journals": 12,
+      "run": "https://github.com/anthonykewl20/leitir/actions/runs/34112163911",
+      "stream_hash_mismatches": 0,
+      "suite": {
+        "errors": 0,
+        "failures": 0,
+        "seconds": 83.506,
+        "skipped": 0,
+        "tests": 11
+      },
+      "unexpected_exits": 0
+    }
+  },
+  "installed_pr_merge_commit": "2e150dc3ec49a20082365dc202f7388cfa168cad",
+  "issue": 343,
+  "offline": {
+    "command": "PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest -q",
+    "note": "Subsequent changes only affect opt-in installed journal byte writing and evidence/docs; final installed lane separately rerun.",
+    "output": "3744 passed, 166 skipped, 4 warnings in 1045.71s (0:17:25)",
+    "started_at_commit": "bbb6909ff7a2ed9da8132f125c6a277df6c2663b"
+  },
+  "reconciled_live_inventory": {
+    "fail": 0,
+    "pass": 95,
+    "skip": 1
+  },
+  "schema": "leitir-real-user-audit-v1",
+  "tested_branch_commit": "4c2c899433d6c8150de1d3bf412882b7eb3254c4"
+}

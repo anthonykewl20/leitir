@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "commit_sha": "d9d80a92d5a4483373acdaf9faa4068c85b3d268",
+      "path": "/tmp/leitir-skill-347/git-corpus/repos/github.com/litl/backoff/d9d80a92d5a4483373acdaf9faa4068c85b3d268",
+      "source": "git-commit",
+      "spec": "github:litl/backoff@d9d80a92d5a4483373acdaf9faa4068c85b3d268",
+      "verified": true
+    }
+  ],
+  "schema_version": 1
+}

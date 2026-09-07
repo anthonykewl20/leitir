@@ -239,3 +239,29 @@ API evidence integrity (issue #310): `info` derives signatures and examples from
 
 Issue #310 also covers example content: `info` re-derives snippets and classifications from verified source; recomputed metadata beside fabricated cache text cannot authenticate that text. The `examples` command also derives its API symbol input from source.
 2026-09-05 correction (#314): `go.mod` records requirements of one module, not the recursively selected module graph. Both filesystem and verified-manifest parsing label this scope `direct-only`; the Go manifest parser identity is version 2. Quoted module paths and versions use the Go string grammar. Full transitive/MVS resolution is not claimed. Reference: https://go.dev/ref/mod#go-mod-file.
+
+## Real-user validation follow-up (#343, 2026-09-07)
+
+The installed-wheel journey against `npm:is-number@7.0.0` exposed an empty API
+surface for its actual `module.exports = function(num)` declaration. The
+JS/TS heuristic now recognizes top-level direct CommonJS function assignments
+to `module.exports`, `module.exports.name`, and `exports.name`. The exported
+assignment target is the symbol name; its signature and line come from source.
+Comments, strings, and nested function bodies cannot introduce these new
+symbols. This remains explicitly heuristic: dynamic assignments, object-export
+resolution, and full JavaScript runtime binding analysis are not claimed.
+
+Installed-artifact journeys are a separate live evidence lane, supplementing
+existing offline regression and direct-provider tests. They preserve command
+logs, wheel identity, independent upstream blob checks, and actual tamper and
+recovery outcomes. See `docs/testing.md`. Rust acquisition remains supported
+without a built-in Rust API extractor; an empty Rust API result is not proof
+of successful extraction.
+
+The same installed journey against the real `rsc/quote` Go manifest exposed an
+`ask` request that routed a proxy-only Go shelf into GitHub search. `ask` now
+requires GitHub-bound provenance before constructing that search and catches
+provider tree-read failures through its existing search-error path. The JSON
+retains source-backed signatures/examples, sets matches and coverage to null,
+and exits `CORPUS_FAILURE`; no GitHub query or complete-coverage claim is made
+for an unsupported host. This does not add non-GitHub search support.

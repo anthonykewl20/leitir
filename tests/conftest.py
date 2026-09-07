@@ -28,6 +28,7 @@ _MOCK_PRINCIPAL_TESTS = frozenset(
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "real_user: installed-artifact CLI journeys using actual upstream data and command logs")
     config.addinivalue_line(
         "markers",
         "mock_principal: CLI/wiring test that replaces the principal domain operation",

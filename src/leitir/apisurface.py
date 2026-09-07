@@ -32,6 +32,7 @@ from leitir.adapters._tier2_patterns import (
     EXPORT_FUNCTION,
     EXPORT_VALUE,
     FUNCTION_VALUE,
+    mask_comments_and_strings,
 )
 
 ApiIndex: TypeAlias = dict[str, object]
@@ -41,6 +42,13 @@ logger = logging.getLogger(__name__)
 # Schema version embedded in every emitted API index. Bump when the shape of
 # the "methods"/"modules"/"symbols" payload changes incompatibly.
 API_SCHEMA_VERSION = 1
+
+# A direct CommonJS function assignment has an explicit exported identity.
+# Dynamic exports, object literals, and alias resolution remain unsupported.
+_COMMONJS_FUNCTION = re.compile(
+    r"^\s*(module\.exports(?:\.[A-Za-z_$][\w$]*)?|exports\.[A-Za-z_$][\w$]*)"
+    r"\s*=\s*(?:async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*(\([^\r\n{};]*\))\s*\{"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,12 +234,22 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
         modules.append({"name": module, "path": relative, "docstring": None, "method": "heuristic"})
         class_name: str | None = None
         class_depth = 0
+        code_lines = mask_comments_and_strings("\n".join(lines)).split("\n")
+        brace_depth = 0
         for number, line in enumerate(lines, 1):
+            code_line = code_lines[number - 1]
+            commonjs = _COMMONJS_FUNCTION.match(code_line) if brace_depth == 0 else None
+            brace_depth += code_line.count("{") - code_line.count("}")
             stripped = line.strip()
             function_match = EXPORT_FUNCTION.match(line)
             class_match = EXPORT_CLASS.match(line)
             value_match = EXPORT_VALUE.match(line)
-            if function_match:
+            if commonjs:
+                name, _signature = commonjs.groups()
+                # Use the original source span so string defaults are preserved.
+                signature: str | None = line[commonjs.start(2):commonjs.end(2)]
+                symbols.append(_symbol(kind="function", name=name, qualified_name=f"{module}.{name}", module=module, path=relative, line=number, signature=signature, docstring=None, method="heuristic"))
+            elif function_match:
                 name, signature = function_match.groups()
                 symbols.append(_symbol(kind="function", name=name, qualified_name=f"{module}.{name}", module=module, path=relative, line=number, signature=signature.strip(), docstring=None, method="heuristic"))
             elif class_match:

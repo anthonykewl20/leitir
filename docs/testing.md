@@ -255,3 +255,55 @@ before calling the intent honestly met.
   coverage, and corrupted-commit intent.
 - `docs/search-v2-spec.md` for search v2 contracts and its changelog/testing
   policy.
+
+## Installed real-user evidence
+
+Unit tests, fixture servers, and wiring tests remain useful regression checks,
+not evidence that the installed product works against an upstream provider.
+Do not describe an offline suite pass as a successful live user journey.
+
+`tests/test_installed_journeys_live.py` builds a wheel, installs it without
+runtime dependencies into a clean virtual environment, verifies that imports
+resolve inside that environment, and invokes its `leitir` console command from
+outside the checkout. It uses actual pinned upstream source and registry data;
+it imports no Leitir implementation and replaces no principal operation or
+transport. The `real_user` marker distinguishes this evidence from the broader
+`live` inventory, which also includes direct Python API and provider checks.
+
+```sh
+LEITIR_ENABLE_LIVE_E2E=1 \
+LEITIR_JOURNEY_EVIDENCE_DIR=/absolute/path/to/a/new-evidence-directory \
+PYTHONPATH=src uv run --no-project --with-requirements requirements.txt \
+  python -m pytest -v tests/test_installed_journeys_live.py \
+  --junitxml=/absolute/path/to/journeys.xml
+```
+
+Prerequisites are network access, `uv`, and the Go toolchain for the independent
+Go-manifest oracle. `GITHUB_TOKEN`/`GH_TOKEN` can provide public API quota. A
+missing prerequisite or provider failure is a failed/incomplete run, never a
+successful journey. The test gate still defaults off. Use a new evidence
+directory per run; existing evidence is not overwritten.
+
+Retain the JUnit report alongside `artifact.json`, each test's `commands.json`,
+and the numbered stdout/stderr files. The journal captures failed commands as
+well as successful ones. The wheel digest, installed import path, code commit,
+and any uncommitted production diff bind the evidence to the tested artifact.
+No environment dump or credential value is included in the journal.
+`.github/workflows/real-user-journeys.yml` runs this lane manually and weekly,
+retaining those artifacts even on failure.
+
+Expected pins and public contracts are not fabricated data. In these journeys,
+source bytes are checked against independently fetched GitHub blob identities;
+search locations are derived from actual source lines; indexed results are
+compared with a scan across hash seeds; API locations are checked with the
+stdlib AST; dependency versions are checked against Go's parser; and snapshot
+round-trips compare actual bytes. Deliberate corruption exercises rejection and
+recovery, starting from a real downloaded shelf.
+
+Report the boundary of each result. Registry acquisition does not imply Rust
+API extraction, which is not supported by the built-in extractors. `check`
+requires authoritative import-root metadata and is not a runtime test of the
+consumer. An excluded shelf with `corpus_status=partial` is not successful
+complete search coverage, even when the command exits zero. Doctor checks
+skipped by `--no-network`, provider skips, unavailable containment, and tests
+using separate opt-in gates must remain explicit gaps in any validation report.

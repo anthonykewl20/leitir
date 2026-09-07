@@ -703,3 +703,24 @@ Shared tree-source instances (#316): cache hits and eviction are atomic under a 
 Module loading and impact (#315): the checker requires evidence that intermediate modules were loaded by the consumer binding, an earlier unconditional top-level import, or source-backed imports of an already loaded module. A module file alone cannot authorize a parent-package attribute; later imports and imports in other scopes do not establish that access. `diff --impact` preserves removal evidence for imported owners and source-backed ancestors, including inherited attribute accesses; a removed owner cannot become a clean terminal-member result.
 
 Release source identity: publication requires successful push or manually dispatched CI for the exact tagged commit and reuses its tested archives. Pull-request merge-ref builds cannot qualify a release solely through their reported head SHA. See [ADR-0038](docs/adr/0038-release-versioning-and-publication.md).
+
+### Real installed-product validation
+
+The opt-in [installed-user journeys](docs/testing.md#installed-real-user-evidence)
+build and install a wheel into a clean environment, then run the actual CLI
+against pinned GitHub source and npm, PyPI, crates.io, and Go registry data.
+They retain command stdout/stderr, exit codes, the wheel digest, and independent
+source checks. A passing offline suite is not a substitute for this evidence;
+provider failures, skipped checks, unsupported extraction, and partial coverage
+remain explicit in the results. The manual/weekly `Installed real user journeys`
+workflow retains evidence on both success and failure.
+
+JavaScript API extraction also recognizes direct top-level CommonJS function
+assignments such as `module.exports = function(num)`: the exported assignment
+target appears as the symbol name, with a source-backed line and signature,
+marked `heuristic`. Dynamic exports remain outside that extractor's contract.
+
+`ask` requires GitHub-bound source provenance for its search portion. A proxy-only
+Go shelf or another unsupported host produces an explicit `search_error` and
+nonzero exit while retaining available source-backed signatures and examples;
+provider tree-read errors also produce a controlled report rather than a traceback.

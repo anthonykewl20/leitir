@@ -1,0 +1,54 @@
+name: Installed real user journeys
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '25 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installed-real-user-journeys-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LEITIR_ENABLE_LIVE_E2E: '1'
+      LEITIR_JOURNEY_EVIDENCE_DIR: ${{ github.workspace }}/.leitir-calibration/real-user-journeys
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+      - name: Build, install, and exercise real CLI journeys
+        run: |
+          mkdir -p .leitir-calibration
+          set -o pipefail
+          PYTHONPATH=src uv run --no-project --with-requirements requirements.txt \
+            python -m pytest -v --tb=short tests/test_installed_journeys_live.py \
+            --junitxml=.leitir-calibration/real-user-junit.xml \
+            2>&1 | tee .leitir-calibration/real-user-pytest.log
+      - name: Retain results and command evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installed-real-user-evidence
+          include-hidden-files: true
+          path: |
+            .leitir-calibration/real-user-junit.xml
+            .leitir-calibration/real-user-pytest.log
+            .leitir-calibration/real-user-journeys/artifact.json
+            .leitir-calibration/real-user-journeys/**/commands.json
+            .leitir-calibration/real-user-journeys/**/*.stdout
+            .leitir-calibration/real-user-journeys/**/*.stderr
+            .leitir-calibration/real-user-journeys/**/upstream-tree.json
+            .leitir-calibration/real-user-journeys/**/test-nodeid.txt

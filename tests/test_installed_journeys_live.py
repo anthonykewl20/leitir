@@ -53,7 +53,7 @@ class Journal:
                 partial = getattr(exc, stream, None) or ""
                 if isinstance(partial, bytes):
                     partial = partial.decode("utf-8", errors="replace")
-                (self.directory / f"{number:03d}.{stream}").write_text(partial, encoding="utf-8")
+                (self.directory / f"{number:03d}.{stream}").write_bytes(partial.encode("utf-8"))
             self.records.append({"argv": argv, "cwd": str(cwd or self.directory),
                                  "status": "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "launch_error",
                                  "timeout": timeout, "error": str(exc),
@@ -62,8 +62,8 @@ class Journal:
             raise AssertionError(f"real command did not complete: {argv}") from exc
         stdout = f"{number:03d}.stdout"
         stderr = f"{number:03d}.stderr"
-        (self.directory / stdout).write_text(result.stdout, encoding="utf-8")
-        (self.directory / stderr).write_text(result.stderr, encoding="utf-8")
+        (self.directory / stdout).write_bytes(result.stdout.encode("utf-8"))
+        (self.directory / stderr).write_bytes(result.stderr.encode("utf-8"))
         self.records.append({"argv": argv, "cwd": str(cwd or self.directory),
                              "exit_code": result.returncode, "expected_exit": expected,
                              "elapsed_seconds": round(time.monotonic() - start, 3),
@@ -71,6 +71,9 @@ class Journal:
                              "stdout_sha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
                              "stderr_sha256": hashlib.sha256(result.stderr.encode()).hexdigest()})
         self._save()
+        for stream in ("stdout", "stderr"):
+            recorded = self.records[-1][f"{stream}_sha256"]
+            assert hashlib.sha256((self.directory / f"{number:03d}.{stream}").read_bytes()).hexdigest() == recorded
         assert result.returncode == expected, f"{argv}\n{result.stdout}\n{result.stderr}"
         assert "Traceback (most recent call last)" not in result.stderr
         return result

@@ -135,7 +135,7 @@ def test_pinned_fixture_recursive_listing_arrives_truncated() -> None:
     assert payload.get("sha") == TRUNCATION_COMMIT
 
 
-def test_truncated_listing_recovery_walk_completes_with_full_universe() -> None:
+def test_truncated_listing_recovery_walk_completes_with_full_universe(live_github_tree_source: GitHubTreeSource) -> None:
     listing = _fetch_recursive_listing(RECOVERY_REPO, RECOVERY_COMMIT)
     assert listing.get("truncated") is True, (
         f"{RECOVERY_REPO}@{RECOVERY_COMMIT} must arrive truncated for the "
@@ -147,7 +147,7 @@ def test_truncated_listing_recovery_walk_completes_with_full_universe() -> None:
         if isinstance(entry, dict) and entry.get("type") == "blob"
     }
 
-    source = GitHubTreeSource(token=_token())
+    source = live_github_tree_source
     blobs, recovered = source.list_blobs_ex(RECOVERY_REPO, RECOVERY_COMMIT)
 
     # Recovery actually happened via the paginated walk, not a silent sample.

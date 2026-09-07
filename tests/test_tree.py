@@ -364,19 +364,8 @@ TYPESCRIPT_TRUNCATED_BLOB_COUNT = 53_309
 
 @pytest.mark.live
 @live_gate
-def test_live_list_blobs_truncated_tree_fallback():
-    class _CountingSource(GitHubTreeSource):
-        def __init__(self, **kwargs: object) -> None:
-            super().__init__(**kwargs)  # type: ignore[arg-type]
-            self.api_calls = 0
-
-        def _get_json(self, url: str, headers: dict[str, str]) -> dict:
-            self.api_calls += 1
-            return super()._get_json(url, headers)
-
-    source = _CountingSource(
-        token=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    )
+def test_live_list_blobs_truncated_tree_fallback(live_github_tree_source: GitHubTreeSource) -> None:
+    source = live_github_tree_source
 
     # Must not raise TreeTruncatedError and must not downgrade to a sample.
     blobs = source.list_blobs(TYPESCRIPT_SLUG, TYPESCRIPT_COMMIT)
@@ -386,7 +375,7 @@ def test_live_list_blobs_truncated_tree_fallback():
     assert len(set(paths)) == len(paths)
     assert len(blobs) > TYPESCRIPT_TRUNCATED_BLOB_COUNT
     print(
-        f"typescript fallback walk: blobs={len(blobs)} api_calls={source.api_calls}"
+        f"typescript fallback walk: blobs={len(blobs)}"
     )
 
 

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from leitir.tree import GitHubTreeSource
 
 _TESTS_DIR = str(Path(__file__).resolve().parent)
 if _TESTS_DIR not in sys.path:
@@ -50,3 +55,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         relative_nodeid = item.nodeid.removeprefix("tests/")
         if relative_nodeid in _MOCK_PRINCIPAL_TESTS:
             item.add_marker(pytest.mark.mock_principal)
+
+
+@pytest.fixture(scope="session")
+def live_github_tree_source() -> GitHubTreeSource:
+    """Reuse actual immutable tree responses across the two recovery contracts."""
+    from leitir.tree import GitHubTreeSource
+
+    return GitHubTreeSource(token=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))

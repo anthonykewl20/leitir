@@ -316,3 +316,12 @@ Its result must be checked separately; a placeholder pytest function cannot
 stand in for it. The inventory gate rejects unconditional `test_live_*` skip
 bodies and rejects a failed collection command instead of accepting a partial
 list of discovered tests.
+
+The two live GitHub recovery contracts share a session-scoped, real
+`GitHubTreeSource`. Its production cache is keyed by immutable repository and
+commit. The `list_blobs` contract performs the actual full walk; the
+`list_blobs_ex` contract can reuse that verified result while independently
+checking the recovery flag and full-universe assertions against provider
+metadata. This avoids spending a second multi-thousand-request API budget on
+identical immutable input. It is one observed network recovery, not two
+independent recovery runs.

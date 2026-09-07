@@ -248,7 +248,11 @@ JS/TS heuristic now recognizes top-level direct CommonJS function assignments
 to `module.exports`, `module.exports.name`, and `exports.name`. The exported
 assignment target is the symbol name; its signature and line come from source.
 Comments, strings, and nested function bodies cannot introduce these new
-symbols. This remains explicitly heuristic: dynamic assignments, object-export
+symbols. Because the shared masker is not a JavaScript regex lexer, an unmasked
+slash makes scope uncertain for that line and all subsequent lines: further
+CommonJS candidates are omitted, including when the slash is division. This
+conservative boundary prevents regex braces from fabricating top-level exports.
+This remains explicitly heuristic: dynamic assignments, object-export
 resolution, and full JavaScript runtime binding analysis are not claimed.
 
 Installed-artifact journeys are a separate live evidence lane, supplementing

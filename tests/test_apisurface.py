@@ -96,3 +96,16 @@ def test_api_cache_path_and_round_trip(tmp_path):
     assert api_index_path(tmp_path, entry, manifest) == path
     assert read_api_index(tmp_path, entry, manifest) == index
     assert json.loads(path.read_text(encoding="utf-8")) == index
+
+
+def test_commonjs_ambiguous_regex_cannot_publish_nested_export(tmp_path):
+    """A regex brace must not turn an uncalled inner assignment into an API."""
+    (tmp_path / "index.js").write_text(
+        'function neverCalled() {\n'
+        '  const closeBrace = /}/;\n'
+        '  module.exports = function fabricatedExport() {};\n'
+        '}\n'
+        'exports.later = function alsoAmbiguous() {};\n', encoding="utf-8",
+    )
+    result = extract_api_surface(tmp_path, "javascript")
+    assert result["symbols"] == []

@@ -554,6 +554,7 @@ jobs:
         run: sudo tools/build-nsjail.sh
       - name: Materialize every pinned exit-corpus donor
         env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           PYTHONPATH: src
         run: |
           root="$RUNNER_TEMP/leitir-corpus-root"
@@ -577,7 +578,7 @@ jobs:
               assert all(isinstance(value, str) for value in (host, owner, repo, commit))
               if host != "github.com":
                   raise RuntimeError(f"unsupported exit-corpus materialization host: {host}")
-              materialize_github_repo(Path(os.environ["CORPUS_ROOT"]), f"github:{owner}/{repo}", owner, repo, commit)
+              materialize_github_repo(Path(os.environ["CORPUS_ROOT"]), f"github:{owner}/{repo}", owner, repo, commit, github_token=os.environ["GITHUB_TOKEN"])
           PY
       - name: Measure containment inputs
         id: substrate
@@ -629,6 +630,31 @@ jobs:
           name: bts-exit-gate-evidence
           path: runs/exit-gate/
           if-no-files-found: warn
+      - name: Materialize optional BTS donors with authenticated host access
+        if: ${{ inputs.run_bench && (success() || steps.exit_gate.outcome == 'failure') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          PYTHONPATH: src
+          TASK_ROOT: ${{ runner.temp }}/leitir-bts-task-root
+        run: |
+          # Credentials stay in this host acquisition step. The sudo/contained
+          # runner below receives verified cache bytes, not the GitHub token.
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          from tools.run_bts_tasks import build_plan, discover_task_sidecars, load_tasks, task_directory, validate_donor_pins
+          from leitir.materialize import materialize_github_repo
+
+          tasks = load_tasks()
+          for task in tasks:
+              discover_task_sidecars(task_directory(), task)
+          plan = build_plan(tasks)
+          root = Path(os.environ["TASK_ROOT"])
+          for pin in sorted({pin for _, _, pins, _ in plan.tasks for pin in pins}):
+              owner, repo = pin.slug.split("/")
+              materialize_github_repo(root, f"github:{pin.slug}", owner, repo, pin.commit_sha, github_token=os.environ["GITHUB_TOKEN"])
+          validate_donor_pins(root, plan)
+          PYCODE
       - name: Run optional BTS task corpus
         if: ${{ inputs.run_bench && (success() || steps.exit_gate.outcome == 'failure') }}
         env:

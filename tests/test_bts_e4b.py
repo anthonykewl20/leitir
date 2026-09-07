@@ -271,12 +271,5 @@ with tempfile.TemporaryDirectory() as value:
     assert outputs[0] == outputs[1] == outputs[2]
 
 
-@pytest.mark.live
-@pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_LIVE_E2E") != "1"
-    or os.environ.get("LEITIR_ENABLE_DONOR_EXECUTION") != "1"
-    or shutil.which("nsjail") is None,
-    reason="real E4b donors require live opt-in, donor opt-in, and nsjail",
-)
-def test_live_ratified_external_corpus_requires_release_artifacts() -> None:
-    pytest.skip("the release-pinned donor manifest, nsjail rootfs, and runner are supplied by the containment job")
+# Live execution evidence is produced by .github/workflows/bts-containment.yml.
+# Do not replace that workflow with a pytest body that always skips.

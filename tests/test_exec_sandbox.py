@@ -1063,12 +1063,8 @@ print(sandbox._canonical_json({{'config_text': sandbox._render_config(p), 'polic
     assert outputs[0] == outputs[1] == outputs[2]
 
 
-@pytest.mark.skipif(
-    os.environ.get("LEITIR_ENABLE_DONOR_EXECUTION") != "1" or not Path("/usr/bin/nsjail").exists(),
-    reason="live nsjail test requires exact donor opt-in and /usr/bin/nsjail",
-)
-def test_live_nsjail_network_and_tmpfs_controls_require_release_policy() -> None:
-    pytest.skip("release-pinned nsjail/rootfs policy artifact is not available in the source tree")
+# Live execution evidence is produced by .github/workflows/bts-containment.yml.
+# Do not replace that workflow with a pytest body that always skips.
 
 
 def test_debug_mount_manifests_are_bounded_and_cleared_per_run(

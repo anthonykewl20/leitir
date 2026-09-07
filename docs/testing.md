@@ -308,3 +308,11 @@ consumer. An excluded shelf with `corpus_status=partial` is not successful
 complete search coverage, even when the command exits zero. Doctor checks
 skipped by `--no-network`, provider skips, unavailable containment, and tests
 using separate opt-in gates must remain explicit gaps in any validation report.
+
+Named live tests must not contain unconditional skip bodies. Actual contained
+execution belongs to `.github/workflows/bts-containment.yml`, which runs the
+CLI against the release-pinned rootfs and retains exit-gate and BTS receipts.
+Its result must be checked separately; a placeholder pytest function cannot
+stand in for it. The inventory gate rejects unconditional `test_live_*` skip
+bodies and rejects a failed collection command instead of accepting a partial
+list of discovered tests.

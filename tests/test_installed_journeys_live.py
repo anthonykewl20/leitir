@@ -142,7 +142,7 @@ def fetch(journey: tuple[Journal, Path, Path], spec: str = SPEC) -> tuple[Path, 
     result = payload["results"][0]
     assert result["verified"] is True
     shelf = Path(result["path"])
-    manifest = json.loads((shelf / "leitir-manifest.json").read_text())
+    manifest = json.loads((shelf / "leitir-manifest.json").read_text(encoding="utf-8"))
     assert manifest["verified"] is True
     assert manifest["materialized_tree_hash_scope"] == "full"
     return shelf, manifest
@@ -176,19 +176,19 @@ def test_installed_analysis_search_and_index_match_real_source(journey: Journey)
     api = json.loads(invoke(journey, "api", SPEC, "--json").stdout)
     assert api["symbols"] > 0
     assert info["api"]["symbols"] == api["symbols"]
-    index_symbols = json.loads(Path(api["index_path"]).read_text())["symbols"]
+    index_symbols = json.loads(Path(api["index_path"]).read_text(encoding="utf-8"))["symbols"]
     assert len(index_symbols) == api["symbols"]
     definitions: dict[str, set[tuple[str, int]]] = {}
     for symbol in index_symbols:
         path = symbol["path"]
         if path not in definitions:
-            definitions[path] = {(node.name, node.lineno) for node in ast.walk(ast.parse((shelf / path).read_text()))
+            definitions[path] = {(node.name, node.lineno) for node in ast.walk(ast.parse((shelf / path).read_text(encoding="utf-8")))
                                  if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
         assert (symbol["name"], symbol["line"]) in definitions[path]
     examples = json.loads(invoke(journey, "examples", SPEC, "--json").stdout)
     assert examples["count"] > 0
     for snippet in examples["snippets"]:
-        lines = (shelf / snippet["path"]).read_text().splitlines()
+        lines = (shelf / snippet["path"]).read_text(encoding="utf-8").splitlines()
         extracted = snippet["code"].splitlines()
         assert extracted
         assert lines[snippet["line"] - 1:snippet["line"] - 1 + len(extracted)] == extracted
@@ -198,7 +198,7 @@ def test_installed_analysis_search_and_index_match_real_source(journey: Journey)
 
     needle = "class Version"
     oracle = {(path, line) for path in sorted(blobs) if path.endswith(".py")
-              for line, text in enumerate((shelf / path).read_text().splitlines(), 1) if needle in text}
+              for line, text in enumerate((shelf / path).read_text(encoding="utf-8").splitlines(), 1) if needle in text}
     assert oracle
     scan = json.loads(invoke(journey, "search", "--corpus", "--must", "exact_text:" + needle).stdout)
     assert scan["corpus_status"] == "complete_for_declared_universe"
@@ -313,19 +313,19 @@ def test_installed_registry_acquisition_and_analysis(journey: Journey, spec: str
         exported = next(s for s in info["api"]["top_symbols"] if s["name"] == "module.exports")
         assert exported["signature"] == "(num)"
         cache = Path(info["api"]["index_path"])
-        poisoned = json.loads(cache.read_text())
+        poisoned = json.loads(cache.read_text(encoding="utf-8"))
         poisoned["symbols"][0]["name"] = "fabricated_export"
         poisoned["symbols"][0]["qualified_name"] = "index.fabricated_export"
         cache.write_text(json.dumps(poisoned, sort_keys=True))
         recovered = invoke(journey, "info", spec, "--json")
         assert "fabricated_export" not in recovered.stdout
         assert any(s["name"] == "module.exports" for s in json.loads(recovered.stdout)["api"]["top_symbols"])
-        assert "module.exports = function(num)" in (shelf / exported["path"]).read_text().splitlines()[exported["line"] - 1]
+        assert "module.exports = function(num)" in (shelf / exported["path"]).read_text(encoding="utf-8").splitlines()[exported["line"] - 1]
     if spec.startswith("pypi:"):
         # Unmodified upstream consumer; no execution of its own test doubles.
         consumer = shelf / "tests/test_help.py"
         checked = json.loads(invoke(journey, "check", str(consumer), "--against", spec, "--json").stdout)
-        tree = ast.parse(consumer.read_text())
+        tree = ast.parse(consumer.read_text(encoding="utf-8"))
         calls = sum(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "info" for n in ast.walk(tree))
         assert calls > 0 and checked["counts"]["sites_ok"] == calls
         assert checked["status"] == "clean" and checked["counts"]["sites_violation"] == 0
@@ -340,6 +340,7 @@ def test_installed_lock_uses_unmodified_upstream_manifest(journey: Journey) -> N
     shelf, _manifest = fetch(journey, spec)
     original = (shelf / "go.mod").read_bytes()
     # The real Go command provides an independent grammar/identity oracle.
+    journal.run(["go", "version"])
     parsed = journal.run(["go", "mod", "edit", "-json"], cwd=shelf)
     requires = json.loads(parsed.stdout)["Require"]
     assert requires
@@ -347,8 +348,8 @@ def test_installed_lock_uses_unmodified_upstream_manifest(journey: Journey) -> N
     locked = (journal, cli, locked_root)
     invoke(locked, "lock", "--cwd", str(shelf))
     assert (shelf / "go.mod").read_bytes() == original
-    records = json.loads((locked_root / "sources.json").read_text())
-    versions = {(record["name"], json.loads((locked_root / record["path"] / "leitir-manifest.json").read_text())["version"]) for record in records}
+    records = json.loads((locked_root / "sources.json").read_text(encoding="utf-8"))
+    versions = {(record["name"], json.loads((locked_root / record["path"] / "leitir-manifest.json").read_text(encoding="utf-8"))["version"]) for record in records}
     assert {(item["Path"], item["Version"]) for item in requires} <= versions
     assert json.loads(invoke(locked, "list", "--json").stdout)
     asked = invoke(locked, "ask", "Hello", "--package", "rsc.io/sampler", "--ecosystem", "go",

@@ -289,7 +289,8 @@ and the numbered stdout/stderr files. The journal captures failed commands as
 well as successful ones. The wheel digest, installed import path, code commit,
 and any uncommitted production diff bind the evidence to the tested artifact.
 No environment dump or credential value is included in the journal.
-`.github/workflows/real-user-journeys.yml` runs this lane manually and weekly,
+`.github/workflows/real-user-journeys.yml` runs this lane on Linux and Windows manually and weekly (or after the explicit
+`run-real-user-journeys` label is applied to a same-repository PR),
 retaining those artifacts even on failure.
 
 Expected pins and public contracts are not fabricated data. In these journeys,

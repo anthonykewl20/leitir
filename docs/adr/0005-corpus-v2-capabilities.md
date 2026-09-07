@@ -252,6 +252,8 @@ symbols. Because the shared masker is not a JavaScript regex lexer, an unmasked
 slash makes scope uncertain for that line and all subsequent lines: further
 CommonJS candidates are omitted, including when the slash is division. This
 conservative boundary prevents regex braces from fabricating top-level exports.
+Arrow expressions also suppress further candidates because their bodies need
+not use braces; open parentheses/brackets exclude nested expression assignments.
 This remains explicitly heuristic: dynamic assignments, object-export
 resolution, and full JavaScript runtime binding analysis are not claimed.
 

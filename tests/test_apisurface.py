@@ -109,3 +109,12 @@ def test_commonjs_ambiguous_regex_cannot_publish_nested_export(tmp_path):
     )
     result = extract_api_surface(tmp_path, "javascript")
     assert result["symbols"] == []
+
+
+def test_commonjs_uncalled_expression_bodies_cannot_publish_exports(tmp_path):
+    for source in (
+        "const neverCalled = () =>\n module.exports = function fabricatedExport() {};\n",
+        "function neverCalled(value =\n module.exports = function fabricatedExport() {}\n) {}\n",
+    ):
+        (tmp_path / "index.js").write_text(source, encoding="utf-8")
+        assert extract_api_surface(tmp_path, "javascript")["symbols"] == []

@@ -718,7 +718,7 @@ workflow retains evidence on both success and failure.
 JavaScript API extraction also recognizes direct top-level CommonJS function
 assignments such as `module.exports = function(num)`: the exported assignment
 target appears as the symbol name, with a source-backed line and signature,
-marked `heuristic`. An unmasked slash (regex or division) makes scope ambiguous,
+marked `heuristic`. An unmasked slash (regex or division) or arrow expression makes scope ambiguous,
 so further CommonJS candidates in that file are omitted. Dynamic exports remain
 outside that extractor's contract.
 

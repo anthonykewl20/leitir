@@ -1,5 +1,5 @@
 {
-  "archive_sha256": "d7b26e3929866e666c850b6ae077c4c9fc94cd9916e67214de5b16ca7fc361eb",
+  "archive_sha256": "00b5f9aa85f83d6f4d4c869b083805be2f45c95b849a0f965e62ecbe004d715a",
   "files": [
     {
       "bytes": 196,
@@ -194,10 +194,16 @@
       "sha256": "4174a208d9444bee7810e5a2d55e4fb031a1f82a3a85db6826a731802bd4e384"
     },
     {
+      "bytes": 1295,
+      "credential_redactions": 0,
+      "path": "commonjs-expression-red.log",
+      "sha256": "67d3f52a2dddc09793993f9fab3d7ff0054bebf9241f82960b0d121afc5d596e"
+    },
+    {
       "bytes": 98,
       "credential_redactions": 0,
       "path": "commonjs-review-green.log",
-      "sha256": "eba750768810cdb50c7c923ac3d0cd6946d422ac71b754504f0645d1744edd6f"
+      "sha256": "3247c50c34e782db19f552455bce1f096e033aae5010deec64401bb0f5ec19c7"
     },
     {
       "bytes": 1371,
@@ -206,10 +212,10 @@
       "sha256": "d3e49949dd7f4f7bcee141b154626340a5ae568718fd301ae5d2b87cea549c92"
     },
     {
-      "bytes": 74,
+      "bytes": 222,
       "credential_redactions": 0,
       "path": "commonjs-runtime-green.log",
-      "sha256": "8c34f88fe5058104473a711cc7532575f36d0c2ee08a1f40c692ebbc639feeeb"
+      "sha256": "23f4cc563b2c33cbc7debd8de7ceccd352473ec25c5f06438ad1f10197a7ff21"
     },
     {
       "bytes": 513,
@@ -8040,6 +8046,12 @@
       "credential_redactions": 0,
       "path": "offline-final.log",
       "sha256": "678f4c42dcf8d245a3d43ba6f804bf0ecc9468adec68879e4cab410959f66785"
+    },
+    {
+      "bytes": 960,
+      "credential_redactions": 0,
+      "path": "offline-reviewed.log",
+      "sha256": "2a1f86e9409516bc5eb7ec5e79134461b4be8b265adae83ffbc4b4888cbbf76a"
     },
     {
       "bytes": 22259,

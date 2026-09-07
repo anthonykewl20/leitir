@@ -136,7 +136,8 @@ that a regex brace could fabricate a nested CommonJS export. The retained
 the green log repeats that flow after the conservative slash boundary fix.
 The crafted adversarial source is a rejection probe, not an upstream package
 or independent evidence of general JS support. The regression failed before
-that fix; seven API regression cases passed afterward. Final post-review CI,
+that fix; eight API regression cases passed afterward, including uncalled arrow bodies
+and function default parameters. Actual Node comparisons cover all three forms. Final post-review CI,
 installed journey runs and approvals are recorded in PR #344; the earlier
 archive remains unchanged as historical evidence, with its commit boundaries
 explicitly retained.

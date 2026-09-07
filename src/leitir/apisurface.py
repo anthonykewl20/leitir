@@ -236,16 +236,19 @@ def _javascript_extractor(target_path: Path, language: str) -> ApiIndex:
         class_depth = 0
         code_lines = mask_comments_and_strings("\n".join(lines)).split("\n")
         brace_depth = 0
+        expression_depth = 0
         commonjs_scope_known = True
         for number, line in enumerate(lines, 1):
             code_line = code_lines[number - 1]
             # The shared masker does not parse regex literals. A remaining
             # slash may be division or a regex containing braces; once seen,
             # decline further CommonJS candidates instead of inventing scope.
-            if "/" in code_line:
+            # Arrow expression bodies can likewise continue without braces.
+            if "/" in code_line or "=>" in code_line:
                 commonjs_scope_known = False
-            commonjs = _COMMONJS_FUNCTION.match(code_line) if commonjs_scope_known and brace_depth == 0 else None
+            commonjs = _COMMONJS_FUNCTION.match(code_line) if commonjs_scope_known and brace_depth == 0 and expression_depth == 0 else None
             brace_depth += code_line.count("{") - code_line.count("}")
+            expression_depth += code_line.count("(") + code_line.count("[") - code_line.count(")") - code_line.count("]")
             stripped = line.strip()
             function_match = EXPORT_FUNCTION.match(line)
             class_match = EXPORT_CLASS.match(line)

@@ -1,0 +1,22 @@
+{
+ "outcomes": [
+  {
+   "col": 12,
+   "duration": 0.612,
+   "exit_code": 1,
+   "id": "3aef870d4e7fc1f4",
+   "lineno": 543,
+   "module": "leitir.treehash",
+   "mutated": "pass",
+   "operator": "raise-drop",
+   "original": "raise TreeHashFormatError(\n                \"materialized_tree_hash_scope does not match the deterministic \"\n                f\"tree scope: stored {scope!r}, computed {actual_scope!r}\"\n            )",
+   "outcome": "killed",
+   "path": "src/leitir/treehash.py",
+   "selection_mode": "contexts",
+   "tests": [
+    "tests/test_materialize.py::test_legacy_full_tree_rejects_tampered_sampled_scope"
+   ]
+  }
+ ],
+ "uncovered": []
+}

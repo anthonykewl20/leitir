@@ -1239,6 +1239,30 @@ def test_legacy_manifest_without_map_loads_via_existing_path(tmp_path):
     assert "materialized_file_digests" not in loaded
 
 
+def test_legacy_full_tree_rejects_tampered_sampled_scope(tmp_path: Path) -> None:
+    from leitir.materialize import verify_materialized_integrity
+    from leitir.treehash import FULL, SAMPLED, compute_materialized_tree_hash
+
+    target, manifest = _healthy_mapped_shelf(tmp_path)
+    legacy = _strip_map_fields(manifest)
+    digest, scope = compute_materialized_tree_hash(target)
+    assert scope == FULL
+    assert legacy["materialized_tree_hash"] == digest
+    verify_materialized_integrity(target, legacy)
+
+    # Change only the scope: the matching digest must not mask this forgery.
+    legacy["materialized_tree_hash_scope"] = SAMPLED
+    (target / "leitir-manifest.json").write_text(
+        json.dumps(legacy, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    with pytest.raises(
+        VerificationError,
+        match="materialized_tree_hash_scope does not match the deterministic tree scope",
+    ):
+        verify_materialized_integrity(target, legacy)
+    assert read_valid_manifest(target, "example", "demo", SHA) is None
+
+
 _SAMPLED_CAP_FILES = 1_001  # one file above the real 1000-file cap
 
 

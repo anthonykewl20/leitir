@@ -46,8 +46,12 @@ priority labels decide within a phase.
   (#346).
 - **Phase 4 — agent surface, depth and growth:** MCP expansion (#401), def/refs (#388),
   history mining (#390), PyPI and registry distribution (#407), competitor benchmark
-  (#408), README and recipes (#409), optional semantic search (#385) and repository Q&A
-  (#392) extras.
+  (#408), README and recipes (#409).
+
+Execution order for agents (dependency waves) is in the epic #410; every issue carries
+explicit `Blocked by` links and its design decisions, so no owner input is pending.
+Closed as not planned: semantic-search (#385) and LLM repository Q&A (#392) extras — the
+calling agent is the model, and ADR-0001 keeps the core model-free.
 
 Milestone definition of done: the north-star journey in #410 runs end to end on a clean
 machine and offline from recorded snapshots; the benchmark is published; the README first

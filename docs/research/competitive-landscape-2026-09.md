@@ -81,10 +81,7 @@ Parity items adapted from competitors: token-budgeted reads and `next` hints (Oc
 [#401](https://github.com/anthonykewl20/leitir/issues/401); history mining (Octocode,
 Sourcegraph) → [#390](https://github.com/anthonykewl20/leitir/issues/390); def/refs →
 [#388](https://github.com/anthonykewl20/leitir/issues/388); path verb (opensrc) →
-[#402](https://github.com/anthonykewl20/leitir/issues/402); optional semantic search and
-repo Q&A extras behind ADRs →
-[#385](https://github.com/anthonykewl20/leitir/issues/385),
-[#392](https://github.com/anthonykewl20/leitir/issues/392); benchmark and distribution →
+[#402](https://github.com/anthonykewl20/leitir/issues/402); benchmark and distribution →
 [#408](https://github.com/anthonykewl20/leitir/issues/408),
 [#407](https://github.com/anthonykewl20/leitir/issues/407),
 [#409](https://github.com/anthonykewl20/leitir/issues/409).
@@ -102,3 +99,12 @@ determinism conventions.
 
 Nia pricing, grep.app homepage (HTTP 429), Exa pricing beyond "free for the public", and
 the OSSKB free-tier rate limit were not verifiable on 2026-09-27.
+
+## Deliberately not pursued
+
+Semantic embedding search (Exa, Chroma, Nia, Sourcegraph `nls_search`) and LLM repository
+Q&A (DeepWiki, Nia) were closed as not planned
+([#385](https://github.com/anthonykewl20/leitir/issues/385),
+[#392](https://github.com/anthonykewl20/leitir/issues/392)): Leitir's caller is already a
+model, so Leitir supplies verified, cited evidence and the agent does the reasoning;
+ADR-0001 keeps the core deterministic and model-free.

@@ -431,7 +431,7 @@ except when interrupted:
 
 ### Analysis
 - `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
-- `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance.
+- `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance. Go API extraction excludes `_test.go` files, `vendor/`, and `testdata/`; test helpers in ordinary `.go` files remain eligible.
 API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under the target lock before accepting its derived caches. A tampered cache is rebuilt; an unchanged cache is not rewritten.
 
 - `examples`: extract and rank usage snippets for that source.

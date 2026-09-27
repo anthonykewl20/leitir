@@ -171,3 +171,21 @@ def test_go_heuristic_skips_vendor_and_testdata_directories(tmp_path):
         "main.Main",
         "vendorlike.Vendorlike",
     ]
+
+
+def test_go_api_excludes_test_files_without_changing_production_symbols(tmp_path):
+    (tmp_path / "jwt.go").write_text("package jwt\nfunc Parse() {}\n", encoding="utf-8")
+    (tmp_path / "test_helpers.go").write_text("package jwt\nfunc TestHelper() {}\n", encoding="utf-8")
+    expected = extract_api_surface(tmp_path, "go")
+    for filename in ("jwt_test.go", "nested/ecdsa_test.go"):
+        path = tmp_path / filename
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            "package jwt_test\nfunc TestECDSASign() {}\nfunc BenchmarkECDSAParsing() {}\n"
+            "func ExampleParse() {}\ntype ExportedFixture struct{}\n",
+            encoding="utf-8",
+        )
+
+    assert extract_api_surface(tmp_path, "go") == expected
+    assert extract_api_surface(tmp_path) == expected
+    assert [symbol["name"] for symbol in expected["symbols"]] == ["Parse", "TestHelper"]

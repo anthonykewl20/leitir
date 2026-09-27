@@ -417,6 +417,7 @@ def _go_extractor(target_path: Path, language: str) -> ApiIndex:
                 for path in target_path.rglob("*")
                 if path.is_file()
                 and path.suffix.casefold() in _GO_EXTENSIONS
+                and not path.name.endswith("_test.go")
                 and not any(part in {"vendor", "testdata"} for part in path.relative_to(target_path).parts)
             ),
             key=lambda path: path.relative_to(target_path).as_posix(),

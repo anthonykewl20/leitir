@@ -20,9 +20,15 @@ The main materialized-source layout is:
     leitir-manifest.json
     ...materialized source files...
   sources.json
-  .leitir-pointers.json
+  POINTERS.md
+  .sources.lock
   .locks/<hashed-target>.lock
 ```
+
+`sources.json` is the corpus catalog of materialized sources. `POINTERS.md` is
+a generated, human-readable index of the catalogued shelves, rewritten
+atomically from the catalog and manifests. `.sources.lock` is the interprocess
+lock held while the catalog is updated.
 
 `repos/<host>/<owner>/<repo>/<commit-sha>/` is the canonical shelf path for a
 pinned hosted repository. The manifest identifies the source and contains the
@@ -126,13 +132,13 @@ LEITIR_HOME="$HOME/.leitir" leitir clean
 ```
 
 `clean` removes `repos/`, `api/`, and `examples/`, plus `sources.json` and
-`.leitir-pointers.json`. It intentionally does not remove `.locks`. Recreate
+`POINTERS.md`. It intentionally does not remove `.locks` or `.sources.lock`. Recreate
 the corpus with `leitir get`, `leitir lock`, or import a snapshot.
 
 Safe manual deletion is limited to a separately retained backup copy or files
 you have positively identified as outside the active corpus. Never manually
-delete `.locks`, active shelf directories, manifests, `sources.json`, or
-`.leitir-pointers.json` as a cleanup shortcut. Never follow symlinks while
+delete `.locks`, `.sources.lock`, active shelf directories, manifests,
+`sources.json`, or `POINTERS.md` as a cleanup shortcut. Never follow symlinks while
 inspecting or deleting cache content; Leitir rejects symlink escapes and unsafe
 staging candidates.
 

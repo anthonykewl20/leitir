@@ -1,31 +1,102 @@
 # Leitir Roadmap
 
+## Product goal
+
+Leitir is the AI coding agent's **GitHub code scavenger** for the research-and-plan
+phase. Given a task (for example "build Next.js authentication"), the agent should be able
+to find the most mature working OSS implementations, understand and compare them from
+byte-verified, commit-pinned source, choose a base and references, and then copy, port or
+adapt with a durable provenance record. The purpose is to stop agents from hand-waving
+architecture and code: suggestions are grounded in mature, cited, verified source.
+
+This is code referencing with more power than IDE suggestion matching (GitHub Copilot code
+referencing): it works *before* code is written, on whole implementations rather than
+~150-character matches, with commit pinning and replayable evidence. Owner decisions
+(2026-09-27): official-documentation tooling is out of scope; license is informational
+(shown accurately per path, never a gate — the agent decides to copy, adapt or learn).
+
+Evidence: [real-user audit 2026-09-27](docs/evidence/audit-2026-09-27/README.md) and
+[competitive landscape 2026-09](docs/research/competitive-landscape-2026-09.md).
+
+## Current milestone — v0.3.000 GitHub Code Scavenger
+
+[Milestone 7](https://github.com/anthonykewl20/leitir/milestone/7), tracked by epic
+[#410](https://github.com/anthonykewl20/leitir/issues/410). Phases are an ordering guide;
+priority labels decide within a phase.
+
+- **Phase 0 — first-minute blockers and integrity defects:** package-scoped search fails on
+  every registry shelf (#349), monorepo shelf collisions (#350), `lock` fails open (#368),
+  `ask --pin` source selection (#369), dropped monorepo subpath (#351), onboarding (#402),
+  opaque GitHub errors (#373), docs truth (#367).
+- **Phase 1 — analysis quality on real packages (TS/JS first):** TS/JS API extraction
+  (#353), JS/TS predicates (#371), tsx/jsx (#370), examples (#355), global coverage (#372),
+  corpus eligibility (#359), parity (#352), original-source preference (#405), lockfile
+  coverage (#403), npm ranges (#404), PyPI tags (#361), license display (#357, #358), test
+  detection (#356), Go API (#354), Rust/Java API (#389), non-GitHub hosts (#360), ref
+  syntax (#374), metadata (#366), diff notes (#362), output fixes (#375), `check` mixed
+  directories (#363), non-Python BTS (#364), comparison evidence (#365).
+- **Phase 2 — scavenger core (find, rank, understand, compare):** maturity signals (#380),
+  project-grouped discovery (#381), BM25 ranking (#382), task compilation (#384), task
+  scouting (#376), comparison (#383), token-budgeted reads (#386), architecture map
+  (#387), tests-for-symbol (#391), research pack (#377), grounding enforcement (#378).
+- **Phase 3 — reuse with provenance:** advisory license (#398), adoption records (#393),
+  base from a mature subtree (#379), winnowing fingerprints (#394), origin lookup (#395),
+  adopted-code drift (#396), attribution export (#397), TS/JS hallucinated-API gate
+  (#399), non-Python adaptation (#400), unwired subsystems (#406), real BTS integration
+  (#346).
+- **Phase 4 — agent surface, depth and growth:** MCP expansion (#401), def/refs (#388),
+  history mining (#390), PyPI and registry distribution (#407), competitor benchmark
+  (#408), README and recipes (#409).
+
+Execution order for agents (dependency waves) is in the epic #410; every issue carries
+explicit `Blocked by` links and its design decisions, so no owner input is pending.
+Closed as not planned: semantic-search (#385) and LLM repository Q&A (#392) extras — the
+calling agent is the model, and ADR-0001 keeps the core model-free.
+
+Milestone definition of done: the north-star journey in #410 runs end to end on a clean
+machine and offline from recorded snapshots; the benchmark is published; the README first
+screen reflects the scavenger positioning with CI-verified commands; v0.3.000 is released
+per ADR-0038 and published to PyPI and the MCP registry.
+
 ## Versioning philosophy
 
-- **v0.x** — active incremental development following SemVer. Patch releases (0.1.1, 0.1.2, 0.1.3, ...) carry **all** incremental work on the path to production-ready quality: audit findings, bug fixes, **and** feature/behavior increments alike (e.g. the Behavioral Transplant Set, composition/multi-language, Search v2). The patch number is an incrementing counter per thematic milestone, not a "bugfix-only" gate; under pre-1.0 SemVer anything may change and breaking changes are permitted, but must be called out in the changelog. There is no currently planned minor bump (0.2.0); if one is ever cut it would denote a deliberate compatibility boundary within 0.x, not a feature gate.
-- **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x series when the Critical/High audit findings are resolved, the self-scorecard passes, and real load testing confirms behavior at scale. The README's "Not production-ready" line changes when the quality bar is met, not when a specific version is cut.
-- **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a feature or quality milestone. v1.0 happens when the community demonstrates the project has earned the stability commitment that SemVer 1.0 implies. Until then, we ship 0.x.
+- **Public versions** use `MAJOR.MINOR.PATCH` with exactly three patch digits (`0.2.000`,
+  `0.2.001`, …) per [ADR-0038](docs/adr/0038-release-versioning-and-publication.md).
+  Substantial capability or compatibility changes advance the minor version and reset the
+  patch; corrective releases advance the patch. Python packaging normalizes `0.2.000` to
+  `0.2.0`.
+- **"Production-ready"** — a quality label, not a version number. Achieved within the 0.x
+  series when the Critical/High audit findings are resolved, the self-scorecard passes, and
+  real load testing confirms behavior at scale.
+- **v1.0** — reserved as a **major adoption milestone** (target: 10,000 users), not a
+  feature or quality milestone.
 
 ## Distribution
 
-**Current (pre-public-release): GitHub-only.**
+**Current: GitHub-only.**
 
-- Install: `pip install git+https://github.com/anthonykewl20/leitir.git`
-- Release artifacts: GitHub Releases (auto-built wheel + sdist via `.github/workflows/release.yml` on `v*` tag push)
-- Update notifications: poll GitHub Releases API on a 24h cache; works as soon as the first `v*` tag is pushed
+- Install: `pip install git+https://github.com/anthonykewl20/leitir.git@<tag>`; optional
+  extras from a checkout or git URL (for example `pip install '.[mcp]'`).
+- Release artifacts: GitHub Releases. Publication requires green CI for the exact commit,
+  verified CI-built artifacts, provenance attestation and committed release notes
+  (ADR-0038); the release workflow publishes the CI-tested artifacts rather than
+  rebuilding them.
+- Update notifications: poll the GitHub Releases API on a 24h cache.
 
-**Future (when ready for public release): PyPI.**
+**Planned (#407): PyPI and agent registries.** Trusted publishing to PyPI gated on the same
+release verification; `uvx`/`pipx` one-line installs; listing in the official MCP registry
+and agent skill/plugin marketplaces.
 
-- Install becomes `pip install leitir` (the standard users expect)
-- Setup is one-time (~10 minutes): create a PyPI account, enable 2FA, register a pending publisher for trusted publishing via GitHub Actions OIDC (no API token needed)
-- The existing wheel build works on PyPI unchanged — zero code changes
-- A `.github/workflows/publish-pypi.yml` workflow will be added alongside the existing GitHub Releases workflow; both run on tag push
-- The update-check URL in `src/leitir/_update_check.py` can optionally switch from GitHub Releases API to PyPI JSON (`https://pypi.org/pypi/leitir/json`) — the rest of the module (cache, gates, threading, notice format) stays identical
-- This is deferred until the maintainer decides the project is ready for broad public visibility; no deadline
+## Release history
 
-## Current status
-
-The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-006, process/docs scaffolding, cross-platform CI). v0.1.1 production-readiness evidence is complete: #42 has recorded dogfood, load-test, canary, and post-#163 security-sign-off evidence, with the remaining dogfood friction retained as a tracked backlog. The BTS code for [milestone v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2) landed on `main` via PR #127; its five-donor exit corpus is repeatedly contained-green and its six-task benchmark is published. The runtime digest was ratified on 2026-08-17 (owner key `7baec2e9…`, digest `sha256:72949674…`) and the Phase-C gate completed on main run 32018948262; #73 and #52 are closed on that evidence and the v0.1.2 milestone is closed.
+- **v0.2.000** (2026-09-05) — accumulated remediation and release-verification tooling;
+  runtime digest re-ratified (`sha256:901bf7ac…`). Notes: `docs/releases/0.2.000.md`.
+- **v0.1.6** (2026-08-25), **v0.1.5** (2026-08-24, milestone "Scavenger reliability &
+  hardening").
+- **v0.1.4** (2026-08-17) — Search v2 (wide+deep): local trigram index, AST/heuristic
+  adapters, truncation-safe tree walk, verified streaming.
+- Milestones v0.1.1–v0.1.5 are closed. Milestone "Verified Usage v1" (#255–#259) has no
+  open issues; its `usage` verb shipped.
 
 ## Initially implemented (v0.1.0 scope)
 
@@ -36,87 +107,58 @@ The v0.1.0 scope is implementation-complete (load-time tree verification, ADR-00
 - ADR-002: deterministic evidence scoring engine (standalone repository scorer)
 - ADR-001: deterministic code-search kernel
 
-## Recently landed
+## Earlier programs (historical)
 
-- v0.1.2 BTS program via PR #127, implementing ADR-0008 through ADR-0011.
+- v0.1.2 BTS program via PR #127, implementing ADR-0008 through ADR-0011; ratified
+  2026-08-17 and proven by Phase-C main run 32018948262 (5/5 donors). The runtime digest
+  was re-ratified on 2026-09-05 for v0.2.000.
 - v0.1.3 composition and multi-language wave via PRs #131–#139: composition,
-  architecture, duplicates, lineage, cost, and occupied-recipient validation;
-  the Windows fix for #128; ADR-0012's fully implemented stage-1 policy/registry
-  and stage-2 JavaScript/TypeScript/Rust/Go graph producers in this PR; and
+  architecture, duplicates, lineage, cost, and occupied-recipient validation; ADR-0012
+  stage-1 policy/registry and stage-2 JavaScript/TypeScript/Rust/Go graph producers; and
   ADR-0013 through ADR-0019.
-- #148's CLI surfaces are complete: `bts-compute`, architecture/lineage analysis,
-  capability funnel, pipeline, transplant, occupied validation, and runnable
-  exit-corpus gates. #75's six-task benchmark is published at run `88330e29…`;
-  five tasks are complete and `worker-shutdown-predicate` is an honest partial.
-- PRs #163–#179 completed the contained Phase-A evidence, security P2 fixes,
-  release-pinned rootfs, and ratification ceremony. The published
-  `containment-rootfs-v1` asset is pinned to
-  `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`.
-  Ratification is recorded (2026-08-17): ADR-0021's manifest-free donor mount
-  projection removed the run-to-run drift of the staged mount-source tree
-  digests, runs 32008683557 and 32009633642 re-measured the stabilized digest
-  byte-identically, and the owner ceremony rotated the trust root to a
-  long-term owner key and signed `sha256:72949674…` into
-  `ratified_runtime_digest`. The Phase-C exit gate then reached `complete` on
-  branch run 32018653190 and canonical main run 32018948262 (5/5 donors),
-  closing #73 and #52 on that evidence.
+- #148's CLI surfaces: `bts-compute`, architecture/lineage analysis, capability funnel,
+  pipeline, transplant, occupied validation, and runnable exit-corpus gates. #75's six-task
+  benchmark is published; #346 tracks the real-integration gaps it exposed.
+- PRs #163–#179 completed the contained Phase-A evidence, security P2 fixes, release-pinned
+  rootfs (`containment-rootfs-v1`,
+  `sha256:ec28886a5e448e9d6b088470c85ee2e0d170e16002bd78ecc835e9d4161155ac`), and the
+  ratification ceremony.
 
 ## v0.1.1 — production-ready audit criteria (all engineering issues closed)
 
-Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are **closed**. The real ≥100-package load-test gate passed with 116 packages (including 29 sampled-boundary cases), independent dogfood evidence is recorded, and two post-#163 security reviews recorded no P0/P1 findings; PR #166 remediated all P2 findings. The remaining dogfood friction backlog is L1, L3, L4, L7, L8, L9, M3 items 1/2, and M4. These gates do not gate the v0.1.1 version number itself.
+Tracked at epic #42. All Critical/High/Medium/Low engineering issues below are **closed**.
+The real ≥100-package load-test gate passed with 116 packages (including 29
+sampled-boundary cases), independent dogfood evidence is recorded, and two post-#163
+security reviews recorded no P0/P1 findings; PR #166 remediated all P2 findings.
 
-### Critical (blocks the "production-ready" quality label)
-
-- #22 ADR-002 contract drift (scorer ≠ runtime trust)
-- #23 Missing-evidence-as-zero violates "unknown never zero"
-- #41 Self-scorecard must report `decision=pass`
-
-### High
-
-- #24 Trust age factor unpopulated
-- #28 Symlink escape from corpus root
-- #31 Snapshot tarball lacks binding to lock
-- #33 Corpus bench runner fully mocked
-- #34 302/424 raise statements uncovered
-- #35 Trust tests don't verify weighted score
-
-### Medium / Low
-
-- #25 Reject NaN and infinity in trust factor clamping.
-- #26 Prevent plaintext HTTP requests through configurable registry URLs.
-- #27 Redact opaque secrets from URL fragments, exceptions, and private-token headers.
-- #29 Add per-target locking to prevent concurrent materialization cache loss.
-- #30 Clean up partial staging left by abrupt process termination.
-- #32 Harden snapshot imports for membership, destination, and atomicity.
-- #36 Add a live-test CI canary for provider compatibility.
-- #37 Audit and label tests that mock their principal operation.
-- #38 Add a CI coverage-regression gate.
-- #39 Close the load-time verification TOCTOU window with corpus-wide locking.
-
-## Next milestones (incremental, shipped as patch releases)
-
-- **[v0.1.2 — Behavioral Transplant Set](https://github.com/anthonykewl20/leitir/milestone/2)** (complete, closed): ADR-0008 through ADR-0011 are implemented. All five donors repeatedly complete under the contained Phase-A workflow, the rootfs is published and pinned, and #75's benchmark is published. #73's runtime digest was ratified (2026-08-17, `sha256:72949674…`) and proven by the Phase-C `complete` main run [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262); #73 and epic #52 are closed on that evidence.
-- **[v0.1.3 — Composition and multi-language](https://github.com/anthonykewl20/leitir/milestone/3)** (complete): #76, #77, #78, #79, #80, and #82 closed via PRs #132, #137, #136, #135, #134, and #139. #81's tree-sitter stages and ADR-0018 optional detached manifest authentication are landed; #148's CLI/evidence work is complete and its tracker is closed.
-- **[v0.1.4 — Search v2 (wide+deep)](https://github.com/anthonykewl20/leitir/milestone/4)** (0 open, released): implementation complete on `main` (all slices merged and independently cross-reviewed/hardened) and **released as [v0.1.4](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4)** — the first `v*` tag, cut 2026-08-17 from the version-bump merge with wheel+sdist built and twine-checked by the tag-triggered Release workflow. Local trigram index (wide) + AST/heuristic adapters (deep) + truncation-safe tree walk + verified streaming. Spec: `docs/search-v2-spec.md`. The `ready-for-agent` pool is currently empty.
+- Critical: #22 ADR-002 contract drift; #23 missing-evidence-as-zero; #41 self-scorecard
+  `decision=pass`.
+- High: #24 trust age factor; #28 symlink escape; #31 snapshot binding; #33 corpus bench
+  mocked; #34 uncovered raises; #35 trust weighted score tests.
+- Medium/Low: #25–#27, #29, #30, #32, #36–#39.
 
 ## Post-production-ready (still v0.x)
 
-- #40 Manifest authenticity (TUF/signatures) — adversarial threat model, separate from corruption detection
-- [x] Real load testing with 100+ package corpora — passed with 116 exercised
-  packages; 29 sampled-boundary cases are recorded in
-  `docs/evidence/loadtest-100-2026-08.md`.
-- TOCTOU hardening via filesystem snapshots
+- [x] Manifest authenticity (#40) — shipped as ADR-0018 optional detached publisher
+  authentication (`--require-manifest-auth`).
+- [x] Real load testing with 100+ package corpora — passed with 116 exercised packages;
+  see `docs/evidence/loadtest-100-2026-08.md`.
+- TOCTOU hardening via filesystem snapshots.
 
 ## Retired / historical
 
 - v1 PRD: docs/PRD.md
-- v1 operations: docs/operations.md
 - v1 smoke evaluation: docs/smoke-evaluation.md
-- Manual scorecards: docs/leitir-engine-scorecard.html, leitir-engine-scorecard-v2.html, leitir-engine-scorecard.png
+- Manual scorecards: docs/leitir-engine-scorecard.html, leitir-engine-scorecard-v2.html,
+  leitir-engine-scorecard.png
 
 These are retained for context but are never scorer evidence.
 
 ## How to contribute
 
-AI agents: see AGENTS.md for workflow conventions.
-Humans: the ready-for-agent pool is currently empty. v0.1.2 is complete and closed (#73/#52 closed on the ratified Phase-C `complete` run 32018948262) and v0.1.4 is released ([tag](https://github.com/anthonykewl20/leitir/releases/tag/v0.1.4)); all milestones are closed. Check the [v0.1.4 milestone](https://github.com/anthonykewl20/leitir/milestone/4) for current status.
+AI agents: see AGENTS.md for workflow conventions. Pick up issues from the
+[v0.3.000 milestone](https://github.com/anthonykewl20/leitir/milestone/7) in phase order;
+issues labelled `ready-for-agent` can be started directly, and `adr-required` issues start
+with an ADR PR. Humans: start with the epic
+[#410](https://github.com/anthonykewl20/leitir/issues/410); `good first issue` labels mark
+small, well-scoped fixes.

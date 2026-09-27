@@ -1,7 +1,30 @@
-# Leitir — Status (2026-08-17)
+# Leitir — Status (2026-09-27)
 
 Leitir is a deterministic code-search kernel with a standalone evidence-bound
 scoring engine. The v1 Hy3 synthesis pipeline has been deleted.
+
+## 2026-09-27 real-user audit and v0.3.000 milestone
+
+A real-user audit (code and command behaviour as the only source of truth)
+measured Leitir against its product goal: scavenging GitHub for the most
+mature working implementation of a task and using it as a base or reference
+with provenance. Verified materialization, coverage honesty and determinism
+hold, but the headline journey fails: package-scoped search aborts on every
+registry-artifact shelf (#349), monorepo packages overwrite one shelf (#350),
+global discovery has no maturity ranking, TS/JS API extraction and examples
+are largely empty, and `lock` fails open (#368). Every finding, with
+reproduction and root cause, is recorded in
+[the audit](evidence/audit-2026-09-27/README.md); the competitive teardown is
+in [competitive-landscape-2026-09](research/competitive-landscape-2026-09.md).
+The work is organised as milestone
+[v0.3.000 — GitHub Code Scavenger](https://github.com/anthonykewl20/leitir/milestone/7)
+under epic [#410](https://github.com/anthonykewl20/leitir/issues/410).
+Owner decisions: official-docs tooling is out of scope; license evidence is
+informational, never a gate (#398); grounding agent suggestions in cited,
+verified mature source is the product's purpose (#378).
+
+Suite at audit time (`bdceeb1`): 3746 passed, 166 skipped (environment-gated),
+0 failed; ruff and mypy clean.
 
 ## Where things stand
 
@@ -18,12 +41,12 @@ AST/`symtable` matching, heuristic Tier-2 adapters, whole-file required
 predicates, verified streaming for blobs above 2 MiB, bounded truncated-tree
 recovery with partial-result reporting, exposed global budgets, and exact
 global `(slug, commit_sha, path, blob_sha)` provenance validation.
-(`src/leitir/adapters/registry.py:17-59`,
+(`src/leitir/adapters/registry.py:18-74`,
 `src/leitir/adapters/languages.py:5-17`,
-`src/leitir/adapters/python_ast.py:186-226`,
-`src/leitir/adapters/_tier2/_base.py:27-100`, `src/leitir/streaming.py:37-168`,
-`src/leitir/tree.py:136-210`, `src/leitir/cli.py:377-405`,
-`src/leitir/discovery_search.py:671-707`.)
+`src/leitir/adapters/python_ast.py:187-234`,
+`src/leitir/adapters/_tier2/_base.py:28-105`, `src/leitir/streaming.py:38-170`,
+`src/leitir/tree.py:162-272`, `src/leitir/cli_search.py:523-559`,
+`src/leitir/discovery_search.py:1062-1104`.)
 
 Search v2 (v0.1.4) is implementation-complete and was independently
 cross-reviewed and hardened post-merge in PRs #109, #112, #113, #114, #115,
@@ -192,7 +215,7 @@ the real network and drives the real pipeline and CLI end to end.
 | Runtime ratification | **RE-RATIFIED + GATE COMPLETE (2026-09-05)** | Owner key `7baec2e9…` re-signed the 0.2.000 runtime digest `sha256:901bf7ac…` (four Phase-A runs agree, final 33960563929) via `ratification-v1.json`; Phase-C `complete` on branch run 33974049348 (5/5 donors), evidence in `evidence/issue-338-2026-09-05/`. The 2026-08-17 ceremony (`sha256:72949674…`, runs 32018653190/32018948262) is archived as `ratification-v1-superseded-2026-08-17.json`; #73/#52 stay closed on it. |
 | BTS bench (#75) | **PUBLISHED** | Published run `88330e29…` has five complete tasks with exact baselines/metrics and one honest `worker-shutdown-predicate` partial (`bts_cli_parity_v1`); E5b timing remains deferred offline. |
 
-Milestone state: #42 is **closed** and v0.1.1 milestone closeout is pending;
+Milestone state: #42 and the v0.1.1 milestone are **closed**;
 v0.1.2 is **complete and closed** (#73 closed on the ratified Phase-C
 `complete` evidence — canonical main run
 [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262)
@@ -212,7 +235,7 @@ multi-host (`gitlab.com`/`bitbucket.org`/`golang.org/x`); Codeberg and
 Sourcehut hosts; and fail-closed cleanup of orphan dirs on failed
 materialization. Comprehensive real-world + sad-path testing passed.
 
-Offline suite: **2661 passed, 123 skipped**. The skips are opt-in live tests
+Offline suite at the time of this section (2026-08-17): **2661 passed, 123 skipped**; see the 2026-09-27 audit section above for the current count. The skips are opt-in live tests
 behind `LEITIR_ENABLE_LIVE_E2E=1` / `LEITIR_ENABLE_SCORE_LIVE=1`, polyglot
 tests that require the optional tree-sitter extra, and the six L5 ratification
 tests that require the optional auth extra (`cryptography`); with those extras
@@ -276,14 +299,15 @@ the scoring engine's gate precedence.
   (`NPM_TOKEN`/`PYPI_TOKEN`/`CARGO_TOKEN`) are supported; private registry
   endpoints with different URLs (npm Enterprise, Artifactory, private PyPI
   index) are a future follow-up on top of the unified credentials layer.
-- **Sourcehut live** — covered offline + a live resolver test; full live
-  materialization needs an `SRHT_TOKEN`.
-- **Self-scorecard release gate (#41)** — the current worktree reaches an
-  offline-only pass with complete required benchmark, coverage, and mutation
-  evidence. The public OpenSSF API still returns 404, and release readiness
-  additionally requires live OpenSSF evidence and an approved controlled
-  performance baseline. The hard release gate is due before v1.0 (the
-  10,000-user adoption milestone), not v0.1.1.
+- **Sourcehut and Codeberg** — anonymous materialization works (verified
+  2026-09-27), but Sourcehut shelves are archive-only verified (0 files
+  compared) and both hosts are excluded from corpus search and indexing (#360,
+  #359).
+- **Self-scorecard release gate** — #41 is closed. Live OpenSSF evidence and an
+  approved controlled performance baseline remain prerequisites for the hard
+  release gate due before v1.0 (the 10,000-user adoption milestone).
+- **v0.3.000 GitHub Code Scavenger** — all open product work is tracked in
+  [milestone 7](https://github.com/anthonykewl20/leitir/milestone/7), epic #410.
 - **Metric floors and baselines** — deliberately absent. §7 and §10 require
   these to be adopted in a separate reviewable change once a measured corpus
   exists; no slice may bundle them with an implementation.

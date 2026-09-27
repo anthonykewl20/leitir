@@ -11,9 +11,9 @@ The wide path uses GitHub's legacy REST `GET /search/code` endpoint. Its
 defaults are 30 candidate-verification attempts and 10 pages; callers can set
 `--max-results`, `--max-pages`, and `--language`. Coverage remains
 `INDETERMINATE_GLOBAL` because the remote index is neither pinned nor proven
-exhaustive. (`src/leitir/discovery_search.py:184-249`,
-`src/leitir/discovery_search.py:441-486`, `src/leitir/cli.py:391-405`,
-`src/leitir/cli.py:1830-1858`.)
+exhaustive. (`src/leitir/discovery_search.py:195-322`,
+`src/leitir/discovery_search.py:768-802`, `src/leitir/cli_search.py:162-178`,
+`src/leitir/cli_search.py:523-559`.)
 
 The deep path scans a pinned tree through adapters for Python, Rust, Go,
 JavaScript, TypeScript, Java, C, and C++. Python uses the unchanged heuristic
@@ -21,10 +21,10 @@ adapter by default; `--ast` opts into stdlib `ast` plus `symtable` lexical
 classification. Blobs above 2 MiB are streamed in line-aligned windows and
 verified incrementally against their Git blob SHA-1. Truncated recursive trees
 are recovered through a bounded non-recursive walk, with recovery or an
-incomplete walk reported as `PARTIAL`. (`src/leitir/adapters/registry.py:17-59`,
-`src/leitir/cli.py:377-405`, `src/leitir/adapters/python_ast.py:164-226`,
-`src/leitir/streaming.py:37-168`, `src/leitir/tree.py:136-210`,
-`src/leitir/engine.py:236-260`.)
+incomplete walk reported as `PARTIAL`. (`src/leitir/adapters/registry.py:18-74`,
+`src/leitir/cli_search.py:148-178`, `src/leitir/adapters/python_ast.py:165-275`,
+`src/leitir/streaming.py:38-170`, `src/leitir/tree.py:162-272`,
+`src/leitir/engine.py:455-495`.)
 
 This report distinguishes **Leitir behavior** from **GitHub-side facts**.
 File-and-line citations refer to this checkout; service limits are linked to
@@ -43,12 +43,13 @@ leitir search --global --must kind:value[:language] ... \
 
 `--global` is mutually exclusive with repository and package scope. A search
 requires at least one `--must`; the three global controls are rejected outside
-global mode. (`src/leitir/cli.py:324-405`, `src/leitir/cli.py:1790-1825`.)
+global mode. (`src/leitir/cli_search.py:77-178`, `src/leitir/cli_search.py:431-451`,
+`src/leitir/cli_support.py:244-259`.)
 
 The production transport calls `/search/code`, caps `per_page` at 100, and
 sends the GitHub JSON media type and API-version header. A token is sent only
 when the configured endpoint is HTTPS on `api.github.com`.
-(`src/leitir/discovery_search.py:184-249`.)
+(`src/leitir/discovery_search.py:195-322`.)
 
 `GlobalSearcher` defaults to `max_results=30` and `max_pages=10`; both the CLI
 and constructor enforce service-aligned maxima of 1000 results and 100 pages.
@@ -57,8 +58,8 @@ budget, GitHub's `incomplete_results`, a short/empty page, a page failure, or
 the page budget. Candidate-budget stops are reported incomplete whenever the
 remote count shows uncollected results. Candidate fetch/verification attempts,
 including promoted candidates, are also bounded by `max_results`.
-(`src/leitir/discovery_search.py:441-519`,
-`src/leitir/discovery_search.py:532-560`.)
+(`src/leitir/discovery_search.py:46-47`, `src/leitir/discovery_search.py:768-1029`,
+`src/leitir/cli_search.py:226-247`.)
 
 ### Query translation and language routing
 
@@ -69,33 +70,33 @@ predicates become a GitHub superset followed by local filtering. `should` and
 `must_not` are local filters, while their `PATH` form is rejected. Conflicting
 required languages are rejected and a canonical language value is stored in
 the search spec (so aliases and case variants share an identity); that
-qualifier is added to the query. (`src/leitir/discovery_search.py:349-433`.)
+qualifier is added to the query. (`src/leitir/discovery_search.py:606-702`.)
 
 Both search paths canonicalize language aliases and require a matching adapter.
 An unsupported required language is rejected before candidates are scanned.
 (`src/leitir/adapters/languages.py:5-17`,
-`src/leitir/discovery_search.py:466-479`,
-`src/leitir/discovery_search.py:659-668`, `src/leitir/engine.py:217-229`,
-`src/leitir/engine.py:399-408`.)
+`src/leitir/discovery_search.py:814-826`,
+`src/leitir/discovery_search.py:1048-1059`, `src/leitir/engine.py:204-214`, `src/leitir/engine.py:436-446`,
+`src/leitir/engine.py:711-722`.)
 
 ### Provenance, validation, and coverage
 
 An API hit is accepted only when the commit in its API `ref` agrees with the
 commit in its HTML `/blob/<sha>/` URL. Leitir fetches the path at that commit
 and verifies the bytes against the claimed Git blob SHA-1.
-(`src/leitir/discovery_search.py:61-75`,
-`src/leitir/discovery_search.py:251-284`,
-`src/leitir/discovery_search.py:575-611`,
-`src/leitir/discovery_search.py:642-657`.)
+(`src/leitir/discovery_search.py:72-87`,
+`src/leitir/discovery_search.py:283-316`,
+`src/leitir/discovery_search.py:897-966`,
+`src/leitir/discovery_search.py:1031-1046`.)
 
 Report validation authorizes every source against the complete global
 provenance tuple `(slug, commit_sha, path, blob_sha)` from the byte-verified hit
 set. It rejects a moving reference, invalid score, out-of-range span, or exact
-duplicate. (`src/leitir/discovery_search.py:671-707`.) Results are therefore
+duplicate. (`src/leitir/discovery_search.py:1062-1104`.) Results are therefore
 strong evidence for accepted bytes, but wide coverage remains
 `INDETERMINATE_GLOBAL`; the first page's remote `total_count` is not an
-exhaustive local denominator. (`src/leitir/discovery_search.py:503-505`,
-`src/leitir/discovery_search.py:621-640`.)
+exhaustive local denominator. (`src/leitir/discovery_search.py:854-855`,
+`src/leitir/discovery_search.py:995-1001`.)
 
 ### GitHub-side constraints
 
@@ -127,40 +128,40 @@ truncated recursive listing and returns the full blob universe (paths, blob
 SHAs, modes) — large repositories such as microsoft/TypeScript enumerate
 without a sampled downgrade — while `list_blobs_ex()` remains the variant
 that additionally reports whether recovery walked.
-(`src/leitir/tree.py:141-261`, `src/leitir/tree.py:388-476`.)
+(`src/leitir/tree.py:162-290`, `src/leitir/tree.py:493-617`.)
 
 `ScopedSearcher` searches recovered blobs. Successful recovery and failed
 recovery with partial blobs both produce real matches but set coverage to
 `PARTIAL` and `incomplete_results=True`; a normal complete tree can still earn
-`COMPLETE_FOR_DECLARED_UNIVERSE`. (`src/leitir/engine.py:236-277`.)
+`COMPLETE_FOR_DECLARED_UNIVERSE`. (`src/leitir/engine.py:432-513`.)
 
 ### Scan universe and large-blob streaming
 
 The eligible universe is selected by adapter, required canonical language, and
 required path filters. Unsupported required languages are rejected before the
-scan. (`src/leitir/engine.py:217-229`, `src/leitir/engine.py:279-311`.)
+scan. (`src/leitir/engine.py:204-214`, `src/leitir/engine.py:436-446`, `src/leitir/engine.py:515-556`.)
 
 Blobs at or below 2 MiB use the ordinary blob read. Larger blobs use
 the raw streaming read and are not automatically omitted: Leitir decodes
 incrementally, evaluates line-aligned windows, rebases line spans, tracks the
 declared byte count, and computes the Git blob SHA-1 incrementally. A size or
 digest mismatch, an over-budget line, or a stream failure excludes that blob
-and makes coverage partial. (`src/leitir/engine.py:317-350`,
-`src/leitir/streaming.py:37-168`, `src/leitir/tree.py:239-252`.)
+and makes coverage partial. (`src/leitir/engine.py:52`, `src/leitir/engine.py:557-597`,
+`src/leitir/streaming.py:38-170`, `src/leitir/tree.py:347-437`.)
 
 Whole-file `must` cannot be evaluated safely window-by-window, so a blob above
 2 MiB is excluded when `--whole-file` is active; ordinary-sized blobs support
-whole-file matching. (`src/leitir/streaming.py:51-52`,
-`src/leitir/engine.py:380-395`.)
+whole-file matching. (`src/leitir/streaming.py:52-53`,
+`src/leitir/engine.py:557-597`.)
 
 ### Language adapters and matching model
 
 The deterministic registry contains eight languages: Python, Rust, Go,
-JavaScript, TypeScript, Java, C, and C++. (`src/leitir/adapters/registry.py:17-37`.)
+JavaScript, TypeScript, Java, C, and C++. (`src/leitir/adapters/registry.py:18-38`.)
 The latter five are Tier-2 regex adapters with hand-adapted patterns attributed
 to nvim-treesitter; emitted matches record `method=heuristic`.
 (`src/leitir/adapters/_tier2/__init__.py:1-7`,
-`src/leitir/adapters/_tier2/_base.py:23-99`,
+`src/leitir/adapters/_tier2/_base.py:28-105`,
 `src/leitir/adapters/_tier2/javascript.py:1-34`.)
 
 Heuristic matching remains the default, including for Python. `--ast` replaces
@@ -169,10 +170,10 @@ stdlib `ast`, and references receive `symtable`-based lexical classification.
 On parse failure it falls back to regex and marks the parser unavailable. On
 `symtable` failure it retains AST structure, marks reference provenance unknown,
 and also marks the result incomplete; the engine converts either condition to
-`PARTIAL`. (`src/leitir/adapters/registry.py:40-59`,
-`src/leitir/adapters/python_ast.py:186-226`,
-`src/leitir/adapters/python_ast.py:273-290`,
-`src/leitir/engine.py:369-395`.)
+`PARTIAL`. (`src/leitir/adapters/registry.py:55-74`,
+`src/leitir/adapters/python_ast.py:187-234`,
+`src/leitir/adapters/python_ast.py:277-303`,
+`src/leitir/engine.py:586-597`, `src/leitir/engine.py:622-648`, `src/leitir/engine.py:489-495`.)
 
 **Comments and string literals are excluded by the five Tier-2 adapters.** All five Tier-2 adapters (JavaScript, TypeScript, Java, C, C++) run
 `mask_comments_and_strings()` on the file before evaluating any content
@@ -190,16 +191,16 @@ nodes) or, for those kinds specifically, inside a string; but any *content*
 predicate on a Python file that is not one of those structural kinds (for
 example `exact_text` or `regex`) still falls back to the same raw, unmasked
 line scan as the non-AST default. (`src/leitir/adapters/__init__.py:119`,
-`src/leitir/adapters/python_ast.py:233-244`.) If a diff against
+`src/leitir/adapters/python_ast.py:204-207`, `src/leitir/adapters/python_ast.py:240-250`.) If a diff against
 `grep` shows leitir "missing" matches on a JS/TS/Java/C/C++ file, check whether
 they are inside a comment or string literal first -- that is expected,
 by-design behavior, not a bug.
 
 By default, required content predicates intersect on one line. `--whole-file`
 sets `SearchSpec.whole_file_must`, allowing required predicates to occur on
-different lines in one ordinary-sized file. (`src/leitir/cli.py:377-389`,
-`src/leitir/search.py:198-223`, `src/leitir/adapters/__init__.py:111-161`,
-`src/leitir/engine.py:380-391`.)
+different lines in one ordinary-sized file. (`src/leitir/cli_search.py:148-154`,
+`src/leitir/search.py:224-282`, `src/leitir/adapters/__init__.py:112-178`,
+`src/leitir/engine.py:322-406`.)
 
 ### Ranking and deterministic provenance
 
@@ -207,7 +208,7 @@ Every result identifies repository, commit, path, blob, and exact line span.
 Scores are normalized through `Decimal` and sorted by the P6 total order
 `(-normalized_score, slug, commit_sha, path, blob_sha, start_line, end_line)`.
 Duplicate identities are rejected. (`src/leitir/ranking.py:13-24`,
-`src/leitir/ranking.py:27-81`.) Explicit sorting in tree enumeration, adapter
+`src/leitir/ranking.py:27-82`.) Explicit sorting in tree enumeration, adapter
 construction, streaming result emission, and ranking makes output independent
 of hash iteration order for identical inputs.
 
@@ -220,8 +221,8 @@ materialized shelf in the local corpus. It is fully offline and commit- and
 blob-pinned: it does not discover new sources and does not require network
 access. The motivating use case is answering "where in anything I depend on does
 X happen?" when a developer has many materialized shelves but doesn't know which
-one holds the answer. (`src/leitir/index/query.py:335-462`,
-`src/leitir/cli.py:816-827`, `src/leitir/cli.py:3026-3053`.)
+one holds the answer. (`src/leitir/index/query.py:317-497`,
+`src/leitir/cli_search.py:100-113`, `src/leitir/cli_search.py:481-522`.)
 
 ```text
 leitir search --corpus --must kind:value[:language] ... \
@@ -247,14 +248,25 @@ than searched) when:
 - `drift_parity`: the shelf's parity metadata is `drift` or `unknown`.
 - `registry_provenance`: the shelf was resolved registry-only without a git
   commit pinning.
-- `unsupported_host`: the shelf is on a host not yet supported by the adapter
-  for generic tree enumeration.
+- `unsupported_host`: the shelf's host is not `github.com` (the
+  `ScopedSearcher` local-shelf fast path only reads `github.com` shelves).
+  This is checked before any other condition.
 - `partial_tree_scope`: the shelf's materialized-tree hash covers only a
   partial-tree scope (incomplete source).
 
 Excluded shelves are always named in `shelves_excluded` with both identity and
-reason; this is never silent. (`src/leitir/search.py:495-504`,
-`src/leitir/index/query.py:405-418`, `src/leitir/cli.py:3041-3046`.)
+reason; this is never silent. (`src/leitir/search.py:499-509`,
+`src/leitir/index/query.py:343-365`, `src/leitir/index/query.py:430-453`,
+`src/leitir/index/builder.py:164-169`, `src/leitir/cli_search.py:362-399`.)
+
+**Current scope limit.** Because of the `registry_provenance` and
+`unsupported_host` rules above, corpus search today excludes every
+registry-artifact shelf (for example npm/PyPI/crates tarballs materialized
+without a pinned git commit) and every shelf on a host other than `github.com`
+(GitLab, Bitbucket, Codeberg, SourceHut). Those shelves are named in
+`shelves_excluded` and force `corpus_status` to `PARTIAL`; they are not
+searched. Widening this is tracked in
+[#359](https://github.com/anthonykewl20/leitir/issues/359).
 
 `corpus_status` is `CoverageStatus.COMPLETE_FOR_DECLARED_UNIVERSE` only when
 both of these hold: (1) the `shelves_excluded` list is empty, and (2) every
@@ -263,8 +275,8 @@ file level. Any named exclusion or any per-shelf partial result forces
 `corpus_status` to `PARTIAL`. An empty corpus (zero shelves materialized) is
 reported honestly: zero searched, zero excluded, no matches, and `corpus_status`
 remains `PARTIAL` (never a false "complete" claim about dependencies that were
-never materialized). (`src/leitir/search.py:559-616`,
-`src/leitir/index/query.py:446-450`.)
+never materialized). (`src/leitir/search.py:563-645`,
+`src/leitir/index/query.py:468-497`.)
 
 ### Indexing and fallback
 
@@ -273,15 +285,18 @@ falls back to full-tree scanning for unindexed shelves. `--require-index`
 rejects unindexed shelves instead, excluding them with reason `unindexed`.
 This is per-shelf: a corpus search with `--require-index` still searches all
 indexed shelves and reports the unindexed ones as excluded, never aborting the
-whole operation. (`src/leitir/index/query.py:400-413`.)
+whole operation. (`src/leitir/index/query.py:430-450`.)
 
 ## 4. Exit codes
 
-`leitir search` uses the same four-tier `ExitCode` as the rest of the CLI
-(`src/leitir/cli.py:64-70`): `SUCCESS = 0`, `CORPUS_FAILURE = 1`,
-`MALFORMED_USAGE = 2`, `INFRASTRUCTURE_FAILURE = 3`. The dispatcher wraps all
-four scopes -- `--corpus`, `--global`, and the scoped `--repo`/`--package`
-branch -- in one `try` block (`src/leitir/cli.py:3604-3733`) with a shared
+`leitir search` uses four values of the CLI-wide `ExitCode`
+(`src/leitir/cli_support.py:71-83`): `SUCCESS = 0`, `CORPUS_FAILURE = 1`,
+`MALFORMED_USAGE = 2`, `INFRASTRUCTURE_FAILURE = 3`. (`ExitCode` also defines
+`NOTHING_INDEXED = 4`, which `leitir search` never returns.) `cli.py`
+dispatches `search` to `cli_search.run` (`src/leitir/cli.py:388-397`), which
+wraps all three scopes -- `--corpus`, `--global`, and the scoped
+`--repo`/`--package` branch -- in one `try` block
+(`src/leitir/cli_search.py:480-636`) with a shared
 exception ladder, so the mapping below is uniform across scopes rather than
 scope-specific:
 
@@ -291,17 +306,17 @@ scope-specific:
   incomplete-but-honest report is still a successful command invocation.
 - **1 (`CORPUS_FAILURE`):** `SearchSpecError` is not raised, but a
   `VerificationError` propagates out of the scope's own search call
-  (`src/leitir/cli.py:3728-3730`). Concretely this covers:
-  - a corrupt or unreadable corpus catalog (`leitir-sources.json`) under
+  (`src/leitir/cli_search.py:631-633`). Concretely this covers:
+  - a corrupt or unreadable corpus catalog (`sources.json`) under
     `--corpus`, raised before any shelf is even considered
-    (`src/leitir/corpus.py:94-99`, surfaced through
+    (`src/leitir/corpus.py:120-135`, surfaced through
     `_corpus_eligibility()`'s `shelves_from_corpus(root, strict=True)` at
-    `src/leitir/index/query.py:320`);
+    `src/leitir/index/query.py:343`);
   - a local materialized shelf whose bytes fail load-time tree-hash
     verification, reached directly (not caught locally) on the scoped
     `--repo`/`--package` path via `ScopedSearcher`/`IndexedSearcher`
-    (`src/leitir/engine.py:76-194` raises; nothing between there and
-    `src/leitir/cli.py:3728` catches it for this path).
+    (`src/leitir/engine.py:55-200` raises; nothing between there and
+    `src/leitir/cli_search.py:631` catches it for this path).
 
   This is **not** reachable on `--global`: `GlobalSearcher`
   (`src/leitir/discovery_search.py:768-`) is built from a GitHub-backed
@@ -311,19 +326,21 @@ scope-specific:
   step on the global-discovery path to fail.
 - **2 (`MALFORMED_USAGE`):** `SearchSpecError` (an invalid predicate/spec) or
   an invalid scope combination caught earlier in argument handling -- e.g.
-  `--corpus` combined with `--repo`/`--package`/`--global`
-  (`src/leitir/cli.py:3725-3727`).
+  `--corpus` combined with `--repo`/`--package`/`--global`, rejected by the
+  argparse mutually exclusive scope group (`src/leitir/cli_search.py:77-113`),
+  plus the checks in `src/leitir/cli_search.py:431-472` and the
+  `SearchSpecError` handler at `src/leitir/cli_search.py:628-630`.
 - **3 (`INFRASTRUCTURE_FAILURE`):** everything else -- network/transport
   errors, an unresolvable package reference, a malformed commit SHA, and any
   other exception not typed as `SearchSpecError` or `VerificationError`
-  (`src/leitir/cli.py:3731-3733`).
+  (`src/leitir/cli_search.py:634-636`).
 
 ### `--corpus` is the one scope where the exit code alone is not the whole story
 
 Under `--corpus`, a per-shelf `VerificationError` (a tampered or otherwise
 unverifiable shelf) does **not** propagate to the top-level handler above --
 `CorpusSearcher.search()` catches it itself, excludes that one shelf, and
-keeps going (`src/leitir/index/query.py:410-427`). The command still exits
+keeps going (`src/leitir/index/query.py:430-453`). The command still exits
 **0**. The only way `--corpus` exits 1 is the catalog-level failure described
 above (nothing to iterate over at all), which is a materially different
 situation from "one shelf out of many was unverifiable."
@@ -344,30 +361,30 @@ a partial, integrity-compromised result as if it were a complete one.
 ### Wide path
 
 - The transport still uses legacy REST `/search/code`, not a local index or the
-  newer GitHub.com code-search experience. (`src/leitir/discovery_search.py:184-249`.)
+  newer GitHub.com code-search experience. (`src/leitir/discovery_search.py:195-322`.)
 - GitHub-side indexing, result, and rate limits prevent a global recall claim.
 - Global required `REGEX` remains fail-closed rejected; structural predicates
-  use remote supersets plus local filtering. (`src/leitir/discovery_search.py:349-433`.)
+  use remote supersets plus local filtering. (`src/leitir/discovery_search.py:606-702`.)
 - Coverage is always `INDETERMINATE_GLOBAL` even when all returned candidates
-  verify. (`src/leitir/discovery_search.py:621-640`.)
+  verify. (`src/leitir/discovery_search.py:995-1001`.)
 
 ### Deep path
 
 - Matching is heuristic and line-oriented by default. The Python AST adapter is
   opt-in, and the JavaScript/TypeScript/Java/C/C++ adapters remain heuristic.
-  (`src/leitir/adapters/registry.py:40-59`,
-  `src/leitir/adapters/_tier2/_base.py:23-99`.)
+  (`src/leitir/adapters/registry.py:55-74`,
+  `src/leitir/adapters/_tier2/_base.py:28-105`.)
 - Large blobs are streamed and SHA-1 verified, but a line over 512 KiB, a
   verification/read failure, or whole-file mode on a large blob yields a
-  partial exclusion. (`src/leitir/streaming.py:17-20`,
-  `src/leitir/streaming.py:126-168`.)
+  partial exclusion. (`src/leitir/streaming.py:17-22`,
+  `src/leitir/streaming.py:128-170`.)
 - Truncated trees are recovered within fixed budgets. Recovery is reported as
   partial, and failures preserve only safely enumerated blobs.
-  (`src/leitir/tree.py:136-210`, `src/leitir/engine.py:236-260`.)
+  (`src/leitir/tree.py:162-272`, `src/leitir/engine.py:455-495`.)
 - Python parse or symbol-table failure is fail-soft through explicit partial
   coverage, not silently treated as parser-backed completeness.
-  (`src/leitir/adapters/python_ast.py:207-226`,
-  `src/leitir/engine.py:369-395`.)
+  (`src/leitir/adapters/python_ast.py:208-234`,
+  `src/leitir/engine.py:586-597`, `src/leitir/engine.py:622-648`, `src/leitir/engine.py:489-495`.)
 - Tier-2 (JavaScript, TypeScript, Java, C, C++) content predicates exclude matches inside comments and
   string/template literals (the Tier-2 adapters mask them out before
   matching); Python content predicates other than the structural `--ast`
@@ -386,7 +403,7 @@ a partial, integrity-compromised result as if it were a complete one.
   `corpus_status=PARTIAL`, not a false "complete" claim.
 - Coverage depends on shelf-level eligibility and individual search success;
   each excluded shelf is named with its reason and prevents corpus_status from
-  claiming completeness. (`src/leitir/search.py:559-616`.)
+  claiming completeness. (`src/leitir/search.py:563-645`.)
 
 ### Verification and operations
 
@@ -405,8 +422,8 @@ global budgets. The remaining opportunities are:
 
 | Opportunity | Why | Effort | Risk | Stdlib-only feasibility |
 |---|---|---:|---|---|
-| Investigate migration to newer GitHub Code Search | The current transport is legacy REST `/search/code`; endpoint semantics, auth, pagination, and immutable provenance require fresh API research. (`src/leitir/discovery_search.py:184-249`) | M-L | Medium | Possible, subject to a supported API |
-| Support global `REGEX` through a bounded superset | The legacy endpoint cannot express arbitrary regex; fail-closed rejection is safer than pretending a term is equivalent. (`src/leitir/discovery_search.py:349-377`) | L / hard | High | Possible only for safely bounded subsets |
+| Investigate migration to newer GitHub Code Search | The current transport is legacy REST `/search/code`; endpoint semantics, auth, pagination, and immutable provenance require fresh API research. (`src/leitir/discovery_search.py:195-322`) | M-L | Medium | Possible, subject to a supported API |
+| Support global `REGEX` through a bounded superset | The legacy endpoint cannot express arbitrary regex; fail-closed rejection is safer than pretending a term is equivalent. (`src/leitir/discovery_search.py:621-636`) | L / hard | High | Possible only for safely bounded subsets |
 | Completed: live-search canary (S3 slice #88; PRs #106/#121) | Search-v2-specific real-provider probes for index drift, truncation recovery, and large-blob streaming are in the opt-in workflow. (`docs/ci.md`) | S | Low | Yes |
 
 ## 7. References

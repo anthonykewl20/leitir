@@ -8,6 +8,12 @@ Leitir is a deterministic, provenance-bound dependency-source corpus plus a dete
 the tagged commit, CI-tested archives, provenance attestations and installed-wheel probes are recorded in
 [the #338 evidence](docs/evidence/issue-338-2026-09-05/README.md).**
 
+**Direction (2026-09-27):** Leitir is being built into the AI agent's GitHub code scavenger — find the most mature
+working OSS implementation of a task, read it from verified pinned source, and reuse it with provenance.
+A real-user audit found that the headline journey does not work yet; findings and the plan are in
+[the audit](docs/evidence/audit-2026-09-27/README.md), [ROADMAP.md](ROADMAP.md) and milestone
+[v0.3.000 — GitHub Code Scavenger](https://github.com/anthonykewl20/leitir/milestone/7) (epic [#410](https://github.com/anthonykewl20/leitir/issues/410)).
+
 Release verification checks archive payload CRCs and gzip trailers as well as
 version metadata; malformed or duplicate wheel members reject before publication.
 
@@ -23,7 +29,7 @@ Leitir treats source as the answer surface and runs a strict materialization pip
 
 ```mermaid
 flowchart TD
-    S["Spec<br/>npm: · pypi: · crates: · go: · github: · gitlab: · bitbucket:"] --> R["Resolve exact version<br/>lockfile pin → registry latest"]
+    S["Spec<br/>npm: · pypi: · crates: · go: · github: · gitlab: · bitbucket: · codeberg: · sourcehut:"] --> R["Resolve exact version<br/>lockfile pin → registry latest"]
     R --> AF{"Registry source<br/>artifact available?"}
     AF -- "yes" --> DL1["Download artifact<br/>npm tarball · PyPI sdist · crate"]
     DL1 --> CV["Verify published checksum<br/>sha512 / sha256 — fail-closed"]
@@ -37,12 +43,12 @@ flowchart TD
 
 ## What it gives you
 
-- Multi-host source support: GitHub, GitLab (including nested subgroup slugs), Bitbucket, Codeberg, and Sourcehut (`~user/repo`); plus package ecosystems npm, PyPI, crates.io, and Go — including non-GitHub Go modules (`gitlab.com/`, `bitbucket.org/`, `golang.org/x/`) — for lockfile-aware resolution.
+- Multi-host source support: GitHub, GitLab (including nested subgroup slugs), Bitbucket, Codeberg, and Sourcehut (`~user/repo`) — non-GitHub hosts are currently materialize-only: corpus search and indexing cover github.com shelves only, and Sourcehut shelves are archive-verified rather than tree-verified (#359, #360); plus package ecosystems npm, PyPI, crates.io, and Go — including non-GitHub Go modules (`gitlab.com/`, `bitbucket.org/`, `golang.org/x/`) — for lockfile-aware resolution.
 - Byte-exact artifact-first fetch for registry ecosystems using published checksums, with checksum mismatch treated as fail-closed.
 - Git-tree verification against host APIs for the git-commit path.
 - Explicit artifact parity as `exact`, `drift`, or `unknown` recorded in manifests.
 - Per-source provenance manifests with immutable commit, checksum, source type, fetch root, and resolution metadata.
-- `leitir info <spec>` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call).
+- `leitir info <spec> --json` — one-shot agent context (provenance + API summary + top examples + trust + parity in a single JSON call; plain text without `--json`).
 - API surface indexes with stdlib `ast` extraction for Python, Go exported-symbol extraction, and conservative JS/TS heuristics behind a plugin hook.
 - Optional hash-locked tree-sitter graph producers for JavaScript, TypeScript,
   Rust, and Go; graph production feeds BTS computation only, while relocation,
@@ -55,7 +61,7 @@ flowchart TD
   translates source code and never executes the agent-written target-language
   implementation; proof-under-containment for that implementation requires a
   future Go-capable containment rootfs and is explicitly out of scope today.
-- Ranked usage-example extraction from practical entry points (`README`, `docs`, `examples`, `tests`) with symbol evidence and deterministic, evidence-backed semantic labels.
+- Ranked usage-example extraction from the root `README` and top-level directories named exactly `docs`, `examples` or `tests`, with symbol evidence and deterministic, evidence-backed semantic labels. Registry tarballs rarely ship those directories, and snippets are kept only when they mention an extracted API symbol, so many npm/PyPI/crates packages currently yield no examples (#355).
 - SPDX 2.3 / CycloneDX 1.5 SBOM generation with deterministic license inference and explicit confidence.
 - BTS reuse licensing uses a separate verified-byte-only, per-source REUSE 3.3
   resolver. It emits authoritative canonical `obligations.json` and derives
@@ -140,7 +146,7 @@ pulled in.
 For optional JavaScript/TypeScript/Rust/Go graph production:
 
 ```bash
-pip install 'leitir[tree-sitter]'
+pip install 'leitir[tree-sitter] @ git+https://github.com/anthonykewl20/leitir.git@v0.2.000'
 # Checkout/CI installs use the ADR-0012 wheel-only, hash-locked tuple:
 uv pip install --require-hashes --only-binary :all: -r requirements-tree-sitter.lock
 ```
@@ -164,7 +170,7 @@ pass `--require-manifest-auth --trusted-keys /secure/trusted-keys.json` to
 corpus-reading commands after installing the version-pinned optional extra:
 
 ```bash
-pip install 'leitir[auth]'
+pip install 'leitir[auth] @ git+https://github.com/anthonykewl20/leitir.git@v0.2.000'
 # Hash-locked installs use the reviewed wheel-only closure:
 uv pip install --require-hashes --only-binary :all: -r requirements-auth.lock
 ```
@@ -199,7 +205,7 @@ Code's own integration is the `skills/leitir/SKILL.md` path above, not this
 server):
 
 ```bash
-pip install 'leitir[mcp]'
+pip install 'leitir[mcp] @ git+https://github.com/anthonykewl20/leitir.git@v0.2.000'
 # Hash-locked installs use the reviewed wheel-only closure:
 uv pip install --require-hashes --only-binary :all: -r requirements-mcp.lock
 
@@ -207,8 +213,8 @@ python -m leitir.mcp
 ```
 
 This is a deliberate, optional add-on: the runtime stays stdlib-only
-(`dependencies = []` in `pyproject.toml` is unchanged, and a plain
-`pip install leitir` pulls in nothing new). The server exposes five verbs as
+(`dependencies = []` in `pyproject.toml` is unchanged, and a plain install
+without extras pulls in nothing new; Leitir is not yet published on PyPI, #407). The server exposes five verbs as
 MCP tools — `info`, `search` (including `--corpus`), `examples`, `api`, and
 `diff` — each a thin wrapper that shells out to the `leitir` CLI and returns
 its JSON output unmodified, so provenance and coverage fields (`corpus_status`,
@@ -275,6 +281,8 @@ rg "parse" "$path"
 cat "$path/package.json"
 
 # Run search and benchmark commands
+# Known issue (#349): after `leitir get` of a registry package, package-scoped search currently fails with
+# `cannot safely stat local blob: <path>`; the fix is tracked in milestone v0.3.000.
 leitir search --package zod --version 3.22.0 --ecosystem npm --must symbol_definition:parse
 leitir index
 leitir search --package zod --version 3.22.0 --ecosystem npm --must exact_text:parse --index
@@ -430,7 +438,7 @@ except when interrupted:
   honest empty corpus, never treated as corruption.
 
 ### Analysis
-- `info`: one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
+- `info` (use `--json` for machine output): one-shot agent context with provenance, bounded public signatures and docstrings, top usage code, trust, and parity. Use this first.
 - `api`: extract, cache, and return a bounded public-symbol contract with signatures, docstrings, and provenance.
 API evidence integrity (issue #310): `info` derives signatures and examples from the verified source under the target lock before accepting its derived caches. A tampered cache is rebuilt; an unchanged cache is not rewritten.
 
@@ -489,9 +497,8 @@ leitir: resolving npm:is-number@7.0.0
 leitir: materializing npm:is-number@7.0.0
 
 $ leitir list
-markdown-it-py 3.0.0 executablebooks/markdown-it-py@bee6d1953be75717a3f2f6a917da6f464bed421d verified trust=unknown
-is-number      7.0.0 jonschlinkert/is-number@98e8ff1da1a89f93d1397a24d7413ed15421c139        verified trust=unknown
-octocat/Hello-World … @7fd1a60b01f91b314f59955a4e4d4e80d8edf11d                                verified trust=unknown
+next-auth 4.24.11 nextauthjs/next-auth@6bca388f46636d1598a430ba6624e1201e70f213 verified trust=60 routing=study-only/license-undetermined ~/.leitir/repos/github.com/nextauthjs/next-auth/6bca388f46636d1598a430ba6624e1201e70f213 2026-09-27T01:28:19.969700Z
+ndom91/next-auth-example-sign-in-page ndom91/next-auth-example-sign-in-page@5a1ccb442ab1d9ff7176f2f6530d303f44810cfd verified trust=unknown routing=transplant-ok/permissive:MIT ~/.leitir/repos/github.com/ndom91/next-auth-example-sign-in-page/5a1ccb442ab1d9ff7176f2f6530d303f44810cfd 2026-09-27T01:28:47.823103Z
 
 $ leitir trust npm:is-number@7.0.0
 is-number trust=64
@@ -632,7 +639,7 @@ scheduler. The canonical local command remains serial. See the
 PYTHONPATH=src uv run --no-project --with-requirements requirements.txt python -m pytest
 ```
 
-Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. **Status (dated — re-verify against CI; 2026-08-24):** **3431 passed, 143 skipped** without extras; additional polyglot tests run with the tree-sitter extra active; combined line+branch coverage **83.48%** against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
+Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2E=1`. **Status (dated — re-verify against CI; 2026-09-27, `bdceeb1`):** **3746 passed, 166 skipped** without extras; additional polyglot tests run with the tree-sitter extra active; combined line+branch coverage last measured **83.48%** (2026-08-24) against the refreshed baseline in `.github/workflows/coverage-baseline.json` (floor 81.0%, per-module minimums carry 0.15% drift headroom).
 
 ## Current state
 
@@ -665,14 +672,14 @@ Offline is default. Live network checks are opt-in behind `LEITIR_ENABLE_LIVE_E2
   read separately from test availability.
 - **Local-verification boundary (2026-08-23 audit):** the full contained
   donor-execution pipeline (`bts-run` under nsjail) was *not* re-executed
-  locally for this audit round; its acceptance evidence remains the milestone
-  Phase-C exit-gate runs — branch
-  [32018653190](https://github.com/anthonykewl20/leitir/actions/runs/32018653190)
-  and canonical main
-  [32018948262](https://github.com/anthonykewl20/leitir/actions/runs/32018948262)
-  — which completed 5/5 donors against the ratified runtime digest
-  (`sha256:72949674…`, owner key `7baec2e9…`, ceremony recorded in
-  `benchmarks/exit-corpus/ratification-v1.json`). Likewise, `--global`
+  locally for this audit round; its acceptance evidence is now the 2026-09-05
+  Phase-C `complete` branch run
+  [33974049348](https://github.com/anthonykewl20/leitir/actions/runs/33974049348)
+  (5/5 donors) against the re-ratified runtime digest
+  (`sha256:901bf7ac…`, owner key `7baec2e9…`, recorded in
+  `benchmarks/exit-corpus/ratification-v1.json`); the 2026-08-17
+  `sha256:72949674…` ceremony and its runs 32018653190/32018948262 are archived
+  in `ratification-v1-superseded-2026-08-17.json`. Likewise, `--global`
   code-search result-capping behavior is covered by offline tests for every
   bound code (`tests/test_discovery_search_capping.py`), but no live
   rate-limited index was driven to produce a capped report this round; live
